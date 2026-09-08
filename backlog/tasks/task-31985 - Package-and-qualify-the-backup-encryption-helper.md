@@ -1,10 +1,10 @@
 ---
 id: TASK-31985
 title: Package and qualify the backup encryption helper
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-07 23:48'
-updated_date: '2026-09-08 00:54'
+updated_date: '2026-09-08 02:34'
 labels:
   - backup-recovery
 dependencies:
@@ -20,9 +20,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Qualified wheels work without Go, runtime downloads, or PATH helper substitution.
-- [ ] #2 Source/editable installation and unsupported-platform behavior are explicit and tested.
-- [ ] #3 Native platform evidence, pinned dependencies, integrity/version checks, and upgrade interoperability accompany each advertised tuple.
+- [x] #1 Qualified wheels work without Go, runtime downloads, or PATH helper substitution.
+- [x] #2 Source/editable installation and unsupported-platform behavior are explicit and tested.
+- [x] #3 Native platform evidence, pinned dependencies, integrity/version checks, and upgrade interoperability accompany each advertised tuple.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,57 +41,22 @@ ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: direct implementation of the approved storage, credential, archive, and recovery contract; reuse ADR-126 with ADR-029/030/036/059/060.
 <!-- SECTION:PLAN:END -->
 
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented ADR-126 package-owned helper delivery. Qualified native wheels carry one reproducibly built helper, its digest and Python qualification cells, and complete age/hpke/x-crypto/Go license and patent notices. Pure wheels, source and editable installs remain explicitly unavailable; runtime never searches PATH, downloads, or compiles. The release builder keeps generated trees outside the checkout.
+
+Qualified evidence is limited to darwin/arm64, macOS 26.5.2 (25F84), APFS, Python 3.12.11 and Go 1.26.2. The helper declares minimum macOS12.0 and has a verified Go ad-hoc signature; Developer ID/notarization and other candidate cells remain unqualified. Native runtime ran in a fresh environment without Go, under inherited macOS network denial with a real EPERM network probe, and verified roundtrip, tamper/missing/malformed resources and both-direction source/package interoperability. Separate offline fresh environments actually installed the sdist and editable checkout; the editable installation executed the documented explicit contributor build.
+
+Final targeted commands: python -m pytest Tests/Packaging/test_backup_helper_distribution.py -q (16 passed,21.67s); python -m pytest Tests/Backup_Recovery/test_crypto.py -q (37 passed,11.64s); python -m pytest Tests/Packaging/test_installed_distribution.py::test_built_artifacts_match_distribution_contract -q (1 passed,8.19s). Used Python3.12.11, GOTOOLCHAIN=local and private offline Go/uv caches. Existing RequestsDependencyWarning reproduced on baseline. Scoped Ruff fatal checks and formatting, Go test/vet/module verification, linked-module/license-byte checks, JSON, shell syntax, codesign, digest and git diff --check passed. No full suite or remote workflow ran.
+
+Independent spec/quality review identified runtime Python qualification, complete linked notices and actual installation evidence gaps. Fix commit 3a75df0be addresses all three; scoped independent re-review reports all addressed and no new breakage. Implementation commits:2758ac733 and3a75df0be.
+
+Files: Packaging/backup_age sources/build/qualification/notices, wheel and sdist inventories/build/checker, Backup_Recovery/crypto.py and helper_manifest.json, focused packaging/crypto tests and fixtures, manual qualification workflow. Incident-backed testing and Backlog lessons record generated build-tree contamination and exact stash recovery after external worktree cleanup. No unrelated main-checkout changes were included.
+<!-- SECTION:NOTES:END -->
+
 ## Design references
 
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-09-07-backup-recovery-01-encryption.md#task-2)
 - [ADR-126](../decisions/126-complete-local-backup-and-recovery.md)
-
-## Implementation Notes
-
-Implemented ADR-126's package-owned helper delivery gate. Source, editable, sdist,
-and `py3-none-any` artifacts retain an all-unavailable delivery manifest. An explicit
-qualified native-wheel build compiles only the selected pinned Go target offline,
-checks its reproducible digest, tags the wheel for that platform, and carries the
-binary, age license, notices, and one authoritative manifest entry. Runtime resolution
-continues to use the fixed package path and now distinguishes an installed digest
-mismatch while mapping other capability-probe failures to `helper_unavailable`; it
-never searches PATH, downloads, or builds.
-
-Actual native qualification is limited to darwin/arm64, macOS 26.5.2 (25F84) on APFS,
-Python 3.12.11, Go 1.26.2, with a macOS 12.0 minimum load command. Python 3.11/3.13
-and every other candidate tuple remain explicitly unavailable. The installed-wheel
-probe used a fresh environment with Go absent and an inherited macOS process sandbox
-network denial; its real network probe returned `EPERM` before round-trip, integrity,
-missing/malformed-resource, and both-direction interoperability checks.
-
-Focused evidence: `Tests/Packaging/test_backup_helper_distribution.py` 13 passed;
-`Tests/Backup_Recovery/test_crypto.py` 37 passed; the existing distribution-contract
-guard passed; Go test/vet/module verification, Python syntax/format checks, shell
-syntax, JSON validation, `codesign --verify`, helper digest, and `git diff --check`
-passed. Test runs emitted one pre-existing RequestsDependencyWarning from the shared
-development environment. No remote workflow or untested matrix cell was executed.
-
-Packaging-generated `build/lib` first caused a whole-root architecture guard to see a
-duplicate runtime-policy owner, so build/test copies now stay outside the checkout.
-An external broad cleanup later stashed this active task and removed its worktree;
-work stopped, recovered exact stash `3de040179723f7ae95dbbf2d63cf73bfff753771`, and
-resumed in a verified self-contained clone. Both incidents are recorded in the testing
-and backlog-hygiene lessons.
-
-Modified delivery/runtime files: `pyproject.toml`, `MANIFEST.in`,
-`Packaging/build_dist.sh`, `Packaging/check_manifest.py`,
-`Packaging/backup_age/*`, `tldw_chatbook/Backup_Recovery/crypto.py`, and
-`tldw_chatbook/Backup_Recovery/helper_manifest.json`. Focused packaging and real-helper
-fixtures plus the manual native qualification workflow carry the release evidence.
-
-Review fixes carry the qualified Python minor versions into the installed manifest and
-reject unqualified interpreters before helper invocation; the py3 wheel therefore
-keeps the application installable on Python >=3.11 while encryption stays unavailable
-outside its tested cell. Native wheels now include byte-identical upstream hpke,
-x/crypto, and Go license texts plus Go's PATENTS grant; `go version -m` confirmed those
-two modules and age are the only linked non-standard dependencies. Separate fresh
-offline environments installed the sdist and editable checkout. The sdist stayed
-unavailable without `_age`; the editable environment executed the documented explicit
-contributor build into a private path and remained unavailable afterward. Fix-round
-evidence: packaging 16 passed, crypto 37 passed, and the distribution guard passed.

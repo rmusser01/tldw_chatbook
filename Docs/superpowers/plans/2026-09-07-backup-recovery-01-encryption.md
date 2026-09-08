@@ -231,7 +231,7 @@ def build_helper(goos: str, goarch: str, destination: Path) -> Path: ...
 def helper_capability() -> tuple[bool, str]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Packaging/test_backup_helper_distribution.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Packaging/test_backup_helper_distribution.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -243,19 +243,19 @@ def test_checkout_without_helper_is_unavailable(monkeypatch, tmp_path):
     assert reason == "helper_unavailable"
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Packaging/test_backup_helper_distribution.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Packaging/test_backup_helper_distribution.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Use the existing internal _package_resource_root() -> Path resolver from crypto.py; verify the installed resource path, expected digest, executable type, protocol version, and platform tuple before invocation. Never search PATH or download at runtime.
+- [x] **Step 3:** Use the existing internal _package_resource_root() -> Path resolver from crypto.py; verify the installed resource path, expected digest, executable type, protocol version, and platform tuple before invocation. Never search PATH or download at runtime.
 
-- [ ] **Step 4:** Build candidate tuples darwin/arm64, darwin/amd64, linux/amd64, linux/arm64, windows/amd64. These are qualification targets, not advertised support. Native runners must record OS minimum, filesystem, Python 3.11/3.12/3.13, pipe behavior, signature/package trust, and helper integrity results; unsupported tuples remain unavailable.
+- [x] **Step 4:** Build candidate tuples darwin/arm64, darwin/amd64, linux/amd64, linux/arm64, windows/amd64. These are qualification targets, not advertised support. Native runners must record OS minimum, filesystem, Python 3.11/3.12/3.13, pipe behavior, signature/package trust, and helper integrity results; unsupported tuples remain unavailable.
 
-- [ ] **Step 5:** Use platform-tagged wheels containing only the corresponding helper and its license/version/digest inventory; a native binary must not enter a py3-none-any wheel. Extend the existing setuptools build command and package-data inventory explicitly. Source distributions include helper source and pinned module files. Document explicit contributor Go build for editable/source checkouts; missing binaries do not trigger automatic compilation.
+- [x] **Step 5:** Use platform-tagged wheels containing only the corresponding helper and its license/version/digest inventory; a native binary must not enter a py3-none-any wheel. Extend the existing setuptools build command and package-data inventory explicitly. Source distributions include helper source and pinned module files. Document explicit contributor Go build for editable/source checkouts; missing binaries do not trigger automatic compilation.
 
-- [ ] **Step 6:** Build a wheel and install it into an isolated environment with Go absent, network disabled during runtime, and an empty PATH except Python requirements. Run the real helper round trip, malformed digest/version, missing helper, and upgrade interoperability cases. Test the sdist and documented editable workflow separately.
+- [x] **Step 6:** Build a wheel and install it into an isolated environment with Go absent, network disabled during runtime, and an empty PATH except Python requirements. Run the real helper round trip, malformed digest/version, missing helper, and upgrade interoperability cases. Test the sdist and documented editable workflow separately.
 
-- [ ] **Step 7:** Record reproducible build inputs and output digests in qualification.json, with packaging ownership in Packaging/backup_age/README.md. A failed platform gate stays unadvertised; an integration-wide failure requires an ADR amendment before encrypted replacement work proceeds.
+- [x] **Step 7:** Record reproducible build inputs and output digests in qualification.json, with packaging ownership in Packaging/backup_age/README.md. A failed platform gate stays unadvertised; an integration-wide failure requires an ADR amendment before encrypted replacement work proceeds.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -268,7 +268,7 @@ if sha256(executable.read_bytes()).hexdigest() != expected_digest:
 # Identity/permission/version/platform checks also precede execution.
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -276,11 +276,11 @@ python -m pytest Tests/Packaging/test_backup_helper_distribution.py -q
 git diff --check
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): package and qualify the backup encryption helper`. Recheck task-ID collisions
   before merge and preserve unrelated work.
