@@ -30,6 +30,7 @@ from tldw_chatbook.DB.private_sqlite import (
     restore_private_sqlite,
 )
 from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
+from tldw_chatbook.TTS.profile_errors import ProfileMigrationCleanupError
 from tldw_chatbook.TTS.profile_migration_namespace import MigrationTombstoneKey
 from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
 
@@ -645,6 +646,279 @@ def test_canonical_migration_candidate_pins_exact_file_through_migration(
         )
 
 
+def test_exclusive_descriptor_open_borrows_original_without_raw_close(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "exclusive.sqlite3"
+    sqlite3.connect(path).close()
+    path.chmod(0o600)
+    fd = os.open(path, os.O_RDONLY)
+    real_close = os.close
+    attempts = []
+    monkeypatch.setattr(
+        os, "close", lambda value: (attempts.append(value), real_close(value))[1]
+    )
+    try:
+        connection = private_sqlite.connect_private_sqlite_descriptor(
+            "tts.profile_migration_publication_descriptor",
+            fd,
+        )
+        assert attempts == []
+        connection.close()
+        assert os.fstat(fd).st_ino == path.stat().st_ino
+    finally:
+        real_close(fd)
+
+
+@pytest.mark.parametrize("callback_failure", [False, True])
+def test_candidate_callback_cannot_escape_live_connection(tmp_path, callback_failure):
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE proof (value)")
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        tmp_path / ".profile-migration-active.candidate.sqlite3",
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    escaped = []
+
+    def migrate(connection):
+        escaped.append(connection)
+        if callback_failure:
+            raise ValueError("owned callback failure")
+
+    try:
+        with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+            private_sqlite.migrate_profile_store_to_candidate(
+                source,
+                destination,
+                migrate=migrate,
+                validate=lambda connection: None,
+            )
+        with pytest.raises(sqlite3.ProgrammingError):
+            escaped[0].execute("SELECT 1")
+    finally:
+        for connection in escaped:
+            connection.close()
+        private_sqlite.close_profile_migration_destination(destination)
+        source.close()
+
+
+@pytest.mark.parametrize("carried_body_owner", [False, True])
+@pytest.mark.parametrize("control_flow", [False, True])
+def test_candidate_step_close_failure_retains_prior_owner_and_signal(
+    monkeypatch, carried_body_owner, control_flow
+):
+    import asyncio
+
+    from tldw_chatbook.TTS import profile_migration_candidate as candidate
+    from tldw_chatbook.TTS.profile_errors import (
+        _migration_cleanup_owner,
+        _ProfileMigrationValidationOwner,
+    )
+
+    signal = asyncio.CancelledError() if control_flow else OSError("private close")
+
+    class CloseOnce(sqlite3.Connection):
+        close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise signal
+            super().close()
+
+    connection = sqlite3.connect(":memory:", factory=CloseOnce)
+    earlier = _ProfileMigrationValidationOwner(-1)
+    earlier.connection = sqlite3.connect(":memory:")
+    body_error = (
+        ProfileMigrationCleanupError(earlier)
+        if carried_body_owner
+        else ValueError("private validation")
+    )
+
+    def fail_validation(value):
+        raise body_error
+
+    monkeypatch.setattr(candidate, "_read_source_version", fail_validation)
+    try:
+        with pytest.raises(
+            asyncio.CancelledError if control_flow else ProfileMigrationCleanupError
+        ) as failure:
+            candidate.step_profile_migration_candidate(connection)
+        if control_flow:
+            assert failure.value is signal
+        else:
+            assert failure.value.__cause__ is None
+            assert failure.value.__context__ is None
+        retained = _migration_cleanup_owner(failure.value)
+        assert retained is not None
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+        retained.close()
+        assert connection.close_calls == 2
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+        if carried_body_owner:
+            assert earlier.connection is None
+    finally:
+        sqlite3.Connection.close(connection)
+        earlier.close()
+
+
+def test_candidate_callback_carried_owner_includes_destination(tmp_path):
+    from tldw_chatbook.TTS.profile_errors import _ProfileMigrationValidationOwner
+
+    source = sqlite3.connect(":memory:")
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        tmp_path / ".profile-migration-active.candidate.sqlite3",
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    earlier = _ProfileMigrationValidationOwner(-1)
+    earlier.connection = sqlite3.connect(":memory:")
+    escaped = []
+
+    def migrate(connection):
+        escaped.append(connection)
+        raise ProfileMigrationCleanupError(earlier)
+
+    try:
+        with pytest.raises(ProfileMigrationCleanupError) as failure:
+            private_sqlite.migrate_profile_store_to_candidate(
+                source,
+                destination,
+                migrate=migrate,
+                validate=lambda connection: pytest.fail("validation resumed"),
+            )
+        failure.value.owner.close()
+        assert earlier.connection is None
+        with pytest.raises(sqlite3.ProgrammingError):
+            escaped[0].execute("SELECT 1")
+        assert (
+            object.__getattribute__(
+                destination, "_ProfileMigrationBoundaryDestination__file_fd"
+            )
+            == -1
+        )
+        assert (
+            object.__getattribute__(
+                destination, "_ProfileMigrationBoundaryDestination__parent_fd"
+            )
+            == -1
+        )
+    finally:
+        earlier.close()
+        private_sqlite.close_profile_migration_destination(destination)
+        source.close()
+
+
+def test_canonical_setup_close_failure_retains_sqlite_and_raw_pins(
+    tmp_path, monkeypatch
+):
+    from Tests.TTS.test_profile_migration_publication import CloseOnceFailure
+
+    path = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    real_connect = private_sqlite._connect_registered_sqlite
+    real_close = os.close
+    proxies = []
+    attempts = []
+
+    def connect(*args, **kwargs):
+        proxy = CloseOnceFailure(real_connect(*args, **kwargs))
+        proxies.append(proxy)
+        return proxy
+
+    def close(fd):
+        if proxies and proxies[0].close_calls:
+            attempts.append(fd)
+        return real_close(fd)
+
+    monkeypatch.setattr(private_sqlite, "_connect_registered_sqlite", connect)
+    monkeypatch.setattr(
+        private_sqlite,
+        "_verify_profile_migration_destination",
+        lambda *a, **k: (_ for _ in ()).throw(ValueError()),
+    )
+    monkeypatch.setattr(os, "close", close)
+    try:
+        with pytest.raises(ProfileMigrationCleanupError) as failure:
+            private_sqlite.open_canonical_profile_migration_destination(
+                path,
+                schema_version=0,
+                tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+            )
+        assert attempts == []
+        assert failure.value.__context__ is None
+        assert failure.value.__cause__ is None
+        failure.value.owner.close()
+        assert proxies[0].close_calls == 2
+        assert len(attempts) == 2
+    finally:
+        for proxy in proxies:
+            proxy.connection.close()
+
+
+@pytest.mark.parametrize("boundary", [False, True])
+def test_migration_immutable_failure_retains_complete_destination(
+    tmp_path, monkeypatch, boundary
+):
+    from Tests.TTS.test_profile_migration_publication import CloseOnceFailure
+
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        tmp_path / ".profile-migration-active.candidate.sqlite3",
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE proof (value)")
+    original_connect = private_sqlite._connect_registered_sqlite
+    real_close = os.close
+    proxies = []
+    attempts = []
+
+    def connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        if kwargs.get("immutable"):
+            proxy = CloseOnceFailure(connection)
+            proxies.append(proxy)
+            return proxy
+        return connection
+
+    def close(fd):
+        if proxies and proxies[0].close_calls:
+            attempts.append(fd)
+        return real_close(fd)
+
+    monkeypatch.setattr(private_sqlite, "_connect_registered_sqlite", connect)
+    monkeypatch.setattr(os, "close", close)
+    try:
+        with pytest.raises(ProfileMigrationCleanupError) as failure:
+            if boundary:
+                private_sqlite.backup_profile_migration_boundary(
+                    source,
+                    destination,
+                    schema_version=0,
+                    validate=lambda connection: None,
+                )
+            else:
+                private_sqlite.migrate_profile_store_to_candidate(
+                    source,
+                    destination,
+                    migrate=lambda connection: connection.close(),
+                    validate=lambda connection: None,
+                )
+        assert attempts == []
+        assert failure.value.__context__ is None
+        assert failure.value.__cause__ is None
+        failure.value.owner.close()
+        assert proxies[0].close_calls == 2
+        assert len(attempts) == (4 if boundary else 2)
+    finally:
+        for proxy in proxies:
+            proxy.connection.close()
+        private_sqlite.close_profile_migration_destination(destination)
+        source.close()
+
+
 @POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_substitution_preserves_retained_exact_inode(
     tmp_path: Path,
@@ -735,8 +1009,12 @@ def test_canonical_migration_candidate_close_error_retains_live_connection(
         "_ProfileMigrationBoundaryDestination__connection",
         FailingClose(),
     )
-    with pytest.raises(private_sqlite.SQLitePrivateDestinationError) as caught:
+    from tldw_chatbook.TTS.profile_errors import ProfileMigrationCleanupError
+
+    with pytest.raises(ProfileMigrationCleanupError) as caught:
         private_sqlite.close_profile_migration_destination(destination)
+
+    assert caught.value.owner is destination
 
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None

@@ -548,6 +548,7 @@ def _assert_raw_connection_census(
         "tldw_chatbook/TTS/profile_sqlite_policy",
         "require_native_close_policy_support",
     )
+    child_proof_site = ("tldw_chatbook/TTS/profile_sqlite_proof", "TTSProof.initialize")
     if not seam_exists:
         assert sum(current.values()) == 31
         assert current == documented_legacy
@@ -560,7 +561,9 @@ def _assert_raw_connection_census(
     # The TTS runtime probe is a separate, fixed, argument-free capability
     # check. Its one raw call is admitted only by the strict source guard below.
     assert current[runtime_probe_site] == 1
-    assert current == Counter({seam_site: 3, runtime_probe_site: 1})
+    assert current == Counter(
+        {seam_site: 3, runtime_probe_site: 1, child_proof_site: 1}
+    )
 
 
 def _assert_runtime_probe_is_literal_memory_only(source_path: Path) -> None:
@@ -620,8 +623,8 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # authority before any profile-store open. C45/C46 are descriptor-bound
         # publisher/recovery validation through the centralized SQLite seam;
         # C47 is the exact admitted restore source retained during canonical
-        # candidate preparation. C48 is the descriptor-bound exact-current
-        # proof retained through shared live-store use. C49 is the external
+        # candidate preparation. C48 is retired: exact-current proof now lives
+        # only in the isolated child, with a separately guarded raw seam. C49 is the external
         # Watchlists agent's non-mutating view of existing subscription data.
         # C50 is the device-private Notes import receipt and future lasting-sync
         # state owner. C51 is the pre-boot "upgrading database..." notice's
@@ -634,7 +637,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
         for number in range(1, 55)
-        if number != 10
+        if number not in {10, 48}
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 18) if number not in {10, 11, 12, 16}
@@ -670,6 +673,7 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
         "tldw_chatbook/TTS/profile_sqlite_policy",
         "require_native_close_policy_support",
     )
+    child_proof_site = ("tldw_chatbook/TTS/profile_sqlite_proof", "TTSProof.initialize")
     documented = Counter({legacy_site: 31})
 
     _assert_raw_connection_census(
@@ -686,19 +690,26 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({seam_site: 3, runtime_probe_site: 1}),
+        Counter({seam_site: 3, runtime_probe_site: 1, child_proof_site: 1}),
         seam_exists=True,
     )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({seam_site: 4, runtime_probe_site: 1}),
+            Counter({seam_site: 4, runtime_probe_site: 1, child_proof_site: 1}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({legacy_site: 7, seam_site: 3, runtime_probe_site: 1}),
+            Counter(
+                {
+                    legacy_site: 7,
+                    seam_site: 3,
+                    runtime_probe_site: 1,
+                    child_proof_site: 1,
+                }
+            ),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
@@ -709,6 +720,7 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
                     legacy_site: 7,
                     seam_site: 1,
                     runtime_probe_site: 1,
+                    child_proof_site: 1,
                     ("tldw_chatbook/new_owner", "open_database"): 1,
                 }
             ),
@@ -717,15 +729,58 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({seam_site: 3, runtime_probe_site: 2}),
+            Counter({seam_site: 3, runtime_probe_site: 2, child_proof_site: 1}),
             seam_exists=True,
         )
+    for child_count in (0, 2):
+        with pytest.raises(AssertionError):
+            _assert_raw_connection_census(
+                documented,
+                Counter(
+                    {seam_site: 3, runtime_probe_site: 1, child_proof_site: child_count}
+                ),
+                seam_exists=True,
+            )
 
 
 def test_runtime_capability_probe_is_one_literal_memory_only_raw_call() -> None:
     _assert_runtime_probe_is_literal_memory_only(
         PROJECT_ROOT / "tldw_chatbook/TTS/profile_sqlite_policy.py"
     )
+
+
+def _assert_child_proof_call_is_fixed(source: str) -> None:
+    tree = ast.parse(source)
+    visitor = _QualifiedCallNodeVisitor(_is_sqlite3_connect)
+    visitor.visit(tree)
+    assert len(visitor.calls) == 1
+    symbol, call = visitor.calls[0]
+    assert symbol == "TTSProof.initialize"
+    expected = ast.parse(
+        'sqlite3.connect(f"file:/dev/fd/{self.file_fd}?mode=ro&immutable=1", uri=True, isolation_level=None)',
+        mode="eval",
+    ).body
+    assert ast.dump(call, include_attributes=False) == ast.dump(
+        expected, include_attributes=False
+    )
+
+
+def test_child_proof_raw_call_is_exact_pinned_immutable_view() -> None:
+    source = (PROJECT_ROOT / "tldw_chatbook/TTS/profile_sqlite_proof.py").read_text()
+    _assert_child_proof_call_is_fixed(source)
+    for replacement in ("self.parent_fd", "self.selected", "caller_fd"):
+        with pytest.raises(AssertionError):
+            _assert_child_proof_call_is_fixed(
+                source.replace("{self.file_fd}", "{" + replacement + "}")
+            )
+    with pytest.raises(AssertionError):
+        _assert_child_proof_call_is_fixed(
+            source.replace("mode=ro&immutable=1", "mode=rw")
+        )
+    with pytest.raises(AssertionError):
+        _assert_child_proof_call_is_fixed(
+            source + '\ndef bypass():\n    return sqlite3.connect(":memory:")\n'
+        )
 
 
 @pytest.mark.parametrize(
@@ -1092,7 +1147,7 @@ def test_connection_and_backup_rows_record_completed_helper_migrations() -> None
                 if row["id"] == "C42"
                 else (
                     "connect_private_sqlite_descriptor"
-                    if row["id"] in {"C45", "C46", "C48"}
+                    if row["id"] in {"C45", "C46"}
                     else "connect_private_sqlite"
                 )
             )

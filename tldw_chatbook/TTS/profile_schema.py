@@ -46,7 +46,10 @@ from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _migrate_v0_to_v1
 from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _migrate_v1_to_v2
 from tldw_chatbook.TTS.migrations.v2_to_v3 import migrate as _migrate_v2_to_v3
 from tldw_chatbook.TTS.migrations.v3_to_v4 import migrate as _migrate_v3_to_v4
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    _raise_migration_cleanup_failure,
+)
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
 )
@@ -1275,6 +1278,54 @@ def _unlink_if_present(path: str) -> None:
         pass
 
 
+class _ProfileCandidateCleanupOwner:
+    """Own a disposable validation snapshot until every SQLite view settles."""
+
+    def __init__(
+        self,
+        connections: tuple[sqlite3.Connection | None, ...],
+        descriptors: tuple[int | None, ...],
+        snapshot_path: str | None,
+        snapshot_directory: Path | None,
+    ) -> None:
+        self.connections = [
+            connection for connection in connections if connection is not None
+        ]
+        self.descriptors = [
+            descriptor for descriptor in descriptors if descriptor is not None
+        ]
+        self.snapshot_path = snapshot_path
+        self.snapshot_directory = snapshot_directory
+
+    def __repr__(self) -> str:
+        return "_ProfileCandidateCleanupOwner(<private>)"
+
+    def close(self) -> None:
+        while self.connections:
+            error = None
+            try:
+                self.connections[0].close()
+            except BaseException as caught:  # noqa: BLE001 - native failure retains all remaining resources
+                error = caught
+            if error is not None:
+                _raise_migration_cleanup_failure(self, error)
+            self.connections.pop(0)
+        cleanup = _CleanupState(None)
+        while self.descriptors:
+            descriptor = self.descriptors.pop(0)
+            cleanup.attempt(
+                lambda descriptor=descriptor: _close_candidate_fd(descriptor)
+            )
+        if self.snapshot_path is not None:
+            cleanup.attempt(lambda: _unlink_if_present(self.snapshot_path))
+        if self.snapshot_directory is not None:
+            cleanup.attempt(self.snapshot_directory.rmdir)
+        cleanup.raise_control_flow()
+        if cleanup.ordinary_cleanup_failed:
+            raise _repository_error("schema_corrupt")
+        self.snapshot_path = self.snapshot_directory = None
+
+
 def validate_profile_candidate(
     path: Path,
     *,
@@ -1459,24 +1510,32 @@ def validate_profile_candidate(
     except BaseException as error:
         body_error = error
 
-    cleanup = _CleanupState(body_error)
-    if upgrade_connection is not None:
-        cleanup.attempt(upgrade_connection.close)
-    if connection is not None:
-        cleanup.attempt(connection.close)
-    if snapshot_fd is not None:
-        cleanup.attempt(lambda: _close_candidate_fd(snapshot_fd))
-    if source_fd is not None:
-        cleanup.attempt(lambda: _close_candidate_fd(source_fd))
-    if snapshot_path is not None:
-        cleanup.attempt(lambda: _unlink_if_present(snapshot_path))
-    if snapshot_directory is not None:
-        cleanup.attempt(snapshot_directory.rmdir)
-    cleanup.raise_control_flow()
+    owner = _ProfileCandidateCleanupOwner(
+        (upgrade_connection, connection),
+        (snapshot_fd, source_fd),
+        snapshot_path,
+        snapshot_directory,
+    )
+    cleanup_error = None
+    try:
+        owner.close()
+    except BaseException as error:  # noqa: BLE001 - keep primary control flow and teardown authority
+        cleanup_error = error
+    if cleanup_error is not None:
+        _raise_migration_cleanup_failure(
+            owner,
+            body_error,
+            cleanup_error,
+            code=(
+                body_error.code
+                if isinstance(body_error, ProfileRepositoryError)
+                else "schema_corrupt"
+            ),
+        )
 
     if body_error is not None:
-        if isinstance(body_error, ProfileRepositoryError):
+        if not isinstance(body_error, Exception) or isinstance(
+            body_error, ProfileRepositoryError
+        ):
             raise body_error
-        raise _repository_error("schema_corrupt") from None
-    if cleanup.ordinary_cleanup_failed:
         raise _repository_error("schema_corrupt") from None

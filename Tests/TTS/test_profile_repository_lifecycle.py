@@ -1171,6 +1171,143 @@ async def test_post_copy_source_close_failure_retains_handle_and_exclusive_lease
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["initialize", "restore"])
+async def test_exclusive_validator_close_failure_retains_repository_owner(
+    tmp_path,
+    monkeypatch,
+    operation,
+):
+    publication = importlib.import_module(
+        "tldw_chatbook.TTS.profile_migration_publication"
+    )
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / "candidate.sqlite3"
+    if operation == "initialize":
+        _build_populated_v3_store_at(database_path)
+    else:
+        await _create_profile_store(candidate_path, "Candidate")
+    repository = _repository(database_path)
+    if operation == "restore":
+        await repository.open()
+    real_connect = publication.connect_private_sqlite_descriptor
+    proxies = []
+    sources = []
+    module = _repository_module()
+    source_connect = module.connect_private_sqlite
+
+    def track_source(owner, *args, **kwargs):
+        connection = source_connect(owner, *args, **kwargs)
+        if owner in {"tts.profile_migration_backup", "tts.profile_restore_stage"}:
+            sources.append(connection)
+        return connection
+
+    def connect(*args, **kwargs):
+        contender = ProfileStoreLease(
+            database_path, ProfileStoreLockMode.SHARED, timeout_seconds=0.01
+        )
+        with pytest.raises(ProfileRepositoryError, match="lock_timeout"):
+            contender.acquire()
+        assert repository._connection is None
+        assert sources
+        for source in sources:
+            with pytest.raises(sqlite3.ProgrammingError):
+                _ = source.in_transaction
+        proxy = _CloseFailingSQLiteProxy(
+            real_connect(*args, **kwargs), "PRIVATE close detail"
+        )
+        proxies.append(proxy)
+        return proxy
+
+    monkeypatch.setattr(publication, "connect_private_sqlite_descriptor", connect)
+    monkeypatch.setattr(module, "connect_private_sqlite", track_source)
+    try:
+        with pytest.raises(ProfileRepositoryError):
+            if operation == "initialize":
+                await repository.open()
+            else:
+                await repository.restore_from(candidate_path)
+        assert repository._migration_cleanup_owners
+        assert repository._connection is None
+        assert repository._lease.mode is ProfileStoreLockMode.EXCLUSIVE
+        assert not repository._helper_restart_required
+        assert not repository._exact_authority_quarantined
+        await _assert_exclusive_lease_blocked(database_path)
+        with pytest.raises(ProfileRepositoryError):
+            await repository.close()
+        assert repository._executor is not None
+        for proxy in proxies:
+            proxy.fail_close = False
+        await repository.close()
+        assert not repository._migration_cleanup_owners
+        assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
+    finally:
+        for proxy in proxies:
+            proxy.fail_close = False
+        await repository.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["backup", "restore"])
+@pytest.mark.parametrize(
+    "failing_owner",
+    ["tts.profile_candidate_upgrade", "tts.profile_candidate", "tts.profile_snapshot"],
+)
+async def test_snapshot_cleanup_owner_survives_actual_repository_callers(
+    tmp_path, monkeypatch, operation, failing_owner
+):
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "restore.sqlite3"
+    await _create_profile_store(candidate, "Candidate")
+    repository = _repository(database_path)
+    await repository.open()
+    real_connect = module.connect_private_sqlite
+    real_schema_connect = module._profile_schema.connect_private_sqlite
+    proxies = []
+    snapshots = []
+
+    def intercept(real, owner, database, **kwargs):
+        connection = real(owner, database, **kwargs)
+        if owner == failing_owner:
+            proxy = _CloseFailingSQLiteProxy(connection, "PRIVATE snapshot close")
+            proxies.append(proxy)
+            snapshots.append(Path(database))
+            return proxy
+        return connection
+
+    monkeypatch.setattr(
+        module,
+        "connect_private_sqlite",
+        lambda *a, **k: intercept(real_connect, *a, **k),
+    )
+    monkeypatch.setattr(
+        module._profile_schema,
+        "connect_private_sqlite",
+        lambda *a, **k: intercept(real_schema_connect, *a, **k),
+    )
+    try:
+        with pytest.raises(ProfileRepositoryError):
+            if operation == "backup":
+                await repository.backup_to(tmp_path / "backup.sqlite3")
+            else:
+                await repository.restore_from(candidate)
+        assert proxies and repository._migration_cleanup_owners
+        assert all(path.exists() for path in snapshots)
+        with pytest.raises(ProfileRepositoryError):
+            await repository.close()
+        assert repository._executor is not None
+        for proxy in proxies:
+            proxy.fail_close = False
+        await repository.close()
+        assert not repository._migration_cleanup_owners
+        assert not any(path.exists() for path in snapshots)
+    finally:
+        for proxy in proxies:
+            proxy.fail_close = False
+        await repository.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("restore_stage_open", (1, 2, 3))
 async def test_restore_stage_close_failure_retains_source_and_exclusive_lease(
     tmp_path: Path,

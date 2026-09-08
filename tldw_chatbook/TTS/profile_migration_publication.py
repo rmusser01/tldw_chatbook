@@ -14,7 +14,11 @@ from typing import Final
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite_descriptor
 from tldw_chatbook.TTS import profile_schema
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    _ProfileMigrationValidationOwner,
+    _migration_cleanup_owner,
+)
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
     MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
@@ -238,6 +242,7 @@ def _open_exact(identity: _OpaqueIdentity) -> tuple[int, int, str]:
 
 def _immutable_validate(identity: _OpaqueIdentity) -> None:
     parent_fd, file_fd, _leaf = _open_exact(identity)
+    owner = _ProfileMigrationValidationOwner(file_fd, parent_fd)
     try:
         os.fsync(file_fd)
         os.fsync(parent_fd)
@@ -246,6 +251,8 @@ def _immutable_validate(identity: _OpaqueIdentity) -> None:
             file_fd,
             isolation_level=None,
         )
+        owner.connection = connection
+        body_error = None
         try:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
@@ -263,8 +270,11 @@ def _immutable_validate(identity: _OpaqueIdentity) -> None:
                 schema_version = row[0]
                 identity._schema_version = schema_version
             profile_schema.validate_profile_store_version(connection, schema_version)
-        finally:
-            connection.close()
+        except BaseException as error:  # noqa: BLE001 - settle SQL or retain complete cleanup ownership
+            body_error = error
+        owner.close_sqlite(body_error)
+        if body_error is not None:
+            raise body_error
         if identity._content_evidence is not None:
             _pin = _content_evidence(file_fd)
             if _pin != identity._content_evidence:
@@ -273,8 +283,8 @@ def _immutable_validate(identity: _OpaqueIdentity) -> None:
         os.close(reopened_fd)
         os.close(_parent_fd)
     finally:
-        os.close(file_fd)
-        os.close(parent_fd)
+        if owner.connection is None:
+            owner.close()
 
 
 def _pin_content(identity: _OpaqueIdentity) -> None:
@@ -331,7 +341,9 @@ def prepare_profile_migration_artifact(
         _immutable_validate(artifact)
         return artifact
     except BaseException as error:
-        if not isinstance(error, Exception):
+        if _migration_cleanup_owner(error) is not None or not isinstance(
+            error, Exception
+        ):
             raise
         raise _safe_failure() from None
 
@@ -385,7 +397,9 @@ def retain_profile_migration_destination(
                 os.close(parent_fd)
         return destination
     except BaseException as error:
-        if not isinstance(error, Exception):
+        if _migration_cleanup_owner(error) is not None or not isinstance(
+            error, Exception
+        ):
             raise
         raise _safe_failure() from None
 
@@ -943,6 +957,10 @@ def publish_profile_migration(
         completed = True
     except BaseException as error:
         body_error = error
+
+    if _migration_cleanup_owner(body_error) is not None:
+        _finish_claim(artifacts, destinations, key)
+        raise body_error
 
     if completed:
         complete_cleanup_errors: list[BaseException] = []
