@@ -272,7 +272,7 @@ fixed normally; a clean configured check does not mean the broad catches vanishe
 - `TTSProof` child owner supports `initialize()`, `pin_sidecars()`, `recheck()`, `export_restore_authority()` and `close()` for its one original path. Wire operations are `tts_exact_current`, `tts_pin_sidecars`, `tts_recheck`, `tts_export_restore_authority`, `close`.
 - `TTSRestoreAuthority` is a frozen, source-free record with `parent: FileIdentity`, `main: FileIdentity`, `wal: FileIdentity`, `shm: FileIdentity`. Repository generation is attached/checked by the parent adapter, not supplied as permission by generated/caller content.
 
-- [ ] Write shared-validator parity tests on real v4, unsupported-version, malformed-schema and invalid-domain databases. Exercise large references without selecting audio or text payloads. Add an exact TTS proof test using a closed current store built with existing `profile_schema.open_profile_store` under pytest isolation:
+- [x] Write shared-validator parity tests on real v4, unsupported-version, malformed-schema and invalid-domain databases. Exercise large references without selecting audio or text payloads. Add an exact TTS proof test using a closed current store built with existing `profile_schema.open_profile_store` under pytest isolation:
 
   Preserve the oversized-options pre-parser test by scoping its spy to the
   extracted domain parser, not the shared stdlib `json.loads` module. At the
@@ -310,9 +310,9 @@ lease, not only a direct `TTSProof` object. Initial proof refusal and actual
 transport/protocol/helper failure remain fail-closed; this is not permission to
 reprove a new path or continue SQLite work while authority is refused.
 
-- [ ] Run `../../.venv/bin/python -m pytest -q Tests/TTS/test_profile_sqlite_proof.py` and record RED. Extract the validator closure without changing existing schema versions/DDL or decoding behavior. Move only needed routines; migration orchestration stays in `profile_schema.py`.
-- [ ] Extend fixed namespace bootstrap to `TTS` and `TTS.migrations`. The import closure is restricted to the new validator/proof, existing profile types/errors/reference types, migration DDL modules, migration-journal bounds and stdlib leaf modules. No `profile_repository`, `profile_schema` live opener, config, providers, logging or package initializer. Test the actual child import graph and installed wheel in Task 7.
-- [ ] Implement child initialization: pin original parent/main/cohort, open its fixed read-only immutable descriptor view directly with sqlite3, configure/version/schema/domain/metadata checks, close SQL before raw pins, then retain only identity pins. Enforce 30 seconds and row/artifact ceilings without payload copies or recursive helpers. Refuse mixed/substituted sidecars; return only closed status/identity fields.
+- [x] Run `../../.venv/bin/python -m pytest -q Tests/TTS/test_profile_sqlite_proof.py` and record RED. Extract the validator closure without changing existing schema versions/DDL or decoding behavior. Move only needed routines; migration orchestration stays in `profile_schema.py`.
+- [x] Extend fixed namespace bootstrap to `TTS` and `TTS.migrations`. The import closure is restricted to the new validator/proof, existing profile types/errors/reference types, migration DDL modules, migration-journal bounds and stdlib leaf modules. No `profile_repository`, `profile_schema` live opener, config, providers, logging or package initializer. Test the actual child import graph and installed wheel in Task 7.
+- [x] Implement child initialization: pin original parent/main/cohort, open its fixed read-only immutable descriptor view directly with sqlite3, configure/version/schema/domain/metadata checks, close SQL before raw pins, then retain only identity pins. Enforce 30 seconds and row/artifact ceilings without payload copies or recursive helpers. Refuse mixed/substituted sidecars; return only closed status/identity fields.
 
 ```python
 validate_profile_store_rows(evidence, check_deadline=check_deadline)
@@ -322,36 +322,45 @@ evidence.close()
 evidence = None
 ```
 
-- [ ] Run new proof tests, `Tests/TTS/test_profile_schema.py`, and `Tests/DB/test_sql_validation.py`. Add exact malformed/oversized TTS-operation frames to protocol tests. Existing normal exact-open no-BLOB/serialization and incremental metadata tests must still pass.
-- [ ] Commit the named leaf/validator/protocol/tests with message `refactor(tts): share isolated metadata-only SQLite proof`; review schema parity, import isolation and original-inode ownership before the live wrapper uses it.
+- [x] Run new proof tests, `Tests/TTS/test_profile_schema.py`, and `Tests/DB/test_sql_validation.py`. Add exact malformed/oversized TTS-operation frames to protocol tests. Existing normal exact-open no-BLOB/serialization and incremental metadata tests must still pass.
+- [x] Commit the named leaf/validator/protocol/tests with message `refactor(tts): share isolated metadata-only SQLite proof`; review schema parity, import isolation and original-inode ownership before the live wrapper uses it.
 
-Task 4 checkpoint: implementation `2db961c4d`, spec correction `d643bbc90`.
-Independent spec review passes after retaining healthy initialized proof across
-ordinary authority refusal. Quality review remains open: first sidecar capture
-can misclassify filesystem refusal as helper loss. The fix exposed an unresolved
-partial-capture policy, now resolved by explicit user approval on 2026-09-07:
-retain and revalidate exact acquired WAL/main/directory pins; a retry may bind
-previously unbound SHM once. Never replace/reopen/remint an acquired pin. Distinguish
-bound absent, partial and complete states; partial cohorts cannot authorize use
-or restore export. Test actual-child no-pin refusal/restoration, partial completion,
-changed acquired WAL/main/parent refusal and exact restoration, same child/pins,
-charged admission until close/reap, and repeated pin commands refusing replacement.
-Normalize only recognized filesystem authority errno values; include fatal internal
-error and failed-initializer controls. Preserve deadlines/control-flow precedence.
-Task 5 remains gated on the scoped quality re-review. Root's broader repository/lifecycle run had
-360 passes and 11 failures creating stdlib multiprocessing semaphores before
-repository exercise; an isolated standard-library probe reproduces the failure
-outside the sandbox. These tests remain unqualified, not waived.
+Task 4 complete through `8b4e5c1d4`: initial implementation `2db961c4d`,
+spec correction `d643bbc90`, staged capture `9fb1e3a4b`, typed privacy refusal
+correction `8b4e5c1d4`. Independent spec and quality gates pass. Approved retry
+retains/revalidates exact acquired WAL/main/directory pins and binds missing SHM
+once; acquired pins are never reopened/replaced/reminted. Incomplete cohorts
+refuse use/export. Known numeric and typed filesystem authority refusals preserve
+the initialized healthy helper; unexpected/internal/transport failures remain
+fatal. Actual-child tests cover no-pin/partial/complete refusal and exact
+restoration, original child/pins/capacity, parent permission changes and initial
+failure classification.
 
-Recovery note: the isolated checkout disappeared during the approval turn and was
-restored from the intact branch at `df5a48407`; the main checkout was untouched.
-Historical ignored reports are not assumed available. Current correction records
-belong to `.superpowers/sdd/2026-09-07-sqlite-lock-safe-private-validation-implementation/`;
-recovered prior evidence must be labeled as attributed history, not fresh execution.
+Fresh final implementer selection: 415 passed, two existing skips, one existing
+dependency warning in 38.99s; separately authorized local parser parameters:
+two passed in 0.80s. Root actual permission/initializer controls: three passed;
+scoped static and immutable diff checks pass. Reviewer independently reproduced
+refusal, same-child/main recovery on exact restoration and clean reap.
+Task 5 may start; this is not whole-correction or Canvas qualification.
+
+Earlier repository/lifecycle run: 360 passes and 11 stdlib multiprocessing
+semaphore ENOSPC setup failures, reproduced without Chatbook imports outside
+sandbox. A fresh probe after the user stopped the runaway worktree remover
+still failed. Those tests and three unchanged strict inventory gaps remain
+unqualified, not waived.
+
+Recovery: the isolated checkout disappeared twice; user identified and stopped
+a runaway removal process. Main checkout was untouched. Approval commit
+`2a0b206dd` survived, the recovered product hash matched exactly, reconstructed
+test ASTs were checked, and final verification reran after recovery. Historical
+ignored logs are not assumed available. Current correction records belong to
+`.superpowers/sdd/2026-09-07-sqlite-lock-safe-private-validation-implementation/`;
+external recovery artifacts remain under `/private/tmp/sqlite-task4-evidence.RSZgc4/`.
+Attribute historical evidence separately from fresh runs.
 
 ### Task 5: Migrate live TTS authority, restore handoff and terminal cleanup
 
-**Files:** Modify `TTS/profile_schema.py`, `TTS/profile_repository.py`, `TTS/profile_errors.py`, `DB/private_sqlite_process.py`; create `Tests/TTS/test_profile_sqlite_helper_lifecycle.py`; extend `Tests/TTS/test_profile_repository_lifecycle.py`.
+**Files:** Modify `TTS/profile_schema.py`, `TTS/profile_repository.py`, `TTS/profile_errors.py`, `DB/private_sqlite_process.py`, and `TTS/profile_migration_namespace.py` only for the required validated metadata adaptation; create `Tests/TTS/test_profile_sqlite_helper_lifecycle.py`; extend `Tests/TTS/test_profile_repository_lifecycle.py` and focused namespace comparison tests as needed. Exclusive finalizer behavior remains Task 6.
 
 **Interfaces:**
 
