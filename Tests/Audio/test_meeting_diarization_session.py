@@ -739,11 +739,13 @@ class _StubMeetingSegment:
 def test_speaker_for_segment_picks_the_largest_overlap():
     from tldw_chatbook.Audio.meeting_session import _speaker_for_segment
 
-    # transcript 1.0-3.0; S1 0.0-2.2 overlaps 1.2s, S2 1.9-4.0 overlaps 1.1s;
-    # midpoint 2.0 sits inside BOTH, so the old first-midpoint-hit rule would
-    # have returned S2 (S1 is listed as it happens; the overlap still wins).
+    # transcript 1.0-3.0; S2 1.9-4.0 overlaps 1.1s, S1 0.0-2.2 overlaps 1.2s;
+    # midpoint 2.0 sits inside BOTH. S2 is listed FIRST, so the old
+    # first-midpoint-hit rule returns S2 -- the largest overlap must win
+    # regardless of list order (review: the earlier ordering let the old
+    # rule pass this test too).
     seg = _StubMeetingSegment(1.0, 3.0)
-    batch = [SpeakerSegment(0.0, 2.2, "S1"), SpeakerSegment(1.9, 4.0, "S2")]
+    batch = [SpeakerSegment(1.9, 4.0, "S2"), SpeakerSegment(0.0, 2.2, "S1")]
     assert _speaker_for_segment(seg, batch) == "S1"
 
 
