@@ -359,13 +359,13 @@ def test_message_presentation_owner_reads_replaced_dependencies_without_screen_b
     screen._session = SimpleNamespace(_active_native_console_session=lambda: None)
     screen._console_transcript_style = lambda: ConsoleTranscriptStyle.NEUTRAL
 
-    context = owner._console_presentation_context()
+    context = screen._message._console_presentation_context()
     assert context.user_name == "Live Global"
     assert context.transcript_style is ConsoleTranscriptStyle.NEUTRAL
 
     screen._session = SimpleNamespace(_active_native_console_session=lambda: session)
     screen._console_transcript_style = lambda: ConsoleTranscriptStyle.ROLE_ACCENTS
-    context = owner._console_presentation_context()
+    context = screen._message._console_presentation_context()
     assert context.user_name == "Session Name"
     assert context.transcript_style is ConsoleTranscriptStyle.ROLE_ACCENTS
 

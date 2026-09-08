@@ -13973,3 +13973,22 @@ JSON prefix followed by invalid content, oversized chunked bodies without EOF,
 and malformed UTF-8; cancellation still propagates. All 83 gateway controls and
 65 complete native/served browser cases pass. Do not replace this with an
 unbounded body read or a larger browser timeout.
+
+## A cancelled timer can retain a Screen outside the component under test
+
+**PR 2427 / TASK-31932, 2026-09-08.** The roleplay-writer unmount test retained
+its departed ChatScreen after 50 GC cycles even though writer callbacks and the
+runtime view had been detached. GC traversal before the failing assertion found
+an asyncio TimerHandle with `cancelled=True` and roughly 8.8 seconds left on its
+original deadline. Its Context still held Textual's `active_message_pump` pointing
+to the departed Screen; creation tracing led through `textual.timer.Timer._run`
+and `asyncio.sleep`, not the writer. The unrelated Environment poll runs every
+ten seconds. Shortening only that existing interval to 0.05 seconds made the
+unchanged collection assertion pass; the unmodified cadence still failed.
+
+The fixture keeps the real timer and explicitly checks its presence before
+departure and removal afterward. It retains all durable-repair assertions and
+the sub-0.5-second unmount bound. Production scheduling is unchanged. When a
+weakref test fails, attribute the external root before blaming an internal
+cycle or assertion rewriting. Do not purge asyncio's private timer heap or
+disable the cleanup assertion to manufacture collection.

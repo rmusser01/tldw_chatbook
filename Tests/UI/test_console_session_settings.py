@@ -8953,6 +8953,13 @@ async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
 async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    # This test owns the roleplay writer, not the Environment poll cadence.
+    # A cancelled Textual sleep may remain on asyncio's timer heap until its
+    # original deadline, retaining active_message_pump in its saved Context.
+    # Keep the real timer/stop path but let that unrelated handle quiesce
+    # inside the existing GC observation window (PR 2427 timer-origin probe).
+    monkeypatch.setattr(chat_screen_module, "CONSOLE_ENVIRONMENT_POLL_SECONDS", 0.05)
+
     class HungFirstWritePersistence:
         """One shared-store double: the FIRST system-prompt write blocks.
 
@@ -9060,6 +9067,7 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         assert writer_task is not None
         assert writer_task.done() is False
         old_screen = weakref.ref(hung)
+        assert hung._console_environment_poll_timer is not None
         event_loop = asyncio.get_running_loop()
         loop_errors: list[dict[str, object]] = []
         previous_exception_handler = event_loop.get_exception_handler()
@@ -9072,6 +9080,7 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
 
             elapsed = asyncio.get_running_loop().time() - started_at
             assert elapsed < 0.5
+            assert hung._console_environment_poll_timer is None
             assert app._console_roleplay_repair_generation == 1
             assert app._console_roleplay_repair_global_name == "Cecelia"
             hung_persistence.release.set()
