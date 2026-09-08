@@ -10260,6 +10260,18 @@ that can recompose, await the mounted and visible target rather than only the fi
 state change. Include the scenario/root identity in bounded failure details so intermittent live
 failures remain attributable.
 
+**Recurrence — TASK-31942, 2026-09-08.** The actual Canvas-child recovery test
+acknowledged a successful saved-conversation load, then immediately invoked its
+synthetic F12 card action. Source-free stage markers reproduced the failure:
+load completion and F12 entry 46ms later both had zero mounted Canvas cards and
+an in-progress/coalesced UI sync. The adapter's synchronous `next(...)` failed
+before real button dispatch; the initial child in the same run had a matching
+mounted card and completed the real handler. Logical load completion was not
+rendered-target readiness. Preserve the failing run and distinguish adapter
+readiness from a production selection or database fault; do not treat a missing
+receipt alone as a crash diagnosis. Exact evidence and restored throwaway patch:
+`Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md`.
+
 ## A verifier must not invalidate the evidence it is verifying (TASK-23019, 2026-08-28)
 
 The retained closeout verifier passed once but imported its adjacent task-local sources into a

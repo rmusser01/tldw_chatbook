@@ -228,3 +228,13 @@ has been reported at this checkpoint.
 Windows and other skipped platform/optional gates must be reported separately,
 not treated as successful local evidence. TASK-31942 remains In Progress and
 Canvas V2 remains disabled while required gates are open.
+
+## Subsequent approved diagnostic spike
+
+The approved test-only stage-marker run reproduced the recovery failure and
+established premature synthetic card action: no cards were mounted at F10
+completion or F12 entry 46ms later. The separate startup failure remains open.
+The diagnostic was removed from live test files, with exact baseline identity
+verified; no fix or green qualification was claimed. See the
+[stage-marker evidence](2026-09-08-canvas-card-readiness-spike.md) for the one-run
+result, in-run comparison, process-exit evidence and inference limits.
