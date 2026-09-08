@@ -1151,3 +1151,101 @@ def test_retained_recheck_lifts_initial_deadline_only_after_handoff_completes(
     assert lease.cleanup_state == "reaped"
     with admission.reserve(transient=4, retained=4, deadline=deadline()):
         pass
+
+
+@pytest.mark.parametrize("seconds,success", [(8.0, True), (0.25, False)])
+def test_actual_tts_initializer_uses_thirty_second_phase_but_earlier_budget_wins(
+    tmp_path, monkeypatch, seconds, success
+):
+    import json
+
+    from tldw_chatbook.TTS.profile_schema import open_profile_store
+
+    process = api()
+    codec = importlib.import_module("tldw_chatbook.DB.private_sqlite_protocol")
+    path = tmp_path / "profiles.sqlite3"
+    open_profile_store(path).close()
+    report = tmp_path / "imports.json"
+    real_popen = subprocess.Popen
+    children = []
+
+    def launch(args, **kwargs):
+        # A test-only profile hook delays the actual fixed initializer and
+        # records its real import graph. No delay/control hook enters production.
+        script = f"""
+import atexit,json,runpy,sys,time
+def record():
+    with open({str(report)!r},'w') as output:
+        json.dump(sorted(sys.modules), output)
+atexit.register(record)
+def trace(frame,event,arg):
+    if event == 'call' and frame.f_code.co_name == 'initialize' and frame.f_globals.get('__name__') == 'tldw_chatbook.TTS.profile_sqlite_proof':
+        sys.setprofile(None)
+        time.sleep(5.3)
+sys.setprofile(trace)
+sys.argv = [{args[-1]!r}]
+runpy.run_path(sys.argv[0],run_name='__main__')
+"""
+        child = real_popen([args[0], "-I", "-S", "-c", script], **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(process.subprocess, "Popen", launch)
+    admission = process.HelperAdmission()
+    budget = deadline(seconds)
+    started = time.monotonic()
+    with admission.reserve(transient=1, retained=1, deadline=budget) as owner:
+        if success:
+            lease = process.HelperLease.start(
+                codec.PrepareRequest(str(path), False, False, False),
+                operation="tts_exact_current",
+                reservation=owner,
+                deadline=budget,
+            )
+            assert lease.initial_response["status"] == "ok"
+            assert time.monotonic() - started >= 5.3
+            owner.handoff_retained(lease)
+        else:
+            with pytest.raises(process.HelperTimeoutError):
+                process.HelperLease.start(
+                    codec.PrepareRequest(str(path), False, False, False),
+                    operation="tts_exact_current",
+                    reservation=owner,
+                    deadline=budget,
+                )
+            assert time.monotonic() - started < 3.5
+    if success:
+        assert lease.request("tts_recheck", deadline=deadline())["status"] == "ok"
+        lease.close()
+        imports = set(json.loads(report.read_text()))
+        assert "tldw_chatbook.TTS.profile_validation" in imports
+        assert "tldw_chatbook.DB.sql_identifier_core" in imports
+        assert not imports.intersection(
+            {
+                "loguru",
+                "tldw_chatbook.config",
+                "tldw_chatbook.TTS.profile_schema",
+                "tldw_chatbook.TTS.profile_repository",
+                "tldw_chatbook.DB.private_sqlite",
+                "tldw_chatbook.DB.private_sqlite_process",
+            }
+        )
+        allowed_tts = {
+            "tldw_chatbook.TTS",
+            "tldw_chatbook.TTS.migrations",
+            "tldw_chatbook.TTS.migrations.v0_to_v1",
+            "tldw_chatbook.TTS.migrations.v2_to_v3",
+            "tldw_chatbook.TTS.migrations.v3_to_v4",
+            "tldw_chatbook.TTS.profile_validation",
+            "tldw_chatbook.TTS.profile_sqlite_proof",
+            "tldw_chatbook.TTS.profile_types",
+            "tldw_chatbook.TTS.profile_errors",
+            "tldw_chatbook.TTS.profile_reference_types",
+            "tldw_chatbook.TTS.profile_migration_journal",
+        }
+        assert {
+            name for name in imports if name.startswith("tldw_chatbook.TTS")
+        } == allowed_tts
+    assert children and all(child.poll() is not None for child in children)
+    with admission.reserve(transient=4, retained=4, deadline=deadline()):
+        pass

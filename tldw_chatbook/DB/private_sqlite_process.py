@@ -30,7 +30,11 @@ from tldw_chatbook.DB.private_sqlite_protocol import (
     encode_frame,
 )
 
-_LEASE_KINDS = {"prepare": "transient", "pin_source": "transient"}
+_LEASE_KINDS = {
+    "prepare": "transient",
+    "pin_source": "transient",
+    "tts_exact_current": "retained",
+}
 
 
 class HelperUnavailableError(RuntimeError):
@@ -317,9 +321,13 @@ class HelperLease:
             )
         except ProtocolError:
             raise HelperProtocolError() from None
+        phase_cap = 30.0 if operation == "tts_exact_current" else 5.0
         budget = OperationDeadline(
             time.monotonic()
-            + min(deadline.remaining(5.0), reservation._deadline.remaining(5.0))
+            + min(
+                deadline.remaining(phase_cap),
+                reservation._deadline.remaining(phase_cap),
+            )
         )
         lease = cls(reservation, operation)
         reservation._claim(lease, _LEASE_KINDS[operation])
@@ -398,7 +406,14 @@ class HelperLease:
     ) -> dict[str, object]:
         """Recheck this pin on its owning worker, without replacing its target."""
         self._reservation._check_owner(allow_closed=self in self._reservation._handoffs)
-        if operation != "recheck_source" or self._operation != "pin_source":
+        allowed = (
+            {"tts_pin_sidecars", "tts_recheck", "tts_export_restore_authority"}
+            if self._operation == "tts_exact_current"
+            else {"recheck_source"}
+            if self._operation == "pin_source"
+            else set()
+        )
+        if type(operation) is not str or operation not in allowed:
             raise HelperProtocolError()
         if self._busy or self._failed or self._reaped_child:
             raise HelperUnavailableError()
@@ -427,6 +442,7 @@ class HelperLease:
     def _exchange(
         self, frame: bytes, operation: str, deadline: OperationDeadline
     ) -> dict[str, object]:
+        phase_cap = 30.0 if operation == "tts_exact_current" else 5.0
         self._busy = True
         try:
             with selectors.DefaultSelector() as selector:
@@ -437,9 +453,9 @@ class HelperLease:
                 selector.register(outgoing, selectors.EVENT_WRITE)
                 offset = 0
                 while offset < len(frame):
-                    if not selector.select(deadline.remaining(5.0)):
+                    if not selector.select(deadline.remaining(phase_cap)):
                         raise HelperTimeoutError()
-                    deadline.remaining(5.0)
+                    deadline.remaining(phase_cap)
                     try:
                         offset += os.write(outgoing, frame[offset:])
                     except BlockingIOError:
@@ -449,9 +465,9 @@ class HelperLease:
                 data = bytearray()
                 expected = 4
                 while len(data) < expected:
-                    if not selector.select(deadline.remaining(5.0)):
+                    if not selector.select(deadline.remaining(phase_cap)):
                         raise HelperTimeoutError()
-                    deadline.remaining(5.0)
+                    deadline.remaining(phase_cap)
                     try:
                         part = os.read(incoming, expected - len(data))
                     except BlockingIOError:

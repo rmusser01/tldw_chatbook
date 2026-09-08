@@ -11,7 +11,20 @@ from typing import BinaryIO
 VERSION = 1
 MAX_BODY_BYTES = 65536
 MAX_NESTING = 8
-OPERATIONS = frozenset({"prepare", "pin_source", "recheck_source", "close"})
+TTS_OPERATIONS = frozenset(
+    {
+        "tts_exact_current",
+        "tts_pin_sidecars",
+        "tts_recheck",
+        "tts_export_restore_authority",
+    }
+)
+TTS_REASONS = frozenset(
+    {"exact_not_current", "schema_corrupt", "corrupt_data", "operation_failed"}
+)
+OPERATIONS = (
+    frozenset({"prepare", "pin_source", "recheck_source", "close"}) | TTS_OPERATIONS
+)
 PRIVATE_STATUSES = frozenset(
     {
         "created_private",
@@ -152,6 +165,52 @@ class PrepareRequest:
             raise ProtocolError()
 
 
+def validate_tts_identity(
+    value: object, *, complete: bool = False
+) -> dict[str, object]:
+    """Validate one original parent/main and absent-or-complete sidecar cohort."""
+    if type(value) is not dict or set(value) != {"parent", "main", "wal", "shm"}:
+        raise ProtocolError()
+    FileIdentity.from_payload(value["parent"])
+    FileIdentity.from_payload(value["main"])
+    if value["wal"] is None and value["shm"] is None:
+        if complete:
+            raise ProtocolError()
+    else:
+        FileIdentity.from_payload(value["wal"])
+        FileIdentity.from_payload(value["shm"])
+    return value
+
+
+@dataclass(frozen=True, repr=False)
+class TTSRestoreAuthority:
+    """Source-free exact cohort; repository generation remains parent-owned."""
+
+    parent: FileIdentity
+    main: FileIdentity
+    wal: FileIdentity
+    shm: FileIdentity
+
+    def __post_init__(self) -> None:
+        if any(
+            type(getattr(self, field.name)) is not FileIdentity
+            for field in fields(self)
+        ):
+            raise ProtocolError()
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            field.name: getattr(self, field.name).to_payload() for field in fields(self)
+        }
+
+    @classmethod
+    def from_payload(cls, value: object) -> TTSRestoreAuthority:
+        identity = validate_tts_identity(value, complete=True)
+        return cls(
+            **{key: FileIdentity.from_payload(item) for key, item in identity.items()}
+        )
+
+
 @dataclass(frozen=True, repr=False)
 class PrepareResult:
     """Main identity and the fixed main/WAL/SHM/journal privacy cohort."""
@@ -194,7 +253,7 @@ def validate_payload(payload: object) -> dict[str, object]:
         raise ProtocolError()
     base = {"version", "operation"}
     if "status" not in payload:
-        if operation in {"prepare", "pin_source"}:
+        if operation in {"prepare", "pin_source", "tts_exact_current"}:
             if set(payload) != base | {
                 "path",
                 "writable",
@@ -217,6 +276,12 @@ def validate_payload(payload: object) -> dict[str, object]:
                 request.writable or request.create_if_missing
             ):
                 raise ProtocolError()
+            if operation == "tts_exact_current" and (
+                request.writable
+                or request.create_if_missing
+                or request.preserve_source_mode
+            ):
+                raise ProtocolError()
         elif set(payload) != base:
             raise ProtocolError()
         return payload
@@ -226,10 +291,26 @@ def validate_payload(payload: object) -> dict[str, object]:
         if operation == "close":
             if set(payload) != base:
                 raise ProtocolError()
+        elif operation in TTS_OPERATIONS:
+            if set(payload) != base | {"identity"}:
+                raise ProtocolError()
+            validate_tts_identity(
+                payload["identity"],
+                complete=operation
+                in {"tts_pin_sidecars", "tts_export_restore_authority"},
+            )
         else:
             if set(payload) != base | {"result"}:
                 raise ProtocolError()
             PrepareResult.from_payload(payload["result"])
+    elif type(status) is str and status == "tts_error":
+        if (
+            operation not in TTS_OPERATIONS
+            or set(payload) != base | {"reason"}
+            or type(payload["reason"]) is not str
+            or payload["reason"] not in TTS_REASONS
+        ):
+            raise ProtocolError()
     elif type(status) is str and status == "private_path_error":
         if set(payload) != base | {"privacy_status", "reason"}:
             raise ProtocolError()

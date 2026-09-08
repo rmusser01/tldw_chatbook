@@ -165,6 +165,7 @@ def run(parent_pid: int) -> int:
         return 0
     pipe = _PrivatePipe(parent_pid)
     source: SourcePin | None = None
+    proof = None
     initialized = False
     try:
         while True:
@@ -188,12 +189,71 @@ def run(parent_pid: int) -> int:
                 if "status" in payload:
                     raise ProtocolError()
                 if operation == "close":
+                    if proof is not None:
+                        proof.close()
+                        proof = None
                     if source is not None:
                         source.close()
                         source = None
                     pipe.write(encode_frame({**response, "status": "ok"}))
                     return 0
-                if operation in {"prepare", "pin_source"}:
+                if operation == "tts_exact_current":
+                    if initialized:
+                        raise ProtocolError()
+                    initialized = True
+                    # The frame itself has already met its fixed five-second
+                    # bound. Extend only this decoded initializer's anchored phase.
+                    pipe.deadline += 25.0
+                    from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+                    from tldw_chatbook.TTS.profile_sqlite_proof import (
+                        TTSProof,
+                        TTSProofError,
+                        TTSProofTimeout,
+                    )
+
+                    def check_proof_deadline() -> None:
+                        if os.getppid() != parent_pid:
+                            raise _ParentGone()
+                        if time.monotonic() >= pipe.deadline:
+                            raise TTSProofTimeout()
+
+                    proof = TTSProof(Path(payload["path"]))
+                    try:
+                        identity = proof.initialize(check_deadline=check_proof_deadline)
+                    except TTSProofTimeout:
+                        response.update(status="timeout")
+                    except TTSProofError as error:
+                        response.update(status="tts_error", reason=error.reason)
+                    except ProfileRepositoryError as error:
+                        response.update(
+                            status="tts_error",
+                            reason=error.code
+                            if error.code in {"schema_corrupt", "corrupt_data"}
+                            else "operation_failed",
+                        )
+                    else:
+                        response.update(status="ok", identity=identity)
+                elif (
+                    operation
+                    in {
+                        "tts_pin_sidecars",
+                        "tts_recheck",
+                        "tts_export_restore_authority",
+                    }
+                    and proof is not None
+                ):
+                    try:
+                        if operation == "tts_pin_sidecars":
+                            identity = proof.pin_sidecars()
+                        elif operation == "tts_recheck":
+                            identity = proof.recheck()
+                        else:
+                            identity = proof.export_restore_authority().to_payload()
+                    except TTSProofError as error:
+                        response.update(status="tts_error", reason=error.reason)
+                    else:
+                        response.update(status="ok", identity=identity)
+                elif operation in {"prepare", "pin_source"}:
                     if initialized:
                         raise ProtocolError()
                     initialized = True
@@ -211,11 +271,12 @@ def run(parent_pid: int) -> int:
                     result = files.prepare_batch(request)
                     if operation == "pin_source":
                         source = SourcePin(request, result)
+                    response.update(status="ok", result=result.to_payload())
                 elif operation == "recheck_source" and source is not None:
                     result = source.recheck()
+                    response.update(status="ok", result=result.to_payload())
                 else:
                     raise ProtocolError()
-                response.update(status="ok", result=result.to_payload())
             except PrivatePathError as exc:
                 reason = exc.result.reason
                 response.update(
@@ -233,5 +294,7 @@ def run(parent_pid: int) -> int:
     except (_ParentGone, BrokenPipeError, TimeoutError):
         return 0
     finally:
+        if proof is not None:
+            proof.close()
         if source is not None:
             source.close()
