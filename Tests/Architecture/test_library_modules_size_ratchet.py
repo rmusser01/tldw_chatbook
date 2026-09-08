@@ -327,9 +327,15 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4630,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
-    # plus the module docstring, imports, the 93-dependency constructor, the
-    # 103 binding properties and the generated state-shim loop.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5216,
+    # plus the module docstring, imports, the constructor's 93 keyword-only
+    # parameters (the state accessor plus 92 named dependencies), the 102
+    # binding properties and the generated state-shim loop.
+    # (Erratum, review round: this comment shipped as "the 93-dependency
+    # constructor, the 103 binding properties". 92 is the dependency count
+    # and 102 the property count -- both measured off the class body; the
+    # fix round that removed one dependency and one property corrected the
+    # wiring-test pin and this row's number, but not this sentence.)
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5254,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

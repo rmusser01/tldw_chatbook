@@ -304,7 +304,10 @@ _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset()
 #: callers of that same shape, 8 further instance-attribute-monkeypatch, 5
 #: not-notes-owned, 4 further members of the ``_library_note_session``
 #: projection-property family, 3 shared-shell-helper, 1 further
-#: class-monkeypatch, 1 module-globals-coupling, 1 callback-identity, and 1
+#: class-monkeypatch, 1 module-globals-coupling, 1 test-bound-and-captured
+#: (``_exit_library_note_editor_guarded``, held by SS3's conservative opening
+#: rule -- NOT the media series' Form E, see the controller docstring's own
+#: correction), and 1
 #: ``partial(LibraryScreen.<name>, self, ...)`` target the first census's
 #: direct-call-argument shape could not see -- found by this task's own
 #: BATTERY, per recipe SS3's amended-RED-tuple rule.
@@ -802,14 +805,19 @@ def test_notes_controller_binds_every_name_its_moved_bodies_use() -> None:
     instance probe would report a false failure for a binding that is in fact
     present and correct.
 
-    TWO of these names appear in NO moved body at all and would be missed by
-    that walk: ``_library_canvas_projection_depth`` (read as
-    ``getattr(screen, "_library_canvas_projection_depth", 0)``) and
-    ``_library_canvas_resync_pending`` (assigned) are reached by the SHARED
+THREE of these names appear in NO moved body at all and would be missed by
+    that walk -- a re-derivation over the moved bodies names exactly these
+    three and nothing else: ``_library_canvas_projection_depth`` (read as
+    ``getattr(screen, "_library_canvas_projection_depth", 0)``),
+    ``_library_canvas_resync_pending`` (assigned) and ``is_running`` (read at
+    ``canvas_sync.py:535``). All three are reached by the SHARED
     ``_sync_library_canvas`` dispatcher through the bare ``self`` 31 movers
     forward into it -- the unbound-attribute-escape shape one indirection
     further out than the skills series' own ``focused``. The conversations and
-    media controllers each bind the identical pair for the identical reason.
+    media controllers each bind the first two for the identical reason; the
+    third is this cluster's own. (An earlier draft of this paragraph said TWO
+    and omitted ``is_running`` -- corrected in review, after measuring rather
+    than re-reading.)
     """
     from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
         LibraryNotesController,

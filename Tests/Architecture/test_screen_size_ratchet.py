@@ -766,8 +766,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `LibraryNotesController`
     # (`UI/Library_Modules/library_notes_controller.py`), which the screen
     # constructs as `self._notes_controller` and delegates to under every
-    # original name. Fresh `_measure()`: 35621/1290 -> 32286/1284. Line delta
-    # -3335 reconciles EXACTLY, each term measured off the tree rather than
+    # original name. Fresh `_measure()`: 35621/1290 -> 32325/1284. Line delta
+    # -3296 reconciles EXACTLY, each term measured off the tree rather than
     # estimated: -4034 removed (the 191 `FunctionDef` segments of the 185
     # movers, decorators included); -6 for the blank line after each of the 6
     # SECOND copies of a byte-identical duplicate block dev shipped twice
@@ -784,6 +784,17 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # The METHOD count drops by exactly 6 (1290 -> 1284), which is the
     # duplicate block and nothing else: 191 definitions out, 185 delegators
     # in.
+    #
+    # (Erratum, same task, review round: the two narrative figures three
+    # paragraphs above shipped as "32286/1284" and "-3335" -- the values from
+    # this task's GREEN commit, before its fix round reverted one mover and
+    # moved the row to 32325/-3296. The per-term arithmetic and the row
+    # itself were corrected in that fix round; these two lines were not, and
+    # sat contradicting the row underneath them until review caught it. This
+    # is recipe SS6's own three-places-inside-the-guard hazard, hit for the
+    # second time in this program, and it is recorded rather than silently
+    # repaired: correcting the terms and assuming the narrative followed is
+    # exactly the failure mode SS6 describes.)
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32325, 1284),
 }
 

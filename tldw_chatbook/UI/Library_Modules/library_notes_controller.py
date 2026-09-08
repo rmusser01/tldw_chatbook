@@ -93,12 +93,27 @@ block plus its own blank lines, and it is stated here so a reviewer reading
 the two numbers does not have to reconstruct why they differ.
 
 **Single vs. split controller: SINGLE, decided by connected components, not
-by feel.** Building the ``self.<name>`` reference graph among the 185 movers
-yields **one connected component of 135 names, one of 9 (the note-import
-canvas handlers), one of 2, and 50 isolated singletons**; adding an edge
-between any two movers that touch the same ``LibraryNotesState`` field
-collapses that to **one component of 154 plus one of 9, one of 2 and 31
-singletons**. The only candidate seam of any size is that 9-member
+by feel.** The decision was taken at the point the split had to be made --
+over the **196-name candidate MOVE set as it stood then**, before the later
+hazard classes (2/3's ``LibraryScreen.<x>(self)`` family and everything after
+it) trimmed it to 185. Building the ``self.<name>`` reference graph over
+those 196 yields **one connected component of 135 names, one of 9 (the
+note-import canvas handlers), one of 2, and 50 isolated singletons**
+(135+9+2+50 = 196); adding an edge between any two of them that touch the
+same ``LibraryNotesState`` field collapses that to **one component of 154
+plus one of 9, one of 2 and 31 singletons** (154+9+2+31 = 196).
+
+**Re-derived over the FINAL 185 movers with the identical instrument** (a
+``self.<attr>`` walk PLUS the ``getattr(self, "<literal>")`` spelling, since
+that is the same spelling the binding census has to honour): **126 + 9 + 2 +
+48 singletons**, and **146 + 9 + 2 + 28** once shared-field edges are added.
+An independent re-derivation that counts only plain ``self.<attr>`` edges,
+without the literal-``getattr`` spelling, measures **142 + 9 + 3 + 2 + 29**;
+both are recorded because the difference is entirely that one spelling, and
+both say the same thing about the seam. **The verdict is unaffected by which
+set or which instrument is used** -- every profile is one dominant component,
+the same 9-member note-import group, one 2-member pair, and singletons. The
+only candidate seam of any size is that 9-member
 note-import group -- but four of the five ``LibraryNoteImportCanvas``
 handlers outside it (``...add_source``, ``...cancel``, ``...collision_name``,
 ``...page``) are singletons only because they touch nothing else, and every
@@ -141,7 +156,7 @@ the RED tuple"):
    an UNBOUND class call with ``self`` passed explicitly
    (``LibraryScreen._sync_library_notes_tree_canvas_if_present(self)``, 11
    sites; ``LibraryScreen._load_library_notes_tree_slice(self, ...)``, 7;
-   ``LibraryScreen._supersede_library_notes_navigation(self)``, 5; and 17
+   ``LibraryScreen._supersede_library_notes_navigation(self)``, 6; and 17
    more targets). Nine were already excluded under class 1; these 11 are
    the remainder. The shape is written that way precisely BECAUSE those
    methods are unit-tested against ``SimpleNamespace`` fakes, and it is
@@ -241,8 +256,8 @@ the RED tuple"):
 
 8. **1 further class-monkeypatch exclusion** (recipe SS3's opening rule).
    ``_library_note_dirty`` (``monkeypatch.setattr(LibraryScreen, ...)`` at
-   ``test_library_shell.py:2419`` and ``patch.object(type(screen), ...)`` at
-   ``:17652``) is the only one of the three class-patched names
+   ``test_library_shell.py:2419`` and ``monkeypatch.setattr(type(screen),
+   "_library_note_dirty", property(...))`` at ``:17651-17655``) is the only one of the three class-patched names
    (``_focus_library_notes_tree_after_page``,
    ``_refresh_library_note_detail``) not already covered above.
    ``_refresh_library_note_detail`` is additionally one of the FOUR names
@@ -295,7 +310,8 @@ the RED tuple"):
     direct argument of; where that call's own ``func`` spelled
     ``LibraryScreen.<x>``, both ends were excluded. That question is answered
     "``partial``" for ``partial(LibraryScreen._restore_library_notes_browse_
-    return_receipt, self, receipt, guard)`` in ``handle_library_notes_filter``
+    return_receipt, self, browse_receipt)`` -- three arguments, not four -- in
+    ``handle_library_notes_filter``
     and ``handle_library_notes_filter_clear`` (both themselves excluded), so
     the TARGET was scored as an ordinary mover. It shipped into the paired
     sweep and produced 4 branch-unique failures, 2 of them
@@ -319,22 +335,44 @@ the RED tuple"):
     (already excluded as a monkeypatch, so its miss was harmless and
     over-determined) and this one, which was not.
 
-11. **1 callback-identity exclusion** -- recipe SS3's TENTH bypass shape,
-    the media series' Form E, where the method to exclude is the CALLER and
-    not the callee. ``Tests/UI/test_screen_navigation.py:3225`` replaces
-    ``screen.call_after_refresh`` with a recorder, awaits
-    ``screen.action_library_note_editor_back()``, and asserts
-    ``focus_calls == [screen._restore_library_notes_focus_identity]``. The
-    body that schedules that continuation is
-    ``_exit_library_note_editor_guarded``
-    (``library_screen.py:29888``). Moved, its ``self`` is the controller, so
-    the captured callback is the CONTROLLER's bound method and the equality
-    fails; excluding the CALLEE would not fix it, because the controller's
-    late-binding property returns the injected ``lambda``, a third object
-    again. ``_exit_library_note_editor_guarded`` stays screen-resident so
-    that ``self._restore_library_notes_focus_identity`` resolves to the
-    screen's delegator, whose ``__self__``/``__func__`` match the
-    assertion's own.
+11. **1 test-bound-and-captured exclusion.** ``_exit_library_note_editor_
+    guarded`` is awaited directly on a REAL screen by
+    ``test_library_notes_reader.py:1532`` (``assert await screen._exit_
+    library_note_editor_guarded() is False``, inside a test that also
+    instance-patches ``screen._save_library_note``), and
+    ``LibraryScreen.__init__`` injects it into ANOTHER controller as a named
+    dependency (``library_screen.py:3223-3225``). It is held by recipe SS3's
+    conservative OPENING rule -- **a name a test binds or captures keeps its
+    call graph screen-routed until that subsystem's cleanup PR retargets the
+    fixtures** -- not by a demonstrated bypass, and it is a MOVE candidate
+    for a later series once those fixtures retarget, exactly as the media
+    series disclosed for 7 of its own 16.
+
+    **CORRECTION, review round -- the reason this exclusion originally
+    carried was WRONG, and recipe SS3's "a wrong reason is worse than a thin
+    one" is why it is rewritten here rather than quietly left standing.**
+    The draft justified it as recipe SS3's TENTH shape (the media series'
+    Form E, callback identity): that
+    ``Tests/UI/test_screen_navigation.py:3225``'s ``focus_calls == [screen.
+    _restore_library_notes_focus_identity]`` would compare against a
+    CONTROLLER-bound method once the scheduling body moved. **It would not.**
+    Read at the tree rather than inferred from the assertion text, the
+    callback that assertion actually receives is ``finish_list_projection``
+    -- a CLOSURE defined inside ``_exit_library_note_editor_guarded`` -- so
+    the comparison never involved a bound method of anything, and no move
+    could have changed which object it captures. **And the test is RED at the
+    parent, on that exact assertion**, byte-identically (verified in an
+    isolated worktree at ``afaf2320c``: ``At index 0 diff: <function
+    LibraryScreen._exit_library_note_editor_guarded.<locals>.finish_list_
+    projection> != <bound method ...._restore_library_notes_focus_
+    identity>``). ``test_screen_navigation.py`` is on recipe SS7's documented
+    list with a stable 32-name failure set across trees, so this red was
+    never evidence about this move at all. The exclusion is retained -- on
+    the rule above, which does govern -- and the Form-E mechanism claim is
+    withdrawn. **Notes has ZERO Form-E callback-identity carriers**; the
+    census that would find one (a test comparing a captured callback against
+    ``<receiver>.<cluster-name>`` as a bare attribute) returned exactly this
+    one candidate, and reading it disqualified it.
 
 **The bare-``self`` census, both figures.** Recipe SS3's standing correction
 after the media series' ``ancestors`` incident is to census EVERY bare
