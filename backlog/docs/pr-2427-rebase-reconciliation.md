@@ -551,3 +551,114 @@ diff checks pass. Evidence:
 `/private/tmp/pr2427-scheduling-reconcile-final.log`. The intermediate
 213/1 result was its old literal `per-reminder` assertion, subsequently
 reconciled; no production notification policy changed.
+
+## Watchlists stylesheet deferral and modal consolidation qualification
+
+The exact Watchlists-only partition moves 12,771 source bytes, including six
+older `wl`/`wc`/`overview` units whose consumers were confirmed exclusively in
+Watchlists. Mixed/shared selectors remain eager. The existing app route map
+loads the sheet; no screen CSS_PATH or loading framework was added. Actual
+startup cost after this split was **798,906 / 804,000 bytes**. Real first entry,
+repeat entry (one parse), initial-route startup, lossless partition and bundle
+reproduction controls pass. Removing the route entry in an isolated in-memory
+negative control fails the route guard as intended.
+
+The complete CSS integrity/budget/ratchet-message and File Notes group passed
+**203 tests** in 521.28 seconds. Its initially failing Save-error expectations
+predated TASK-31910's contrast repair; only those two expectations now match
+the already-shipped `$ds-text-primary` / `$surface` pair. Git error styling and
+disabled opacity checks remain unchanged. Evidence:
+`/private/tmp/pr2427-watchlists-css-notes.log`.
+
+The first complete five-file Watchlists group recorded **201 passed / 7 failed**.
+Four failures disappeared when the full-app fixtures loaded the route-owned
+sheet before their direct screen push. Three new mount-boundary controls went
+RED before this fixture correction and pass afterward, including painted and
+hit-tested primary controls at 160x45, 235x52 and 80x24. The remaining three
+failures reproduce identically using the exact pre-split 875936d66f eager CSS
+in memory; they are not split regressions. The stale filter fixture now seeds
+the real local database, waits for the genuine reload and checks the exact
+canonical fresh-row ID (focused test passes). Two compact-Select focus contrast
+failures remain **open**, at 1.8811:1 and 1.5348:1 against the unchanged 2.0:1
+floor. They trace to the upstream theme-token change; the old token makes both
+unchanged tests pass in a diagnostic arm. A separate visible-cue repair was
+requested for approval; neither the global token nor the thresholds were
+changed. Complete affected-file requalification remains in progress.
+
+Four independently failing modal DEFAULT_CSS declarations were reconciled via
+the existing default-tier consolidation: three effective blocks now use
+BUNDLED_CSS with dedicated classes on the same subjects; Recovery's genuinely
+inert Navigation alias was removed. Exact original class declarations are
+retained as test fixtures. Paired compact/wide arms compare every mounted
+widget's computed geometry, full compositor text-and-style output, selected
+emoji/swatch, and action-button normal/disabled/focus paint and hit targets.
+They include both Clear and Cancel and prove the original arm removes the
+migrated generated blocks. Exact standalone modal harnesses retain the same
+default tier through ConsolidatedCSSApp.
+
+The consolidation/parity/fastpath/byte group passed **51 tests**; the final
+complete four-file modal/navigation group passed **47 tests** in 69.59 seconds.
+The combined measured startup cost is **803,081 / 804,000 bytes**, with a
+**273 / 274** selector census. The approved snapshot writer refreshed only
+the CSS snapshot after the under-cap measurement, without force or a cap
+change. Evidence: `/private/tmp/pr2427-modal-green.log`,
+`/private/tmp/pr2427-modal-complete-final.log`, and
+`/private/tmp/pr2427-css-snapshot.log`. Independent final reviews are pending;
+this section is progress evidence, not merge clearance.
+
+Both independent CSS reviews subsequently passed. A documentation-only follow-up
+corrected the shared generated split header's obsolete CSS_PATH wording to name
+the app/owning-screen stylesheet boundary. No selector or declaration changed;
+the final snapshot is **803,075 / 804,000 bytes** (925 bytes headroom).
+The frozen-input complete CSS/route/budget group then passed **43 tests** in
+22.82 seconds (`/private/tmp/pr2427-css-frozen-final.log`), and the final
+parity/fastpath/byte group passed **19 tests**. The combined long Watchlists/CSS
+run recorded 248 passed/6 failed: its two known focus failures plus four generator
+comparisons that still held the imported pre-edit header while generated files
+had the corrected comment. The fresh complete 43-test group eliminates
+that stale-input discrepancy; no CSS assertion was changed. Across the complete
+Watchlists/context cohort, only the two qualified focus failures remain open.
+
+## Console durability owner checkpoint (qualification remains open)
+
+The existing durability controller now owns the twelve approved methods,
+three completion/repair helpers and ten original state initializers. The audit
+matches every body after only the two named provider/self-owner substitutions,
+and matches all initializer ASTs/order. Named ports remain live; inspection of
+the current store does not create it. The thin dynamic repair hook and writable
+Screen state compatibility remain. Screen size is **16,973 lines / 506 methods**,
+still above the unchanged 16,811 / 505 limits pending the handoff move.
+
+Independent spec and source-correctness reviews pass for checkpoint only.
+Fresh owner controls: **16 passed**. The exact generation fixture now builds
+the existing settings owner before its genuinely used callbacks: complete
+file **40 passed**. The interim 949-test group was compiled before that fixture
+correction and two callback late-binding changes; it recorded **909 passed /
+40 failed**, all failures in the subsequently corrected generation file. An
+attempted stdin interruption also produced an ignored KeyboardInterrupt warning
+in that interim run; this is not a clean final-head aggregate pass.
+
+Fresh runtime compatibility group: **109 passed / 4 failed**. All four failures
+reproduce on the baseline: shutdown-event expectation, raw-refusal restoration,
+eager Canvas-controller expectation, and old resume-timer receiver strings.
+The isolated retired-screen weakref assertion also fails against the properly
+assertion-rewritten baseline. An earlier non-rewritten baseline pass was not
+valid evidence of a new leak; a later current plain-assert run also failed,
+so rewriting alone is not a proven cause. The lifecycle/test retention issue
+remains open. No production workaround or weakened assertion was introduced.
+
+Evidence: `/private/tmp/pr2427-durability-body-audit.log`,
+`/private/tmp/pr2427-durability-runtime-final.log`,
+`/private/tmp/pr2427-durability-baseline-rewritten.log`,
+`/private/tmp/pr2427-durability-generation-green.log`, and
+`/private/tmp/pr2427-durability-complete.log`.
+
+The diagnostic inventory review found exactly three removed Screen statements
+and the same three added durability-owner statements, with identical digests
+6d15da687ae8593e, f9cb8d1a5b6887c4, and 437b59c84df2e755. Logger binding and
+arguments are unchanged; this is relocation, not new privacy clearance for
+incumbent exception diagnostics. No sink topology or inventory policy changed.
+The inventory is refreshed only for those two owner rows after this review.
+
+Fresh pre-checkpoint verification of the two complete owner/generation files:
+**56 passed** in 6.29 seconds (`/private/tmp/pr2427-durability-checkpoint.log`).

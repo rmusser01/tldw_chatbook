@@ -327,7 +327,9 @@ async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors()
         screen._restore_console_workbench_focus = restore_focus
         screen._workspace._reconcile_console_session_with_registry = reconcile
         screen._consume_pending_console_identity_refresh = identity_refresh
-        screen._dispatch_active_console_roleplay_refresh = active_roleplay_refresh
+        screen._settings_durability._dispatch_active_console_roleplay_refresh = (
+            active_roleplay_refresh
+        )
         screen.set_timer = recording_set_timer
         screen.run_worker = recording_run_worker
 
@@ -531,11 +533,10 @@ async def test_mounted_resume_settles_first_chat_once_without_intermediate_prese
         screen._consume_pending_console_identity_refresh = (
             lambda: lifecycle_events.append("intermediate-identity-refresh") or False
         )
-        screen._dispatch_active_console_roleplay_refresh = (
-            lambda **_kwargs: lifecycle_events.append(
-                "intermediate-roleplay-refresh"
+        screen._settings_durability._dispatch_active_console_roleplay_refresh = (
+            lambda **_kwargs: (
+                lifecycle_events.append("intermediate-roleplay-refresh") or False
             )
-            or False
         )
 
     host = _MountedNavigationConsoleHarness(
@@ -629,11 +630,10 @@ async def test_mounted_resume_releases_transient_first_chat_without_rollback_foc
         screen._consume_pending_console_identity_refresh = (
             lambda: lifecycle_events.append("intermediate-identity-refresh") or False
         )
-        screen._dispatch_active_console_roleplay_refresh = (
-            lambda **_kwargs: lifecycle_events.append(
-                "intermediate-roleplay-refresh"
+        screen._settings_durability._dispatch_active_console_roleplay_refresh = (
+            lambda **_kwargs: (
+                lifecycle_events.append("intermediate-roleplay-refresh") or False
             )
-            or False
         )
         screen.run_worker = recording_run_worker
 

@@ -33,6 +33,15 @@ Files: `chat_screen.py`, `UI/Console_Modules/settings_durability.py`, `UI/Consol
 - [ ] Route private internal callers to the owner and update exact test receivers/patch targets without changing assertions. Bind non-framework dependencies by named late-bound callables in `wiring.py`; keep framework services live. Reuse existing ports and remove superseded constructor arguments only after caller census.
 - [ ] Run complete affected settings/roleplay/wiring files and scoped static checks. Obtain spec then correctness review before committing this owner change.
 
+Task 2 source checkpoint: all listed moves/initializers and private receiver
+adaptations are implemented; independent spec and source-correctness reviews
+pass. Fresh owner16 and generation40 pass. Interim compiled949 and fresh
+compatibility113 results are explicitly qualified in the reconciliation report,
+including four baseline compatibility failures and the unresolved weakref
+lifecycle test. This checkpoint does not mark the full verification step done.
+The reviewed diagnostic relocation is exactly three identical statements between
+the two existing owners. Current Screen size is16,973/506; Task4 remains required.
+
 ## Task 3: Existing settings navigation owner
 
 Files: `chat_screen.py`, `UI/Console_Modules/settings_navigation.py`, `wiring.py`, exact probe tests.

@@ -136,10 +136,14 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     from tldw_chatbook.UI.Console_Modules.wiring import (
         build_console_commands_controller,
         build_console_provider_selection_controller,
+        build_console_settings_controllers,
     )
 
     build_console_commands_controller(screen)
     build_console_provider_selection_controller(screen)
+    # Speech presentation reads the live global name through its durability
+    # owner; this detached fixture must wire that owner just as production does.
+    build_console_settings_controllers(screen)
     # Must precede the `_console_chat_store` assignment below: that is a
     # property whose setter reaches `ConsoleRuntime.attach_view` ->
     # `ChatScreen.console_view_hooks`, which reads
@@ -231,7 +235,9 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
         active_native_console_session=(
             lambda: screen._session._active_native_console_session()
         ),
-        global_chat_display_name=lambda: screen._global_chat_display_name(),
+        global_chat_display_name=lambda: (
+            screen._settings_durability._global_chat_display_name()
+        ),
         console_transcript_style=lambda: screen._console_transcript_style(),
         current_console_conversation_id=_unreached,
         active_console_provider_model_display=_unreached,
