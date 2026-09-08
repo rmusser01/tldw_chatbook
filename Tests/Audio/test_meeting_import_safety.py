@@ -53,6 +53,25 @@ _BLOCK_NUMPY = textwrap.dedent("""
     sys.meta_path.insert(0, _NoNumpyFinder())
 """)
 
+#: The same trick for torch, so the ONNX probe below has a real negative
+#: control on a machine where torch simply is not installed (this one): a
+#: regression that imports it fails the probe by RAISING, not only by showing
+#: up in `sys.modules` on some other machine.
+_BLOCK_TORCH = textwrap.dedent("""
+    import sys
+    import importlib.abc
+
+
+    class _NoTorchFinder(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path, target=None):
+            if name.split(".")[0] in ("torch", "torchaudio", "speechbrain"):
+                raise ImportError(f"No module named {name}")
+            return None
+
+
+    sys.meta_path.insert(0, _NoTorchFinder())
+""")
+
 
 def _run_probe(script: str) -> subprocess.CompletedProcess:
     """Run `script` in a fresh interpreter using the SAME venv as pytest."""
@@ -156,5 +175,50 @@ def test_app_import_pulls_in_no_diarizer_module():
     assert "RESULT: PULLED=[]" in result.stdout, (
         f"app import pulled in a diarizer module or torch at boot "
         f"(exit={result.returncode}):\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    )
+
+
+def test_loading_the_onnx_engine_never_pulls_in_torch(tmp_path):
+    """The whole point of the ONNX engine (spec §2/§7): a base install with no
+    torch must be able to run live speaker labels.
+
+    The other probes on this page prove the APP process stays torch-free; this
+    one proves the WORKER process does too, which is where torch would
+    otherwise load. A fresh subprocess with a fake `sherpa_onnx` runs the real
+    `diarizer_engine_onnx.load()` -- the same call `diarizer_worker.main()`
+    makes for `--engine onnx` -- against empty model files with hash
+    verification off, and reports what got imported. numpy is expected (the
+    engine's own dependency); torch, torchaudio and speechbrain are not.
+    """
+    script = _BLOCK_TORCH + textwrap.dedent(f"""
+        import sys
+        import types
+        from pathlib import Path
+
+        class _Extractor:
+            def __init__(self, config): self.config = config
+
+        sys.modules["sherpa_onnx"] = types.SimpleNamespace(
+            SpeakerEmbeddingExtractorConfig=lambda **kw: kw,
+            SpeakerEmbeddingExtractor=_Extractor,
+        )
+
+        from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+        from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+        models = Path({str(tmp_path)!r})
+        (models / eng.SEGMENTATION.file_name).write_bytes(b"")
+        (models / eng.EMBEDDERS[eng.DEFAULT_EMBEDDER].file_name).write_bytes(b"")
+
+        loaded = eng.load(OnlineClusterer(), 8, models_dir_override=models, verify_hashes=False)
+        torch_like = sorted(
+            n for n in ("torch", "torchaudio", "speechbrain") if n in sys.modules
+        )
+        print(f"RESULT: LOADED={{loaded.model_id.startswith('sherpa-onnx/')}}, TORCH={{torch_like}}")
+    """)
+    result = _run_probe(script)
+    assert "RESULT: LOADED=True, TORCH=[]" in result.stdout, (
+        f"loading the ONNX engine pulled in torch (exit={result.returncode}):\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     )
