@@ -998,8 +998,9 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             painted_copy = "Select a skill to inspect it here."
         elif case.name == "pending-conversations" and size == (60, 20):
             # The narrow dedicated reader paints semantic load status in the
-            # viewport; the conversation title remains outside that pane.
-            painted_copy = "Loaded chat-2"
+            # viewport. task-32067: that status names the conversation by
+            # TITLE -- it used to print the raw id ("Loaded chat-2").
+            painted_copy = "Loaded Design review notes"
         await _wait_for_condition(
             pilot,
             lambda: _entry_worker_terminal(case, active_screen),

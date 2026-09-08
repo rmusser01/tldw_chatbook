@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from textual.app import ComposeResult
@@ -15,6 +16,9 @@ from tldw_chatbook.Library.library_conversation_reader_state import (
     ConversationReaderState,
 )
 from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 
 def _open_console_disabled_tooltip(state: ConversationReaderState) -> str | None:
@@ -138,9 +142,14 @@ class LibraryConversationReader(Vertical):
 
     @staticmethod
     def _message_copy(message: ConversationMessageView) -> str:
-        heading = " · ".join(
-            value for value in (message.sender, message.timestamp) if value
+        # task-32067: the same compact age the Conversations list shows
+        # ("27m", "2d"), not the stored ISO stamp the transcript used to
+        # repeat above every message. Unparseable stamps format to "", and
+        # the join below then drops the slot entirely.
+        age = format_console_relative_age(
+            message.timestamp, now=datetime.now(timezone.utc)
         )
+        heading = " · ".join(value for value in (message.sender, age) if value)
         return f"{heading}\n{message.text}" if heading else message.text
 
     @classmethod
@@ -260,8 +269,15 @@ class LibraryConversationReader(Vertical):
             return with_list_summary(f"Loading {selected_title} ({selected})…")
         if state.loaded_id:
             suffix = "complete" if state.complete else "loading more"
+            # task-32067: by TITLE. This line is the reader's only identity
+            # cue and it read "Loaded bf20fab2-0474-…" -- a raw UUID, which
+            # names nothing the user has ever seen. Untitled conversations
+            # get the neutral phrase, never the id.
+            name = str(self.loaded_metadata.get("title") or "").strip() or (
+                "this conversation"
+            )
             return with_list_summary(
-                f"Loaded {state.loaded_id} · {len(state.messages)} of "
+                f"Loaded {name} · {len(state.messages)} of "
                 f"{state.message_total} messages · {suffix}."
             )
         return with_list_summary("Select a conversation to read it here.")

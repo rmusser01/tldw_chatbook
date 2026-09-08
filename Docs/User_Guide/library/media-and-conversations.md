@@ -424,7 +424,9 @@ harness, not re-verified live.)*
 
 Its header is deliberately short: **‹ Back**, the title, the action row, and
 the mode row — five rows above the reading surface, border included. A byline
-row appears only when the item actually has an author or a URL, and an
+row appears only when the item actually has an author or a URL — an author
+stored as the literal "Unknown", which is what most local imports write when
+a file names none, counts as no author and paints no byline — and an
 identity line ("Server item · not in local Media list") only for a server
 item a local Media list cannot show. The mode row is the only label for the
 open mode; no section header repeats it. Body text wraps at a reading measure
@@ -439,12 +441,13 @@ still spans the pane.
   characters, using the same renderer as Notes' own "Preview". Press
   "Raw" to see the plain source instead. A rendered heading starts in the
   same column as the prose beneath it. Any item with content but no
-  markdown gets no toggle, whatever its media type; that slot reads
-  "No Markdown formatting to render — showing the stored text" instead of
-  going silently blank — it names what THIS item has, so a plain-prose
-  transcript is not told that rendering is "for transcripts". An item with no stored content shows no such note — the
-  box already says "No stored content." and there is no rendered view to
-  explain away. Below the toggle (or directly
+  markdown gets no toggle, whatever its media type; **Info** then carries the
+  one-line reason, "No Markdown formatting to render — showing the stored
+  text", so the reading surface is not banner-ed with it on every open — it
+  names what THIS item has, so a plain-prose transcript is not told that
+  rendering is "for transcripts". An item with no stored content shows no such
+  note anywhere — the box already says "No stored content." and there is no
+  rendered view to explain away. Below the toggle (or directly
   above Content for everything else) is a "Search content…" box — its
   placeholder reads "Search content (raw text)…" whenever the toggle is
   present, since search always matches the raw stored text regardless of
@@ -480,8 +483,10 @@ still spans the pane.
   press "Add highlight". Each saved highlight shows the quote with a
   color swatch, its color/note details, and a "✕ Delete" button.
 - **Info** — metadata and provenance: backend-qualified ID, original source,
-  stored representation, preview status, and the representation **Use in
-  Console** will send. The Items catalogue is local-only. A finished server
+  stored representation, preview status, the representation **Use in
+  Console** will send, and — for an item with content that has no Markdown —
+  the "No Markdown formatting to render — showing the stored text" line that
+  explains why Read offers no Rendered|Raw toggle. The Items catalogue is local-only. A finished server
   import may open one read-only compatibility detail labelled **Server item ·
   not in local Media list**; it does not become a local Items row.
 - **Primary toolbar**:
@@ -608,7 +613,15 @@ while its pager stays visible underneath it. The pager always states the exact
 range, total, and page: with 45 conversations it reads **"1-20 of 45 · Page 1
 of 3"**, then **"21-40 of 45 · Page 2 of 3"**, and finally **"41-45 of 45 ·
 Page 3 of 3"**. Previous and Next show a visible reason when unavailable, such
-as "Already on the first page." or "No more results."
+as "Already on the first page." or "No more results." A list that fits one page
+shows only its range ("1-2 of 2") — the page counter, those reasons and the
+Previous/Next controls all return the moment a second page exists, exactly as
+on the Media list.
+
+The reader above names the open conversation by **title**, not by its stored
+id ("Loaded Design review notes · 30 of 30 messages · complete."), and each
+message is headed with its sender and the same compact age the list uses
+("user · 27m"), never a raw timestamp.
 
 Filtering searches the **full conversation source before paging**, so a match
 on the oldest page is still found; clearing the filter returns to unfiltered

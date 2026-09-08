@@ -1034,18 +1034,30 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
 
     def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
         """Render the controller-derived Prompt pager without recalculation."""
+        # task-32067: Media's one-page rule (task-28016 + task-31237), applied
+        # here -- "Page 1 of 1", the boundary reasons and the two dead
+        # "○ Previous ○ Next" forms all say the same nothing under a list that
+        # fits one page. The range stays; everything returns with a page 2.
         with Vertical(id="library-prompts-pager"):
-            copy = " · ".join(part for part in (pager.range_copy, pager.page_copy) if part)
+            parts = (
+                (pager.range_copy,)
+                if pager.single_page
+                else (pager.range_copy, pager.page_copy)
+            )
             yield Static(
-                copy,
+                " · ".join(part for part in parts if part),
                 id="library-prompts-page-label",
                 markup=False,
             )
-            reasons = tuple(
-                dict.fromkeys(
-                    reason
-                    for reason in (pager.previous_reason, pager.next_reason)
-                    if reason
+            reasons = (
+                ()
+                if pager.single_page
+                else tuple(
+                    dict.fromkeys(
+                        reason
+                        for reason in (pager.previous_reason, pager.next_reason)
+                        if reason
+                    )
                 )
             )
             yield Static(
@@ -1054,6 +1066,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 classes="destination-purpose",
                 markup=False,
             )
+            if pager.single_page and not pager.retry_visible:
+                return
             previous_disabled = pager.previous_disabled or self.mutation_in_flight
             next_disabled = pager.next_disabled or self.mutation_in_flight
             toolbar = Horizontal(classes="ds-toolbar")
