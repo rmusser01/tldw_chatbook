@@ -1149,6 +1149,120 @@ change or external action. The clean-host, platform and final qualification gate
 still require further work; do not restart already-reviewed implementation or
 the prior review. Resume only the open qualification work after direction.
 
+### Task 10: Repair baseline owner tests and maintenance Canvas validation
+
+**Authorization and scope:** The user approved this bounded repair after the
+recorded causal diagnosis. BASE is `e1a2e859127eb83a100b22387e47a8ffbc95d424`.
+Work in `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/canvas-v1`
+on `codex/canvas-v2-mermaid-design`. Preserve reviewed Tasks1–9, the dirty root
+governance documents, and all ignored evidence. One implementation agent owns
+this combined repair; no parallel implementation or delegated subagents.
+
+ADR required: no
+ADR path: existing backlog/decisions/029-local-private-data-boundary.md;
+backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md;
+backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md;
+backlog/decisions/125-lock-safe-private-sqlite-validation.md
+Reason: Restore tests to the approved helper boundary and reuse the existing
+pure Canvas integrity function during existing same-file maintenance. No new
+storage, runtime, authentication or mutation-authority contract is introduced.
+
+**Read first:** TASK-31942 and the preserved `task-10-owner-diagnosis.md` and
+`task-10-compaction-diagnosis.md` in this plan's SDD directory. The retained
+`task-10-compaction-probe.py` is diagnostic evidence, not a production test.
+Relevant lessons cover collected pre-import isolation, selective path guards,
+real close versus wrong-thread errors, non-reentrant progress callbacks and
+same-file/cursor quiescence. Read applicable repository/skill instructions.
+
+**Only product/test files permitted:**
+
+- `Tests/DB/test_core_sqlite_owner_privacy.py`
+- `tldw_chatbook/DB/ChaChaNotes_DB.py`
+- `tldw_chatbook/Chat/console_trace_maintenance.py`
+- `Tests/Chat/test_console_trace_compaction.py`
+
+**Interfaces and invariants:**
+
+- Owner repair is test-only. Preserve exact kwargs equality, including the
+  existing required `base_db._QuiescentSQLiteConnection` factory. Selective
+  `Path.resolve` guards reject selected database paths and both backup source
+  and target, while delegating unrelated fixed helper-entry resolution to the
+  real method. Retain actual SQLite/helper calls, private modes, parent modes,
+  exact owner/source/target observations, copied rows and cleanup.
+- Relative-path tests observe and delegate the live
+  `prepare_in_helper(PrepareRequest(...))` seam. Assert the exact lexical absolute
+  path, writable/create-if-missing true and preserve-source-mode false. Forward
+  the actual received owner ID unchanged; never repair arguments in a recorder.
+  Assert actual owner ID and the raw SQLite lexical target. Do not restore local
+  original-inode inspection or weaken registered policies to satisfy old spies.
+- Add one narrow shared internal installer for the existing deterministic
+  three-argument `canvas_revision_payload_valid` implementation, using it on
+  ordinary ChaChaNotes and every dedicated maintenance connection. Do not copy
+  validation logic or introduce a generalized initializer/registry. If maintenance
+  setup fails after acquiring a native connection, attempt owned close and
+  re-raise the original setup failure; cleanup must not mask its control flow.
+- Install only the pure validator for maintenance: no semantic mutation guard,
+  logical-GC permission, Canvas deletion grant or authorizer expansion. Keep the
+  schema/triggers, bounded public errors, maintenance lease, dedicated worker,
+  dispatch pause, same-file/cursor quiescence, TRUNCATE checkpoint, preflight,
+  cancellation, retry state, reopen and integrity checks unchanged. No payloads
+  or raw SQLite exceptions in public diagnostics.
+
+- [x] Establish focused RED before edits. Preserve the recorded 22-case drift
+  evidence and show meaningful failures for new compaction regressions before
+  production changes. Use collected pytest isolation and owned temporary data.
+- [x] Correct the owner tests with behavioral sensitivity checks for missing or
+  wrong factory/owner, selected-path resolution, absent/wrong helper request
+  path/policy and backup bypass. Prefer scoped negative controls of the actual
+  tests over a new test framework; record mutations and restoration in the report.
+- [x] Add real populated Canvas revision preservation through same-file VACUUM
+  and reopen, including HTML/digest/byte count and lineage. Demonstrate invalid
+  UTF-8/digest/size payload rejection through the maintenance connection and
+  unchanged refusal of unauthorized mutation/deletion with rows retained. Inject
+  setup-registration failure, prove the acquired real handle is closed (not
+  merely a wrong-thread ProgrammingError) and maintenance exclusion releases so
+  ordinary acquisition can resume. Apply the narrow shared installer/cleanup fix.
+- [x] Run the covering targeted selection once: core-owner privacy, private_sqlite,
+  private_sqlite_inventory, chachanotes_connection_quiescence, trace_compaction,
+  trace_compaction_admission and the existing Canvas persistence/repository test
+  file(s) directly covering the validator. Run only focused cases while iterating.
+  Explicitly account for all 22 owner parameters and the four diagnosed physical
+  compaction/admission nodes. Use `../../.venv/bin/python`; no full repository
+  suite, eleven host-blocked spawned-case reruns, dependency or host changes.
+- [x] Run changed-file format and BASE-mapped Ruff checks plus `git diff --check`.
+  Preserve unrelated inherited static debt; introduce none and do not wholesale
+  format legacy modules. Self-review and commit only the four named files using
+  serialized index ownership. Leave root governance edits unstaged. Write exact
+  commands, RED/GREEN, negative sensitivity controls, cleanup, residuals and commit
+  in `task-10-report.md` in the existing plan SDD directory.
+- [x] Independent task-scoped spec and quality review of immutable BASE-to-HEAD
+  package, bounded fixes if needed, then root committed smoke of the diagnosed
+  groups and fresh unchanged startup/import/UI-ready/preload guards. Tests remain
+  serialized. Record evidence and AC10/11 only if met; TASK-31942 stays In Progress
+  while host/platform/final qualification remains open. No PR/push/rebase/merge,
+  user resource cleanup/restart, or Canvas V2 enablement.
+
+**Task10 checkpoint:** `ad5c02e5a8` contains exactly the four permitted files.
+Independent spec/quality review approves with no Critical/Important findings.
+One new Minor remains deferred: the setup-failure test should put its database
+lifetime in `try/finally` so assertion failure also closes its test-owned registry.
+The second Minor retains inherited Requests/static noise. Both are recorded for
+the remaining qualification handoff; no additional repair wave is implied.
+
+Original owner22 and new compaction6 each demonstrated RED then GREEN; the four
+original compaction/admission cases pass. Final implementation115passed/1warning
+22.69s; root committed31passed/1warning9.30s. Covering479passed/2skipped/2failed
+146.88s remains recorded as non-green: the two gateway cases reproduce sandbox
+loopback EPERM and pass with required permission (2passed/1warning1.48s).
+Root unchanged startup3passed/4warnings16.22s; counts625/660,963/972,499/500 and
+364325/378740,110163/123319 LOC. Aggregate599Ruff/threeformatter-dirty files remain;
+no added-range diagnostic identified, with the multiset-comparison limitation
+and exact BASE import controls documented. No budget, schema, native/helper,
+privacy or mutation-authority change. AC10/11 are checked; original seven remain
+open. Memory bypass is confirmed in the unchanged seam and covering memory tests;
+Windows skips and host/platform/final gates remain unqualified. Task31942 remains
+In Progress, V2 off; no full suite, host/dependency or external action.
+
 ## Spec coverage and handoff
 
 | Approved contract | Implementation/review unit |
@@ -1165,5 +1279,6 @@ the prior review. Resume only the open qualification work after direction.
 | Terminal proof loss, bounded retention, healthy siblings, both exit modes and finalizer data recovery | 5b, 7 |
 | Exclusive descriptor finalizers and complete consumer inventory | 6, 9 |
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
+| Helper-aware owner tests and pure Canvas integrity support during maintenance | 10 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Separately authorized Task9 closes the three strict-inventory gaps with independent approval and diagnoses the host without mutation. The26BASE failures,11semaphore-blocked cases, platform and final affected-selection/benchmark gaps are not passing tests or permission for host cleanup/unrelated repairs.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Separately authorized Task9 closes the three strict-inventory gaps with independent approval and diagnoses the host without mutation. Task10 closes the 26 BASE failures with scoped review and committed verification. Its deferred test-teardown Minor, eleven semaphore-blocked cases, platform and final affected-selection/benchmark gaps remain for qualification; they are not passing tests or permission for host cleanup/unrelated repairs.

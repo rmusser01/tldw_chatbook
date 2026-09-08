@@ -493,3 +493,63 @@ mutation) are checked; the original seven final ACs remain unchecked. The 26
 baseline failures, eleven host-blocked cases, platform/optional qualification and
 final affected-selection/benchmark remain open. No full suite, cleanup, reboot,
 dependency change, PR action or V2 admission was performed by this continuation.
+
+## Approved baseline-test and maintenance repair — 2026-09-08
+
+SQLite Task10 implements the separately approved diagnosis from
+`Docs/superpowers/reviews/2026-09-08-sqlite-baseline-failure-diagnosis.md` in commit
+`ad5c02e5a8`. Exactly four code/test files changed. The 22 core-owner failures were
+stale observations of the helper boundary; production owner/privacy policies
+remain unchanged. Dedicated trace-maintenance connections now install the same
+real deterministic Canvas payload validator as ordinary connections and close an
+acquired handle if setup fails. No semantic or deletion authority is added.
+Existing ADR-029/097/121/125 apply; no new ADR or architecture is introduced.
+
+Evidence on the existing macOS arm64 / CPython 3.12.11 / SQLite 3.49.1 runtime:
+
+- Original owner tests: 22 failed before repair, then 22 passed. New compaction
+  regressions: 6 failed before product edits, then 6 passed. All four originally
+  failing compaction/admission nodes pass. Deliberate negative controls detect
+  incorrect owner/path/helper/backup observations, omitted or permissive
+  validators, added deletion authority and omitted setup cleanup.
+- Final focused implementation selection: **115 passed, 1 warning, 22.69s**.
+- Seven-file covering run: **479 passed, 2 skipped, 2 failed, 146.88s**. Both
+  failures were gateway startup tests. Exact sandbox isolation reproduced them;
+  an owned stdlib loopback bind failed with EPERM. The same two tests passed with
+  the required loopback permission: **2 passed, 1 warning, 1.48s**. This does not
+  rewrite the original covering run as all-green. Skips remain Windows-only.
+- Independent root committed smoke: **31 passed, 1 warning, 9.30s**, covering
+  all 26 original cases plus populated Canvas integrity, malformed payloads,
+  denied authority and setup-close behavior.
+- Fresh unchanged startup guards: **3 passed, 4 warnings, 16.22s**. Counts are
+  boot625/660, UI963/972 and preload499/500 modules; 364325/378740 total LOC and
+  110163/123319 largest-route LOC. Thresholds and snapshots are unchanged.
+- Aggregate Ruff remains 599 diagnostics and three legacy files remain
+  formatter-dirty. The first occurrence-preserving rule/message comparison could
+  hide offsetting occurrences; the subsequent changed-range audit identified no
+  new diagnostic and reproduced import-block findings from exact BASE blobs.
+  Whitespace is clean. Aggregate lint/format are not green; Requests and budget
+  warnings remain inherited or intentional, not permission for dependency edits.
+
+Independent task-scoped review approves spec compliance and quality, with no
+Critical or Important finding. One new Minor is deferred: wrap the setup-failure
+test's database lifetime in `try/finally` so failed assertions also clean up its
+test-owned registry. The other Minor is the disclosed inherited warning/static
+debt. Root resolved the review's memory-bypass verification item by inspecting
+the unchanged memory branch and its covering tests; this does not qualify the
+explicitly skipped Windows or broader host/platform cases.
+
+Exact commands, negative-control
+results, baseline-attribution limits and committed checks are in this plan's
+`task-10-report.md` and `task-10-root-verification.md`. Runs are separate evidence,
+not summed whole-suite qualification. The diagnostic comparison archive and
+earlier evidence remain preserved.
+
+No full suite, host-resource cleanup/restart, dependency change, external PR
+action or Canvas V2 admission was performed. The eleven host-blocked spawned
+tests, platform/optional evidence and final affected-selection/benchmark gates
+remain open. TASK-31942 stays In Progress and V2 stays disabled.
+
+AC10 (helper-aware owner tests) and AC11 (physical compaction/admission repair)
+are checked alongside the prior scoped AC8/9. The original seven final acceptance
+criteria remain unchecked. No broader completion or admission is claimed.
