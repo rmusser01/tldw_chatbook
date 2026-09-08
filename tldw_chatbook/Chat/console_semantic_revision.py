@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
 import re
@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.console_trace_redaction import (
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
     SemanticRevisionRecord,
+    TraceCallRecord,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -47,6 +48,7 @@ _INTERNAL_ENVELOPE_KEYS = frozenset(
     {"message_id", "conversation_id", "parent_message_id"}
 )
 _TRACE_REDACTION_POLICY_UNSUPPORTED = "trace_redaction_policy_unsupported"
+TRACE_RESPONSE_PII_FIELD_PREFIX = "response:typed-thinking-v1:"
 
 
 def project_semantic_revision_provider_message(
@@ -55,12 +57,15 @@ def project_semantic_revision_provider_message(
     revision_id: str,
     expected_conversation_id: str,
     policy_id: str | None = None,
+    response_call: TraceCallRecord | None = None,
 ) -> dict[str, object]:
     """Project a live or policy-materialized revision to provider-message shape.
 
     The ownership check precedes the content read. The complete canonical
     semantic envelope is decoded before projection so malformed sidecars or a
     mismatched live locator cannot be mistaken for the referenced revision.
+    A response call selects only its explicit frozen response profile; ordinary
+    request projections and historical calls without that profile stay unchanged.
     """
 
     repository = ConsoleTraceRepository()
@@ -86,7 +91,9 @@ def project_semantic_revision_provider_message(
             raise ValueError("semantic_revision_materialization_unavailable") from exc
         if not isinstance(envelope, dict):
             raise ValueError("semantic_revision_materialization_unavailable")
-        return _project_revision_envelope(revision, envelope)
+        return _project_revision_response_envelope(
+            cursor, revision, envelope, response_call
+        )
     envelope = SemanticRevisionCoordinator._message_envelope(
         cursor, revision.live_message_id
     )
@@ -95,7 +102,107 @@ def project_semantic_revision_provider_message(
         or envelope["conversation_id"] != expected_conversation_id
     ):
         raise ValueError("semantic_revision_locator_mismatch")
-    return _project_revision_envelope(revision, envelope)
+    return _project_revision_response_envelope(
+        cursor, revision, envelope, response_call
+    )
+
+
+def _project_revision_response_envelope(
+    cursor: sqlite3.Cursor,
+    revision: SemanticRevisionRecord,
+    envelope: dict[str, object],
+    call: TraceCallRecord | None,
+) -> dict[str, object]:
+    projected = _project_revision_envelope(revision, envelope)
+    if call is None:
+        return projected
+    repository = ConsoleTraceRepository()
+    header = repository.get_request_header(cursor, call.request_header_id or "")
+    profile = (
+        None if header is None else header.adapter_defaults.get("response_projection")
+    )
+    if profile is None:
+        return projected
+    if (
+        not isinstance(profile, Mapping)
+        or set(profile)
+        != {
+            "version",
+            "thinking_stream_disposition",
+            "thinking_round_trip_version",
+            "provider",
+            "model",
+            "protocol",
+            "source_format",
+        }
+        or type(profile["version"]) is not int
+        or profile["version"] != 1
+        or type(profile["thinking_round_trip_version"]) is not int
+        or profile["thinking_round_trip_version"] != 1
+        or profile["thinking_stream_disposition"] not in {"displayable", "proprietary"}
+        or profile["source_format"]
+        != (
+            "start_anchored_think"
+            if profile["thinking_stream_disposition"] == "displayable"
+            else "reasoning_content"
+        )
+        or profile["provider"] != call.provider_name
+        or profile["model"] != call.model_name
+        or profile["protocol"] not in {"chat_completions", "responses"}
+        or revision.normalized_role != "assistant"
+    ):
+        raise ValueError("response_projection_unavailable")
+    raw_thinking = envelope.get("thinking_blocks")
+    if raw_thinking is None:
+        return projected
+    from tldw_chatbook.Chat.thinking_blocks import (
+        DisplayableThinkingBlock,
+        ProprietaryThinkingBlock,
+        parse_thinking_blocks_json,
+    )
+
+    thinking = parse_thinking_blocks_json(json.dumps(raw_thinking, allow_nan=False))
+    if any(block.round_ordinal > call.call_sequence for block in thinking.blocks):
+        raise ValueError("response_thinking_round_mismatch")
+    blocks = tuple(
+        block for block in thinking.blocks if block.round_ordinal == call.call_sequence
+    )
+    if not blocks:
+        return projected
+    expected_status = {
+        "complete": "complete",
+        "stopped": "stopped",
+        "error": "failed",
+        "interrupted": "failed",
+    }.get(call.outcome or call.state.value)
+    if len(blocks) != 1:
+        raise ValueError("response_thinking_round_mismatch")
+    block = blocks[0]
+    if (
+        not isinstance(
+            block,
+            DisplayableThinkingBlock
+            if profile["thinking_stream_disposition"] == "displayable"
+            else ProprietaryThinkingBlock,
+        )
+        or block.status != expected_status
+        or any(
+            getattr(block, key) != profile[key]
+            for key in ("provider", "model", "protocol", "source_format")
+        )
+    ):
+        raise ValueError("response_thinking_source_mismatch")
+    evidence = {
+        "provider": block.provider,
+        "model": block.model,
+        "protocol": block.protocol,
+        "source_format": block.source_format,
+    }
+    if isinstance(block, DisplayableThinkingBlock):
+        projected["thinking"] = [{**evidence, "text": block.text}]
+    else:
+        projected["proprietary_thinking_evidence"] = [evidence]
+    return projected
 
 
 def project_semantic_revision_provider_messages(
@@ -200,6 +307,7 @@ def project_semantic_revision_trace_message(
     revision_id: str,
     expected_conversation_id: str,
     policy_id: str,
+    response_call: TraceCallRecord | None = None,
 ) -> dict[str, object]:
     """Project one canonical revision through its immutable trace masks.
 
@@ -212,6 +320,8 @@ def project_semantic_revision_trace_message(
         revision_id: Opaque semantic revision to project.
         expected_conversation_id: Conversation that must own the revision.
         policy_id: Frozen trace policy whose credential and PII masks apply.
+        response_call: Optional exact call selecting its frozen response projection
+            and response mask domain; omitted for ordinary request messages.
 
     Returns:
         A provider-message mapping safe for trace disclosure.
@@ -245,6 +355,7 @@ def project_semantic_revision_trace_message(
         revision_id=revision_id,
         expected_conversation_id=expected_conversation_id,
         policy_id=policy_id,
+        response_call=response_call,
     )
     credential_projection = CredentialSanitizer().sanitize(projected)
     if not credential_projection.available or not isinstance(
@@ -264,10 +375,25 @@ def project_semantic_revision_trace_message(
         artifact_id=None,
     )
     by_path: dict[str, list[PIIRedactionSpan]] = {}
+    response_header = (
+        None
+        if response_call is None
+        else repository.get_request_header(
+            cursor, response_call.request_header_id or ""
+        )
+    )
+    response_masks = (
+        response_header is not None
+        and "response_projection" in response_header.adapter_defaults
+    )
     for row in rows:
+        is_response_mask = row.field_path.startswith(TRACE_RESPONSE_PII_FIELD_PREFIX)
+        if is_response_mask != response_masks:
+            continue
         if row.outcome != "applied":
             raise ValueError("redaction_span_unavailable")
-        by_path.setdefault(row.field_path, []).append(
+        field_path = row.field_path.removeprefix(TRACE_RESPONSE_PII_FIELD_PREFIX)
+        by_path.setdefault(field_path, []).append(
             PIIRedactionSpan(
                 row.start_codepoint,
                 row.end_codepoint,

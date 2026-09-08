@@ -149,9 +149,19 @@ class LibraryConversationsCanvas(
             )
         yield select_btn
         if select_mode:
-            action_row = Horizontal(classes="ds-toolbar")
-            action_row.styles.height = "auto"
-            with action_row:
+            # task-32042 (critique #7 P1): parity with the Media canvas's
+            # select toolbar (task-30043). A single ds-toolbar row of four
+            # actions -- forced to ``width: 1fr`` by the shared CSS -- split
+            # the narrow conversations list pane evenly, so every label
+            # truncated ("Selec"/"Exp") and "0 selected" wrapped. Media keeps
+            # each action at its CONTENT width across a multi-row toolbar; this
+            # mirrors that: summary row (count + Select all), then a bulk-action
+            # row (Clear + Export selected), each row's label sum fitting the
+            # pane's narrow floor. The ``> .ds-toolbar > .library-canvas-action``
+            # width switches to ``auto`` alongside (_agentic_terminal.tcss).
+            summary_row = Horizontal(classes="ds-toolbar")
+            summary_row.styles.height = "auto"
+            with summary_row:
                 # task-2853 review round 2: the SAME unbounded-width defect
                 # proved live in the Media canvas's identical counter --
                 # see library_media_canvas.py's compose() for the live
@@ -177,6 +187,11 @@ class LibraryConversationsCanvas(
                 if actions_disabled:
                     select_all.tooltip = stale_action_reason
                 yield select_all
+            actions_row = Horizontal(
+                id="library-conversations-select-actions", classes="ds-toolbar"
+            )
+            actions_row.styles.height = "auto"
+            with actions_row:
                 clear = Button(
                     library_disabled_action_label("Clear", actions_disabled),
                     id="library-conversations-select-clear",

@@ -9,6 +9,8 @@ from hypothesis import given, settings, strategies as st
 from rich.cells import cell_len
 
 from tldw_chatbook.Library.library_media_state import (
+    _KEYWORD_REASON_CELLS,
+    _trailing_regional_indicators,
     MediaBrowseScope,
     LibraryMediaRow,
     LibraryMediaCanvasState,
@@ -958,23 +960,30 @@ def test_int_backing_id_covers_every_shape_the_three_spellings_handled(
     assert library_media_int_backing_id(value) == expected
 
 
-def test_flag_pair_keyword_is_cut_on_a_cell_boundary_not_a_cluster_one() -> None:
-    """Known ceiling: rich's splitter is not full UAX #29 (task-31955 review).
+def test_flag_pair_keyword_never_paints_a_half_flag() -> None:
+    """task-32044 (crit #7 P2): a flag keyword never leaves a lone indicator.
 
-    ``chop_cells`` keeps ZWJ sequences whole (pinned above), but a
-    regional-indicator PAIR -- the two code points a flag is made of -- can
-    be halved when the cut lands at an odd offset, leaving a lone indicator
-    letter on each side. This pin DOCUMENTS that ceiling rather than
-    asserting cluster safety the library does not provide: what is
-    guaranteed is the CELL budget, which is what the cap exists to bound.
+    A regional-indicator flag is a PAIR of code points painted as one 2-cell
+    glyph. ``chop_cells`` fills the ten-cell budget to the tail and can split
+    the pair, leaving a lone indicator that a real terminal paints as a
+    2-cell box -- the row frame drifts +2 (border at 237 vs 235). The cut now
+    drops the dangling half so only whole flags paint; rich counts a whole
+    flag as 2 cells, matching the terminal, so once no half-flag survives the
+    measured width is the painted width and the frame stays put.
+
+    (Supersedes the task-31955 ceiling pin that accepted the half-flag.)
     """
-    flag = "\U0001F1EF\U0001F1F5"  # JP, two regional indicators = 2 cells
+    flag = "\U0001F1EF\U0001F1F5"  # JP, two regional indicators = one 2-cell flag
     term = _keyword_reason_term("a" + flag * 6)
     head = term.removesuffix("…")
 
-    assert cell_len(head) == 10, term
-    # The ceiling, stated: the head ends on HALF a flag.
-    assert head.endswith("\U0001F1EF"), term
+    # (1) no lone / half regional indicator survives the cut.
+    assert _trailing_regional_indicators(head) % 2 == 0, term
+    assert not head.endswith("\U0001F1EF"), term  # not the JP first-half alone
+    # (2) the reason's painted width stays within the cap -- whole flags count
+    #     as two cells, exactly what the terminal paints.
+    assert cell_len(head) <= _KEYWORD_REASON_CELLS, term
+    assert cell_len(term) <= _KEYWORD_REASON_CELLS, term
 
 
 # ---------------------------------------------------------------------------

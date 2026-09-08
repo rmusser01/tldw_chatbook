@@ -245,6 +245,30 @@ turn, disclosure policy, surface, provider and model; removed artifacts must
 still belong to the verified source stream run. Artifact equality compares the frozen credential/PII projection
 without modifying the actual provider input.
 
+### Amendment recorded 2026-09-08: per-call rendered system rows
+
+TASK-32048 reproduces a llama.cpp discovery run that reaches two provider calls,
+then fails with `unsupported_surface_change` after `load_tools`. Its fenced tool
+protocol changes the leading system row while new tool traffic is appended.
+The following saved send can also change that row while replacing the completed
+tool suffix. Treating the system row as ordinary shared history cannot represent
+both legitimate changes with the existing bounded surface operation.
+
+Retain the immutable leading `rendered_system` artifact slot and record its
+current value in the call header as a `rendered_system_row` component. This is
+limited to the same first message slot with direct rendered-system artifact
+provenance and a system-role value. Saved system revisions, moved slots and
+other history remain subject to exact reference/value matching. Preparation and
+atomic dispatch binding verify slot identity, incoming frozen policy and the
+exact final sanitized row; raw provider values remain disposable. Reconstruction
+applies the header component only to that eligible slot. Older headers keep
+their existing reads, and earlier calls and artifact bytes never change.
+
+This uses the existing header artifact ownership, deduplication and collection
+paths. There is no schema migration, new retention policy, transcript-sized
+header or additional surface replacement permission. The provider receives the
+original message sequence and content.
+
 ### Clarification recorded 2026-09-05: retained soft-delete envelopes
 
 The accepted design's mutation-boundary section and TASK-23113.2 AC8 specify
@@ -296,6 +320,130 @@ defines exclusions and recovery proofs; the
 defines staged verification. This amendment authorizes the contract, not a claim
 that implementation or merge verification is complete. It adds no Canvas
 privileges, dependency, synchronization contract or new persistence registry.
+
+### Amendment recorded 2026-09-08: current-turn transformed request ownership
+
+TASK-32032 reproduced a Capture-On dictionary send failing before provider entry:
+the admitted current user text was transformed after persistence, so its request
+row became an unowned artifact. Preserve that row as a typed current-turn
+transform with exactly one admitted saved-revision source and one policy-owned
+`active_request` artifact. The artifact retains the transformed provider value;
+the source remains the exact saved value. Only the accepted current user owner
+from the pre-transform snapshot may receive this descriptor. Changed historical
+rows, unknown owners, and changes outside the current text field gain no authority.
+
+Record the factory's exact current revision on the existing
+`call_boundary.semantic_revision_id` foreign key, atomically with reservation.
+Schema v69 permits that reference on call boundaries and verifies that its source
+message and conversation own the call. Older NULL boundaries stay readable and
+do not gain a guessed source. Existing event-reference reachability rules govern
+copy-on-write, archival and collection; no new ownership registry is introduced.
+A tool-loop continuation must retain its origin's exact pinned revision; the
+same message identity and equal artifact bytes cannot substitute a newer source
+revision. Legacy NULL boundaries grant no transformed-source continuation proof.
+
+Extend the existing completed-turn witness with an optional exact transformed
+source revision. An eligible next fresh/agent send may replace the prior bounded
+current-request suffix with its exact saved source and append the verified saved
+assistant plus the next admitted user. A next user may itself carry the same
+typed transform. The source must equal the original call-boundary pin, and the
+removed source artifact must belong to that origin call. Any removed tool suffix
+must satisfy the existing same-run tool proof. Require the latest eligible terminal call,
+unchanged prefix, exact tail, attached owner, bounded range, verified assistant
+response link, exact saved values, and equal persisted disclosure settings.
+Recheck the full witness during final persistence and owned pre-dispatch recovery.
+The replacement, appends, header and dispatch binding remain one transaction;
+historical call heads retain their original transformed values.
+An unchanged continuation suffix may follow the current user in physical node
+order. Locate the original last active message at its exact call head, and replace
+only the proven contiguous message range; preserve the continuation domain and
+its values. An unchanged continuation inside a proposed replacement range still
+makes that range ineligible.
+
+If the preceding transformed run ended ERROR, STOPPED or INTERRUPTED and the
+next request has no assistant row for it, the same bounded witness may restore
+only the exact pinned user source and append the next user. Require a settled
+terminal call and the same owner, tail, range, source, policy and tool lineage
+proofs. Do not invent a response link or an assistant row. Pending, reserved,
+dispatch-open, unknown-outcome and superseded calls remain ineligible. A real
+controller regression establishes the durable ERROR outcome before testing its
+successor; provider-shaped error text is not evidence of terminal failure.
+When a stopped/failed run has a saved partial assistant in the next request, that
+row requires the same exact verified response-revision link and value comparison
+as a completed response. Terminal state alone never authorizes assistant content.
+A real streaming-controller Stop regression verifies the saved partial answer,
+durable STOPPED outcome and exact response link before a cold-factory next send.
+
+The source pin retains revision identity only. It creates no new policy binding
+or retained source body. If a later operation needs a retired source projection
+that existing policy retention cannot supply, that operation remains unavailable.
+
+The current-turn source proof and automatic-project-context proof compose over
+one bounded replacement. The exact pinned user source precedes its verified saved
+assistant (when present), the next admitted user and only the declared current
+project-context rows. Each removed source/context/tool artifact must still belong
+to the proven origin or tool chain; changed or disabled project context never
+replaces the saved call owner. An unchanged continuation suffix remains outside
+that message range. Warm/cold controller tests cover ordinary, tool and llama.cpp
+fallback predecessors with current-user dictionary transforms and context renewal.
+This integration preserves both proofs and adds no new ownership authority.
+
+Selected saved continuation values cross the trace service as canonical V1 JSON.
+The service issues an immutable tuple of strictly parsed checkpoint objects for
+provider dispatch; verification still requires that exact issued tuple and checks
+the canonical value against its saved source. This preserves the existing provider
+contract without asking the JSON sanitizer to accept runtime dataclasses.
+Retained saved continuation artifacts are rehydrated from that exact live saved
+source for dispatch, then compared under their frozen artifact masks. Compare
+the raw supplied checkpoint before filtering: equal redacted bytes cannot grant
+source ownership. Provider-only attachment owners retain exact artifact-value
+comparison and receive no saved-source normalization authority.
+When selected displayable thinking actually changes a serialized message, its
+existing MESSAGE_REWRITE descriptor carries a policy-owned thinking artifact of
+the exact final provider message, plus the original owner and typed attachments.
+An unchanged message keeps its original descriptor, including continuation-only
+attachment cases. A rendered thinking message is not an exact raw saved revision.
+These artifacts use existing disclosure and retention policy; no reader-side
+guessing, new retained canonical bodies or new ownership storage is introduced.
+
+For newly captured supported typed-thinking responses, freeze an explicit
+versioned response projection in the existing request-header defaults. Settlement
+and the native reader use that same profile to project the exact saved visible
+answer and strict terminal ThinkingEnvelope. Displayable blocks project their
+exact text and provenance; proprietary blocks project only their content-free
+provider evidence. Only consecutive displayable fragments
+with identical provider, model, protocol and source-format metadata coalesce;
+literal tags are never parsed by the trace ledger. Old headers without this
+profile retain their previous visible-message response projection. Unsupported,
+malformed, differently owned or mismatched thinking remains artifact-backed.
+
+Before filtering the response, the existing ephemeral settlement handoff records
+a process-keyed HMAC of its canonical semantic value, hidden from representations.
+The coordinator compares this proof to the exact saved revision before creating
+a new thinking-response revision link. The proof and process key never enter the
+ledger, diagnostics or exported captures; the existing bounded queue retains
+credential-filtered response bytes and this opaque process-local proof, not raw response
+bodies. Equal credential masks alone cannot establish response-source equality.
+Frozen PII masks use the existing source-span records. Typed-response paths have
+an explicit response-profile prefix, alongside the ordinary visible-message
+paths, so each projection consumes only its own mask domain. Copy-on-write retains
+the same canonical envelope through the response link's existing policy reachability.
+A new handoff cannot establish raw equality from a retired masked body; that
+terminal retry remains unavailable while the original linked capture stays readable.
+
+Every newly stored response applies its frozen PII policy, including verified
+visible-message links and artifact fallbacks without a response profile. If the
+detector is unavailable, persist a bounded content-free omission. Terminal artifact
+retries compare the same policy projection; existing stored captures are not rewritten.
+
+Rejected alternatives: treating transformed text as an exact saved revision,
+disabling capture after failure, accepting arbitrary historical replacements,
+or inferring the source from the current message version or timestamp. A call's
+turn identifies a message but not its historical revision; response links identify
+the assistant, and artifact nodes do not persist transient derived inputs. A
+creation-version-only restriction would exclude supported edited/retry inputs.
+The existing nullable event FK is therefore the smallest precise durable source
+contract. This amendment does not relax other routes or artifact transforms.
 
 ### Amendment recorded 2026-09-05: owner-approved latency reference replacement
 
@@ -398,3 +546,39 @@ runtime boundary without making a transitive regex engine a core dependency.
 - [TASK-24206](../tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
 - [DeepSeek Harness session model](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session.md)
 - [DeepSeek reconstructable requests](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.md)
+
+### Amendment recorded 2026-09-08: explicit discard after a tool-run capture failure
+
+TASK-32075 reproduces a third-request construction failure leaving previous calls
+at RESPONSE_STARTED. Reopening the conversation and explicitly discarding its
+pending assistant commits `assistant_generation_state=discarded` and removes the
+active dispatch checkpoint, but the previous tool/context surface remains.
+A following captured send may replace that bounded suffix using an optional exact
+discarded-assistant owner in the existing completed-turn witness. Recheck that the
+current saved user is a direct child of that live discarded assistant, the assistant
+is a direct child of the prior call's saved user in the attached conversation, and
+no active dispatch checkpoint remains for that prior user. Multiple assistant
+children (including soft-deleted siblings) make run ownership ambiguous and remain
+ineligible. The prior user's source
+must match the exact origin call and incoming retained history. The latest prior
+call must be response-bearing (RESPONSE_STARTED or a settled terminal outcome);
+dispatch-open/unknown calls remain ineligible.
+
+This explicit durable discard substitutes only for the completed assistant response
+proof. It does not synthesize an answer, a response link, or a successful trace
+outcome. Retain all existing owner, policy, tail, source, bounded tool/context range,
+and same-run lineage checks, and repeat the discard proof during final persistence
+and owned reservation recovery. Transformed sources retain their exact call-boundary
+pin. Historical call records and request heads remain unchanged. No schema or new
+ownership registry is needed. An absent, deleted, changed, unrelated or still-active
+response owner grants no replacement authority.
+
+Already-failed follow-up sends can have committed additional user messages
+without a provider call. Extend the same witness with a bounded ordered tuple of
+(saved user revision, discarded assistant message ID) pairs. Each pair must be an
+exact saved-user descriptor in the incoming replacement, and the direct-parent
+and unique-assistant proof must link the original traced user through every pair
+to the current admitted user. Validate all saved values and recheck the full chain
+at final binding. Missing, active, changed, cyclic, ambiguous or over-limit chains
+remain ineligible. This adds only bounded revision/owner identities to the existing
+in-memory witness; it does not store transcript copies or modify historical calls.

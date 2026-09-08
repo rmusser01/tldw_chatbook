@@ -25,6 +25,18 @@ AXIS_CONTROLS: tuple[str, ...] = (
     "tts-speed-input",
 )
 
+# Empty means omit the request override and infer language from the voice,
+# as both Kokoro engines already do. Values are espeak codes, never labels.
+KOKORO_LANGUAGE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Automatic (from voice)", ""),
+    ("American English", "en-us"),
+    ("British English", "en-gb"),
+    ("Japanese", "ja"),
+    ("Chinese", "zh"),
+    ("Spanish", "es"),
+    ("French", "fr"),
+)
+
 #: Post-processing that applies whatever the provider, so it is appended to
 #: every provider's group rather than duplicated into each. A provider switch
 #: must not make normalisation disappear.

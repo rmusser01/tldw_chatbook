@@ -6,13 +6,16 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 import hashlib
+import hmac
 import json
+import secrets
 import sqlite3
 import threading
 from typing import Protocol
 
 from tldw_chatbook.Chat.console_semantic_revision import (
     SemanticRevisionCoordinator,
+    TRACE_RESPONSE_PII_FIELD_PREFIX,
     project_semantic_revision_provider_message,
 )
 from tldw_chatbook.Chat.console_trace_models import (
@@ -24,6 +27,10 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
     CredentialSanitizer,
     CredentialSanitizationResult,
+    PIIRedactionSpan,
+)
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    redact_pii_value_for_ruleset_revision,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
@@ -113,6 +120,7 @@ class _PreparedSettlement:
     canonical_message_id: str | None
     prior_integrity_state: str
     prior_omission_reason_code: str | None
+    _response_equality_proof: bytes | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +173,7 @@ class ConsoleTraceSettlementCoordinator:
         self._inflight: dict[str, str] = {}
         self._queue_lock = threading.Lock()
         self._dropped_count = 0
+        self._response_equality_key = secrets.token_bytes(32)
 
     @property
     def pending_count(self) -> int:
@@ -396,6 +405,7 @@ class ConsoleTraceSettlementCoordinator:
             raise TypeError("request")
         response_bytes: bytes | None = None
         response_omission: str | None = None
+        response_equality_proof: bytes | None = None
         if isinstance(request.response_envelope, TraceResponseOmission):
             response_omission = request.response_envelope.reason_code
             response_bytes = _canonical_bytes(
@@ -406,7 +416,17 @@ class ConsoleTraceSettlementCoordinator:
             )
         elif request.response_envelope is not None:
             try:
-                response = self._sanitizer.sanitize(request.response_envelope)
+                semantic_response = _normalize_typed_response(request.response_envelope)
+                try:
+                    raw_bytes = _canonical_bytes(semantic_response)
+                    if len(raw_bytes) <= MAX_TRACE_RESPONSE_BYTES:
+                        response_equality_proof = hmac.digest(
+                            self._response_equality_key, raw_bytes, "sha256"
+                        )
+                except (TypeError, ValueError, OverflowError):
+                    # Preserve the sanitizer's established content-free refusal.
+                    response_equality_proof = None
+                response = self._sanitizer.sanitize(semantic_response)
                 if response.available:
                     response_bytes = _canonical_bytes(response.value)
                     if len(response_bytes) > MAX_TRACE_RESPONSE_BYTES:
@@ -466,6 +486,7 @@ class ConsoleTraceSettlementCoordinator:
             canonical_message_id=request.canonical_message_id,
             prior_integrity_state=request.prior_integrity_state,
             prior_omission_reason_code=request.prior_omission_reason_code,
+            _response_equality_proof=response_equality_proof,
         )
 
     def _prepare_safely(
@@ -626,19 +647,28 @@ class ConsoleTraceSettlementCoordinator:
                         cursor,
                         revision_id=revision.revision_id,
                         expected_conversation_id=owner.conversation_id,
+                        response_call=replace(
+                            call, state=prepared.outcome, outcome=prepared.outcome.value
+                        ),
                     )
                     sanitized = self._sanitizer.sanitize(projected)
                     if (
                         sanitized.available
                         and _canonical_bytes(sanitized.value) == prepared.response_bytes
+                        and self._response_source_equal(
+                            cursor, call, projected, prepared
+                        )
                     ):
+                        self._record_response_pii_spans(
+                            cursor, call, revision.revision_id, sanitized.value
+                        )
                         response = SemanticRevisionRef(revision.revision_id)
                 except Exception:
                     response = None
         if response is None:
             artifact = self.repository.store_sanitized_artifact(
                 cursor,
-                sanitized_bytes=prepared.response_bytes or b"null",
+                sanitized_bytes=self._response_artifact_bytes(cursor, call, prepared),
                 media_type=TRACE_RESPONSE_MEDIA_TYPE,
                 normalization_version=TRACE_RESPONSE_NORMALIZATION_VERSION,
             )
@@ -681,9 +711,9 @@ class ConsoleTraceSettlementCoordinator:
             raise _SettlementConflict("settlement_response_conflict")
         if link.link_kind == "artifact" and link.artifact_id is not None:
             artifact = self.repository.get_artifact(cursor, link.artifact_id)
-            if (
-                artifact is not None
-                and artifact.sanitized_bytes == prepared.response_bytes
+            if artifact is not None and artifact.sanitized_bytes in (
+                prepared.response_bytes,
+                self._response_artifact_bytes(cursor, existing, prepared),
             ):
                 return
         if link.link_kind == "revision" and link.semantic_revision_id is not None:
@@ -695,16 +725,105 @@ class ConsoleTraceSettlementCoordinator:
                         revision_id=link.semantic_revision_id,
                         expected_conversation_id=owner.conversation_id,
                         policy_id=existing.policy_id,
+                        response_call=existing,
                     )
                     sanitized = self._sanitizer.sanitize(projected)
                     if (
                         sanitized.available
                         and _canonical_bytes(sanitized.value) == prepared.response_bytes
+                        and self._response_source_equal(
+                            cursor, existing, projected, prepared
+                        )
                     ):
                         return
                 except Exception:
                     pass
         raise _SettlementConflict("settlement_response_conflict")
+
+    def _response_source_equal(
+        self,
+        cursor: sqlite3.Cursor,
+        call: TraceCallRecord,
+        projected: object,
+        prepared: _PreparedSettlement,
+    ) -> bool:
+        header = self.repository.get_request_header(
+            cursor, call.request_header_id or ""
+        )
+        if header is None or "response_projection" not in header.adapter_defaults:
+            return True
+        return prepared._response_equality_proof is not None and hmac.compare_digest(
+            prepared._response_equality_proof,
+            hmac.digest(
+                self._response_equality_key, _canonical_bytes(projected), "sha256"
+            ),
+        )
+
+    def _record_response_pii_spans(
+        self,
+        cursor: sqlite3.Cursor,
+        call: TraceCallRecord,
+        revision_id: str,
+        projected: object,
+    ) -> None:
+        header = self.repository.get_request_header(
+            cursor, call.request_header_id or ""
+        )
+        policy = self.repository.get_policy(cursor, call.policy_id)
+        if policy is not None and not policy.pii_redaction_enabled:
+            return
+        if policy is None or policy.pii_ruleset_revision_id is None:
+            raise ValueError("response_redaction_unavailable")
+        if not isinstance(projected, Mapping):
+            raise TypeError("response_redaction_unavailable")
+        domains = [("", {key: projected[key] for key in ("role", "content")})]
+        if header is not None and "response_projection" in header.adapter_defaults:
+            domains.append((TRACE_RESPONSE_PII_FIELD_PREFIX, projected))
+        for prefix, value in domains:
+            redaction = redact_pii_value_for_ruleset_revision(
+                value, policy.pii_ruleset_revision_id
+            )
+            if not redaction.available:
+                raise ValueError("response_redaction_unavailable")
+            by_path: dict[str, list[PIIRedactionSpan]] = {}
+            for item in redaction.field_redactions:
+                by_path.setdefault(prefix + item.field_path, []).append(item.span)
+            for field_path, spans in sorted(by_path.items()):
+                self.repository.ensure_redaction_spans(
+                    cursor,
+                    policy_id=policy.policy_id,
+                    semantic_revision_id=revision_id,
+                    artifact_id=None,
+                    field_path=field_path,
+                    spans=spans,
+                )
+
+    def _response_artifact_bytes(
+        self,
+        cursor: sqlite3.Cursor,
+        call: TraceCallRecord,
+        prepared: _PreparedSettlement,
+    ) -> bytes:
+        """Apply the frozen policy to new fallback artifacts, or omit content."""
+        payload = prepared.response_bytes or b"null"
+        policy = self.repository.get_policy(cursor, call.policy_id)
+        if policy is not None and not policy.pii_redaction_enabled:
+            return payload
+        omitted = _canonical_bytes(
+            {"omitted": True, "reason": "pii_detector_unavailable"}
+        )
+        try:
+            if policy is None or policy.pii_ruleset_revision_id is None:
+                raise ValueError("response_redaction_unavailable")
+            redaction = redact_pii_value_for_ruleset_revision(
+                json.loads(payload),
+                policy.pii_ruleset_revision_id,
+            )
+            if redaction.available:
+                return _canonical_bytes(redaction.value)
+        except Exception:  # noqa: BLE001 - detector errors may contain private response values
+            return omitted
+        return omitted
 
     def _verify_dispatch_unknown_retry(
         self,
@@ -771,6 +890,32 @@ class ConsoleTraceSettlementCoordinator:
             self._dropped_count += 1
 
 
+def _normalize_typed_response(value: object) -> object:
+    """Coalesce typed fragments only when every provenance field is identical."""
+    if not isinstance(value, Mapping) or "thinking" not in value:
+        return value
+    entries = value["thinking"]
+    keys = {"text", "provider", "model", "protocol", "source_format"}
+    if not isinstance(entries, (tuple, list)) or not entries:
+        return value
+    coalesced: list[dict[str, str]] = []
+    for entry in entries:
+        if (
+            not isinstance(entry, Mapping)
+            or set(entry) != keys
+            or any(type(item) is not str or not item for item in entry.values())
+        ):
+            return value
+        detached = dict(entry)
+        if coalesced and all(
+            coalesced[-1][key] == detached[key] for key in keys - {"text"}
+        ):
+            coalesced[-1]["text"] += detached["text"]
+        else:
+            coalesced.append(detached)
+    return {**value, "thinking": coalesced}
+
+
 def _canonical_bytes(value: object) -> bytes:
     return json.dumps(
         value,
@@ -792,6 +937,11 @@ def _prepared_settlement_fingerprint(prepared: _PreparedSettlement) -> str:
         "call_id": prepared.call_id,
         "outcome": prepared.outcome.value,
         "response_digest": response_digest,
+        "response_equality_proof": (
+            None
+            if prepared._response_equality_proof is None
+            else prepared._response_equality_proof.hex()
+        ),
         "response_omission": prepared.response_omission,
         "usage": prepared.usage,
         "usage_omission": prepared.usage_omission,

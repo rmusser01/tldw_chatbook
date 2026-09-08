@@ -6879,7 +6879,11 @@ async def test_slash_focuses_the_media_filter_not_the_rail_search(size):
     away. The footer advertises "/ focus search"; before this fix the key
     landed on ``#library-search-input`` and a filter query did nothing to
     the list. Mirrors the notes ``/`` action; must hold at both the wide
-    three-pane width and the narrow stacked one."""
+    three-pane width and the narrow stacked one.
+
+    Args:
+        size: The ``(width, height)`` terminal viewport under test.
+    """
     app = _build_test_app()
     app.library_new_profile_admission = False
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -6904,13 +6908,66 @@ async def test_slash_focuses_the_media_filter_not_the_rail_search(size):
 
 
 @pytest.mark.asyncio
+async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
+    """task-32085 AC#2: task-32046 routed `/` to the own-canvas filter for
+    BOTH Media and Prompts, but only Media was pinned. On the Prompts list `/`
+    must focus ``#library-prompts-filter``, not the rail's global
+    ``#library-search-input``. A prompt is seeded so the list (and its filter)
+    is mounted rather than the empty-state recovery."""
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, _two_conversations())
+    prompts_db = PromptsDatabase(
+        tmp_path / "slash-prompts.db", client_id="slash-prompts-test"
+    )
+    prompt_id, _uuid, _msg = prompts_db.add_prompt(
+        name="Summarize",
+        author="Alice",
+        details="A summarizer",
+        system_prompt="You are concise.",
+        user_prompt="Summarize: {text}",
+    )
+    app.prompt_scope_service = PromptScopeService(
+        local_service=LocalPromptService(prompts_db),
+        server_service=None,
+    )
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts").press()
+            await _wait_for_selector(
+                screen, pilot, f"#library-prompt-row-{prompt_id}"
+            )
+            await pilot.pause()
+
+            prompts_filter = screen.query_one("#library-prompts-filter", Input)
+            rail_search = screen.query_one("#library-search-input", Input)
+            assert not prompts_filter.has_focus
+            await pilot.press("/")
+            await pilot.pause()
+            assert prompts_filter.has_focus, (
+                f"/ landed on {screen.focused!r}, expected the Prompts filter"
+            )
+            assert not rail_search.has_focus
+    finally:
+        prompts_db.close_connection()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)])
 async def test_media_list_arrow_keys_move_the_cursor_at_every_width(size):
     """task-32041 AC#1/#4: with the Media list owning focus, Down/Up move
     the list cursor between rows at every supported width -- the 235x52 wide
     three-pane layout as well as the 100x30 stacked one that already worked.
     Focus must stay on a ``.library-media-row`` and never leak into the
-    reader pane."""
+    reader pane.
+
+    Args:
+        size: The ``(width, height)`` terminal viewport under test.
+    """
     app = _build_test_app()
     app.library_new_profile_admission = False
     _seed_conversations(app, _two_conversations(), media=_two_media_items())

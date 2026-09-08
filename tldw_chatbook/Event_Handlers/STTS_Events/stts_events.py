@@ -45,7 +45,10 @@ from tldw_chatbook.TTS.audio_cpp_contract import validate_pcm16_wav
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
     project_audio_cpp_settings_config,
 )
-from tldw_chatbook.TTS.effective_settings import TTSSelectionSource
+from tldw_chatbook.TTS.effective_settings import (
+    TTSEffectiveResolutionError,
+    TTSSelectionSource,
+)
 from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_config,
     openai_internal_model_id,
@@ -1619,6 +1622,14 @@ class STTSEventHandler:
                     error.code,
                     error.retryable,
                 )
+            elif isinstance(error, TTSEffectiveResolutionError):
+                logger.error(
+                    "TTS generation failed (resolution_code={}, "
+                    "resolution_axis={}, resolution_source={})",
+                    error.code,
+                    error.axis,
+                    error.source.value if error.source is not None else "provider",
+                )
             else:
                 logger.error(
                     "TTS generation failed ({})",
@@ -1818,6 +1829,8 @@ class STTSEventHandler:
 
     @staticmethod
     def _generation_error_copy(error: Exception) -> str:
+        if isinstance(error, TTSEffectiveResolutionError):
+            return error.recovery_message()
         if isinstance(error, TTSOperationError):
             parts = [str(error)]
             recovery_copy = _RECOVERY_ACTION_COPY.get(error.recovery_action or "")

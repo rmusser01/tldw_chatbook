@@ -94,6 +94,21 @@ but names both items until the new detail settles. Late or failed loads cannot
 replace a newer selection. Conversations retains its existing paged
 list-and-preview layout.
 
+**The Reader tracks the visible set.** When the item open in the Reader
+leaves the list — a filter that matches nothing, or deleting the loaded item
+(from the viewer or as the sole item in a bulk delete) — the Reader stops
+painting it and falls back to "Select a media item to read it here." rather
+than showing a now-absent item. A filter that still has matches moves the
+Reader to its first result instead. Undoing a delete re-adds the row, which
+opens normally again.
+
+*Verified against fix/media-crit7-readerdesync — 2026-09-08 (task-32043:
+app-test pins at 170x48 — opening an item then applying a 0-result filter, and
+bulk-deleting the open item, both leave the Reader on its no-selection
+placeholder; the crit6 empty-reader widening, three-pane ladder, scroll-
+restore and bulk-delete Undo pins stay green. Confirmed in tests, not
+re-verified live.)*
+
 **Row markers.** An item's second row says what it is and how old it is, and
 adds **· analysed** when that item already carries an analysis — so you can
 see what is worth generating without opening anything (`document · 5m ·
@@ -117,7 +132,9 @@ keywords, so without it a hit whose title and body hold nothing you typed
 reads as a mistake (`article · 2m · keyword: notes`). A row whose title or
 text carries the term already shows you why it is there and says nothing
 extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
-wide CJK characters) to keep the line short. It can still be too long for a narrow Items pane: at the
+wide CJK characters, or five flag emoji) to keep the line short — the cut
+counts a flag by the two columns it paints and never leaves half of one, so
+the row frame does not drift. It can still be too long for a narrow Items pane: at the
 pane's narrowest the row clips mid-term at the pane edge, and a row that is
 both analysed and a keyword hit can clip at the default width too.
 
@@ -170,9 +187,12 @@ keyword: quokkasand…`, the title hit painted `article · 1m`.)*
   You can see that on Media, Conversations and Prompts. Notes reserves the
   same width, but its select-mode row overflows the notes pane at every
   width today, so "Clear" and "Export selected" are off-screen there until
-  that row is reworked. On Conversations the pane is narrow enough that the
-  label is clipped either way — "○" alone while disabled, "Exp" once
-  enabled — but it is clipped in the same column, which is the point.
+  that row is reworked. Conversations now splits its select toolbar into
+  content-width rows the same way Media does — a summary row ("N selected",
+  "Select all N shown") above a bulk-action row ("Clear", "Export selected")
+  — so every label paints in full at every supported width (no more the old
+  "Selec"/"Exp" clipping), and the word still holds its column across the
+  disabled flip.
 
 **Media's "Analyze"** (Media only) generates an analysis for every checked
 item in one run, in list order, on its own row under Clear/Export/Review:
@@ -480,6 +500,14 @@ content painted the no-Markdown note above its text; an empty `article` painted 
 it. In Conversations select mode, checking the first row moved the count
 0 → 1 and left the Export selected label's first painted glyph on column
 83 — "○" before, "Exp" (clipped) after.)*
+
+*Verified against fix/media-crit7-convselect — 2026-09-08 (task-32042,
+critique #7 P1: the Conversations select toolbar, once a single 1fr row that
+clipped every action to "Selec"/"Exp", now mirrors Media's multi-row
+content-width treatment. Painted-cell tests at both 235x52 and 100x30 assert
+"Select all N shown", "Clear", and "Export selected" render in full and the
+count reads on one line; the column-hold pin now measures the "Export" word,
+which stays put across the disabled flip.)*
 
 *Verified against fix/media-wave5-j — 2026-09-06 (task-31635 items 1, 5, 13,
 14: a seeded Markdown item and a seeded plain `article` opened live at 235x52.

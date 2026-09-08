@@ -35,7 +35,10 @@ def test_v66_dispatches_versioned_sql_artifact(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr(Path, "read_text", tracked_read)
     db = CharactersRAGDB(tmp_path / "artifact.sqlite", client_id="artifact")
     assert reads == [artifact]
-    assert db._get_db_version(db.get_connection()) == 68
+    assert (
+        db._get_db_version(db.get_connection())
+        == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+    )
 
 
 def _owned_schema(db: CharactersRAGDB) -> dict[str, tuple[tuple[object, ...], ...]]:
@@ -95,7 +98,10 @@ def test_v66_migrates_genuine_v65_once_without_starting_backfill(
     upgraded = CharactersRAGDB(path, client_id="character-search-v66")
     try:
         connection = upgraded.get_connection()
-        assert upgraded._get_db_version(connection) == 68
+        assert (
+            upgraded._get_db_version(connection)
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         assert {
             row[0]
             for row in connection.execute(
@@ -128,7 +134,10 @@ def test_v66_migrates_genuine_v65_once_without_starting_backfill(
 
     reopened = CharactersRAGDB(path, client_id="character-search-v66-reopen")
     try:
-        assert reopened._get_db_version(reopened.get_connection()) == 68
+        assert (
+            reopened._get_db_version(reopened.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         assert (
             reopened.get_connection()
             .execute(
@@ -151,7 +160,7 @@ def test_v66_fresh_schema_matches_migrated_tables_columns_indexes_and_triggers(
     migrated = CharactersRAGDB(historical_path, client_id="migrated")
     fresh = CharactersRAGDB(tmp_path / "fresh.sqlite", client_id="fresh")
     try:
-        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 68
+        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 68
         assert _owned_schema(fresh) == _owned_schema(migrated)
         document_columns = {
             row[1]
@@ -275,7 +284,10 @@ def test_canvas_migrations_preserve_character_search_state_from_genuine_v66(
     upgraded = CharactersRAGDB(path, client_id="character-search-state-v68")
     try:
         connection = upgraded.get_connection()
-        assert upgraded._get_db_version(connection) == 68
+        assert (
+            upgraded._get_db_version(connection)
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         assert (
             tuple(
                 connection.execute(

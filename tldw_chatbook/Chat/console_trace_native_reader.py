@@ -228,6 +228,33 @@ class ConsoleTraceNativeReader:
                 raise ValueError("native_surface_reference_invalid")
 
         header = self.service.reconstruct_header(cursor, call.request_header_id)
+        system_rows = [
+            item
+            for item in header.components
+            if item.component_kind == "rendered_system_row"
+        ]
+        system_slot = header.adapter_defaults.get("rendered_system_slot")
+        if system_rows or system_slot is not None:
+            if (
+                type(system_slot) is not int
+                or system_slot != 0
+                or len(system_rows) != 1
+                or system_rows[0].ordinal != 0
+                or not projection.entries
+                or projection.entries[0][1][:2] != ("rendered_system", "artifact")
+                or not messages
+                or not isinstance(messages[0], Mapping)
+                or messages[0].get("role") != "system"
+            ):
+                raise ValueError("rendered_system_slot_mismatch")
+            row = system_rows[0].value
+            if isinstance(row, Mapping) and row.get("role") == "system":
+                messages[0] = row
+            elif isinstance(row, Mapping) and set(row) == {"omitted"}:
+                messages[0] = row
+                omissions.append("rendered_system_row")
+            else:
+                raise ValueError("rendered_system_slot_unavailable")
         request = self._header_request(cursor, call, header)
         request["messages_payload"] = messages
         if continuations:
@@ -384,6 +411,7 @@ class ConsoleTraceNativeReader:
                 revision_id=revision.revision_id,
                 expected_conversation_id=revision.source_conversation_id,
                 policy_id=call.policy_id,
+                response_call=call,
             )
         value = self._decode_artifact(
             self.repository.get_artifact(cursor, response.artifact_id or "")

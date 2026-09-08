@@ -2096,6 +2096,60 @@ async def test_select_mode_bulk_reason_is_painted_with_nothing_selected(size):
 
 
 @pytest.mark.asyncio
+async def test_select_mode_empty_refresh_does_not_ask_to_select_nothing():
+    """task-32085 AC#1 (Qodo #7): the zero-selection reason must not paint on a
+    SUCCESSFUL empty list.
+
+    task-32045 made ``Select items to enable.`` visible whenever
+    ``selected_count == 0``, without checking that any row exists -- so select
+    mode surviving a refresh that returns zero rows asked the user to select
+    from nothing. The line stays MOUNTED (height reserved, per task-32045's
+    visibility-not-display layout fix) but paints nothing when there is no
+    selectable row.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._toggle_library_media_select_mode()
+        await _wait_for_selector(screen, pilot, "#library-media-select-actions")
+        await pilot.pause()
+        # Baseline: with rows present and nothing selected, the reason paints.
+        reason = screen.query_one("#library-media-select-bulk-reason", Static)
+        assert reason.styles.visibility == "visible"
+
+        # A successful refresh empties the list while select mode survives.
+        controller = screen._library_media_browse_controller
+        service.media_items = []
+        screen._request_library_media_browse(
+            controller.mutation_refresh_scope,
+            focus_identity=None,
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_result is not None
+            and controller.applied_result.total == 0
+            and not controller.loading,
+            message="Empty Media refresh never applied while in select mode.",
+        )
+        await pilot.pause()
+
+        assert screen._media_state.select_mode is True
+        empty_reason = screen.query("#library-media-select-bulk-reason")
+        assert empty_reason, "reason line must stay mounted for layout stability"
+        empty_reason_widget = empty_reason.first(Static)
+        # No selectable row -> kept mounted via ``visibility: hidden`` (the
+        # height-reserving mechanism, NOT ``display: none``), painting nothing.
+        assert empty_reason_widget.styles.visibility == "hidden"
+        canvas_region = screen.query_one("#library-media-canvas").region
+        assert "Select items to enable" not in _painted(
+            host, canvas_region
+        ).replace("\n", " ")
+
+
+@pytest.mark.asyncio
 async def test_select_mode_analyze_reason_refreshes_on_resume():
     """task-32039 AC#2: a provider configured mid-session clears the gate on return.
 
@@ -3606,6 +3660,44 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
         # The row without a reason still paints whole -- the clipping is the
         # suffix's own cost, not a regression in the base secondary line.
         assert "…" not in "".join(secondaries), secondaries
+
+
+@pytest.mark.asyncio
+async def test_flag_keyword_reason_paints_no_half_flag():
+    """task-32044 (crit #7 P2): a flag keyword never paints a lone indicator.
+
+    A regional-indicator flag is a PAIR painted as one 2-cell glyph. The
+    ten-cell cut could split the pair at the tail, leaving a lone indicator a
+    real terminal paints as a 2-cell box -- the finding's +2 row-frame drift
+    (border at 237 vs 235). (Textual's headless compositor measures cells the
+    way rich does, so it cannot reproduce the terminal-font width itself; what
+    it pins is that the production render path never emits the half-flag that
+    causes the drift.) So the painted reason carries only whole flags: an even
+    number of regional-indicator code points.
+    """
+    flag_jp = "\U0001F1EF\U0001F1F5"
+    flag_us = "\U0001F1FA\U0001F1F8"
+    # "flagx" is five cells, so the ten-cell cut lands mid-pair without the
+    # fix, leaving a lone indicator; the title carries no "flagx" so the row
+    # can only match through the keyword.
+    keyword = "flagx" + (flag_jp + flag_us) * 3
+    items = _match_reason_items()
+    items[0]["keywords"] = [keyword]  # row 1 now matches only via the flag keyword
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=items)
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "flagx")
+        for _ in range(3):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        reason = "".join(line for line in lines if "keyword: flagx" in line)
+        assert reason, lines
+        ri = sum(1 for ch in reason if 0x1F1E6 <= ord(ch) <= 0x1F1FF)
+        assert ri >= 2, reason  # at least one whole flag actually paints
+        assert ri % 2 == 0, (ri, reason)  # no lone half-flag
 
 
 @pytest.mark.asyncio

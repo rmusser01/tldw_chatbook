@@ -220,6 +220,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
     ConsoleTraceCaptureMode,
+    DerivedTraceProvenance,
     ProviderArtifactTraceProvenance,
     TraceProvenancePersistenceError,
     TraceProvenanceSource,
@@ -450,12 +451,15 @@ from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.Chat.console_thinking_history import (
     EffectiveThinkingHistoryPolicy,
     ProviderThinkingSidecar,
+    ThinkingReplayTarget,
     effective_thinking_history_policy,
+    resolve_thinking_history,
 )
 from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
+    parse_thinking_blocks_json,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -6081,6 +6085,7 @@ class ConsoleChatController:
         try:
             trace_request = self._build_durable_trace_request(
                 preparation=committing,
+                resolution=resolution,
                 provider_messages=self._provider_messages_with_prefill(
                     continuation.provider_messages,
                     continuation.prefill,
@@ -8714,6 +8719,7 @@ class ConsoleChatController:
         self,
         *,
         preparation: ConsoleTurnPreparation,
+        resolution: Any,
         provider_messages: list[dict[str, Any]],
         trace_source_messages: tuple[dict[str, Any], ...],
         echoed_user_id: str,
@@ -8753,12 +8759,22 @@ class ConsoleChatController:
         }
         saved_positions: list[int] = []
         saved_ids: list[str] = []
+        saved_values: list[dict[str, Any]] = []
+        transformed_positions: set[int] = set()
         visible_messages: list[dict[str, Any]] = []
         for index, row in enumerate(provider_messages):
             visible = provider_row(row)
             visible_messages.append(visible)
             owner_id = row.get(NATIVE_MESSAGE_ID_KEY)
-            if type(owner_id) is not str or source_by_owner.get(owner_id) != visible:
+            if type(owner_id) is not str:
+                continue
+            source = source_by_owner.get(owner_id)
+            transformed = source != visible
+            if transformed and (
+                owner_id != echoed_user_id
+                or source is None
+                or not self._is_current_user_text_transform(source, visible)
+            ):
                 continue
             if owner_id == echoed_user_id:
                 persisted_id = committed_user_id
@@ -8770,6 +8786,72 @@ class ConsoleChatController:
             if type(persisted_id) is str and persisted_id:
                 saved_positions.append(index)
                 saved_ids.append(persisted_id)
+                saved_values.append(source)
+                if transformed:
+                    transformed_positions.add(index)
+
+        selected_owner_ids = {
+            provider_messages[position][NATIVE_MESSAGE_ID_KEY]
+            for position in saved_positions
+        }
+        sidecars, continuation_target = (
+            self._provider_continuation_history_for_resolution(
+                preparation.session_id, resolution
+            )
+        )
+        continuation_groups = (
+            provider_continuation_owner_groups(
+                tuple(
+                    item
+                    for item in sidecars
+                    if item.owner_message_id in selected_owner_ids
+                ),
+                target=continuation_target,
+            )
+            if sidecars and continuation_target is not None
+            else ()
+        )
+        thinking_sidecars = tuple(
+            item
+            for item in self._provider_thinking_sidecar_for_session(
+                preparation.session_id
+            )
+            if item.owner_message_id in selected_owner_ids
+        )
+        thinking = resolve_thinking_history(
+            target=ThinkingReplayTarget(
+                provider=getattr(resolution, "execution_key", None)
+                or resolution.provider,
+                model=resolution.model or "",
+                protocol=(
+                    getattr(resolution, "continuation_protocol", None)
+                    or getattr(resolution, "api_mode", None)
+                    or "chat_completions"
+                ),
+                disposition=getattr(
+                    resolution, "thinking_stream_disposition", "ignored"
+                ),
+                round_trip_version=getattr(
+                    resolution, "thinking_round_trip_version", None
+                ),
+            ),
+            policy=self.store.session_thinking_history_policy(preparation.session_id),
+            sidecars=thinking_sidecars,
+            continuation_required=bool(continuation_groups),
+        )
+        continuation_owner_ids = {
+            group.owner_message_id for group in continuation_groups
+        }
+        thinking_owner_ids = {group.owner_message_id for group in thinking.groups}
+        thinking_by_owner = {
+            item.owner_message_id: item.envelope for item in thinking_sidecars
+        }
+        for position in saved_positions:
+            owner_id = provider_messages[position][NATIVE_MESSAGE_ID_KEY]
+            if owner_id in continuation_owner_ids:
+                visible_messages[position][CONTINUATION_OWNER_KEY] = owner_id
+            if owner_id in thinking_owner_ids:
+                visible_messages[position][THINKING_OWNER_KEY] = owner_id
 
         policy = FrozenTracePolicy(
             policy_id=new_opaque_id(),
@@ -8784,16 +8866,56 @@ class ConsoleChatController:
                     coordinator=coordinator,
                     message_ids=tuple(saved_ids),
                 )
+                for position, descriptor in zip(saved_positions, saved, strict=True):
+                    owner_id = provider_messages[position][NATIVE_MESSAGE_ID_KEY]
+                    if owner_id not in thinking_owner_ids:
+                        continue
+                    row = cursor.execute(
+                        "SELECT m.thinking_blocks_json "
+                        "FROM console_trace_semantic_revisions AS r "
+                        "JOIN messages AS m ON m.id = r.live_message_id "
+                        "WHERE r.revision_id = ? "
+                        "AND r.source_message_id = m.id "
+                        "AND r.source_conversation_id = m.conversation_id",
+                        (descriptor.revision_id,),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or parse_thinking_blocks_json(row[0])
+                        != thinking_by_owner[owner_id]
+                    ):
+                        raise TraceProvenancePersistenceError()
+                if transformed_positions:
+                    from tldw_chatbook.Chat.console_semantic_revision import (
+                        project_semantic_revision_provider_message,
+                    )
+
+                    for position, source, descriptor in zip(
+                        saved_positions, saved_values, saved, strict=True
+                    ):
+                        if position not in transformed_positions:
+                            continue
+                        revision = repository.get_semantic_revision(
+                            cursor, descriptor.revision_id
+                        )
+                        if (
+                            revision is None
+                            or project_semantic_revision_provider_message(
+                                cursor,
+                                revision_id=descriptor.revision_id,
+                                expected_conversation_id=revision.source_conversation_id,
+                            )
+                            != source
+                        ):
+                            raise TraceProvenancePersistenceError()
                 repository.ensure_policy(cursor, policy)
                 if policy.pii_redaction_enabled:
-                    for position, descriptor in zip(
-                        saved_positions,
+                    for source, descriptor in zip(
+                        saved_values,
                         saved,
                         strict=True,
                     ):
-                        credential_projection = CredentialSanitizer().sanitize(
-                            visible_messages[position]
-                        )
+                        credential_projection = CredentialSanitizer().sanitize(source)
                         if not credential_projection.available:
                             repository.bind_revision_policy(
                                 cursor,
@@ -8839,6 +8961,14 @@ class ConsoleChatController:
             raise TraceProvenancePersistenceError() from None
 
         saved_by_position = dict(zip(saved_positions, saved, strict=True))
+        for position in transformed_positions:
+            saved_by_position[position] = DerivedTraceProvenance(
+                TraceTransformKind.CURRENT_TURN_TEXT,
+                inputs=(saved_by_position[position],),
+                artifact=ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.ACTIVE_REQUEST, policy
+                ),
+            )
         descriptors = tuple(
             saved_by_position.get(index)
             or ProviderArtifactTraceProvenance(
@@ -8856,7 +8986,44 @@ class ConsoleChatController:
             mandatory_provenance=(),
             tool_provenance=(),
             capture_policy=policy,
+            continuation_groups=continuation_groups,
+            thinking_groups=thinking.groups,
+            thinking_policy=thinking.saved_policy,
+            effective_thinking_policy=thinking.effective_policy,
         )
+
+    @staticmethod
+    def _is_current_user_text_transform(
+        source: Mapping[str, Any], visible: Mapping[str, Any]
+    ) -> bool:
+        """Admit text-only changes; retain every role, attachment and sidecar."""
+        if source.get("role") != "user" or {
+            key: value for key, value in source.items() if key != "content"
+        } != {key: value for key, value in visible.items() if key != "content"}:
+            return False
+        before, after = source.get("content"), visible.get("content")
+        if type(before) is str and type(after) is str:
+            return True
+        if (
+            type(before) is not list
+            or type(after) is not list
+            or len(before) != len(after)
+        ):
+            return False
+        for original, transformed in zip(before, after, strict=True):
+            if original == transformed:
+                continue
+            if (
+                type(original) is not dict
+                or type(transformed) is not dict
+                or original.get("type") != "text"
+                or type(original.get("text")) is not str
+                or type(transformed.get("text")) is not str
+                or {key: value for key, value in original.items() if key != "text"}
+                != {key: value for key, value in transformed.items() if key != "text"}
+            ):
+                return False
+        return True
 
     @staticmethod
     def _provider_messages_with_prefill(
@@ -9170,6 +9337,7 @@ class ConsoleChatController:
         try:
             trace_request = self._build_durable_trace_request(
                 preparation=preparation,
+                resolution=resolution,
                 provider_messages=self._provider_messages_with_prefill(
                     provider_messages,
                     prefill,
