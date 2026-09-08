@@ -42,6 +42,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_ANALYZE_SELECTED_TOOLTIP,
+    LIBRARY_BULK_ACTIONS_NO_SELECTION_REASON,
     LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
@@ -1101,6 +1102,49 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 with actions_row:
                     yield self._clear_selection_button()
                     yield from self._select_mode_bulk_buttons()
+                # task-32045 (critique #7 P2): Export/Review/Delete all gate
+                # on ``selected_count == 0`` (see ``_bulk_action_button``)
+                # and previously dimmed with only the "○" marker -- no
+                # inline reason, unlike Analyze below. One shared line (not
+                # one per button, since all three share the one gate) using
+                # Analyze's own always-visible-reason grammar
+                # (``.library-media-action-reason``, task-31981). Excluded
+                # when the list itself failed to load with nothing to select
+                # (``_gate_failed_action``'s predicate) -- that state already
+                # explains itself via the recovery callout, and "select
+                # items" would be the wrong reason.
+                #
+                # Always yielded (visibility toggled, not conditionally
+                # composed, and NOT ``display`` either): a single row-press
+                # toggle takes the Tier 1 in-place patch
+                # (``_apply_library_row_toggle``), which deliberately never
+                # recomposes (task-252 perf discipline) -- so this widget
+                # must already exist for that patch to flip it alongside
+                # Export/Review/Delete's ``disabled``. ``display=False``
+                # was tried first and regressed
+                # ``test_every_click_on_a_media_row_toggles_it_in_select_mode``:
+                # it drops the line's row from layout entirely, so the
+                # in-place flip on the FIRST check shifted the media row
+                # list (composed further down this same method) up by one
+                # line under a screen coordinate a caller had already
+                # computed. ``visibility: hidden`` reserves the same
+                # height while painting nothing, so the row list never
+                # moves.
+                bulk_list_failed = (
+                    self.load_failure is not None and self.list_unselectable
+                )
+                bulk_reason_line = Static(
+                    LIBRARY_BULK_ACTIONS_NO_SELECTION_REASON,
+                    id="library-media-select-bulk-reason",
+                    classes="library-media-action-reason",
+                    markup=False,
+                )
+                bulk_reason_line.styles.visibility = (
+                    "visible"
+                    if self.canvas.selected_count == 0 and not bulk_list_failed
+                    else "hidden"
+                )
+                yield bulk_reason_line
                 # task-28007 AC#4: Analyze gets its own row -- see
                 # ``_analyze_selected_button`` for the measurement that put
                 # it here rather than beside Export/Review.

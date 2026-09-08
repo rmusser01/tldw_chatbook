@@ -485,6 +485,14 @@ of the rail's global search two panes away; pinned at 235x52 and 100x30 in
   source services) keep the plain sentence and no button.
 
 —
+*Verified against fix/media-crit7-selreason — 2026-09-08 (task-32045: with
+nothing checked, Select mode's Export/Review/Delete row now carries its own
+always-visible "Select items to enable." line — the same inline-reason
+grammar the Analyze row already used — instead of dimming with only the "○"
+marker and a hover-only tooltip. The line disappears the moment any row is
+checked.)*
+
+—
 *Verified against fix/media-riders-m — 2026-09-07 (task-31943: a bulk delete
 followed by Undo puts the rail's "Media N" back to the restored total without
 leaving the screen; task-31948: the browse-row source-failure message carries
