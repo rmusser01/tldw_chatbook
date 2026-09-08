@@ -31,10 +31,26 @@ The state module under test is ``tldw_chatbook.UI.Library_Modules.library_
 notes_state`` -- NOT the unrelated, pre-existing ``tldw_chatbook.Library.
 library_notes_state`` domain module of the same basename (see that docstring's
 own note on the collision).
+
+**Task 2 (controller PR)** adds the full-cluster ownership / same-name-
+delegator-forwarding / staticmethod-class-forwarding / controller-state-shim
+checks (``_NOTES_CLUSTER_METHOD_NAMES``, 186 names) plus a
+constructor-binding coverage check (``_NOTES_CONTROLLER_BOUND_NAMES``, 103
+names) carried from the prompts and media series, which added it because the
+skills series shipped a silent production regression precisely in that gap (a
+moved body's ``getattr(self, "focused", None)`` with no ``focused`` property
+bound; recipe SS3's unbound-attribute-escape entry). It also adds the
+``on_<message>`` whitelist resolution recipe SS4's third member requires --
+run against Textual's own NAME-based dispatch rather than against a reference
+census. See ``library_notes_controller.py``'s own module docstring for the
+full 285-candidate derivation, the 99 exclusions, and the
+connected-components evidence behind the single-controller decision.
 """
 from __future__ import annotations
 
 import dataclasses
+import inspect
+import re
 
 import pytest
 
@@ -268,3 +284,625 @@ def test_the_four_member_list_entry_focus_family_stays_screen_owned() -> None:
         if isinstance(getattr(LibraryScreen, attr, None), property)
     ]
     assert not shimmed, f"shell family members were shimmed: {shimmed!r}"
+
+
+#: Filled in by this series' own cleanup task (task 3, notes series 3/N): the
+#: moved names whose screen delegator has ZERO references outside its own body
+#: anywhere in the repo, across all five census spellings. Empty at the
+#: controller PR, exactly as every prior series' own wiring test carried it
+#: between its task 2 and task 3.
+_NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset()
+
+
+#: Every method Task 2 moved into ``LibraryNotesController``, under its
+#: original ``LibraryScreen`` name. Derived from a full ``ast`` census of every
+#: ``LibraryScreen`` class-body method whose name contains "note"
+#: (case-insensitive): **291 raw ``FunctionDef`` matches, 285 unique names**
+#: (the 6-name gap is a byte-identical DUPLICATE block dev shipped twice; see
+#: the controller docstring) -- minus 99 exclusions: 57 unbound-fake-self, 11
+#: further in-file ``LibraryScreen.<name>(self, ...)`` targets, 8 further
+#: callers of that same shape, 8 further instance-attribute-monkeypatch, 5
+#: not-notes-owned, 4 further members of the ``_library_note_session``
+#: projection-property family, 3 shared-shell-helper, 1 further
+#: class-monkeypatch, 1 module-globals-coupling, 1 callback-identity.
+#: NOT a prefix/substring shortcut. See ``library_notes_controller.py``'s
+#: module docstring for the full per-name reasoning behind every exclusion.
+_NOTES_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
+    "_activate_database_note_work_session",
+    "_append_library_note_source_record",
+    "_apply_library_note_presentation_state",
+    "_apply_library_note_save_outcome",
+    "_apply_library_note_saved_presentation",
+    "_apply_library_notes_footer_context",
+    "_apply_library_notes_operation_state",
+    "_apply_library_notes_stage_legs",
+    "_begin_library_note_load",
+    "_begin_library_notes_operation",
+    "_build_library_note_import_executor",
+    "_capture_library_notes_recompose_state",
+    "_commit_library_note_widgets_before_recompose",
+    "_compact_library_notes_stage",
+    "_defer_library_notes_settled_focus_restore",
+    "_delete_library_note",
+    "_discard_new_library_note_claimed",
+    "_dispatch_database_note_identity_cleared",
+    "_dispatch_library_notes_work_session",
+    "_evacuate_library_notes_authority_focus",
+    "_exit_library_notes_lasting_sync",
+    "_export_library_note",
+    "_finish_library_note_create",
+    "_finish_library_notes_operation",
+    "_fire_library_note_autosave",
+    "_focus_library_note_conflict_callout",
+    "_focus_library_note_control",
+    "_focus_library_note_import_control",
+    "_focus_library_note_validation_field",
+    "_focus_library_notes_filter_input",
+    "_focus_library_notes_lasting_control",
+    "_gc_pending_blank_note",
+    "_handle_file_notes_editable_opened",
+    "_handle_file_notes_identity_cleared",
+    "_handle_file_notes_reload_confirmation_changed",
+    "_handle_file_notes_root_changed",
+    "_install_library_notes_scroll_observers",
+    "_invalidate_library_note_autosave",
+    "_library_note_editor_active",
+    "_library_note_editor_state",
+    "_library_note_import_database",
+    "_library_note_import_execution_active",
+    "_library_note_import_folder_repository",
+    "_library_note_meta_base_line",
+    "_library_note_presentation_state",
+    "_library_note_session_is_unsafe",
+    "_library_note_status_line",
+    "_library_note_work_pane_kwargs",
+    "_library_notes_active_region",
+    "_library_notes_authority_root",
+    "_library_notes_canvas_kwargs",
+    "_library_notes_fallback_focus_target",
+    "_library_notes_focus_region",
+    "_library_notes_focus_stage",
+    "_library_notes_folder_target_options",
+    "_library_notes_list_canvas_kwargs",
+    "_library_notes_mutation_fenced",
+    "_library_notes_operation_for_active_region",
+    "_library_notes_operation_is_current_and_active",
+    "_library_notes_role_target",
+    "_library_notes_scroll_owner",
+    "_library_notes_user_id",
+    "_library_notes_widget_is_within",
+    "_library_notes_work_first_preferences",
+    "_library_notes_work_session_reader_width",
+    "_mark_library_notes_user_interaction",
+    "_mirror_library_file_notes_reader_preference",
+    "_mirror_library_notes_reader_preference",
+    "_move_library_notes_operation",
+    "_note_word_count",
+    "_notes_true_count_or_none",
+    "_notify_library_note_create_warning",
+    "_notify_library_note_delete_warning",
+    "_notify_library_note_import_failure",
+    "_notify_library_note_missing_warning",
+    "_open_selected_library_note_handoff",
+    "_project_library_note_entry_result",
+    "_publish_library_note_import_snapshot",
+    "_publish_library_notes_lasting_sync_snapshot",
+    "_queue_library_notes_scroll_interaction",
+    "_queue_library_notes_settled_focus_restore",
+    "_read_library_note_editor_fields",
+    "_reconcile_library_notes_list_canvas",
+    "_record_library_notes_focus_interaction",
+    "_record_library_notes_presented_focus",
+    "_record_library_notes_scroll_interaction",
+    "_refresh_after_library_note_import",
+    "_rehydrate_library_notes_after_recompose",
+    "_release_library_notes_focus_after_snapshot",
+    "_remember_library_notes_authority_focus",
+    "_remember_library_notes_responsive_focus",
+    "_remove_library_note_source_record",
+    "_reset_library_note_editor_state",
+    "_resolve_library_note_conflict",
+    "_restore_library_note_delete_origin",
+    "_restore_library_notes_after_targeted_sync",
+    "_restore_library_notes_authority_focus",
+    "_restore_library_notes_browse_return_receipt",
+    "_restore_library_notes_final_scroll",
+    "_restore_library_notes_focus_identity",
+    "_restore_library_notes_scroll_after_layout",
+    "_restore_library_notes_scroll_offset",
+    "_restore_library_notes_settled_focus",
+    "_return_from_library_notes_task",
+    "_route_library_note_validation_field",
+    "_run_library_note_import_check",
+    "_selected_library_note_handoff_payload",
+    "_selected_library_notes_tree_row",
+    "_set_library_notes_source",
+    "_settle_library_notes_final_scroll",
+    "_show_library_database_notes",
+    "_show_library_file_notes",
+    "_show_library_note_shortcut_refusal",
+    "_sync_library_file_notes_reader_layout_from_shell",
+    "_sync_library_notes_source_controls",
+    "_try_switch_retained_library_notes_route",
+    "_undo_library_note_delete",
+    "_update_library_note_meta_static",
+    "_update_library_notes_responsive_state",
+    "action_library_note_editor_back",
+    "action_library_notes_escape",
+    "action_library_notes_focus_filter",
+    "action_library_notes_new",
+    "handle_library_note_back",
+    "handle_library_note_body_changed",
+    "handle_library_note_conflict_overwrite",
+    "handle_library_note_conflict_reload",
+    "handle_library_note_context_back",
+    "handle_library_note_context_keywords_changed",
+    "handle_library_note_context_open",
+    "handle_library_note_copy",
+    "handle_library_note_delete",
+    "handle_library_note_delete_cancel",
+    "handle_library_note_delete_receipt_dismiss",
+    "handle_library_note_discard_new",
+    "handle_library_note_edit_mode",
+    "handle_library_note_export_markdown",
+    "handle_library_note_export_text",
+    "handle_library_note_import_add_source",
+    "handle_library_note_import_cancel",
+    "handle_library_note_import_check",
+    "handle_library_note_import_collision_choice",
+    "handle_library_note_import_collision_name",
+    "handle_library_note_import_confirm_match",
+    "handle_library_note_import_destination",
+    "handle_library_note_import_item_action",
+    "handle_library_note_import_item_choice",
+    "handle_library_note_import_page",
+    "handle_library_note_import_retry",
+    "handle_library_note_keywords_changed",
+    "handle_library_note_load_retry",
+    "handle_library_note_preview_toggle",
+    "handle_library_note_save",
+    "handle_library_note_title_changed",
+    "handle_library_note_use_in_console",
+    "handle_library_note_work_pane_editor_ready",
+    "handle_library_notes_add_from_files",
+    "handle_library_notes_create_back",
+    "handle_library_notes_create_blank",
+    "handle_library_notes_create_template",
+    "handle_library_notes_export",
+    "handle_library_notes_folder_row",
+    "handle_library_notes_import_back",
+    "handle_library_notes_lasting_activate",
+    "handle_library_notes_lasting_apply",
+    "handle_library_notes_lasting_back",
+    "handle_library_notes_lasting_check",
+    "handle_library_notes_lasting_choice",
+    "handle_library_notes_lasting_comparison",
+    "handle_library_notes_lasting_comparison_return",
+    "handle_library_notes_lasting_dismiss",
+    "handle_library_notes_lasting_folder_requested",
+    "handle_library_notes_lasting_history",
+    "handle_library_notes_lasting_history_page",
+    "handle_library_notes_lasting_history_return",
+    "handle_library_notes_lasting_review_page",
+    "handle_library_notes_lasting_root_action",
+    "handle_library_notes_lasting_root_page",
+    "handle_library_notes_lasting_setup_changed",
+    "handle_library_notes_lasting_undo",
+    "handle_library_notes_new",
+    "handle_library_notes_relationship_choice",
+    "handle_library_notes_select_clear",
+    "handle_library_notes_select_toggle",
+    "handle_library_notes_sort",
+    "handle_library_notes_sort_choice",
+)
+
+_NOTES_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "_build_library_note_import_executor",
+        "_library_notes_widget_is_within",
+        "_note_word_count",
+    }
+)
+
+_NOTES_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
+    # -- framework services, live-read from the screen on every access (16)
+    "_footer_shortcut_registration",
+    "app",
+    "app_instance",
+    "call_after_refresh",
+    "call_later",
+    "focus_chain",
+    "focused",
+    "is_mounted",
+    "is_running",
+    "query",
+    "query_one",
+    "refresh",
+    "register_footer_shortcuts",
+    "run_worker",
+    "set_focus",
+    "watch",
+    # -- shared shell state this cluster READS (getter-only accessors) (10)
+    "_library_canvas_projection_depth",
+    "_library_lifecycle",
+    "_library_onboarding_all_empty",
+    "_library_rail_collapsed",
+    "_library_snapshot_state_generation",
+    "_local_source_counts",
+    "_local_source_records",
+    "_media_state",
+    "_prompts_state",
+    "_rag_search_state",
+    # -- shared shell state this cluster also WRITES (getter + setter) (6)
+    "_library_canvas_resync_pending",
+    "_library_navigation_context_generation",
+    "_library_notes_programmatic_focus_target",
+    "_library_notes_restoring_focus",
+    "_library_selected_row_id",
+    "_pending_library_source_open",
+    # -- the 3 prior-extracted notes WIRING coordinator instances (3)
+    "_library_note_import_controller",
+    "_library_note_session",
+    "_library_notes_sync_controller",
+    # -- screen-resident methods a moved body still calls (named late-binding callables) (68)
+    "_acknowledge_library_destination_change",
+    "_active_library_rail",
+    "_advance_library_stage_interaction",
+    "_apply_library_emergency_geometry",
+    "_apply_library_notes_stage_visibility",
+    "_apply_library_notes_stage_visibility_for_resize",
+    "_arm_library_list_entry_focus",
+    "_arm_library_note_editor",
+    "_begin_library_note_create",
+    "_build_library_notes_state",
+    "_build_library_notes_tree_projection",
+    "_build_library_shell_input",
+    "_capture_library_notes_browse_return_receipt",
+    "_capture_library_notes_focus_identity",
+    "_compose_library_rail_top_action",
+    "_compose_workspaces_rail_body",
+    "_create_library_note",
+    "_delete_library_note_claimed",
+    "_discard_new_library_note",
+    "_exit_library_note_editor_guarded",
+    "_file_notes_active",
+    "_flush_library_note_save",
+    "_focus_library_control",
+    "_hide_library_adaptive_reader_rail_collapse",
+    "_invalidate_library_workspace_depth_state",
+    "_library_compose_scoped_ref",
+    "_library_entry_route_key",
+    "_library_header_line",
+    "_library_layout_ref",
+    "_library_note_dirty",
+    "_library_note_keywords_from_input",
+    "_library_note_template_fields",
+    "_library_note_version",
+    "_library_notes_compact_stage_applies",
+    "_library_notes_compact_workflow_active",
+    "_library_notes_focused_task_active",
+    "_library_notes_footer_shortcuts",
+    "_library_notes_restore_guard_is_current",
+    "_library_notes_workflow_active",
+    "_library_rail_preferences",
+    "_library_rail_search_placeholder",
+    "_library_workspace_depth_state",
+    "_locate_library_notes_tree_target",
+    "_open_library_export_canvas",
+    "_patch_library_note_list_from_session",
+    "_project_library_media_stage_classes",
+    "_push_library_note_import_picker",
+    "_refresh_library_note_detail",
+    "_refresh_local_source_snapshot",
+    "_register_footer_shortcuts",
+    "_reload_library_notes_browse_return_receipt",
+    "_replace_library_canvas_child",
+    "_request_library_notes_tree_initial_load",
+    "_request_library_notes_tree_slice",
+    "_return_to_library_database_notes",
+    "_run_library_note_import_execution",
+    "_run_library_service_call",
+    "_save_library_note",
+    "_schedule_library_note_autosave",
+    "_select_library_rail_row",
+    "_set_library_destination_with_conversation_fence",
+    "_source_record_id",
+    "_supersede_library_notes_navigation",
+    "_sync_library_ingest_rail_for_width",
+    "_sync_library_notes_reader_layout_from_shell",
+    "_sync_library_ordinary_rail_width_contract",
+    "_transition_library_notes_presentation",
+    "_write_library_note_export_file",
+)
+
+
+@pytest.mark.unit
+def test_notes_cluster_method_names_are_genuinely_notes_named() -> None:
+    """Guards the hand-kept cluster list against drift with the census:
+    every name must contain "note" (case-insensitive) -- a typo here would
+    silently test the wrong surface.
+    """
+    not_notes_named = [
+        n for n in _NOTES_CLUSTER_METHOD_NAMES if "note" not in n.lower()
+    ]
+    assert not not_notes_named, f"non-notes-named cluster entries: {not_notes_named!r}"
+    assert len(_NOTES_CLUSTER_METHOD_NAMES) == 186, (
+        f"expected 186 moved names, got {len(_NOTES_CLUSTER_METHOD_NAMES)}"
+    )
+    assert len(set(_NOTES_CLUSTER_METHOD_NAMES)) == len(_NOTES_CLUSTER_METHOD_NAMES), (
+        "duplicate entries in _NOTES_CLUSTER_METHOD_NAMES"
+    )
+
+
+@pytest.mark.unit
+def test_notes_controller_owns_its_cluster() -> None:
+    """Every one of the 186 moved names is a callable on the controller.
+
+    Covers the whole cluster, not a hand-picked sample -- mirrors
+    ``test_media_controller_owns_its_cluster``.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+
+    missing = [
+        name
+        for name in _NOTES_CLUSTER_METHOD_NAMES
+        if not callable(getattr(LibraryNotesController, name, None))
+    ]
+    assert not missing, f"LibraryNotesController is missing: {missing!r}"
+
+
+@pytest.mark.unit
+def test_screen_delegates_notes_handlers() -> None:
+    """Every one of the 186 moved names is a one-line screen delegator that
+    forwards to the SAME-NAMED controller method (or, for the 3 staticmethods,
+    to the module-level controller CLASS) -- unless a later cleanup task pruned
+    it.
+
+    A same-name forwarding check, not a loose "the controller is referenced
+    somewhere" substring check. Skips the names in
+    ``_NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED`` (task 3's census) and instead
+    asserts each such name is genuinely ABSENT from ``LibraryScreen``, so a
+    future accidental re-add fails loudly here rather than silently
+    reintroducing dead code.
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    not_delegators = []
+    for name in _NOTES_CLUSTER_METHOD_NAMES:
+        if name in _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen but is back -- either "
+                "wire it as a delegator again or drop it from "
+                "_NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED"
+            )
+            continue
+        method = getattr(LibraryScreen, name, None)
+        if method is None:
+            not_delegators.append(f"{name!r} (missing entirely)")
+            continue
+        src = inspect.getsource(method)
+        escaped = re.escape(name)
+        if not re.search(rf"_notes_controller\.{escaped}\(", src) and not re.search(
+            rf"LibraryNotesController\.{escaped}\(", src
+        ):
+            not_delegators.append(name)
+    assert not not_delegators, f"not delegators yet: {not_delegators!r}"
+
+
+@pytest.mark.unit
+def test_notes_cluster_staticmethods_forward_to_the_controller_class() -> None:
+    """The 3 staticmethod names in the cluster forward to the CLASS.
+
+    A ``@staticmethod`` has no ``self`` to reach ``self._notes_controller``
+    through, so its delegator names the module-level controller class directly
+    -- the conversations exemplar's own corrected shape (recipe SS11, "the
+    static-method delegator pattern"), reused unchanged by every series since.
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    assert _NOTES_CLUSTER_STATICMETHOD_NAMES <= set(_NOTES_CLUSTER_METHOD_NAMES), (
+        "a staticmethod name is not in the mover tuple"
+    )
+    not_class_forwarding = []
+    for name in _NOTES_CLUSTER_STATICMETHOD_NAMES:
+        if name in _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen but is back"
+            )
+            continue
+        method = getattr(LibraryScreen, name, None)
+        if method is None:
+            not_class_forwarding.append(f"{name!r} (missing entirely)")
+            continue
+        src = inspect.getsource(method)
+        if not re.search(rf"LibraryNotesController\.{re.escape(name)}\(", src):
+            not_class_forwarding.append(name)
+    assert not not_class_forwarding, (
+        f"expected class-forwarding delegators: {not_class_forwarding!r}"
+    )
+
+
+@pytest.mark.unit
+def test_notes_controller_exposes_every_state_field() -> None:
+    """The controller's generated shim loop covers every state field.
+
+    The moved bodies spell the ORIGINAL flat names, so each one has to keep
+    resolving on the controller -- through the same single-source
+    ``notes_state_shim_attr()`` the screen's own task-1 shim block uses.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+
+    field_names = {f.name for f in dataclasses.fields(LibraryNotesState)}
+    assert field_names, "state object is empty"
+    missing = []
+    for name in sorted(field_names):
+        shim_attr = notes_state_shim_attr(name)
+        if not isinstance(getattr(LibraryNotesController, shim_attr, None), property):
+            missing.append(shim_attr)
+    assert not missing, (
+        f"no notes controller shim property found for state field(s): {missing!r}"
+    )
+
+
+@pytest.mark.unit
+def test_every_controller_shim_reads_and_writes_its_own_state_field() -> None:
+    """Each generated controller property is a real two-way shim, not a stub.
+
+    The same closure-binding trap ``test_every_shim_reads_and_writes_its_own_
+    state_field`` rules out for the SCREEN's block, aimed at the controller's
+    own permanent one: a `for` loop over `dataclasses.fields` gives every
+    generated property the LAST field unless the name is bound as a default
+    argument, which would satisfy a bare `isinstance(..., property)` check
+    while silently aliasing 100 names onto one field.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+
+    controller = object.__new__(LibraryNotesController)
+    state = LibraryNotesState()
+    controller._notes_state_accessor = lambda: state
+
+    field_names = sorted(f.name for f in dataclasses.fields(LibraryNotesState))
+    read_mismatch = []
+    write_mismatch = []
+    for name in field_names:
+        shim_attr = notes_state_shim_attr(name)
+        if getattr(controller, shim_attr) is not getattr(state, name):
+            read_mismatch.append(shim_attr)
+        sentinel = object()
+        setattr(controller, shim_attr, sentinel)
+        if getattr(state, name) is not sentinel:
+            write_mismatch.append(shim_attr)
+        if getattr(controller, shim_attr) is not sentinel:
+            read_mismatch.append(shim_attr)
+    assert not read_mismatch, f"shim getters do not read their field: {read_mismatch!r}"
+    assert not write_mismatch, (
+        f"shim setters do not write their field: {write_mismatch!r}"
+    )
+    written = [getattr(state, name) for name in field_names]
+    assert len({id(value) for value in written}) == len(field_names)
+
+
+@pytest.mark.unit
+def test_notes_controller_binds_every_name_its_moved_bodies_use() -> None:
+    """Constructor-binding coverage: the byte-for-byte canon's own contract.
+
+    A moved body is never edited, so every non-state name it spells as
+    ``self.<name>`` (or reaches by ``getattr(self, "<literal>")``, or hands to
+    the shared ``_sync_library_canvas`` dispatcher as bare ``self``) has to
+    keep resolving -- on the CONTROLLER now, not the screen. This asserts the
+    resolution exists at the CLASS level rather than on a constructed
+    instance, deliberately: framework forwards raise off the app tree, so an
+    instance probe would report a false failure for a binding that is in fact
+    present and correct.
+
+    TWO of these names appear in NO moved body at all and would be missed by
+    that walk: ``_library_canvas_projection_depth`` (read as
+    ``getattr(screen, "_library_canvas_projection_depth", 0)``) and
+    ``_library_canvas_resync_pending`` (assigned) are reached by the SHARED
+    ``_sync_library_canvas`` dispatcher through the bare ``self`` 31 movers
+    forward into it -- the unbound-attribute-escape shape one indirection
+    further out than the skills series' own ``focused``. The conversations and
+    media controllers each bind the identical pair for the identical reason.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+
+    assert len(_NOTES_CONTROLLER_BOUND_NAMES) == 103, (
+        f"expected 103 bound names, got {len(_NOTES_CONTROLLER_BOUND_NAMES)}"
+    )
+    assert len(set(_NOTES_CONTROLLER_BOUND_NAMES)) == len(
+        _NOTES_CONTROLLER_BOUND_NAMES
+    ), "duplicate entries in _NOTES_CONTROLLER_BOUND_NAMES"
+    unbound = [
+        name
+        for name in _NOTES_CONTROLLER_BOUND_NAMES
+        if not isinstance(getattr(LibraryNotesController, name, None), property)
+    ]
+    assert not unbound, (
+        "moved bodies reference these names, but the controller binds no "
+        f"property for them: {unbound!r}"
+    )
+
+
+@pytest.mark.unit
+def test_no_notes_handler_is_name_dispatched_by_textual() -> None:
+    """Recipe SS4's THIRD delegator-prune whitelist member, RESOLVED for notes.
+
+    The wave-8 plan predicted notes would own ``on_<message>`` NAME-dispatched
+    handlers (media's were zero, so the member has been untested since
+    prompts). It does not, and this pins the answer against Textual's own
+    dispatch rather than against a reference census -- the exact check recipe
+    SS4 prescribes: "construct the ``Message`` subclass it would receive and
+    confirm ``handler_name`` matches, or confirm no ``Message`` in the
+    subsystem's own widgets produces that string."
+
+    Both directions are asserted. Notes' 35 Message-typed ``@on`` handlers are
+    DECORATOR-dispatched (whitelist member 1); none is named the
+    ``handler_name`` its own Message computes. And no ``Message`` anywhere in
+    ``Widgets/Library`` computes a ``handler_name`` that a notes-named
+    ``LibraryScreen`` method answers to.
+    """
+    import importlib
+    import pkgutil
+
+    from textual.message import Message
+
+    import tldw_chatbook.Widgets.Library as widgets_library
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    handler_names: dict[str, list[str]] = {}
+    for info in pkgutil.iter_modules(widgets_library.__path__):
+        try:
+            module = importlib.import_module(
+                f"tldw_chatbook.Widgets.Library.{info.name}"
+            )
+        except Exception:  # pragma: no cover - optional widget deps
+            continue
+        for attr in dir(module):
+            value = getattr(module, attr, None)
+            if (
+                isinstance(value, type)
+                and issubclass(value, Message)
+                and value is not Message
+            ):
+                handler_names.setdefault(value.handler_name, []).append(
+                    f"{info.name}.{attr}"
+                )
+            if isinstance(value, type):
+                for inner in vars(value).values():
+                    if (
+                        isinstance(inner, type)
+                        and issubclass(inner, Message)
+                        and inner is not Message
+                    ):
+                        handler_names.setdefault(inner.handler_name, []).append(
+                            f"{info.name}.{attr}.{inner.__name__}"
+                        )
+    assert handler_names, "no Library Message classes found -- census is vacuous"
+
+    # Direction 1: no notes-named cluster method is itself a handler_name.
+    name_dispatched = sorted(set(_NOTES_CLUSTER_METHOD_NAMES) & set(handler_names))
+    assert not name_dispatched, (
+        "these moved names ARE Textual name-dispatch targets and must be kept "
+        f"as screen delegators unconditionally: {name_dispatched!r}"
+    )
+
+    # Direction 2: every LibraryScreen method that IS a handler_name is
+    # accounted for, and none of them is notes-owned.
+    screen_dispatched = sorted(
+        name
+        for name in handler_names
+        if callable(getattr(LibraryScreen, name, None))
+        and "note" in name.lower()
+    )
+    assert not screen_dispatched, (
+        "LibraryScreen carries notes-owned name-dispatched handlers the "
+        f"cluster census never enumerated: {screen_dispatched!r}"
+    )
