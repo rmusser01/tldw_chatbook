@@ -197,3 +197,11 @@ once per continuous excessive-activity episode, rearming after a quiet window;
 ordinary polling and token streaming are not per-frame log events. These are
 observations, not authorization to cancel providers or suppress application
 state updates. Fixes to the actual refresh loop require separate causal evidence.
+
+**TASK-31977.1 field correction (2026-09-07).** Emit the random diagnostic
+correlation value as `attempt_id`, replacing `attempt_token`. The live Logs
+redactor treats an unquoted `*_token` assignment as a credential through the
+end of the line, which removed approved phase and failure fields. The new
+spelling carries exactly the same random value through send and refresh events.
+Credential redaction, metadata admission, retention and excluded data are
+unchanged; no log record receives a redaction exemption.

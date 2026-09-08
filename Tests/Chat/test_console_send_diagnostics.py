@@ -1,4 +1,4 @@
-"""TASK-31977: support evidence must survive the real disk and share sinks."""
+"""Support evidence must survive disk, live logs, and both copy actions."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from Tests.Chat.test_console_durable_commit_diagnostics import (
 )
 from Tests.test_logs_share_path_privacy import _Collector
 from tldw_chatbook.Logging_Config import PrivateRotatingFileHandler
-from tldw_chatbook.UI.Logs_Window import LogsWindow
+from tldw_chatbook.UI.Logs_Window import LogRecord, LogsWindow
 from tldw_chatbook.Utils.persistent_diagnostics import PersistentDiagnosticFilter
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
@@ -34,6 +34,9 @@ def sinks(tmp_path):
             app=SimpleNamespace(
                 copy_to_clipboard=copied.append, notify=lambda *a, **k: None
             ),
+            _visible_records=lambda: [
+                LogRecord(*record) for record in app._log_records
+            ],
         )
         try:
             yield SimpleNamespace(path=path, window=window, copied=copied)
@@ -44,7 +47,8 @@ def sinks(tmp_path):
 
 def assert_export(sinks, *tokens):
     LogsWindow._on_copy_all(sinks.window)
-    for text in (sinks.path.read_text(), sinks.copied[-1]):
+    LogsWindow._on_copy_visible(sinks.window)
+    for text in (sinks.path.read_text(), *sinks.copied[-2:]):
         for token in tokens:
             assert token in text
         assert SECRET_IDENTIFIER not in text
@@ -52,7 +56,7 @@ def assert_export(sinks, *tokens):
     return sinks.path.read_text()
 
 
-async def test_pre_trace_commit_failure_reaches_file_and_copy_all(sinks):
+async def test_pre_trace_commit_failure_reaches_file_and_both_copy_actions(sinks):
     controller, _store = _controller_with_failing_commit()
     result = await controller.submit_draft("PRIVATE-DRAFT-31977")
     assert not result.accepted
@@ -69,6 +73,35 @@ async def test_pre_trace_commit_failure_reaches_file_and_copy_all(sinks):
         "capture_enabled=false",
     )
     assert "phase=provider_entry" not in text
+
+
+async def test_send_and_refresh_keep_the_same_visible_correlation_id(sinks):
+    import re
+
+    from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
+
+    monitor = UIResponsivenessMonitor()
+    try:
+        async with send_diagnostic_scope("ui_submit", monitor):
+            for _ in range(100):
+                monitor.record_worker_started("console-sync")
+                monitor.record_worker_finished("console-sync")
+            monitor.record_heartbeat_delta(0.01)
+    finally:
+        await asyncio.to_thread(monitor.close)
+    assert_export(sinks, "event=ui_refresh_churn", "phase=ui_submit", "attempt_id=")
+    for text in (sinks.path.read_text(), *sinks.copied[-2:]):
+        events = [
+            line
+            for line in text.splitlines()
+            if "event=console_send_stage" in line or "event=ui_refresh_churn" in line
+        ]
+        assert len(events) >= 3
+        identifiers = [
+            re.search(r"attempt_id=([0-9a-f]{32})\b", line) for line in events
+        ]
+        assert all(identifiers)
+        assert len({match[1] for match in identifiers}) == 1
 
 
 async def test_responsive_refresh_churn_is_exported_once_per_episode(sinks):
@@ -229,7 +262,7 @@ async def test_sequential_queued_submissions_get_independent_diagnostic_budgets(
         for line in text.splitlines()
         if "phase=controller_submit" in line and "status=entered" in line
     ]
-    assert len({re.search(r"attempt_token=(\w+)", line)[1] for line in starts}) == 8
+    assert len({re.search(r"attempt_id=(\w+)", line)[1] for line in starts}) == 8
 
 
 async def test_failure_keeps_runtime_and_capture_context_at_warning_root(sinks):
