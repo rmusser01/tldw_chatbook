@@ -416,7 +416,7 @@ python -m pytest Tests/ProductionApp/test_service_composition_lifecycle.py -q
 <a id="task-6"></a>
 ## Task 6: Add recovery adapters for core conversation and library stores
 
-**Backlog:** [TASK-31989](../../../backlog/tasks/task-31989%20-%20Add-recovery-adapters-for-core-conversation-and-library-stores.md) — To Do.
+**Backlog:** [TASK-31989](../../../backlog/tasks/task-31989%20-%20Add-recovery-adapters-for-core-conversation-and-library-stores.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -441,7 +441,7 @@ the following exact contracts. Factories return only installed owner declaration
 def core_adapters() -> tuple[OwnerAdapter, ...]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_core_owners.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_core_owners.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -451,19 +451,19 @@ def test_core_owner_set_is_declared():
     assert {"db.chachanotes.primary", "db.media.primary", "db.prompts.primary"} <= names
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_core_owners.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_core_owners.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Declare core store resolvers and dependency groups for conversations/messages/characters/notes, prompts, media, collections, and ingestion history. Include soft-deleted rows and referenced attachments; do not export records through selective Chatbook serializers.
+- [x] **Step 3:** Declare core store resolvers and dependency groups for conversations/messages/characters/notes, prompts, media, collections, and ingestion history. Include soft-deleted rows and referenced attachments; do not export records through selective Chatbook serializers.
 
-- [ ] **Step 4:** Implement capture with registered backup_connection_to_private or copy_private_sqlite owners. Snapshot committed WAL through SQLite while maintenance is held; never independently copy sidecars. Register recovery-specific backup authority where current centralized-backup policy disallows it; keep ordinary selective export exclusions intact.
+- [x] **Step 4:** Implement capture with registered backup_connection_to_private or copy_private_sqlite owners. Snapshot committed WAL through SQLite while maintenance is held; never independently copy sidecars. Register recovery-specific backup authority where current centralized-backup policy disallows it; keep ordinary selective export exclusions intact.
 
-- [ ] **Step 5:** Describe exact supported schema/FTS/trigger definitions and installed migration steps through SchemaPolicy. Add relocation of managed paths and domain reference validation without normal constructors. Unsupported historical versions stay explicit rather than attempting best-effort upgrades.
+- [x] **Step 5:** Describe exact supported schema/FTS/trigger definitions and installed migration steps through SchemaPolicy. Add relocation of managed paths and domain reference validation without normal constructors. Unsupported historical versions stay explicit rather than attempting best-effort upgrades.
 
-- [ ] **Step 6:** Create real database fixtures through current domain APIs under Tests isolation, then compare primary keys, relationships, soft deletions, FTS content, BLOBs, and byte assets after adapter capture. Add per-store WAL and interrupted-capture cases; the declaration smoke test below is only the smallest red step, not completion evidence.
+- [x] **Step 6:** Create real database fixtures through current domain APIs under Tests isolation, then compare primary keys, relationships, soft deletions, FTS content, BLOBs, and byte assets after adapter capture. Add per-store WAL and interrupted-capture cases; the declaration smoke test below is only the smallest red step, not completion evidence.
 
-- [ ] **Step 7:** Update both owner inventories and run private SQLite census/interop guards alongside these focused round trips.
+- [x] **Step 7:** Update both owner inventories and run private SQLite census/interop guards alongside these focused round trips.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -476,7 +476,7 @@ copy_private_sqlite(self.backup_owner_id, item.path, destination,
                     progress_guard=check_cancelled)
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -485,11 +485,11 @@ python -m pytest Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_in
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): add recovery adapters for core conversation and library stores`. Recheck task-ID collisions
   before merge and preserve unrelated work.
