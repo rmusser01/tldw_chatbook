@@ -1,11 +1,11 @@
 ---
 id: TASK-32033
 title: Add Copy selection to the Console selection menu
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 05:16'
-updated_date: '2026-09-08 06:47'
+updated_date: '2026-09-08 06:52'
 labels:
   - console
   - clipboard
@@ -69,10 +69,10 @@ Qodo's follow-up requested explicit Returns sections on the three selection gett
 Files: `Widgets/Console/console_selection_menu.py`, `Widgets/Console/console_transcript.py`, both generated `css/widget_defaults_*.tcss` files, the new `Tests/UI/test_console_selection_copy.py`, existing selection-menu, keyboard-selection, and end-to-end tests, `Docs/User_Guide/console/text-selection-and-feedback.md`, and `backlog/docs/lessons-textual.md`.
 
 Verification:
-- All **183 cases pass** across the six targeted selection suites after rebasing onto dev at `c37d61136` (157.15 seconds), including the three inherited failures and all eight resize cases. Each inherited failure was reproduced before its repair and verified passing afterward. The existing requests dependency-version warning remains.
+- All **183 cases pass** across the six targeted selection suites after rebasing onto dev at `aecb14720` (170.00 seconds), including the three inherited failures and all eight resize cases. Each inherited failure was reproduced before its repair and verified passing afterward. The existing requests dependency-version warning remains.
 - All **55 selection-menu cases pass** after the Qodo follow-up (22.75 seconds). The four compact-to-full resize cases each failed before the owner-bound fix and passed afterward; four additional cases verify settled movement and click handling while the full menu continues to fit.
 - All eight new Copy cases pass, including mouse and keyboard journeys with production styles, uncapped plain/Markdown/diff text, and stale selections. Earlier production render probes also verified user and assistant menu containment and first-action focus; SVG/PNG captures are in `/private/tmp/chatbook-copy-selection-32033/`.
-- All six `scripts/preflight.sh` derived-artifact checks pass on the rebased branch, including stylesheet reproduction and task ID hygiene. The rebase changed none of the three patches, confirmed with git range-diff.
+- All six `scripts/preflight.sh` derived-artifact checks pass on the rebased branch, including stylesheet reproduction and task ID hygiene. Neither rebase changed the patches, confirmed with git range-diff.
 - The new Copy test file passes Ruff and formatting. Before/after checks find no new Ruff diagnostics in the five existing Python files; all edited Python regions and scoped whitespace checks pass. Existing lint findings and unrelated formatting drift remain.
 - Clipboard assertions use the real Textual app clipboard in the headless harness. Linux desktop clipboard delivery was not exercised; the user guide explains the existing OSC 52 requirement and terminal-native selection fallback.
 
