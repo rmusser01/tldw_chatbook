@@ -300,6 +300,18 @@
 
 
 
+/* ===== WIDGET: LibraryCharacterRepairDialog (UI/Library_Modules/library_character_repair_controller.py) ===== */
+
+    LibraryCharacterRepairDialog { align: center middle; }
+    LibraryCharacterRepairDialog > Container {
+        width: 76; max-width: 96%; height: auto; max-height: 90%;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    LibraryCharacterRepairDialog Select.character-repair-select { width: 100%; }
+    LibraryCharacterRepairDialog Horizontal.character-repair-actions { height: auto; }
+    LibraryCharacterRepairDialog Button.character-repair-action { min-width: 14; margin-right: 1; }
+
+
 /* ===== WIDGET: SkillImportChoiceModal (UI/Library_Modules/skill_import_choice_modal.py) ===== */
 
     SkillImportChoiceModal {
@@ -688,6 +700,17 @@
     }
 
 
+
+
+/* ===== WIDGET: RoleplayDraftNavigationDialog (UI/Navigation/character_conversation_navigation.py) ===== */
+
+    RoleplayDraftNavigationDialog { align: center middle; }
+    RoleplayDraftNavigationDialog > Container {
+        width: 72; max-width: 96%; height: auto; border: thick $accent;
+        background: $surface; padding: 1 2;
+    }
+    RoleplayDraftNavigationDialog Vertical.roleplay-draft-actions { height: auto; }
+    RoleplayDraftNavigationDialog Button.roleplay-draft-action { width: 100%; margin-top: 1; }
 
 
 /* ===== WIDGET: MainNavigationBar (UI/Navigation/main_navigation.py) ===== */
@@ -1935,6 +1958,41 @@
         max-height: 1;
         background: $boost;
     }
+
+
+
+
+
+/* ===== WIDGET: ConsoleAppearancePickerModal (Widgets/Console/console_appearance_picker_modal.py) ===== */
+
+    ConsoleAppearancePickerModal {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
