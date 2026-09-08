@@ -395,7 +395,7 @@ async def test_cancelled_running_and_queued_backups_keep_worker_native_ownership
 
 
 @pytest.mark.asyncio
-async def test_pause_refuses_delegated_sqlite_after_validation_file_effects(
+async def test_pause_refuses_validation_before_file_effects(
     tmp_path, monkeypatch
 ):
     import asyncio
@@ -455,11 +455,7 @@ async def test_pause_refuses_delegated_sqlite_after_validation_file_effects(
         finish.set()
         with pytest.raises(ProfileRepositoryError):
             await pending
-        # This is eventual SQLite refusal, NOT admission before file effects.
-        # The source FD and copy files are the mandatory next-phase native graph.
-        assert {"source_fd", "directory", "snapshot_fd"} <= {
-            role for role, paused in effects if paused
-        }
+        assert effects == [], "paused validation must refuse before source/copy IO"
         assert not (tmp_path / "snapshot.sqlite").exists()
         assert not tuple(tmp_path.glob(".snapshot.sqlite.*.backup"))
         assert await repo._maintenance_drain(time.monotonic() + 3)

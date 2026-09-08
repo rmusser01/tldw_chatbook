@@ -770,6 +770,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_validate_standalone_snapshot | connect_private_sqlite | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | _fsync_directory | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | _fsync_file | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_schema.py | _CandidateValidationJob.pin_parent | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _copy_source_to_snapshot | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _open_candidate_source | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _open_exact_store_sidecars | open | 1 | unsupported | tts |
@@ -779,7 +780,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/profile_schema.py | open_exact_current_profile_store | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | open_profile_store | connect_private_sqlite | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | peek_profile_store_schema_version | connect_private_sqlite | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_schema.py | validate_profile_candidate | connect_private_sqlite | 2 | unsupported | tts |
+| tldw_chatbook/TTS/profile_schema.py | _validate_profile_candidate | connect_private_sqlite | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_store_lock.py | ProfileStoreLease.acquire | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/sample_audio_validation.py | _read_bounded_regular_file | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/sample_audio_validation.py | compressed_audio_has_decodable_frame | open | 1 | unsupported | tts |
@@ -1124,7 +1125,7 @@ The control owner now exclusively creates bounded version-1 before/after write i
 | tldw_chatbook/TTS/profile_reference_materialization.py | _create_materialization_sync | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _sweep_orphans | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _cleanup_materialization_sync | os.unlink | 2 | unsupported | tts |
-| tldw_chatbook/TTS/profile_schema.py | _unlink_if_present | os.unlink | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_schema.py | _CandidateValidationJob.cleanup.remove_snapshot | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/TTS/voice_bundle_service.py | _cleanup_operation | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._copy_pending_video_external | os.unlink | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | os.unlink | 1 | generic_boundary | generic |
@@ -2555,3 +2556,32 @@ copy, `raw._replace` and `raw._remove_temporary`. Exact BASE AST-clause reproduc
 and full source/test byte identity are in the phase14b report. Controller owns the
 mandatory Task10 guard correction after native continuation; this is separate from
 Task26 diagnostic drift and is not a waiver. Source census itself passed.
+
+
+### Task10 phase14c: ordinary candidate validation, still unsupported as installed source
+
+`TTS/profile_schema.py::validate_profile_candidate(path, *, check_deadline=None)`
+now owns a concrete synchronous `_CandidateValidationJob` before first callback or
+file access. It grants no configured repository/source authority. Its private
+`_validate_profile_candidate(..., job=...)` retains existing snapshot-copy, schema4
+and disposable-only historical migration behavior. Actual source/snapshot FD,
+private directory/main identities, parent pins, returned upgrade/read SQLite handles
+and independent ordinary leases survive uncertain cleanup in `storage._raw_operations`.
+Attempted and positive close are distinct; independent closes preserve control-flow
+priority, and foreign/unlinked/substituted or unproven-sidecar namespace uncertainty
+cannot be erased by unrelated success. Native missing-parent-pin detection preserves
+ordinary platform behavior without a failure-triggered downgrade or qualification.
+The source census names the exact new pin and unlink symbols, with unchanged
+`unsupported / tts` classification.
+
+Immediate continuation: authenticate app.py's actual configured TTSProfileRepository,
+preselect finite original source/destination/snapshot/migration/restore names before
+worker dispatch, and own the actual `DB/private_sqlite.py::_pin_sqlite_source` parent
+and file FDs, backup journals, `profile_repository._worker_validate_standalone_snapshot`
+additional immutable reader, historical migration subresources and real reference
+BLOB lifetimes. The standalone job cannot stand in for that compound source. Restore
+publication/rebinding, ProfileStoreLease residual handles, materializer/bundle sessions,
+service/UI dirty state and runtime/audio/model/process work remain Task10. ADR040 shared
+voice path census correction follows this immediate TTS graph, not a default-path move.
+The inherited exact JSONStorage AST guard follow-up, three host SemLock failures and
+combined-order/diagnostic debts retain their earlier separate assignments.

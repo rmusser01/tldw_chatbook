@@ -99,6 +99,16 @@ ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct maintenance native-lifetime implementation; preserve ADR028/040/051/023. Record controller scope ruling before production.
 
+### Phase14c implementation plan — standalone candidate native job (ruling81)
+
+1. Preserve six actual BASE file-effect, real FD/SQLite close-before/after and foreign-namespace REDs; apply controller ruling81 before production.
+2. Register one concrete ordinary synchronous validation job before selectors/callbacks, admit each native allocation, and retain actual source/copy/parent/SQLite resources through positive independent cleanup without granting installed or callback authority.
+3. Preserve disposable-only historical migration, deadline and first control-flow/error precedence; isolate exact unsafe cleanup expectations and cover partial allocation, callback pause, independent native admission and affected backup/schema contracts.
+4. Run affected targeted tests, source census and static checks; self-review, document exact native limits and immediate configured-source/preselection/pin/journal/BLOB/outer-reader continuation, and commit scoped files.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct ordinary native-lifetime implementation of ADR126 under ruling81; ADR028/040/051/023 ownership and schema contracts remain unchanged.
+
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -748,3 +758,38 @@ source/test are reproduced in task10-phase14b-base-inventory.log. Controller own
 its mandatory Task10 correction after native continuation, separately from Task26
 diagnostic debt. Fatal Ruff, new-test format and diff checks passed. All counts
 are overlapping; see phase14b report for exact commands/limits.
+
+
+### Phase14c implementation notes — ordinary standalone candidate job (ruling81)
+
+The standalone TTS candidate validator now takes ordinary admission before its
+first callback/source access and before each native allocation. A concrete retained
+job owns source/copy FD, exact directory/main/parent evidence, returned upgrade/read
+SQLite handles, original body/cleanup errors and all acquired leases. Independent
+close attempts preserve first control-flow priority; uncertainty and foreign namespace
+cannot be erased by unlink, another success or caller cancellation. Pinned directory
+rechecks and fchmod prevent an observed replacement from receiving mode or child
+creation effects. Explicit missing POSIX pin primitives preserve ordinary validation
+without any error-triggered downgrade or installed-source qualification.
+
+Only production TTS/profile_schema.py changed. Targeted legacy cleanup expectations
+now preserve unsafe uncertain/foreign namespaces in isolated children while retaining
+original post-unlink absence and exception precedence. The preceding backup pause
+regression now requires zero validation file effects. Exact owner census rows and
+ADR126 document the still-unsupported TTS source posture.
+
+Final changed-source targeted run: 72 passed / 128 deselected, 33.95s, including35
+new native cases,34 affected standalone schema cases, the actual backup pause check
+and real backup/reference round trips. Earlier61/25/20/29 and10/8 edge runs overlap.
+Six initial BASE REDs, the later genuine directory-mode RED, initial control-flow
+regression and intermediate fixture mistakes are preserved distinctly in the dual
+phase14c report. Two affected private-SQLite census checks passed; final exact source
+census and fatal Ruff/new-module format/diff checks recorded there. Only targeted
+checks ran; inherited SemLock, two shared-voice census failures, pet AST guard,
+combined-order/bootstrap and diagnostic debts remain explicit and unmodified.
+
+ADR required: yes. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct ordinary native-lifetime implementation under ruling81; ADR028/040/051/023
+remain intact. Next immediate TTS source/preselection/delegated pin+journal/BLOB/outer
+reader and remaining migration/restore/materializer/runtime/app work stays Task10.
+No installed capability, startup/responder/Complete/replacement or AC promotion.

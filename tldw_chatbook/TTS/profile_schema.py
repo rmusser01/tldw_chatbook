@@ -1,10 +1,9 @@
 """SQLite schema, validation, and persistence codecs for TTS profiles.
 
-Connections remain caller-owned.  The live opener configures and returns a
-connection; candidate validation owns and always closes every connection it
-opens against its disposable snapshot copy -- a brief read-write reopen to
-run the same in-place version upgrade the live opener uses, followed by the
-immutable read-only handle used for the rest of validation.
+Connections remain caller-owned. The live opener configures and returns a
+connection. Candidate validation owns its disposable snapshot connections and
+retains uncertain native cleanup: a brief read-write reopen upgrades only the
+copy, followed by an immutable read-only validation handle.
 """
 
 from __future__ import annotations
@@ -2071,17 +2070,243 @@ def _apply_posix_snapshot_mode(snapshot_fd: int) -> bool:
     return True
 
 
-def _unlink_if_present(path: str) -> None:
-    try:
-        os.unlink(path)
-    except FileNotFoundError:
-        pass
+_CANDIDATE_DIR_FD_CALLS = frozenset((os.open, os.stat, os.unlink, os.rmdir))
+
+
+class _CandidateValidationJob:
+    """Own one ordinary synchronous candidate call, never installed authority."""
+
+    def __init__(self, source: object) -> None:
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        self.storage = storage
+        self.parent_pins_available = (
+            os.name == "posix"
+            and bool(getattr(os, "O_DIRECTORY", 0))
+            and bool(getattr(os, "O_NOFOLLOW", 0))
+            and callable(getattr(os, "fchmod", None))
+            and _CANDIDATE_DIR_FD_CALLS.issubset(getattr(os, "supports_dir_fd", ()))
+        )
+        self.source = source
+        self.pid = os.getpid()
+        self.thread = storage.threading.current_thread()
+        self.resolved_source: Path | None = None
+        self.source_identity: tuple[int, ...] | None = None
+        self.attempt = None
+        self.leases = []
+        self.descriptors: dict[str, int] = {}
+        self.connections: dict[str, sqlite3.Connection] = {}
+        self.attempted: set[str] = set()
+        self.directory: Path | None = None
+        self.directory_identity: tuple[int, int] | None = None
+        self.directory_parent_identity: tuple[int, int] | None = None
+        self.snapshot: Path | None = None
+        self.snapshot_identity: tuple[int, int] | None = None
+        self.snapshot_parent_identity: tuple[int, int] | None = None
+        self.allocation_pending = False
+        self.uncertain = False
+        self.body_error: BaseException | None = None
+        self.cleanup_errors: list[BaseException] = []
+        with storage._changed:
+            storage._raw_operations.add(self)
+            storage._changed.notify_all()
+
+    def admit(self, path: Path | None) -> None:
+        # No token is installed or inherited as this job's authority. Even an
+        # outer admitted repository operation cannot grant it work after pause.
+        with self.storage._lock:
+            if self.storage._pause is not None:
+                from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                raise RecoveryRequired("storage_locally_paused")
+        if self.attempt is None:
+            self.attempt = self.storage._Acquisition()
+        self.attempt.check(path)
+        lease = self.storage.acquire_storage(path)
+        self.leases.append(lease)
+        self.attempt.check(path)
+
+    def pin_parent(self, role: str, path: Path) -> tuple[int, int]:
+        self.admit(path)
+        if not self.parent_pins_available:
+            # Explicit ordinary-unqualified platform path; never a retry after
+            # pin/identity/IO failure and never installed/capture authority.
+            named = path.lstat()
+            if not stat.S_ISDIR(named.st_mode):
+                raise ValueError
+            return named.st_dev, named.st_ino
+        self.allocation_pending = True
+        self.descriptors[role] = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        self.allocation_pending = False
+        opened = os.fstat(self.descriptors[role])
+        named = path.lstat()
+        identity = (opened.st_dev, opened.st_ino)
+        if not stat.S_ISDIR(opened.st_mode) or identity != (named.st_dev, named.st_ino):
+            self.uncertain = True
+            raise ValueError
+        return identity
+
+    def check_directory(self) -> None:
+        assert self.directory is not None
+        named = self.directory.lstat()
+        pinned = (
+            os.fstat(self.descriptors["directory"])
+            if self.parent_pins_available
+            else named
+        )
+        if (named.st_dev, named.st_ino) != self.directory_identity or (
+            pinned.st_dev,
+            pinned.st_ino,
+        ) != self.directory_identity:
+            raise ValueError
+        parent = self.directory.parent.lstat()
+        pinned_parent = (
+            os.fstat(self.descriptors["directory_parent"])
+            if self.parent_pins_available
+            else parent
+        )
+        if (parent.st_dev, parent.st_ino) != self.directory_parent_identity or (
+            pinned_parent.st_dev,
+            pinned_parent.st_ino,
+        ) != self.directory_parent_identity:
+            raise ValueError
+
+    def check_snapshot(self) -> None:
+        assert self.snapshot is not None
+        named = self.snapshot.lstat()
+        parent = self.snapshot.parent.lstat()
+        pinned = (
+            os.fstat(self.descriptors["snapshot_parent"])
+            if self.parent_pins_available
+            else parent
+        )
+        if (
+            not stat.S_ISREG(named.st_mode)
+            or named.st_nlink != 1
+            or (named.st_dev, named.st_ino) != self.snapshot_identity
+            or (parent.st_dev, parent.st_ino) != self.snapshot_parent_identity
+            or (pinned.st_dev, pinned.st_ino) != self.snapshot_parent_identity
+            or not _sidecars_absent(self.snapshot)
+        ):
+            raise ValueError
+
+    def close_descriptor(self, role: str) -> None:
+        if role in self.attempted:
+            raise ValueError
+        self.attempted.add(role)
+        _close_candidate_fd(self.descriptors[role])
+        del self.descriptors[role]
+
+    def cleanup(self, body_error: BaseException | None) -> _CleanupState:
+        if self.body_error is None:
+            self.body_error = body_error
+        cleanup = _CleanupState(body_error)
+
+        def attempt(action: Callable[[], object]) -> None:
+            def recorded() -> None:
+                try:
+                    action()
+                except BaseException as error:
+                    self.uncertain = True
+                    self.cleanup_errors.append(error)
+                    raise
+
+            cleanup.attempt(recorded)
+
+        for role in ("upgrade", "read"):
+            if role in self.connections:
+
+                def close_connection(role: str = role) -> None:
+                    self.check_snapshot()
+                    if role in self.attempted:
+                        raise ValueError
+                    self.attempted.add(role)
+                    self.connections[role].close()
+                    del self.connections[role]
+
+                attempt(close_connection)
+        for role in ("snapshot", "source"):
+            if role in self.descriptors:
+                attempt(lambda role=role: self.close_descriptor(role))
+        if self.allocation_pending:
+            self.uncertain = True
+        if not self.uncertain and self.snapshot is not None:
+
+            def remove_snapshot() -> None:
+                self.check_snapshot()
+                if self.parent_pins_available:
+                    os.unlink(
+                        self.snapshot.name, dir_fd=self.descriptors["snapshot_parent"]
+                    )
+                else:
+                    os.unlink(self.snapshot)
+                self.snapshot = None
+
+            attempt(remove_snapshot)
+        if not self.uncertain and self.directory is not None:
+
+            def remove_directory() -> None:
+                self.check_directory()
+                if self.parent_pins_available:
+                    os.rmdir(
+                        self.directory.name, dir_fd=self.descriptors["directory_parent"]
+                    )
+                else:
+                    self.directory.rmdir()
+                self.directory = None
+
+            attempt(remove_directory)
+        if not self.uncertain:
+            for role in tuple(self.descriptors):
+                attempt(lambda role=role: self.close_descriptor(role))
+        if not self.uncertain:
+            for lease in self.leases:
+                attempt(lease.close)
+        if self.attempt is not None:
+            self.attempt.close()
+        if not self.uncertain:
+            with self.storage._changed:
+                self.storage._raw_operations.discard(self)
+                self.storage._changed.notify_all()
+        return cleanup
 
 
 def validate_profile_candidate(
     path: Path,
     *,
     check_deadline: Callable[[], None] | None = None,
+) -> None:
+    """Validate a disposable private copy, retaining uncertain native cleanup."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    job = _CandidateValidationJob(path)
+    body_error: BaseException | None = None
+    try:
+        job.admit(path if isinstance(path, Path) else None)
+        _validate_profile_candidate(path, check_deadline=check_deadline, job=job)
+    except RecoveryRequired:
+        body_error = _repository_error("schema_corrupt")
+    except BaseException as error:
+        body_error = error
+    cleanup = job.cleanup(body_error)
+    cleanup.raise_control_flow()
+    if body_error is not None:
+        raise body_error
+    if cleanup.ordinary_cleanup_failed or job.uncertain:
+        raise _repository_error("schema_corrupt") from None
+
+
+def _validate_profile_candidate(
+    path: Path,
+    *,
+    check_deadline: Callable[[], None] | None = None,
+    job: _CandidateValidationJob,
 ) -> None:
     """Validate a point-in-time private snapshot of a standalone v1 backup.
 
@@ -2123,17 +2348,23 @@ def validate_profile_candidate(
     try:
         if check_deadline is not None:
             check_deadline()
+        job.resolved_source = resolved_path
         path_state = _source_identity(os.stat(resolved_path))
         if not stat.S_ISREG(path_state[2]):
             raise ValueError
 
+        job.admit(resolved_path)
+        job.allocation_pending = True
         source_fd = _open_candidate_source(
             resolved_path,
             _candidate_source_open_flags(),
         )
+        job.descriptors["source"] = source_fd
+        job.allocation_pending = False
         if check_deadline is not None:
             check_deadline()
         source_state = _source_identity(os.fstat(source_fd))
+        job.source_identity = source_state
         if source_state != path_state or not _source_is_unchanged(
             source_fd,
             resolved_path,
@@ -2141,17 +2372,40 @@ def validate_profile_candidate(
         ):
             raise ValueError
 
+        job.admit(Path(tempfile.gettempdir()).resolve(strict=True))
+        job.allocation_pending = True
         snapshot_directory = Path(
             tempfile.mkdtemp(
                 prefix="tldw-tts-profile-candidate-",
                 dir=Path(tempfile.gettempdir()).resolve(strict=True),
             )
         )
-        os.chmod(snapshot_directory, 0o700)
+        job.directory = snapshot_directory
+        job.allocation_pending = False
+        job.directory_parent_identity = job.pin_parent(
+            "directory_parent", snapshot_directory.parent
+        )
+        job.directory_identity = job.pin_parent("directory", snapshot_directory)
+        job.check_directory()
+        if job.parent_pins_available:
+            os.fchmod(job.descriptors["directory"], 0o700)
+        else:
+            os.chmod(snapshot_directory, 0o700)
+        job.admit(snapshot_directory)
+        job.check_directory()
+        job.allocation_pending = True
         snapshot_fd, snapshot_path = tempfile.mkstemp(
             prefix="snapshot-",
             suffix=".sqlite3",
             dir=snapshot_directory,
+        )
+        job.descriptors["snapshot"] = snapshot_fd
+        job.snapshot = Path(snapshot_path)
+        job.allocation_pending = False
+        info = os.fstat(snapshot_fd)
+        job.snapshot_identity = (info.st_dev, info.st_ino)
+        job.snapshot_parent_identity = job.pin_parent(
+            "snapshot_parent", job.snapshot.parent
         )
         posix_mode_enforced = _apply_posix_snapshot_mode(snapshot_fd)
         _copy_source_to_snapshot(
@@ -2179,12 +2433,17 @@ def validate_profile_candidate(
 
         if check_deadline is not None:
             check_deadline()
+        job.admit(Path(snapshot_path))
+        job.allocation_pending = True
         upgrade_connection = connect_private_sqlite(
             "tts.profile_candidate_upgrade",
             snapshot_path,
             must_exist=True,
             isolation_level=None,
         )
+        job.connections["upgrade"] = upgrade_connection
+        job.allocation_pending = False
+        job.check_snapshot()
         _configure_connection(upgrade_connection)
         # Force the disposable snapshot out of WAL mode before touching it:
         # switching away from WAL always checkpoints and removes any -wal/
@@ -2222,6 +2481,8 @@ def validate_profile_candidate(
 
         if check_deadline is not None:
             check_deadline()
+        job.admit(Path(snapshot_path))
+        job.allocation_pending = True
         connection = connect_private_sqlite(
             "tts.profile_candidate",
             snapshot_path,
@@ -2229,6 +2490,8 @@ def validate_profile_candidate(
             immutable=True,
             isolation_level=None,
         )
+        job.connections["read"] = connection
+        job.allocation_pending = False
         if not _snapshot_is_unchanged(
             snapshot_fd,
             snapshot_path,
@@ -2261,25 +2524,11 @@ def validate_profile_candidate(
             raise ValueError
     except BaseException as error:
         body_error = error
-
-    cleanup = _CleanupState(body_error)
-    if upgrade_connection is not None:
-        cleanup.attempt(upgrade_connection.close)
-    if connection is not None:
-        cleanup.attempt(connection.close)
-    if snapshot_fd is not None:
-        cleanup.attempt(lambda: _close_candidate_fd(snapshot_fd))
-    if source_fd is not None:
-        cleanup.attempt(lambda: _close_candidate_fd(source_fd))
-    if snapshot_path is not None:
-        cleanup.attempt(lambda: _unlink_if_present(snapshot_path))
-    if snapshot_directory is not None:
-        cleanup.attempt(snapshot_directory.rmdir)
-    cleanup.raise_control_flow()
+        job.body_error = error
 
     if body_error is not None:
-        if isinstance(body_error, ProfileRepositoryError):
+        if not isinstance(body_error, Exception) or isinstance(
+            body_error, ProfileRepositoryError
+        ):
             raise body_error
-        raise _repository_error("schema_corrupt") from None
-    if cleanup.ordinary_cleanup_failed:
         raise _repository_error("schema_corrupt") from None

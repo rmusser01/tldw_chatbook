@@ -525,3 +525,38 @@ of admission before file effects. Finite original source selection must precede
 those effects before any full backup/source qualification. Migration, restore,
 reference BLOB/materializer/bundle and actual app/runtime owners remain Task10 work.
 No startup release, responder, full repository or Complete qualification follows.
+
+
+### Task10 phase14c — ordinary candidate validation native job (ruling81)
+
+The standalone synchronous `validate_profile_candidate` API has no repository
+receiver and authenticates no installed source. It now registers its actual call
+in the existing raw-operation set before ordinary admission, callbacks or selectors.
+Each new native allocation obtains ordinary admission. It creates no operation token,
+callback permission or directory-descendant authority; a later pause refuses new
+allocation even when another installed operation called the helper.
+
+The concrete job retains supplied/resolved source and observed source identity,
+source/copy descriptors, returned upgrade/read SQLite connections, private snapshot
+and directory identities, parent pins, ordinary leases and body/cleanup association.
+Resources become owned immediately on return, before subsequent metadata probes.
+Attempted close and positive native retirement are distinct. Independent closes
+continue after errors with original first control-flow precedence; uncertain native
+state, allocation return, substituted namespace or unproven sidecars retain the job
+and actual leases. No uncertain close is retried or foreign namespace removed.
+Parent-pinned removal and mode changes apply only to the observed private cohort.
+Positive ordinary cleanup removes only that job. Another successful validation
+cannot retire older uncertainty. Disposable-copy-only historical migration, schema4,
+source bytes, deadline and public sanitized error contracts remain unchanged.
+
+Explicit missing-parent-pin primitives select the pre-existing ordinary path with
+identity checks; actual pin, IO or admission failures never downgrade. Every acquired
+lease is retained, including real native leases on a host missing only a pin primitive.
+Host-simulated portability is not Windows-native, source or capture qualification.
+
+This is the bounded ordinary native repair, not whole candidate/repository ownership:
+internal historical migration/BLOB lifetimes, delegated SQLite source pins and journals,
+the repository's additional immutable snapshot reader, configured app source binding,
+finite preselection, restore/publication/materializer/runtime and all-owner startup
+remain immediate Task10 work. Successful schema inspection never proves those resources
+retired. No Complete/replacement/responder/startup capability or task AC is promoted.
