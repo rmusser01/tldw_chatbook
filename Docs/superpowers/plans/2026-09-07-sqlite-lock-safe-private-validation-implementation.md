@@ -309,6 +309,19 @@ evidence = None
 - [ ] Run new proof tests, `Tests/TTS/test_profile_schema.py`, and `Tests/DB/test_sql_validation.py`. Add exact malformed/oversized TTS-operation frames to protocol tests. Existing normal exact-open no-BLOB/serialization and incremental metadata tests must still pass.
 - [ ] Commit the named leaf/validator/protocol/tests with message `refactor(tts): share isolated metadata-only SQLite proof`; review schema parity, import isolation and original-inode ownership before the live wrapper uses it.
 
+Task 4 checkpoint: implementation `2db961c4d`, spec correction `d643bbc90`.
+Independent spec review passes after retaining healthy initialized proof across
+ordinary authority refusal. Quality review remains open: first sidecar capture
+can misclassify filesystem refusal as helper loss. The fix exposed an unresolved
+partial-capture policy: WAL may already be pinned when SHM capture fails. User
+direction is required before permitting completion of that staged cohort on
+retry or choosing a close-only state; neither behavior is approved here. Preserve
+all acquired pins and do not replace them or reconstruct proof while awaiting
+that decision. Task 5 remains gated. Root's broader repository/lifecycle run had
+360 passes and 11 failures creating stdlib multiprocessing semaphores before
+repository exercise; an isolated standard-library probe reproduces the failure
+outside the sandbox. These tests remain unqualified, not waived.
+
 ### Task 5: Migrate live TTS authority, restore handoff and terminal cleanup
 
 **Files:** Modify `TTS/profile_schema.py`, `TTS/profile_repository.py`, `TTS/profile_errors.py`, `DB/private_sqlite_process.py`; create `Tests/TTS/test_profile_sqlite_helper_lifecycle.py`; extend `Tests/TTS/test_profile_repository_lifecycle.py`.
