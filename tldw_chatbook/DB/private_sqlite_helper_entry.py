@@ -36,6 +36,8 @@ def main() -> int:
         ("tldw_chatbook", package),
         ("tldw_chatbook.DB", package / "DB"),
         ("tldw_chatbook.Utils", package / "Utils"),
+        ("tldw_chatbook.TTS", package / "TTS"),
+        ("tldw_chatbook.TTS.migrations", package / "TTS" / "migrations"),
     ):
         namespace = ModuleType(name)
         namespace.__path__ = [str(directory)]

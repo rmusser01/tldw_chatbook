@@ -16,6 +16,7 @@ import pytest
 
 import tldw_chatbook.DB.private_sqlite as private_sqlite
 import tldw_chatbook.TTS.profile_schema as profile_schema
+from tldw_chatbook.TTS import profile_validation
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _raw_migrate_v0_to_v1
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_candidate import (
@@ -29,8 +30,8 @@ from tldw_chatbook.TTS.profile_schema import (
     BUSY_TIMEOUT_MS,
     CURRENT_PROFILE_SCHEMA_VERSION,
     MIGRATIONS,
-    decode_assignment,
     decode_assigned_snapshot,
+    decode_assignment,
     decode_options,
     decode_profile,
     decode_utc_datetime,
@@ -2317,7 +2318,9 @@ def test_profile_row_validation_rejects_oversized_raw_options_before_parsing(
     raw_options = "{" + ",".join(['"é":"声"'] * 1_500) + "}"
     assert len(raw_options) < 16 * 1024
     assert len(raw_options.encode("utf-8")) > 16 * 1024
-    canonical_options = canonical_json_options(profile_schema.json.loads(raw_options))
+    canonical_options = canonical_json_options(
+        profile_validation._json_loads(raw_options)
+    )
     assert canonical_options == '{"é":"声"}'
     assert len(canonical_options.encode("utf-8")) < 16 * 1024
 
@@ -2331,13 +2334,13 @@ def test_profile_row_validation_rejects_oversized_raw_options_before_parsing(
     connection.commit()
 
     parsed_values: list[object] = []
-    real_json_loads = profile_schema.json.loads
+    real_json_loads = profile_validation._json_loads
 
     def tracked_loads(*args: object, **kwargs: object) -> object:
         parsed_values.append(args[0])
         return real_json_loads(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(profile_schema.json, "loads", tracked_loads)
+    monkeypatch.setattr(profile_validation, "_json_loads", tracked_loads)
     if validation_kind == "candidate":
         connection.close()
         with _safe_error("corrupt_data"):
@@ -2775,7 +2778,7 @@ def test_candidate_rejects_source_modified_during_validation(
             modified = True
         return real_decode_profile(row)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(profile_schema, "decode_profile", racing_decode_profile)
+    monkeypatch.setattr(profile_validation, "decode_profile", racing_decode_profile)
 
     with _safe_error("schema_corrupt"):
         validate_profile_candidate(path)
@@ -2828,7 +2831,7 @@ def test_candidate_control_flow_exception_closes_and_removes_private_snapshot(
     monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
     monkeypatch.setattr(profile_schema, "_open_candidate_source", tracked_os_open)
     monkeypatch.setattr(sqlite3, "connect", tracked_connect)
-    monkeypatch.setattr(profile_schema, "decode_profile", interrupt_decode)
+    monkeypatch.setattr(profile_validation, "decode_profile", interrupt_decode)
 
     with pytest.raises(exception_type) as caught:
         validate_profile_candidate(path)
@@ -3147,7 +3150,7 @@ def test_full_row_validator_checks_deadline_before_each_profile_row(
         decoded += 1
         return real_decode(row)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(profile_schema, "decode_profile", traced_decode)
+    monkeypatch.setattr(profile_validation, "decode_profile", traced_decode)
     try:
         with _safe_error("restore_failed"):
             profile_schema.validate_profile_store_rows(

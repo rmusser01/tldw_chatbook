@@ -732,3 +732,70 @@ def test_source_pin_preserves_existing_private_path_error(tmp_path, monkeypatch)
     with pytest.raises(PrivatePathError) as caught:
         helper.SourcePin(selected, prepared)
     assert caught.value is original
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "tts_exact_current",
+        "tts_pin_sidecars",
+        "tts_recheck",
+        "tts_export_restore_authority",
+    ],
+)
+def test_tts_frames_are_closed_and_reject_mixed_or_payload_authority(
+    tmp_path, operation
+):
+    codec = protocol()
+    identity = codec.FileIdentity.from_stat(tmp_path.stat()).to_payload()
+    reply = {
+        "version": 1,
+        "operation": operation,
+        "status": "ok",
+        "identity": {
+            "parent": identity,
+            "main": identity,
+            "wal": identity,
+            "shm": identity,
+        },
+    }
+    assert codec.decode_frame(codec.encode_frame(reply)) == reply
+    for extra in (
+        {"generation": 7},
+        {"rows": []},
+        {"digest": "x"},
+        {"audio": "x" * 65536},
+    ):
+        with pytest.raises(codec.ProtocolError):
+            codec.encode_frame({**reply, **extra})
+    for wal, shm in [(identity, None), (None, identity), (True, identity)]:
+        with pytest.raises(codec.ProtocolError):
+            codec.encode_frame(
+                {**reply, "identity": {**reply["identity"], "wal": wal, "shm": shm}}
+            )
+    if operation in {"tts_pin_sidecars", "tts_export_restore_authority"}:
+        with pytest.raises(codec.ProtocolError):
+            codec.encode_frame(
+                {**reply, "identity": {**reply["identity"], "wal": None, "shm": None}}
+            )
+
+
+def test_tts_initializer_refuses_mutation_flags_and_controls_refuse_targets(tmp_path):
+    codec = protocol()
+    initial = {**request(tmp_path / "db"), "operation": "tts_exact_current"}
+    initial.update(writable=False, create_if_missing=False, preserve_source_mode=False)
+    assert codec.decode_frame(codec.encode_frame(initial)) == initial
+    with pytest.raises(codec.ProtocolError):
+        codec.encode_frame({**initial, "path": "/" + "x" * 65536})
+    for key in ("writable", "create_if_missing", "preserve_source_mode"):
+        with pytest.raises(codec.ProtocolError):
+            codec.encode_frame({**initial, key: True})
+    for operation in (
+        "tts_recheck",
+        "tts_pin_sidecars",
+        "tts_export_restore_authority",
+    ):
+        with pytest.raises(codec.ProtocolError):
+            codec.encode_frame(
+                {"version": 1, "operation": operation, "path": str(tmp_path)}
+            )
