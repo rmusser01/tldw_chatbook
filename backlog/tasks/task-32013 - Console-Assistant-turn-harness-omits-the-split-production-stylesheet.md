@@ -1,5 +1,5 @@
 ---
-id: TASK-31759
+id: TASK-32013
 title: Console Assistant-turn harness omits the split production stylesheet
 status: Done
 assignee:
@@ -49,3 +49,9 @@ Reason: the production Console styling contract is already established by TASK-2
 - Evidence: the complete module passes 39/39; Ruff and diff checks pass.
 - ADR required: no; TASK-25812 already owns the stylesheet split boundary.
 <!-- SECTION:NOTES:END -->
+
+## PR 2427 rebase renumbering provenance
+
+Review-owned TASK-31759 became TASK-32013 on 2026-09-07 to preserve
+the upstream More-menu task identity while rebasing onto dev 3090013cfe.
+Creation dates, historical evidence, and upstream references are unchanged.

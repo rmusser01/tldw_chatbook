@@ -1,5 +1,6 @@
 """Explicit ownership cleanup for real Console integration fixtures."""
 
+from collections.abc import Awaitable, Callable
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -7,6 +8,14 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+
+class ConsoleResourceStack(ExitStack):
+    """Require admitted thread work to finish before closing owned databases."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.before_close: list[Callable[[], Awaitable[list[BaseException]]]] = []
 
 
 @pytest.fixture(autouse=True)
@@ -32,11 +41,15 @@ async def close_owned_console_resources(
 
         monkeypatch.setattr(cls, "__init__", record_instance)
 
-    auxiliary = ExitStack()
+    auxiliary = ConsoleResourceStack()
     yield auxiliary
 
     errors: list[BaseException] = []
     try:
+        # A failed/timed-out drain must not close databases beneath live work.
+        # Completed drains return cleanup errors for the normal aggregate below.
+        for drain in auxiliary.before_close:
+            errors.extend(await drain())
         for controller in reversed(controllers):
             try:
                 await controller.shutdown()

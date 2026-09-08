@@ -350,7 +350,7 @@ def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
         has_browser_session_for=lambda session_id: session_id == "session-a"
     )
     screen.app_instance = SimpleNamespace(call_from_thread=lambda callback: callback())
-    screen._open_console_canvas_selection = Mock(
+    screen._message._open_console_canvas_selection = Mock(
         side_effect=lambda **_kwargs: _closed_coroutine()
     )
     workers: list[object] = []
@@ -362,10 +362,10 @@ def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
     screen.run_worker = capture_worker
     info = SimpleNamespace(canvas_id="canvas-a", revision_id="revision-a")
 
-    screen._schedule_console_canvas_tool_open("session-a", info)
-    screen._schedule_console_canvas_tool_open("session-b", info)
+    screen._message._schedule_console_canvas_tool_open("session-a", info)
+    screen._message._schedule_console_canvas_tool_open("session-b", info)
 
-    screen._open_console_canvas_selection.assert_called_once_with(
+    screen._message._open_console_canvas_selection.assert_called_once_with(
         session_id="session-b",
         canvas_id="canvas-a",
         revision_id="revision-a",
@@ -397,17 +397,17 @@ def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
         revisions=(SimpleNamespace(origin=SimpleNamespace(message_id=left.id)),),
     )
 
-    assert screen._console_canvas_publication_is_current(publication) is True
+    assert screen._message._console_canvas_publication_is_current(publication) is True
 
     store.create_sibling(
         left.id,
         role=ConsoleMessageRole.ASSISTANT,
         content="right",
     )
-    assert screen._console_canvas_publication_is_current(publication) is False
+    assert screen._message._console_canvas_publication_is_current(publication) is False
 
     store.create_session(ephemeral=True)
-    assert screen._console_canvas_publication_is_current(publication) is False
+    assert screen._message._console_canvas_publication_is_current(publication) is False
 
 
 def test_canvas_composer_sink_validates_exact_session_and_branch_target():
@@ -436,7 +436,7 @@ def test_canvas_composer_sink_validates_exact_session_and_branch_target():
     composer = Mock()
     screen._console_composer_or_none = Mock(return_value=composer)
 
-    screen._prefill_console_canvas_repair(target, "exact draft")
+    screen._message._prefill_console_canvas_repair(target, "exact draft")
 
     composer.load_draft.assert_called_once_with("exact draft")
     assert store.session_draft(session.id) == "exact draft"
@@ -447,12 +447,12 @@ def test_canvas_composer_sink_validates_exact_session_and_branch_target():
         content="right",
     )
     with pytest.raises(RuntimeError, match="unavailable"):
-        screen._prefill_console_canvas_repair(target, "stale branch draft")
+        screen._message._prefill_console_canvas_repair(target, "stale branch draft")
     assert store.session_draft(session.id) == "exact draft"
 
     store.create_session(ephemeral=True)
     with pytest.raises(RuntimeError, match="unavailable"):
-        screen._prefill_console_canvas_repair(target, "stale session draft")
+        screen._message._prefill_console_canvas_repair(target, "stale session draft")
     assert store.session_draft(session.id) == "exact draft"
 
 
@@ -484,7 +484,7 @@ def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
     composer.capture_draft_snapshot.side_effect = [unchanged, unchanged]
     screen._console_composer_or_none = Mock(return_value=composer)
 
-    apply = screen._prepare_console_canvas_submit(target)
+    apply = screen._message._prepare_console_canvas_submit(target)
     apply("exact unsent draft")
 
     composer.load_draft.assert_called_once_with("exact unsent draft")
@@ -493,7 +493,7 @@ def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
 
     composer.load_draft.reset_mock()
     composer.capture_draft_snapshot.side_effect = [unchanged, object()]
-    stale_apply = screen._prepare_console_canvas_submit(target)
+    stale_apply = screen._message._prepare_console_canvas_submit(target)
     with pytest.raises(RuntimeError, match="changed"):
         stale_apply("must not replace")
     composer.load_draft.assert_not_called()
@@ -625,7 +625,7 @@ async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh
     store = screen._ensure_console_chat_store()
     session = store.ensure_session(title="Canvas card")
     open_selection = AsyncMock()
-    screen._open_console_canvas_selection = open_selection
+    screen._message._open_console_canvas_selection = open_selection
 
     exact = SimpleNamespace(
         session_id=session.id,
@@ -643,7 +643,7 @@ async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh
     )
 
     open_selection.reset_mock()
-    screen._canvas_last_open_request = (
+    screen._message._canvas_last_open_request = (
         session.id,
         "canvas-a",
         "revision-2",
@@ -672,7 +672,7 @@ async def test_production_canvas_card_handler_rejects_unowned_session_events(
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
     store.create_session(session_id="current-session", title="Current Canvas card")
-    screen._open_console_canvas_selection = AsyncMock()
+    screen._message._open_console_canvas_selection = AsyncMock()
     attributes = {
         "canvas_id": "canvas-a",
         "revision_id": "revision-2",
@@ -686,7 +686,7 @@ async def test_production_canvas_card_handler_rejects_unowned_session_events(
     await screen.handle_console_canvas_card_open(event)
 
     event.stop.assert_called_once_with()
-    screen._open_console_canvas_selection.assert_not_awaited()
+    screen._message._open_console_canvas_selection.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -703,12 +703,12 @@ async def test_served_canvas_selection_binds_child_without_opening_native_browse
     )
     authority = Mock()
     authority.gateway_scope.return_value = scope
-    screen._console_canvas_authority = Mock(return_value=authority)
+    screen._message._console_canvas_authority = Mock(return_value=authority)
     screen._console_runtime = Mock(
         side_effect=AssertionError("served Canvas must not open a native gateway")
     )
 
-    launch = await screen._open_console_canvas_selection(
+    launch = await screen._message._open_console_canvas_selection(
         session_id="session-a",
         canvas_id="canvas-a",
         revision_id="revision-a",

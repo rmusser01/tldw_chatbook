@@ -45,6 +45,7 @@ from ...Chat.console_chat_store import (
     ConsoleSettingsPolicyFailureLabel,
 )
 from ...Chat.provider_readiness import provider_config_key
+from .settings_diagnostics import log_settings_failure
 
 
 logger = logger.bind(module="ChatScreen")
@@ -625,8 +626,13 @@ class ConsoleSettingsDurabilityController:
                     committed.live_commit,
                     policy_failure_label=policy_failure_label,
                 )
-            except Exception:
-                logger.exception("Console settings conversation persistence failed")
+            except Exception as exc:
+                log_settings_failure(
+                    "conversation_persist",
+                    exc,
+                    session_id=committed.live_commit.session_id,
+                    submission_id=submission.submission_id,
+                )
             finally:
                 self._sync_console_settings_recovery_surfaces()
 
@@ -642,8 +648,13 @@ class ConsoleSettingsDurabilityController:
                     intent = await self._reserve_console_default_intent_off_event_loop(
                         submission
                     )
-                except Exception:
-                    logger.exception("Console default reservation failed")
+                except Exception as exc:
+                    log_settings_failure(
+                        "default_reserve",
+                        exc,
+                        session_id=committed.live_commit.session_id,
+                        submission_id=submission.submission_id,
+                    )
                     self._sync_console_settings_recovery_surfaces()
                     recovery = self._console_default_durability_state()
                     recovery_copy = (
@@ -663,8 +674,14 @@ class ConsoleSettingsDurabilityController:
                     apply_console_default_intent,
                     intent,
                 )
-            except Exception:
-                logger.exception("Console default persistence failed")
+            except Exception as exc:
+                log_settings_failure(
+                    "default_apply",
+                    exc,
+                    session_id=committed.live_commit.session_id,
+                    submission_id=submission.submission_id,
+                    generation=intent.generation,
+                )
                 self._record_console_default_failure(
                     intent,
                     ConsoleDefaultSavePhase.BEFORE_REPLACE,
@@ -675,8 +692,14 @@ class ConsoleSettingsDurabilityController:
                     intent,
                     outcome,
                 )
-            except Exception:
-                logger.exception("Console default runtime publication failed")
+            except Exception as exc:
+                log_settings_failure(
+                    "default_publish",
+                    exc,
+                    session_id=committed.live_commit.session_id,
+                    submission_id=submission.submission_id,
+                    generation=intent.generation,
+                )
                 published = False
             if published:
                 scope = (
