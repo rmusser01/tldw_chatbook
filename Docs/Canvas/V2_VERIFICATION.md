@@ -553,3 +553,34 @@ remain open. TASK-31942 stays In Progress and V2 stays disabled.
 AC10 (helper-aware owner tests) and AC11 (physical compaction/admission repair)
 are checked alongside the prior scoped AC8/9. The original seven final acceptance
 criteria remain unchecked. No broader completion or admission is claimed.
+
+## Final local qualification continuation — 2026-09-08
+
+Task11 closes the reviewed setup-failure test teardown Minor in `55f74aa009`.
+Real failure-path RED/GREEN, 20 covering passes and independent spec/quality
+approval; root committed control and original test each pass. AC12 is checked.
+
+At that checkpoint the37-file affected selection reports **1844passed, 5skipped,
+11explicitly deselected, 9warnings**, with unchanged startup budgets. Separate
+bundle consumer checks report59passes and the local schema parameter named
+`live` reports1pass. These are separate targeted runs, not whole-suite evidence.
+
+Fresh actual Canvas children report **4passed, 1failed**. The read-publication
+case did not acknowledge the restored card action after reconnect. One unchanged
+single-node rerun failed earlier at terminal first-byte readiness, leaving the
+original boundary unresolved. Both lifecycle captures are preserved. Read-only
+diagnosis suggests a readiness/action-delivery race but does not prove root
+cause or attribute a SQLite crash. New bounded test diagnostics await approval;
+no retries, timeout/assertion changes or production edits were used to mask it.
+
+Five-sample checkout benchmarks completed: UI-ready median8814.697ms current
+versus8525.682ms baseline; threaded repository open192.666ms versus13.214ms.
+Both harness logs contain errors; timings are not pristine lifecycle evidence.
+Final53-file static checks remain nonzero (1373Ruff diagnostics,12formatter-dirty
+files); whitespace checks pass. No limits or dependencies changed.
+
+Exact commands, results, warning/skip attribution, benchmark/resource limits and
+diagnosis disposition: [final local qualification](../superpowers/reviews/2026-09-08-sqlite-final-local-qualification.md).
+TASK-31942 remains In Progress and V2 disabled. Host semaphore, platform/optional,
+nonzero static and fresh Canvas readiness gates remain explicit; no PR/external
+action, host cleanup or full repository sweep occurred.
