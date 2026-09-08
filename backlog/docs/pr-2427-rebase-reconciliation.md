@@ -692,3 +692,19 @@ Fresh census covered 985 refs and 324 registered worktrees. Only the review-owne
 Assistant stylesheet task collided again: intermediate TASK-32013 is now
 TASK-32040, preserving upstream Media debt TASK-32013 and all earlier provenance.
 The identity guard passes 3,595 task files. No final-head review or merge claimed.
+
+### Latest fetched-dev integration
+
+Second rebase completed at `b8190be4fbf18dcf2a47ff193ab8771aa0366a7c`,
+containing dev `603812300f18562c1906ac837a8098a0a6cbff23`. The two conflicts
+retain dev's precise split-Library stylesheet assertions and facet-context reset,
+alongside the PR's live `_sync_view` callback. Independent AST comparison verifies
+all scoped fault-history/resume-cache changes; both Copy selection production
+files and adaptive-reader validation are byte-identical to dev.
+
+Retargeted nine test-only references from removed Screen Media fields to
+`screen._media_state`, keeping predicates and scroll assertions unchanged.
+Complete scroller, Reader/Analysis characterization and entry-focus files:
+**13 passed** in 12.78 seconds (`/private/tmp/pr2427-media-state-retarget.log`).
+Remaining visual failures and size gates are still open. This is a progress
+checkpoint, not merge qualification.

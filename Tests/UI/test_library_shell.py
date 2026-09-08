@@ -11027,11 +11027,11 @@ async def _wait_for_media_reader_loaded(
     await _wait_for_condition(
         pilot,
         lambda: (
-            screen._library_media_reader_session.pending_request is None
-            and screen._library_media_reader_session.loaded_id is not None
+            screen._media_state.reader_session.pending_request is None
+            and screen._media_state.reader_session.loaded_id is not None
             and (
                 expected_id is None
-                or screen._library_media_reader_session.loaded_id == expected_id
+                or screen._media_state.reader_session.loaded_id == expected_id
             )
         ),
         message=(
