@@ -12087,3 +12087,27 @@ budgets and self-contained failure records fixed both regression tests.
 user action through refusal or completion. Test a responsive refresh episode
 separately from a stall, and test failure records at WARNING thresholds. A
 start/end-only log is absence of coverage, not proof that the send worked.
+
+---
+
+---
+
+## A boot census must poll for serially-gated workers, not use a flat settle window
+
+**PR #2467 CI, 2026-09-06.** The "UI latency guardrails" job failed once
+with `census looks degenerate -- boot workers that always start were not
+recorded: [('_backfill_chachanotes_messages_fts', 'chachanotes-fts-backfill')]`
+and passed everywhere else, including the identical commit locally. The
+chachanotes FTS backfill is THIRD in the staggered boot fleet, which
+`boot_worker_policy.py` runs strictly serially (`MAX_CONCURRENT = 1`,
+behind the two actor-pack prefetches whose durations are "milliseconds on
+a healthy profile"). The census probe snapshotted at `_ui_ready` + a flat
+1.0 s; on a contended runner the two prefetches occasionally consumed the
+whole window before the third worker was admitted, and the anti-vacuity
+assert read that as a degenerate census.
+
+**What to do.** When a probe asserts that gated/queued work "always"
+starts, wait for the expected starts (poll with a generous deadline)
+rather than a flat window sized to the happy path. The probe already
+records STARTS rather than running state, so waiting cannot miss a worker
+that finishes quickly.
