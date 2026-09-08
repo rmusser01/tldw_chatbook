@@ -241,6 +241,24 @@ callbacks as non-reentrant unless the API explicitly guarantees otherwise. Read
 needed metrics before the long statement, keep callbacks bounded and in-memory,
 and verify the behavior against a real file-backed SQLite database.
 
+## Schema functions also belong on dedicated maintenance connections
+
+**TASK-31942, 2026-09-08.** Four physical trace-compaction/admission tests
+returned only the intentionally bounded `vacuum_failed` reason. An isolated
+real-schema probe exposed `no such function: canvas_revision_payload_valid`:
+ordinary ChaChaNotes connections registered the pure function, but the older
+maintenance opener did not. The Canvas CHECK constraint required it while
+preparing VACUUM even with an empty Canvas table. Registering only the existing
+real validator let the same logical-GC result compact and pass quick_check;
+checkpoint, lease, disk and exclusion policies did not need changes.
+
+**What to do.** When adding a connection-local function used by schema integrity
+constraints, test dedicated maintenance opens against that schema as well as
+ordinary CRUD. Share narrow pure-validator registration, not a wholesale set of
+mutation/deletion grants. Keep raw diagnostics confined to owned synthetic
+probes, and require populated-row preservation and invalid-payload rejection
+before treating the maintenance repair as verified.
+
 ## SQLite quiescence must cover result consumption and database identity
 
 **TASK-23113.11, 2026-09-02.** Review of the first physical-compaction barrier
