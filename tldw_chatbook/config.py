@@ -5216,9 +5216,26 @@ post_diarize = true
 # (feeds the live Speakers legend). Needs the same packages as post_diarize,
 # installed via the "diarization" extra: pip install -e ".[diarization]"
 live_diarization = false
-# Which live diarizer to build when live_diarization is on. Only "local"
-# (in-process, no server round trip) is implemented today.
-diarizer_backend = "local"
+# Which engine assigns the live speaker ids when live_diarization is on:
+#   "auto"        - the first engine whose packages are installed (default)
+#   "onnx"        - sherpa-onnx; ships with the base install, no torch needed
+#   "speechbrain" - needs the "diarization" extra (torch, torchaudio,
+#                   speechbrain, scikit-learn)
+#   "server"      - reserved; not available yet
+# Switching engines invalidates an enrolled voiceprint (the two produce
+# different kinds of vector), so pin this if you do not want "auto" to change
+# it for you when you add or remove the torch extra.
+diarizer_backend = "auto"
+# Which speaker embedder the "onnx" engine uses: titanet_small,
+# wespeaker_resnet34, eres2net_en or campplus_en. Also part of the voiceprint
+# identity -- changing it means enrolling again.
+onnx_embedder = "titanet_small"
+# Where the ONNX model files live; empty = <data_dir>/models/diarization/onnx,
+# fetched on the first Start (~35 MB). Point it at a directory of pre-placed
+# files for an air-gapped install: the files already there are verified and
+# never re-fetched, and only missing ones are downloaded. The user guide lists
+# the file names, URLs and hashes.
+onnx_models_dir = ""
 # Upper bound the local live diarizer uses when clustering voices into
 # speaker ids.
 max_speakers = 8
