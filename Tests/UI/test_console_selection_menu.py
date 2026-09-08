@@ -653,7 +653,7 @@ async def test_short_owner_box_shrinks_menu_and_keeps_containment(ansi_color):
         assert menu.region.contains_region(copy.region)
 
 
-class _ResizableTranscriptFeedbackApp(_TinyTranscriptFeedbackApp):
+class ResizableTranscriptFeedbackApp(_TinyTranscriptFeedbackApp):
     CSS = """
     ConsoleTranscript { height: 1fr; }
     #composer-standin { height: 25; }
@@ -666,7 +666,7 @@ class _ResizableTranscriptFeedbackApp(_TinyTranscriptFeedbackApp):
 async def test_open_menu_recovers_after_owner_shrink_and_growth(
     ansi_color, resize_target
 ):
-    app = _ResizableTranscriptFeedbackApp(ansi_color=ansi_color)
+    app = ResizableTranscriptFeedbackApp(ansi_color=ansi_color)
     async with app.run_test(size=(80, 32)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
         row = app.query_one("#console-message-m0")
@@ -722,7 +722,7 @@ async def test_open_menu_recovers_after_owner_shrink_and_growth(
 async def test_open_menu_repositions_when_resizing_without_compacting(
     ansi_color, resize_target
 ):
-    app = _ResizableTranscriptFeedbackApp(ansi_color=ansi_color)
+    app = ResizableTranscriptFeedbackApp(ansi_color=ansi_color)
     async with app.run_test(size=(80, 45)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
         row = app.query_one("#console-message-m0")

@@ -89,7 +89,7 @@ async def test_keyboard_selection_enter_copies_and_keeps_the_selected_message():
         assert screen.focused is transcript
 
 
-class _LongSelectionApp(ConsolidatedCSSApp):
+class LongSelectionApp(ConsolidatedCSSApp):
     def __init__(self, message: ConsoleChatMessage) -> None:
         super().__init__()
         self.message = message
@@ -122,7 +122,7 @@ async def test_copy_preserves_long_selection_while_quotes_remain_capped(row_kind
         )
         selected = "-" + "x" * 5000
 
-    app = _LongSelectionApp(message)
+    app = LongSelectionApp(message)
     async with app.run_test(size=(100, 40)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
         await transcript.refresh_messages()

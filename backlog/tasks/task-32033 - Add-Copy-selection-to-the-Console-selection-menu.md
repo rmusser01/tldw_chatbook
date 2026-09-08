@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 05:16'
-updated_date: '2026-09-08 06:52'
+updated_date: '2026-09-08 07:04'
 labels:
   - console
   - clipboard
@@ -41,6 +41,7 @@ Users selecting part of a Console message need an explicit way to copy that text
 6. Per the requested follow-up, trace and repair the three inherited failures before rebasing or merging. Use the existing production-style keyboard harness, sample geometry after selection entry, and wire the real workspace registry into the two real-database stores. Preserve or strengthen the behavioral assertions and rerun the complete selection slice. This is test-harness repair within existing runtime and persistence contracts; no new ADR is required.
 7. Address Qodo's two findings: annotate/document the public compose override, and remeasure the menu when its owner's bounds change. Exercise shrink/grow cycles from terminal and transcript changes in normal and ANSI modes; restore normal sizing without losing focus. Reuse Textual's layout notification and the existing clamp; no new ADR is required.
 8. Document the empty-selection and capped/full-text return contracts on all three modified selection getters, as requested by Qodo's follow-up review. This is documentation only; no new ADR or behavior test is required. Rebase onto the updated dev and repeat the targeted integration and preflight checks.
+9. Rename the two new test harness classes to PascalCase without a leading underscore, as required by Qodo's configured class-name pattern. Update their references and rerun the two affected test modules and preflight. Production behavior is unchanged; no new ADR is required.
 
 ADR required: no
 
@@ -66,14 +67,17 @@ Addressed Qodo's two findings: compose now declares ComposeResult and documents 
 
 Qodo's follow-up requested explicit Returns sections on the three selection getters. Those docstrings now describe each row type's selected text, the capped/full-text option, and the empty-string result. The executable Python AST is unchanged by this documentation correction, with no new Ruff diagnostics and all edited regions formatted.
 
+The final naming review cited an explicit PascalCase pattern for new classes. The two new test harnesses are now LongSelectionApp and ResizableTranscriptFeedbackApp, with all five declarations/references updated. All 63 cases in the two affected test modules pass after the rename (36.29 seconds); production code is unchanged and static checks find no new diagnostics.
+
 Files: `Widgets/Console/console_selection_menu.py`, `Widgets/Console/console_transcript.py`, both generated `css/widget_defaults_*.tcss` files, the new `Tests/UI/test_console_selection_copy.py`, existing selection-menu, keyboard-selection, and end-to-end tests, `Docs/User_Guide/console/text-selection-and-feedback.md`, and `backlog/docs/lessons-textual.md`.
 
 Verification:
-- All **183 cases pass** across the six targeted selection suites after rebasing onto dev at `aecb14720` (170.00 seconds), including the three inherited failures and all eight resize cases. Each inherited failure was reproduced before its repair and verified passing afterward. The existing requests dependency-version warning remains.
+- All **183 cases pass** across the six targeted selection suites after rebasing onto dev at `8dc5366dc` (135.35 seconds), including the three inherited failures, all eight resize cases, and the renamed test harnesses. Each inherited failure was reproduced before its repair and verified passing afterward. The existing requests dependency-version warning remains.
 - All **55 selection-menu cases pass** after the Qodo follow-up (22.75 seconds). The four compact-to-full resize cases each failed before the owner-bound fix and passed afterward; four additional cases verify settled movement and click handling while the full menu continues to fit.
 - All eight new Copy cases pass, including mouse and keyboard journeys with production styles, uncapped plain/Markdown/diff text, and stale selections. Earlier production render probes also verified user and assistant menu containment and first-action focus; SVG/PNG captures are in `/private/tmp/chatbook-copy-selection-32033/`.
-- All six `scripts/preflight.sh` derived-artifact checks pass on the rebased branch, including stylesheet reproduction and task ID hygiene. Neither rebase changed the patches, confirmed with git range-diff.
+- All six `scripts/preflight.sh` derived-artifact checks pass on the rebased branch, including stylesheet reproduction and task ID hygiene. The rebases changed none of the patches, confirmed with git range-diff.
 - The new Copy test file passes Ruff and formatting. Before/after checks find no new Ruff diagnostics in the five existing Python files; all edited Python regions and scoped whitespace checks pass. Existing lint findings and unrelated formatting drift remain.
+- A prior Perf Guard run hit the already documented one-second boot-census sampling race for the serially queued ChaChaNotes FTS worker. Run 34199414350 passed on its second attempt with identical code. The census and boot-worker policy are unchanged by this PR; see the existing lesson in `backlog/docs/lessons-testing-evidence.md`.
 - Clipboard assertions use the real Textual app clipboard in the headless harness. Linux desktop clipboard delivery was not exercised; the user guide explains the existing OSC 52 requirement and terminal-native selection fallback.
 
 ADR check: direct extension of [ADR-068](../decisions/068-console-text-selection-and-annotations.md); no new ADR, storage change, clipboard backend, or shortcut. ADR-031 remains applicable. No full-suite run was performed, per repository policy.
