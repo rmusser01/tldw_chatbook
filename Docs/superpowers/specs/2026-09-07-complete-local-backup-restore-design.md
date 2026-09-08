@@ -4,8 +4,8 @@ Date: 2026-09-07
 
 Revision: 4 — fourth design-review corrections incorporated.
 
-Status: Draft for written user review. Conversational scope and review corrections
-approved; implementation and implementation planning have not started.
+Status: Approved by the user on 2026-09-07. Revision 4 is the implementation baseline;
+implementation planning follows this approval. Production implementation has not started.
 
 Task: [TASK-31978](../../../backlog/tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
 
@@ -52,9 +52,8 @@ Approved decisions:
   revalidates source inventory under maintenance, and distinguishes intentionally
   deleted recovered media from unexpectedly missing required payloads.
 
-The remaining implementation choices below are concrete proposals for this written
-review, particularly the encryption helper, recovery catalog, and verification
-limits. They do not authorize implementation before approval of this document.
+The encryption helper, recovery catalog, and verification limits below are approved
+design choices. Their qualification gates remain mandatory during implementation.
 
 ### Non-goals
 
@@ -915,8 +914,8 @@ provide automatic remote storage.
 
 ## 11. Delivery boundaries and accepted review changes
 
-This is one product design but more than one implementation PR. After written
-approval, planning should first qualify encryption-helper delivery and the maintenance/
+This is one product design but more than one implementation PR. The approved
+implementation sequence first qualifies encryption-helper delivery and the maintenance/
 bootstrap protocol, then separate storage inventory/profile admission, maintenance
 coordination, archive qualification, recovered-media ownership, isolated restore, replacement and
 rollback/recovery startup, and final Settings/first-run integration with end-to-end
@@ -951,11 +950,10 @@ is qualified. Existing selective exports remain available during development.
 | Preview inventory drifts before capture | Rediscover under maintenance, renew scope/budget previews, and bind completeness to final captured inventory. |
 | Deliberate media deletion appears as backup corruption | Validated owner tombstones preserve intentional absence and references; unexpected missing payloads still block completeness. |
 
-## 12. Written review boundary
+## 12. Approval and implementation handoff
 
-The next step is user review of this document and ADR-126. TASK-31978 remains In
-Progress until that review is received. No production changes, implementation task
-completion, tests-passing claim, or implementation plan is implied by this draft.
-
-After approval, invoke writing-plans and create atomic implementation Backlog tasks
-in dependency order, with ADR links and required evidence scoped to each slice.
+The user approved revision 4 and ADR-126 on 2026-09-07. TASK-31978 records the completed
+design review. The [implementation roadmap](../plans/2026-09-07-complete-local-backup-restore.md)
+links six component plans and atomic Backlog tasks in dependency order, with ADR
+links and scoped release evidence. Approval and planning do not claim production
+implementation, passing runtime tests, or qualified replacement capability.
