@@ -35,6 +35,7 @@ Reason: This implements the accepted cross-process privacy/proof boundary, termi
 - Targeted tests only. No full repository sweep, PR, push, rebase or merge. Canvas V2 remains disabled until its existing independent admission gates pass; completion of this correction is not admission.
 - Use `apply_patch` for manual edits. Commit only named task files, never blanket-stage the untracked diagnostic. Do not weaken test or performance budgets to obtain green results.
 - Owner-approved Task13 exception (2026-09-08): replace only the actual Canvas test's implicit5s first-output plus explicit45s Composer waits with one shared45s initial post-login readiness deadline. Both conditions remain; no reset/retry. Runtime, helper, import/UI and other test budgets remain unchanged.
+- Owner-approved Task14 exception (2026-09-08): set up and push the scoped macOS evidence job only to `codex/task-31942-macos-concurrency-evidence`, then inspect its exact run. Runner-only installation of existing dev dependencies is allowed; no local host/dependency change, main/dev update, PR/rebase/merge or V2 admission.
 
 ## Evidence and file map
 
@@ -1471,6 +1472,99 @@ pre-task baseline and the inherited Requests warning remains deferred.
 Evidence: Docs/superpowers/reviews/2026-09-08-canvas-startup-deadline-fix.md.
 This closes the approved test-contract correction, not the original latency
 attribution or other qualification gates. Task7 remains incomplete, V2 disabled.
+
+### Task 14: Run the eleven blocked concurrency cases on fresh macOS CI
+
+User approved setting up and running this targeted fresh-runner job on
+2026-09-08 after confirming the local Mac has not restarted.
+BASE: `65e30f42989145585d24526d346ce17b0ee96b7f`.
+
+ADR required: no
+ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md (unchanged)
+Reason: Direct fresh-host qualification of the existing concurrency contract;
+no new runtime, permission, dependency or release-policy boundary.
+
+**Files:**
+
+- Create `.github/workflows/task-31942-macos-concurrency-evidence.yml`.
+- Create `Tests/CI/test_task31942_macos_concurrency_evidence.py`.
+- Root owns Backlog, this plan, evidence docs, Git commits and all remote actions.
+
+**Bounded job contract:**
+
+- One push-triggered job, restricted to the dedicated branch
+  `codex/task-31942-macos-concurrency-evidence`. No pull-request, default-branch,
+  schedule or broad-suite trigger. No modification of other workflows.
+- Runner `macos-15` (GitHub-hosted ARM64), Python `3.12.11`, job timeout30min.
+  Read-only `contents: read`, no secrets or write token, checkout exact
+  `github.sha` with persisted credentials disabled. No canceling others' runs.
+- Install the checkout with existing `python -m pip install -e ".[dev]"`
+  only on the clean runner. No local dependency or host-resource changes.
+- Before product tests, run the standard-library-only isolated spawn Lock
+  allocation/acquisition/disposal control from the preserved semaphore diagnosis.
+  Require allocation AND acquisition success; a failed control fails the job
+  without running the eleven cases. Record Python/SQLite/macOS/architecture and
+  tested Git SHA, not an environment dump or secrets. No local lock-control run.
+- Run exactly the11parameter IDs below, once each, serially in one pytest
+  invocation, existing test assertions/timeouts unchanged. No xdist, retries,
+  keyword expansion, skip/deselect, broad targets or PYTHONPATH source override.
+  Preserve pytest nonzero status through any tee/logging pipeline.
+- Emit JUnit plus a pytest log and retain fixed metadata/control output under
+  runner.temp. Upload this narrow evidence even on failure, no repo/user-data
+  archive. Fail closed if JUnit is missing, malformed, has duplicates, missing/
+  extra cases, errors/failures/skips or anything other than the exact11passes.
+  Do not accept only a top-level aggregate count without checking case identities.
+- No generic runner/validation framework or production edits; concise inline
+  workflow logic is sufficient. Unit tests must execute the relevant script/
+  shell behavior against controlled inputs (failure propagation and exact JUnit
+  acceptance/rejection), not merely assert YAML contains source strings.
+  Keep local tests confined to the new CI test file with
+  `--confcutdir=Tests/CI`; never run the real blocked cases or semaphore probe
+  locally. Existing repository tests are the actual concurrency oracle in CI.
+
+**Exact pytest node IDs:**
+
+- `Tests/TTS/test_profile_repository.py::test_spawned_repositories_open_one_fresh_store_concurrently[0]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_repositories_open_one_fresh_store_concurrently[1]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_repositories_open_one_fresh_store_concurrently[2]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[0]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[1]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[2]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[3]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[4]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_set_delete_race_is_serialized_without_partial_mutation[0]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_set_delete_race_is_serialized_without_partial_mutation[1]`
+- `Tests/TTS/test_profile_repository.py::test_spawned_set_delete_race_is_serialized_without_partial_mutation[2]`
+
+**Execution and handoff:**
+
+- [x] Implementer records focused behavioral RED/GREEN and scoped static checks;
+  leaves both files unstaged. No subagents, Git/index writes or remote actions.
+- [x] Root commits only the two files and obtains one independent scoped spec/
+  quality review; fixes must be reviewed before remote execution. Verify final
+  committed focused tests, with no unrelated suite/review replay.
+- [x] Root pushes the exact reviewed commit to the unused dedicated evidence
+  branch without force, preserving main/dev and the existing local branch.
+  This push is the user-approved job trigger; no PR, rebase or merge.
+- [x] Root waits for the exact run, records run/job/commit identity and inspects
+  log + downloaded JUnit. A failure is diagnosed, not blindly rerun or waived.
+  CI execution failures requiring product changes need a separately scoped fix.
+- [x] Record exact evidence and limitations in TASK-31942/docs. Keep other
+  platform/optional/static gates, original final ACs and V2-disabled status.
+  The unchanged local Mac is not qualified by a remote pass. Preserve all
+  historical evidence and the SDD workspace.
+
+Task14 implementation/checkpoint: `13fe672c64`, root committed contract tests
+15passed1.12s/no warnings, independent scoped spec/quality approved without
+findings. Exact push-run34292597991/job102282182152 failed at Python setup:
+3.12.11 has no GitHub macOS ARM64 build. No control/product case ran, no JUnit
+or artifact exists (API total_count0), so download inspection is unavailable
+rather than waived. Root inspected the exact failed-step logs and job metadata.
+CI-only3.12.10 is the latest available 3.12 Darwin build in the official manifest;
+that pin amendment and a fresh exact-commit run await approval under the CI-fix
+workflow. No pin change/retry has occurred. AC15 stays unchecked and Task14's
+product qualification remains incomplete. Evidence:
+Docs/superpowers/reviews/2026-09-08-sqlite-macos-concurrency-evidence.md.
 
 ## Spec coverage and handoff
 

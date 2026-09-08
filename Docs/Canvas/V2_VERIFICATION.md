@@ -650,3 +650,20 @@ previously failing files match baseline edit content and neighboring lines.
 See [static attribution](../superpowers/reviews/2026-09-08-sqlite-static-attribution.md)
 for the language-floor control, exact scope and limits. No fixes, suppression,
 pytest/browser/benchmark replay or static-gate waiver; task In Progress, V2 off.
+
+## Fresh macOS concurrency CI attempt — 2026-09-08
+
+Task14's reviewed two-file workflow/test implementation is committed in
+`13fe672c64`. Root committed contract checks: **15 passed in 1.12s**, no warnings;
+scoped spec/quality review approved without findings. The user-approved push
+created only the dedicated evidence branch, not a PR or main/dev update.
+
+[Run34292597991](https://github.com/rmusser01/tldw_chatbook/actions/runs/34292597991)
+failed during setup: GitHub has no macOS ARM64 Python3.12.11 package. The lock
+control and all11product cases were unrun; no runtime metadata/JUnit/artifact
+exists. Missing evidence was rejected, not accepted as a pass. A CI-only
+3.12.10 pin is available in the official manifest and proposed, not implemented
+or rerun. See the [full attempt evidence](../superpowers/reviews/2026-09-08-sqlite-macos-concurrency-evidence.md).
+
+No local host/dependency change, local semaphore probe, broad run or release-gate
+waiver. Original final ACs and AC15 remain unchecked; task In Progress, V2 off.
