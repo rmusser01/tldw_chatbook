@@ -2114,7 +2114,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_onboarding_status = LibraryEvidenceStatus.LOADING
         self._library_onboarding_status_copy = "Checking existing Library content…"
         self._library_onboarding_persistence_warning = ""
-        self._library_graduation_announcement_visible = False
         self._library_lifecycle_pending_persist: LibraryLifecycle | None = None
         self._library_lifecycle_persist_worker: Worker | None = None
         self._library_notes_source: Literal["database", "files"] = (
@@ -6593,7 +6592,28 @@ class LibraryScreen(BaseAppScreen):
         if rail.display != rail_display:
             rail.display = rail_display
         if canvas.display != canvas_display:
+            stranded = (
+                self.focused
+                if not canvas_display
+                and rail_display
+                and self.focused is not None
+                and canvas in self.focused.ancestors_with_self
+                else None
+            )
             canvas.display = canvas_display
+            if stranded is not None:
+                # task-32066: `display = False` writes the style and nothing
+                # else -- Textual only resets focus on removal -- so a landing
+                # control that had focus when the terminal shrank kept it and
+                # swallowed Enter while invisible. library.md already promises
+                # the hand-off; the landing's own controls carry the row they
+                # lead to (`row_id`), which is that "matching rail destination".
+                row_id = str(
+                    getattr(stranded, "row_id", "") or self._library_selected_row_id
+                )
+                self._focus_library_rail_action(
+                    f"#library-row-{row_id}" if row_id else "#library-search-input"
+                )
         try:
             collapse = rail.query_one("#library-rail-collapse", Button)
         except (NoMatches, QueryError):
@@ -13811,19 +13831,14 @@ class LibraryScreen(BaseAppScreen):
         return header_line
 
     def _library_lifecycle_status_copy(self) -> str:
-        """Combine session feedback in the screen-owned visible carrier."""
-        return "\n".join(
-            copy
-            for copy in (
-                (
-                    "Library tools are now available."
-                    if self._library_graduation_announcement_visible
-                    else ""
-                ),
-                self._library_onboarding_persistence_warning,
-            )
-            if copy
-        )
+        """Return the durable lifecycle warning for the screen-owned carrier.
+
+        task-32063: the graduation announcement used to share this line with
+        the persistence warning, so one event painted twice -- a toast AND a
+        line that lived until the next destination change. The announcement is
+        the toast; only the warning (a state, not an event) is durable.
+        """
+        return self._library_onboarding_persistence_warning
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
@@ -21098,10 +21113,7 @@ class LibraryScreen(BaseAppScreen):
         status.display = bool(copy)
 
     def _acknowledge_library_destination_change(self) -> None:
-        """Clear transition feedback after an explicit route is admitted."""
-        if not self._library_graduation_announcement_visible:
-            return
-        self._library_graduation_announcement_visible = False
+        """Resync the lifecycle carrier after an explicit route is admitted."""
         if self.is_mounted:
             self._sync_library_lifecycle_status()
 
@@ -21315,13 +21327,16 @@ class LibraryScreen(BaseAppScreen):
         user-visible state whose tools were genuinely hidden -- UNKNOWN is the
         transient pre-evidence state nobody reads, and EXPANDED already shows
         every tool.
+
+        The toast is the ONLY surface: an in-canvas line for the same event
+        was two surfaces for one thing, and (task-32062) its arrival
+        repainted the canvas the reader was typing into.
         """
         if (
             previous_lifecycle is not LibraryLifecycle.STARTER
             or self._library_lifecycle is not LibraryLifecycle.GRADUATED
         ):
             return
-        self._library_graduation_announcement_visible = True
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(

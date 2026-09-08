@@ -2237,7 +2237,9 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
                 "Library tools are now available.",
                 {"severity": "information"},
             )
-            assert "Library tools are now available." in str(
+            # task-32063: the toast is the only surface; the canvas line that
+            # used to repeat it is gone.
+            assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
     finally:
@@ -2245,13 +2247,20 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_persists_on_note_creation_canvas() -> (
-    None
-):
+async def test_library_graduation_leaves_the_note_creation_canvas_intact() -> None:
+    """task-32063: graduating mid-note announces by toast and disturbs nothing.
+
+    This used to pin a durable `#library-lifecycle-status` line that survived
+    the transition and cleared on the next destination change. The line is
+    gone -- one event, one surface -- so what is pinned here is the canvas the
+    reader is standing in: the work pane, its focus, and no landing.
+    """
+    notifications: list = []
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
     app = _new_library_onboarding_app(gates)
+    app.notify = lambda message, **kwargs: notifications.append(message)
     app.library_new_profile_admission = False
     app.app_config["library"]["rail_state"]["lifecycle"] = "starter"
     screen = LibraryScreen(app)
@@ -2276,21 +2285,22 @@ async def test_library_graduation_announcement_persists_on_note_creation_canvas(
 
             assert screen.query_one("#library-note-work-pane")
             assert creation_action.has_focus
+            assert notifications == ["Library tools are now available."]
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert "Library tools are now available." in str(
+            assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
-            assert lifecycle_status in screen._compositor.visible_widgets
             painted = "\n".join(
                 "".join(segment.text for segment in strip)
                 for strip in screen._compositor.render_strips()
             )
-            assert "Library tools are now available." in painted
+            assert "Library tools are now available." not in painted
             assert not screen.query("#library-landing-canvas")
 
             await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
             await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
             await pilot.pause()
+            assert notifications == ["Library tools are now available."]
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2302,11 +2312,16 @@ async def test_library_graduation_announcement_persists_on_note_creation_canvas(
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_clears_on_notes_files_switch() -> None:
+async def test_library_graduation_paints_no_canvas_line_across_a_notes_files_switch() -> (
+    None
+):
+    """task-32063: the notice is a toast, so a source switch has nothing to clear."""
+    notifications: list = []
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
     app = _new_library_onboarding_app(gates, starter=True)
+    app.notify = lambda message, **kwargs: notifications.append(message)
     screen = LibraryScreen(app)
     host = LibraryHarness(app, screen=screen)
 
@@ -2323,7 +2338,8 @@ async def test_library_graduation_announcement_clears_on_notes_files_switch() ->
                 message="note evidence did not graduate before the source switch",
             )
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert "Library tools are now available." in str(
+            assert notifications == ["Library tools are now available."]
+            assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
 
@@ -2338,6 +2354,7 @@ async def test_library_graduation_announcement_clears_on_notes_files_switch() ->
             )
             await pilot.pause()
 
+            assert notifications == ["Library tools are now available."]
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2346,11 +2363,14 @@ async def test_library_graduation_announcement_clears_on_notes_files_switch() ->
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_clears_on_direct_item_open() -> None:
+async def test_library_graduation_paints_no_canvas_line_on_a_direct_item_open() -> None:
+    """task-32063: the notice is a toast, so a direct open has nothing to clear."""
+    notifications: list = []
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
     app = _new_library_onboarding_app(gates, starter=True)
+    app.notify = lambda message, **kwargs: notifications.append(message)
     screen = LibraryScreen(app)
     host = LibraryHarness(app, screen=screen)
 
@@ -2364,7 +2384,8 @@ async def test_library_graduation_announcement_clears_on_direct_item_open() -> N
                 message="note evidence did not graduate before the direct open",
             )
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert "Library tools are now available." in str(
+            assert notifications == ["Library tools are now available."]
+            assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
 
@@ -2398,6 +2419,7 @@ async def test_library_graduation_announcement_clears_on_direct_item_open() -> N
             )
             await pilot.pause()
 
+            assert notifications == ["Library tools are now available."]
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2406,13 +2428,16 @@ async def test_library_graduation_announcement_clears_on_direct_item_open() -> N
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_survives_cancelled_source_switch(
+async def test_library_cancelled_source_switch_keeps_the_notes_database_source(
     monkeypatch,
 ) -> None:
+    """A dirty note blocks the Files switch; the graduation toast is not repeated."""
+    notifications: list = []
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
     app = _new_library_onboarding_app(gates, starter=True)
+    app.notify = lambda message, **kwargs: notifications.append(message)
     screen = LibraryScreen(app)
     host = LibraryHarness(app, screen=screen)
 
@@ -2444,7 +2469,8 @@ async def test_library_graduation_announcement_survives_cancelled_source_switch(
                 screen._library_notes_source
                 == library_screen_module.LIBRARY_NOTES_SOURCE_DATABASE
             )
-            assert "Library tools are now available." in str(
+            assert notifications == ["Library tools are now available."]
+            assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
     finally:

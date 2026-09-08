@@ -556,10 +556,30 @@ async def test_library_landing_late_sync_cannot_replace_a_new_route_owner(
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_survives_reconcile_and_same_route_replace():
+async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_route_replace():
+    """task-32063: the graduation notice is a toast, and only a toast.
+
+    It used to also paint a durable `#library-lifecycle-status` line, and this
+    test pinned that the line survived a reconcile and a same-route replace.
+    The line is gone (two surfaces for one event); what has to hold now is
+    that neither recompose repeats the toast or resurrects a canvas line, and
+    that focus still survives both.
+    """
     app = _build_test_app()
     _seed_conversations(app, [], notes=_two_notes())
+    announcements: list = []
+    app.notify = lambda message, **kwargs: announcements.append(message)
     host = LibraryHarness(app)
+
+    def graduation_toasts() -> list:
+        return [
+            message
+            for message in announcements
+            if "Library tools are now available." in str(message)
+        ]
+
+    def canvas_line() -> str:
+        return str(screen.query_one("#library-lifecycle-status", Static).renderable)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -581,9 +601,8 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
-        assert "Library tools are now available." in str(
-            screen.query_one("#library-lifecycle-status", Static).renderable
-        )
+        assert len(graduation_toasts()) == 1
+        assert "Library tools are now available." not in canvas_line()
 
         generation = screen._library_snapshot_state_generation
         route_key = screen._library_entry_route_key()
@@ -595,9 +614,8 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         await pilot.pause()
 
         assert reconciled is LibraryEntryReconcileResult.APPLIED
-        assert "Library tools are now available." in str(
-            screen.query_one("#library-lifecycle-status", Static).renderable
-        )
+        assert len(graduation_toasts()) == 1
+        assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
@@ -611,9 +629,8 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         await pilot.pause()
 
         assert child_replaced is LibraryEntryReconcileResult.APPLIED
-        assert "Library tools are now available." in str(
-            screen.query_one("#library-lifecycle-status", Static).renderable
-        )
+        assert len(graduation_toasts()) == 1
+        assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
@@ -625,9 +642,8 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         await pilot.pause()
 
         assert replaced is True
-        assert "Library tools are now available." in str(
-            screen.query_one("#library-lifecycle-status", Static).renderable
-        )
+        assert len(graduation_toasts()) == 1
+        assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
@@ -702,7 +718,7 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
             await pilot.pause()
 
             assert newer_target.has_focus
-            assert "Library tools are now available." in str(
+            assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
         finally:

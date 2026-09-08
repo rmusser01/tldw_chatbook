@@ -67,7 +67,10 @@ checking sources -- usable content found --> full Library (permanent)
 choice independently of which rail sections are open. While the expanded
 Library is still authoritatively empty, **Back to Get started** is available.
 Adding any usable content permanently graduates the profile to the full
-Library; deleting that content later does not hide tools again.
+Library; deleting that content later does not hide tools again. Graduation
+announces itself once, as the toast "Library tools are now available." — the
+rail growing is the durable evidence, so nothing is added to the canvas, and
+whatever you were reading or typing is left alone.
 
 Compact presentation never blocks navigation. Deep links and command-palette
 routes, including **Tab Navigation: Library — Skills**, can open a tool that is
@@ -721,3 +724,10 @@ in the Lab returns to the Library canvas it was opened from. task-32069: the
 rail search box has an "x" and no longer carries a stale query onto another
 canvas; the three Study rows are one row each. task-32072: Get started's
 "1 Add · 2 Find · 3 Use" is now three live controls.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (fix round:
+task-32063's graduation notice is now the toast and nothing else — the
+in-canvas line that repeated it is gone; task-32066's documented compact
+focus-recovery rule is implemented, so a landing control that had focus when
+the terminal became compact hands it to that action's matching rail row
+instead of keeping it on the hidden canvas.)*

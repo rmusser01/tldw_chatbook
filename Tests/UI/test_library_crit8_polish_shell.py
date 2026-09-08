@@ -7,26 +7,33 @@ and 32072 -- the polish-shell group of the critique-8 fix wave.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook import config as app_config
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import LibraryLandingCanvas
+from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesListScopeService,
+    StaticLibraryNotesScopeService,
 )
 from Tests.UI.test_library_shell import (
     LibraryHarness,
+    StaticLibraryNotesKeywordsService,
     _FakeSkillsScopeService,
+    _LibraryEvidenceGates,
     _active_library_screen,
     _build_test_app,
+    _new_library_onboarding_app,
     _seed_conversations,
     _two_conversations,
     _two_notes,
     _wait_for_condition,
+    _wait_for_evidence_round,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -57,6 +64,37 @@ async def test_library_landing_canvas_is_hidden_at_compact_widths():
         assert rail.display is True
         assert landing.region.width == 0, (
             "the landing canvas must not paint at compact widths"
+        )
+
+
+@pytest.mark.asyncio
+async def test_compact_hide_hands_landing_focus_to_the_matching_rail_row():
+    """task-32066: library.md's focus-recovery half of the compact rule.
+
+    Hiding the canvas only writes `display`; Textual resets focus on removal,
+    not on a hidden ancestor, so a landing control that had focus when the
+    terminal shrank kept it and swallowed Enter while invisible.
+    """
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        action = screen.query_one("#library-hub-action-import", Button)
+        action.focus()
+        await pilot.pause()
+        assert action.has_focus
+
+        await pilot.resize_terminal(*COMPACT_TEST_SIZE)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.query_one("#library-canvas").display is False
+        focused = screen.focused
+        assert focused is not None, "focus was left on the hidden landing canvas"
+        assert focused.id == f"library-row-{action.row_id}", (
+            f"focus must land on the matching rail row, got {focused.id!r}"
         )
 
 
@@ -240,6 +278,105 @@ async def test_escape_does_not_reopen_a_notes_list_the_user_collapsed():
         assert screen._library_notes_reader_preferences.items_open is False
 
 
+def _new_fresh_profile_app(gates: _LibraryEvidenceGates):
+    """A brand-new profile: settled STARTER rail, empty sources, real create seam.
+
+    ``_new_library_onboarding_app`` stubs all six owners down to their evidence
+    read, which leaves the browse canvas with no list services at all (the
+    shell then paints its "sources are unavailable" callout instead of the
+    Notes list). Put the real empty list services back and gate only the
+    evidence read, so the STARTER -> GRADUATED transition stays under the
+    test's control while the canvas behaves like the real one.
+    """
+    app = _new_library_onboarding_app(gates, starter=True)
+    _seed_conversations(app, [], notes=[])
+    for owner, attribute in (
+        ("notes", "notes_scope_service"),
+        ("media", "media_reading_scope_service"),
+        ("conversations", "chat_conversation_scope_service"),
+    ):
+        setattr(
+            getattr(app, attribute),
+            "get_library_user_content_evidence",
+            gates._async_call(owner),
+        )
+    return app
+
+
+def _first_note_gates() -> _LibraryEvidenceGates:
+    """Empty on entry, then user content -- the STARTER -> GRADUATED transition."""
+    return _LibraryEvidenceGates(
+        rounds=2,
+        outcomes={
+            "notes": [
+                LibraryContentEvidence.EMPTY,
+                LibraryContentEvidence.HAS_USER_CONTENT,
+            ]
+        },
+    )
+
+
+async def _open_the_first_note_editor(screen, pilot, gates) -> None:
+    """Settle a fresh profile on Starter, then open the blank-note editor."""
+    await _wait_for_evidence_round(pilot, gates, 0)
+    gates.release_round(0)
+    await _wait_for_condition(
+        pilot,
+        lambda: screen._library_lifecycle is LibraryLifecycle.STARTER,
+        message="empty evidence did not settle Starter",
+    )
+    screen.query_one("#library-hub-action-new-note", Button).press()
+    await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+    screen.query_one("#library-notes-create-blank", Button).press()
+    await _wait_for_selector(screen, pilot, "#library-note-title")
+    await pilot.pause()
+
+
+async def _type(pilot, text: str) -> None:
+    """Send ``text`` one keystroke at a time, the way a person types it."""
+    for character in text:
+        await pilot.press("space" if character == " " else character)
+
+
+@pytest.mark.asyncio
+async def test_first_note_on_a_fresh_profile_leaves_the_notes_list_visible():
+    """task-32061 in the condition it was reported in: a FRESH profile.
+
+    The earlier reproduction used a populated profile, which never runs the
+    STARTER -> GRADUATED transition -- and that transition is what the
+    critique saw collapse the list pane behind the first note.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+
+            gates.release_all()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="the first note did not graduate the profile",
+            )
+            await pilot.pause()
+
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.pause()
+
+            notes_list = screen.query_one("#library-notes-canvas")
+            assert notes_list.display is True
+            assert notes_list.region.width > 0, (
+                "Escape after the first note must leave the Notes list visible"
+            )
+    finally:
+        gates.release_all()
+
+
 # --- task-32063: one status line, one header, one toast ------------------
 
 
@@ -324,7 +461,6 @@ async def test_graduation_notice_is_silent_on_a_populated_profiles_first_visit()
     screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
     screen._apply_graduation_notice(LibraryLifecycle.EXPANDED)
 
-    assert screen._library_graduation_announcement_visible is False
     assert sent == []
 
 
@@ -345,6 +481,42 @@ async def test_graduation_notice_fires_when_the_compact_rail_gives_way():
     assert sent == [
         ("Library tools are now available.", {"severity": "information"})
     ]
+
+
+@pytest.mark.asyncio
+async def test_graduation_notice_is_a_toast_and_not_a_second_canvas_line():
+    """task-32063 AC: the notice IS a toast -- one event, one surface.
+
+    The first pass kept the in-canvas `#library-lifecycle-status` line beside
+    the toast, which is the duplication the critique called out.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    sent = _graduation_notifications(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen._set_library_lifecycle(LibraryLifecycle.STARTER)
+        screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
+        screen._sync_library_rail_lifecycle_presentation()
+        await pilot.pause()
+
+        assert sent[-1] == (
+            "Library tools are now available.",
+            {"severity": "information"},
+        )
+        status = screen.query_one("#library-lifecycle-status", Static)
+        assert "Library tools are now available." not in str(status.renderable)
+        assert status.display is False
+        painted = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in screen._compositor.render_strips()
+        )
+        assert "Library tools are now available." not in painted
 
 
 # --- task-32064: the Chunking Lab strip and its exit --------------------
