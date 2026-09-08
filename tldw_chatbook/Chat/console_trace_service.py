@@ -60,6 +60,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     _project_verified_provider_request_provenance,
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
+    CredentialSanitizer,
     PIIRedactionSpan,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
@@ -1095,6 +1096,7 @@ class _ProjectedProviderValues(Sequence[object]):
         "_owner_id",
         "_domain",
         "_cache",
+        "_retained_artifact_values",
     )
 
     def __init__(
@@ -1107,6 +1109,7 @@ class _ProjectedProviderValues(Sequence[object]):
         descriptor_root: _DescriptorRoot,
         owner_id: str,
         domain: str,
+        retained_artifact_values: Mapping[int, object],
     ) -> None:
         self._service = service
         self._cursor = cursor
@@ -1117,6 +1120,7 @@ class _ProjectedProviderValues(Sequence[object]):
         self._owner_id = owner_id
         self._domain = domain
         self._cache: tuple[object, ...] | None = None
+        self._retained_artifact_values = retained_artifact_values
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>"
@@ -1157,13 +1161,19 @@ class _ProjectedProviderValues(Sequence[object]):
         )
         resolved = self._service._resolve_reference_values(
             self._cursor,
-            tuple(key for _, key, _ in selected if key is not None),
+            tuple(
+                key
+                for sequence, key, _ in selected
+                if key is not None and sequence not in self._retained_artifact_values
+            ),
             owner_id=self._owner_id,
         )
         values: list[object] = []
-        for _, key, value in selected:
+        for sequence, key, value in selected:
             if key is None:
                 values.append(value)
+            elif sequence in self._retained_artifact_values:
+                values.append(self._retained_artifact_values[sequence])
             else:
                 values.append(resolved[key])
         self._cache = tuple(values)
@@ -2281,6 +2291,7 @@ class ConsoleTraceService:
         current_turn_id: str | None = None,
         current_policy_id: str | None = None,
         reserved_call: TraceCallRecord | None = None,
+        known_credentials: tuple[str, ...] = (),
     ) -> tuple[SurfaceDeltaAdmission, object]:
         """Plan an append, no-op, or one-item bounded surface replacement.
 
@@ -2337,9 +2348,11 @@ class ConsoleTraceService:
             owner_id=owner_id,
         )
 
+        retained_artifact_values: dict[int, object] = {}
+
         def matches(active_index: int, incoming_index: int) -> bool:
             key = active[active_index][2]
-            return _surface_reference_domain(key) == domains[
+            matched = _surface_reference_domain(key) == domains[
                 incoming_index
             ] and self._durable_reference_matches(
                 cursor,
@@ -2347,7 +2360,13 @@ class ConsoleTraceService:
                 values[incoming_index],
                 key,
                 durable_values,
+                known_credentials=known_credentials,
             )
+            if matched and key[1] == "artifact":
+                retained_artifact_values[active[active_index][1]] = values[
+                    incoming_index
+                ]
+            return matched
 
         prefix = 0
         while prefix < min(len(active), len(descriptors)) and matches(prefix, prefix):
@@ -2359,20 +2378,31 @@ class ConsoleTraceService:
         admitted_to = len(descriptors)
         if prefix < len(active):
             suffix = 0
+            project_transition = (
+                completed_tool_turn is not None
+                and completed_tool_turn.project_context_count is not None
+            )
             while (
                 suffix < len(active) - prefix
                 and suffix < len(descriptors) - prefix
+                # Project context is delivered anew for this turn, even when
+                # its bytes equal the previous turn's trailing context.
+                and (
+                    not project_transition
+                    or domains[len(descriptors) - 1 - suffix]
+                    == "provider_continuations"
+                )
                 and matches(len(active) - 1 - suffix, len(descriptors) - 1 - suffix)
             ):
                 suffix += 1
             incoming_changed = len(descriptors) - prefix - suffix
             active_changed = len(active) - prefix - suffix
             compound = (
-                incoming_changed == 2
-                and completed_tool_turn is not None
+                completed_tool_turn is not None
+                and incoming_changed == completed_tool_turn.descriptor_count
                 and route_identity in {"agent_first", "fresh"}
-                and domains[prefix : prefix + 2]
-                == ("messages_payload", "messages_payload")
+                and domains[prefix : prefix + incoming_changed]
+                == ("messages_payload",) * incoming_changed
             )
             if incoming_changed == 1 and active_changed == 0:
                 # A later turn adds a message before an unchanged provider
@@ -2421,7 +2451,9 @@ class ConsoleTraceService:
                         domain == domains[prefix] for domain in domains[:prefix]
                     ),
                 )
-                admitted_to = prefix + (2 if compound else 1)
+                admitted_to = prefix + (
+                    completed_tool_turn.descriptor_count if compound else 1
+                )
 
         if compound:
             assert replacement_range is not None and completed_tool_turn is not None
@@ -2445,7 +2477,9 @@ class ConsoleTraceService:
             expected_route=route_identity,
         )
         bootstrap = checkpoint is None and predecessor is not None
-        if compound and bootstrap:
+        if compound and (
+            bootstrap or completed_tool_turn.project_context_count is not None
+        ):
             assert tail is not None and current_policy_id is not None
             assert completed_tool_turn is not None
             terminal = self.repository.get_call(
@@ -2459,7 +2493,15 @@ class ConsoleTraceService:
                 tail=tail,
                 projection=projection,
                 route=route_identity,
-                policy_id=terminal.policy_id,
+                # Project renewal appends a provider artifact under the new
+                # frozen policy. The proof above established equivalent
+                # filtering; rebind retained descriptors to that same policy
+                # instead of mixing two otherwise-equivalent policy IDs.
+                policy_id=(
+                    current_policy_id
+                    if completed_tool_turn.project_context_count is not None
+                    else terminal.policy_id
+                ),
             )
             bootstrap = False
         admitted = descriptors[admitted_from:admitted_to]
@@ -2517,6 +2559,8 @@ class ConsoleTraceService:
             admission=admission,
             values=delta_values,
             reserved_call=reserved_call,
+            known_credentials=known_credentials,
+            retained_artifact_values=retained_artifact_values,
         )
         return admission, boundary
 
@@ -2531,6 +2575,31 @@ class ConsoleTraceService:
                 self._pending_child_uses.pop(key, None)
         self._surface_ref_cache.pop(admission.segment_id, None)
         self._prune_unreferenced_parents()
+
+    def has_completed_project_context(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        segment_id: str,
+        terminal_surface_id: str | None,
+    ) -> bool:
+        """Find a candidate project suffix; this grants no transition authority."""
+        if terminal_surface_id is None:
+            return False
+        tail = self.repository.get_surface_node(cursor, terminal_surface_id)
+        if tail is None:
+            return False
+        entries = self._surface_projection(cursor, segment_id, tail).entries
+        for _sequence, key in reversed(entries[-MAX_SURFACE_REPLACEMENT_SPAN:]):
+            if key[1] != "artifact" or key[0] not in {
+                "project_instruction",
+                "tool_call",
+                "tool_result",
+            }:
+                break
+            if key[0] == "project_instruction":
+                return True
+        return False
 
     def _validate_completed_tool_turn(
         self,
@@ -2547,6 +2616,7 @@ class ConsoleTraceService:
         reserved_call: TraceCallRecord | None = None,
     ) -> None:
         """Recheck bounded run evidence; a response link alone grants nothing."""
+        project_transition = witness.project_context_count is not None
         self._validate_owner(cursor, owner_id=owner_id, segment_id=segment_id)
         owner = self.repository.get_owner(cursor, owner_id)
         origin = self.repository.get_call(cursor, witness.origin_call_id)
@@ -2583,17 +2653,85 @@ class ConsoleTraceService:
             latest_id = None if previous is None else previous[0]
         else:
             latest_id = None if latest is None else latest.call_id
+        chain_terminal = terminal
+        fallback = (
+            project_transition
+            and terminal is not None
+            and terminal.route_identity == "llama_fallback"
+        )
+        if fallback:
+            # The non-streaming retry owns a distinct run ID. Its exact
+            # immediately preceding failed stream owns the unchanged surface;
+            # neither an arbitrary older call nor the response link proves it.
+            fallback_events = cursor.execute(
+                """SELECT sequence FROM console_trace_events
+                   WHERE segment_id = ? AND event_type = 'call_boundary'
+                     AND call_id = ? ORDER BY sequence LIMIT 2""",
+                (segment_id, terminal.call_id),
+            ).fetchall()
+            previous_event = (
+                cursor.execute(
+                    """SELECT call_id FROM console_trace_events
+                       WHERE segment_id = ? AND event_type = 'call_boundary'
+                         AND sequence < ? ORDER BY sequence DESC LIMIT 1""",
+                    (segment_id, fallback_events[0][0]),
+                ).fetchone()
+                if len(fallback_events) == 1
+                else None
+            )
+            chain_terminal = (
+                self.repository.get_call(cursor, previous_event[0])
+                if previous_event is not None
+                else None
+            )
+            if (
+                origin != terminal
+                or terminal.call_sequence != 0
+                or chain_terminal is None
+                or chain_terminal.state is not TraceCallState.ERROR
+                or chain_terminal.route_identity
+                not in {"agent_first", "fresh", "tool_loop"}
+                or (
+                    chain_terminal.owner_id,
+                    chain_terminal.segment_id,
+                    chain_terminal.turn_id,
+                    chain_terminal.policy_id,
+                    chain_terminal.surface_node_id,
+                    chain_terminal.provider_name,
+                    chain_terminal.model_name,
+                )
+                != (
+                    terminal.owner_id,
+                    terminal.segment_id,
+                    terminal.turn_id,
+                    terminal.policy_id,
+                    terminal.surface_node_id,
+                    terminal.provider_name,
+                    terminal.model_name,
+                )
+            ):
+                raise ValueError("completed_project_fallback_lineage")
+            origin = self.repository.get_run_origin(cursor, chain_terminal.run_id)
         if (
             owner is None
             or origin is None
             or terminal is None
+            or chain_terminal is None
             or tail is None
             or latest_id != terminal.call_id
             or terminal.state is not TraceCallState.COMPLETE
-            or terminal.route_identity != "tool_loop"
-            or origin.route_identity != "agent_first"
+            or (
+                chain_terminal.route_identity != "tool_loop"
+                and not (
+                    project_transition
+                    and chain_terminal == origin
+                    and chain_terminal.route_identity in {"agent_first", "fresh"}
+                )
+            )
+            or origin.route_identity
+            not in ({"agent_first", "fresh"} if project_transition else {"agent_first"})
             or origin.call_sequence != 0
-            or self.repository.get_run_origin(cursor, terminal.run_id) != origin
+            or self.repository.get_run_origin(cursor, chain_terminal.run_id) != origin
             or (
                 origin.owner_id,
                 origin.segment_id,
@@ -2602,11 +2740,11 @@ class ConsoleTraceService:
                 origin.policy_id,
             )
             != (
-                terminal.owner_id,
-                terminal.segment_id,
-                terminal.turn_id,
-                terminal.run_id,
-                terminal.policy_id,
+                chain_terminal.owner_id,
+                chain_terminal.segment_id,
+                chain_terminal.turn_id,
+                chain_terminal.run_id,
+                chain_terminal.policy_id,
             )
             or (terminal.owner_id, terminal.segment_id) != (owner_id, segment_id)
             or terminal.turn_id == current_turn_id
@@ -2618,15 +2756,14 @@ class ConsoleTraceService:
             """SELECT call_id, sequence FROM console_trace_events
                 WHERE segment_id = ? AND event_type = 'call_boundary'
                   AND call_id IN (?, ?) ORDER BY sequence LIMIT 3""",
-            (segment_id, origin.call_id, terminal.call_id),
+            (segment_id, origin.call_id, chain_terminal.call_id),
         ).fetchall()
-        if tuple(row[0] for row in boundary_events) != (
-            origin.call_id,
-            terminal.call_id,
+        if tuple(row[0] for row in boundary_events) != tuple(
+            dict.fromkeys((origin.call_id, chain_terminal.call_id))
         ):
             raise ValueError("completed_tool_turn_lineage")
         origin_event_sequence = boundary_events[0][1]
-        terminal_event_sequence = boundary_events[1][1]
+        terminal_event_sequence = boundary_events[-1][1]
         previous_policy = self.repository.get_policy(cursor, terminal.policy_id)
         current_policy = (
             None
@@ -2655,7 +2792,11 @@ class ConsoleTraceService:
         )
         if (
             origin_head is None
-            or plan.start_sequence != origin_head.sequence + 1
+            or (
+                plan.start_sequence > origin_head.sequence + 1
+                if project_transition
+                else plan.start_sequence != origin_head.sequence + 1
+            )
             or plan.end_sequence != tail.sequence
             or not 1
             <= plan.end_sequence - plan.start_sequence + 1
@@ -2679,15 +2820,11 @@ class ConsoleTraceService:
             or assistant.source_conversation_id != owner.conversation_id
             or user.source_conversation_id != owner.conversation_id
             or user.source_message_id != current_turn_id
-            or descriptors
-            != (
-                SavedRevisionTraceProvenance(witness.assistant_revision_id),
-                SavedRevisionTraceProvenance(witness.user_revision_id),
-            )
-            or len(values) != 2
+            or not witness.matches_descriptors(descriptors)
+            or len(values) != witness.descriptor_count
         ):
             raise ValueError("completed_tool_turn_revision")
-        for descriptor, value in zip(descriptors, values, strict=True):
+        for descriptor, value in zip(descriptors[:2], values[:2], strict=True):
             expected = self._resolve_reference_value(
                 cursor,
                 ("message", "revision", descriptor.revision_id),
@@ -2695,17 +2832,59 @@ class ConsoleTraceService:
             )
             if _artifact_bytes(expected) != _artifact_bytes(value):
                 raise ValueError("completed_tool_turn_value")
+        if any(
+            not isinstance(value, Mapping)
+            or value.get("role") != "user"
+            or value.get("_chatbook_ephemeral_origin") != "project_instructions"
+            or (
+                descriptor.policy.credential_filter_version,
+                descriptor.policy.pii_redaction_enabled,
+                descriptor.policy.pii_ruleset_revision_id,
+            )
+            != (
+                current_policy.credential_filter_version,
+                current_policy.pii_redaction_enabled,
+                current_policy.pii_ruleset_revision_id,
+            )
+            for descriptor, value in zip(descriptors[2:], values[2:], strict=True)
+        ):
+            raise ValueError("completed_project_context_value")
         projection = self._surface_projection(cursor, segment_id, tail)
         suffix = tuple(
             (sequence, key)
             for sequence, key in projection.entries
-            if sequence > origin_head.sequence
+            if sequence >= plan.start_sequence
         )
+        if project_transition:
+            prefix = tuple(
+                key
+                for sequence, key in projection.entries
+                if sequence < plan.start_sequence
+            )
+            prior_user = (
+                self.repository.get_semantic_revision(cursor, prefix[-1][2])
+                if prefix and prefix[-1][1] == "revision"
+                else None
+            )
+            if (
+                prior_user is None
+                or prior_user.normalized_role != "user"
+                or prior_user.source_conversation_id != owner.conversation_id
+                or prior_user.source_message_id != terminal.turn_id
+            ):
+                raise ValueError("completed_project_turn_anchor")
         if tuple(sequence for sequence, _ in suffix) != tuple(
             range(plan.start_sequence, plan.end_sequence + 1)
         ) or any(
-            key[0] not in {"tool_call", "tool_result"} or key[1] != "artifact"
-            for _, key in suffix
+            key[0]
+            not in (
+                {"project_instruction", "tool_call", "tool_result"}
+                if project_transition
+                else {"tool_call", "tool_result"}
+            )
+            or key[1] != "artifact"
+            or (sequence <= origin_head.sequence and key[0] != "project_instruction")
+            for sequence, key in suffix
         ):
             raise ValueError("completed_tool_turn_range")
         # Every removed node must have been appended under a durable call from
@@ -2728,16 +2907,20 @@ class ConsoleTraceService:
         if tuple(row[0] for row in rows) != tuple(
             sequence for sequence, _ in suffix
         ) or any(
-            tuple(row[1:7])
+            tuple(row[1:6])
             != (
                 owner_id,
                 segment_id,
                 terminal.turn_id,
-                terminal.run_id,
+                chain_terminal.run_id,
                 terminal.policy_id,
-                "tool_loop",
             )
-            or not 1 <= row[7] <= terminal.call_sequence
+            or (
+                (row[6], row[7]) != (origin.route_identity, 0)
+                if project_transition and row[0] <= origin_head.sequence
+                else row[6] != "tool_loop"
+                or not 1 <= row[7] <= chain_terminal.call_sequence
+            )
             for row in rows
         ):
             raise ValueError("completed_tool_turn_lineage")
@@ -2753,7 +2936,7 @@ class ConsoleTraceService:
                 origin_event_sequence,
                 terminal_event_sequence,
                 owner_id,
-                terminal.run_id,
+                chain_terminal.run_id,
                 terminal.turn_id,
                 terminal.policy_id,
             ),
@@ -2836,7 +3019,10 @@ class ConsoleTraceService:
         provenance: ProviderRequestProvenance,
         admitted: tuple[TraceProvenance, ...],
         values: tuple[object, ...],
-    ) -> tuple[object, ProviderRequestProvenance, tuple[object, ...]]:
+        known_credentials: tuple[str, ...] = (),
+    ) -> tuple[
+        object, ProviderRequestProvenance, tuple[object, ...], dict[int, object]
+    ]:
         projection = self._surface_projection(cursor, segment_id, tail)
         message_descriptors = tuple(provenance.messages_payload)
         continuation_descriptors = tuple(provenance.continuations)
@@ -2864,6 +3050,7 @@ class ConsoleTraceService:
         consumed = {"messages_payload": 0, "provider_continuations": 0}
         prefix_descriptors: list[tuple[int, TraceProvenance]] = []
         prefix_domains: list[tuple[int, str]] = []
+        retained_artifact_values: dict[int, object] = {}
         for sequence, key in projection.entries:
             domain = _surface_reference_domain(key)
             descriptors, provider_values = domain_values[domain]
@@ -2874,10 +3061,13 @@ class ConsoleTraceService:
                 provider_values[ordinal],
                 key,
                 durable_values,
+                known_credentials=known_credentials,
             ):
                 raise ValueError("surface_prefix_mismatch")
             prefix_descriptors.append((sequence, descriptors[ordinal]))
             prefix_domains.append((sequence, domain))
+            if key[1] == "artifact":
+                retained_artifact_values[sequence] = provider_values[ordinal]
             consumed[domain] += 1
         message_delta = message_descriptors[consumed["messages_payload"] :]
         continuation_delta = continuation_descriptors[
@@ -2933,7 +3123,12 @@ class ConsoleTraceService:
                 if index >= consumed["messages_payload"]
             ),
         )
-        return capability, delta_provenance, tuple(delta_values)
+        return (
+            capability,
+            delta_provenance,
+            tuple(delta_values),
+            retained_artifact_values,
+        )
 
     def prepare_surface_provenance(
         self,
@@ -2944,6 +3139,8 @@ class ConsoleTraceService:
         admission: object,
         values: tuple[object, ...],
         reserved_call: TraceCallRecord | None = None,
+        known_credentials: tuple[str, ...] = (),
+        retained_artifact_values: Mapping[int, object] | None = None,
     ) -> _PreparedSurfaceBoundary:
         """Derive one full structural projection from an opaque parent and delta.
 
@@ -2954,6 +3151,7 @@ class ConsoleTraceService:
 
         if type(admission) is not SurfaceDeltaAdmission:
             raise TypeError("admission")
+        retained_artifact_values = dict(retained_artifact_values or {})
         initial_parent = capability is None
         if capability is None:
             owner_id = str(getattr(admission, "owner_id", ""))
@@ -2982,15 +3180,19 @@ class ConsoleTraceService:
                     tool_loop=(),
                 )
             else:
-                capability, provenance, values = self._bootstrap_surface_parent(
-                    cursor,
-                    owner_id=owner_id,
-                    segment_id=segment_id,
-                    tail=tail,
-                    provenance=provenance,
-                    admitted=admitted,
-                    values=values,
+                capability, provenance, values, bootstrap_artifact_values = (
+                    self._bootstrap_surface_parent(
+                        cursor,
+                        owner_id=owner_id,
+                        segment_id=segment_id,
+                        tail=tail,
+                        provenance=provenance,
+                        admitted=admitted,
+                        values=values,
+                        known_credentials=known_credentials,
+                    )
                 )
+                retained_artifact_values.update(bootstrap_artifact_values)
             assert capability is not None
         parent = self._parent_capabilities.get(id(capability))
         admitted = tuple(getattr(admission, "descriptors", ()))
@@ -3012,6 +3214,38 @@ class ConsoleTraceService:
             or len(values) != len(admitted)
         ):
             raise ValueError("surface_checkpoint_identity")
+        if retained_artifact_values:
+            # These values live only in this dispatch boundary. Independently
+            # verify every supplied artifact against the durable disclosure
+            # projection; saved revisions never accept raw-value overrides.
+            parent_keys = dict(parent.root.iter_entries())
+            parent_descriptors = dict(parent.descriptors.iter_entries())
+            durable_values = self._resolve_reference_values(
+                cursor,
+                tuple(
+                    parent_keys[sequence]
+                    for sequence in retained_artifact_values
+                    if sequence in parent_keys
+                ),
+                owner_id=parent.owner_id,
+            )
+            for sequence, value in retained_artifact_values.items():
+                key = parent_keys.get(sequence)
+                descriptor = parent_descriptors.get(sequence)
+                if (
+                    key is None
+                    or key[1] != "artifact"
+                    or descriptor is None
+                    or not self._durable_reference_matches(
+                        cursor,
+                        descriptor,
+                        value,
+                        key,
+                        durable_values,
+                        known_credentials=known_credentials,
+                    )
+                ):
+                    raise ValueError("surface_prefix_mismatch")
         replacement_component_ordinal: int | None = None
         if admission.completed_tool_turn is not None:
             if replacement_range is None:
@@ -3030,8 +3264,13 @@ class ConsoleTraceService:
                 descriptors=admitted,
                 values=values,
                 current_turn_id=None if user is None else user.source_message_id,
-                current_policy_id=(reserved_call.policy_id if reserved_call is not None
-                                   else None if terminal is None else terminal.policy_id),
+                current_policy_id=(
+                    reserved_call.policy_id
+                    if reserved_call is not None
+                    else None
+                    if terminal is None
+                    else terminal.policy_id
+                ),
                 reserved_call=reserved_call,
             )
         if replacement_range is not None:
@@ -3125,7 +3364,11 @@ class ConsoleTraceService:
                 ),
             )
         else:
-            if len(admitted) != (2 if admission.completed_tool_turn is not None else 1):
+            if len(admitted) != (
+                admission.completed_tool_turn.descriptor_count
+                if admission.completed_tool_turn is not None
+                else 1
+            ):
                 raise ValueError("surface_delta_shape")
             descriptor_root = _DescriptorRoot(
                 parent.descriptors,
@@ -3231,6 +3474,7 @@ class ConsoleTraceService:
             descriptor_root,
             parent.owner_id,
             "messages_payload",
+            retained_artifact_values,
         )
         continuation_values = _ProjectedProviderValues(
             self,
@@ -3241,6 +3485,7 @@ class ConsoleTraceService:
             descriptor_root,
             parent.owner_id,
             "provider_continuations",
+            retained_artifact_values,
         )
         boundary = _PreparedSurfaceBoundary(
             self,
@@ -4242,24 +4487,36 @@ class ConsoleTraceService:
         value: object,
         durable_key: SurfaceReferenceKey,
         durable_values: Mapping[SurfaceReferenceKey, object],
+        *,
+        known_credentials: tuple[str, ...] = (),
     ) -> bool:
-        if type(descriptor) is ProviderArtifactTraceProvenance:
-            source = cast(ProviderArtifactTraceProvenance, descriptor).source.value
-            return (
-                durable_key[:2] == (source, "artifact")
-                and durable_key in durable_values
-                and _artifact_bytes(value)
-                == _artifact_bytes(durable_values[durable_key])
+        artifact = (
+            descriptor
+            if type(descriptor) is ProviderArtifactTraceProvenance
+            else descriptor.artifact
+            if type(descriptor) is DerivedTraceProvenance
+            else None
+        )
+        if artifact is not None:
+            if (
+                durable_key[:2] != (artifact.source.value, "artifact")
+                or durable_key not in durable_values
+            ):
+                return False
+            # The provider still receives the original value. Compare only in
+            # the same disclosure projection used by the durable artifact;
+            # otherwise unchanged secret-bearing context looks like an edit.
+            sanitized = CredentialSanitizer(
+                known_credentials=known_credentials
+            ).sanitize(value)
+            if not sanitized.available:
+                return False
+            projected = self._pii_projected_value(
+                sanitized.value, policy=artifact.policy
             )
-        if type(descriptor) is DerivedTraceProvenance:
-            derived = cast(DerivedTraceProvenance, descriptor)
-            if derived.artifact is not None:
-                return (
-                    durable_key[:2] == (derived.artifact.source.value, "artifact")
-                    and durable_key in durable_values
-                    and _artifact_bytes(value)
-                    == _artifact_bytes(durable_values[durable_key])
-                )
+            return _artifact_bytes(projected) == _artifact_bytes(
+                durable_values[durable_key]
+            )
         expected = self._reference_key(cursor, descriptor, value)
         if expected != durable_key:
             return False

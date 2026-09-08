@@ -12,6 +12,7 @@ import pytest
 
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    ConsoleConversationUnit,
     build_console_request,
     prepare_provider_request,
     resolve_request_capacity,
@@ -30,6 +31,7 @@ from tldw_chatbook.Chat.console_trace_models import (
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
     ConsoleTraceCaptureMode,
+    ConsoleUnitProvenance,
     ProviderArtifactTraceProvenance,
     SavedRevisionTraceProvenance,
     TraceProvenanceSource,
@@ -1736,6 +1738,104 @@ def test_production_factory_rejects_unsaved_active_message_instead_of_stale_turn
             None,
             ConsoleRequestRoute.FRESH,
         )
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "unsaved_user",
+        "untagged_context",
+        "wrong_source",
+        "wrong_role",
+        "assistant_owner",
+        "context_only_active",
+    ],
+)
+@pytest.mark.parametrize("wire_style", ["distinct_roles", "single_preamble"])
+def test_project_context_cannot_supply_or_hide_a_missing_turn_owner(
+    tmp_path, make_database, scenario, wire_style
+) -> None:
+    database = make_database(tmp_path / "project-owner.sqlite", "project-owner")
+    conversation_id = database.add_conversation({"title": "project ownership"})
+    _, prior = _saved_message(database, conversation_id, "prior")
+    current_role = "assistant" if scenario == "assistant_owner" else "user"
+    current_id, current = _saved_message(
+        database, conversation_id, "current", sender=current_role
+    )
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    context = {
+        "role": "user",
+        "content": "project guidance",
+        "_chatbook_ephemeral_origin": "project_instructions",
+    }
+    if scenario == "untagged_context":
+        context.pop("_chatbook_ephemeral_origin")
+    if scenario == "wrong_role":
+        context["role"] = "assistant"
+    context_source = (
+        TraceProvenanceSource.ACTIVE_REQUEST
+        if scenario == "wrong_source"
+        else TraceProvenanceSource.PROJECT_INSTRUCTION
+    )
+    semantic = _semantic_request(
+        [
+            {"role": "user", "content": "prior"},
+            {"role": current_role, "content": "current"},
+            context,
+            dict(context),
+        ],
+        [
+            prior,
+            ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.ACTIVE_REQUEST, policy
+            )
+            if scenario == "unsaved_user"
+            else current,
+            ProviderArtifactTraceProvenance(context_source, policy),
+            ProviderArtifactTraceProvenance(context_source, policy),
+        ],
+        policy,
+        route=ConsoleRequestRoute.AGENT_FIRST,
+        actor_id=new_opaque_id(),
+        chain_id=new_opaque_id(),
+    )
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style=wire_style,
+        provider="openai",
+        model="gpt-test",
+        capacity=resolve_request_capacity(context_window_tokens=None),
+        apply_safety_window=False,
+    )
+    if scenario == "context_only_active":
+        # A forged section boundary must not authorize an older compactable user.
+        prepared = replace(
+            prepared,
+            semantic=replace(
+                prepared.semantic,
+                compactable=prepared.semantic.compactable
+                + (ConsoleConversationUnit(prepared.semantic.active_request[:-2]),),
+                active_request=prepared.semantic.active_request[-2:],
+                provenance=replace(
+                    prepared.semantic.provenance,
+                    compactable=prepared.semantic.provenance.compactable
+                    + (
+                        ConsoleUnitProvenance(
+                            prepared.semantic.provenance.active_request[:-2]
+                        ),
+                    ),
+                    active_request=prepared.semantic.provenance.active_request[-2:],
+                ),
+            ),
+        )
+    factory = ConsoleTraceBoundaryFactory(database)
+    if scenario == "valid":
+        boundary = factory(prepared, None, ConsoleRequestRoute.AGENT_FIRST)
+        assert boundary.identity.turn_id == current_id
+    else:
+        with pytest.raises(ValueError, match="trace_turn_unavailable"):
+            factory(prepared, None, ConsoleRequestRoute.AGENT_FIRST)
 
 
 def test_production_factory_batches_revision_owner_lookup_for_long_traces(

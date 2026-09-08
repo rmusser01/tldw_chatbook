@@ -26,7 +26,11 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     CredentialSanitizationResult,
     CredentialSanitizer,
 )
-from tldw_chatbook.Chat.console_trace_models import SemanticRevisionRef, new_opaque_id
+from tldw_chatbook.Chat.console_trace_models import (
+    MAX_SURFACE_REPLACEMENT_SPAN,
+    SemanticRevisionRef,
+    new_opaque_id,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
@@ -189,6 +193,9 @@ class CompletedToolTurnWitness:
     terminal_call_id: str
     assistant_revision_id: str
     user_revision_id: str
+    # None preserves the tool-only transition. Zero explicitly renews a
+    # project turn whose next request no longer contains project context.
+    project_context_count: int | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         for identity in (
@@ -198,6 +205,32 @@ class CompletedToolTurnWitness:
             self.user_revision_id,
         ):
             SemanticRevisionRef(identity)
+        if self.project_context_count is not None and (
+            type(self.project_context_count) is not int
+            or not 0 <= self.project_context_count <= MAX_SURFACE_REPLACEMENT_SPAN
+        ):
+            raise ValueError("completed_project_context_count")
+
+    @property
+    def descriptor_count(self) -> int:
+        """Number of saved response/user and current project-context rows."""
+        return 2 + (self.project_context_count or 0)
+
+    def matches_descriptors(self, descriptors: tuple[TraceProvenance, ...]) -> bool:
+        """Require the exact saved pair followed only by declared context."""
+        return (
+            len(descriptors) == self.descriptor_count
+            and descriptors[:2]
+            == (
+                SavedRevisionTraceProvenance(self.assistant_revision_id),
+                SavedRevisionTraceProvenance(self.user_revision_id),
+            )
+            and all(
+                type(item) is ProviderArtifactTraceProvenance
+                and item.source is TraceProvenanceSource.PROJECT_INSTRUCTION
+                for item in descriptors[2:]
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,11 +270,7 @@ class SurfaceDeltaAdmission:
                 or self.replacement_range is None
                 or self.replacement_range.component_name != "messages_payload"
                 or self.route_identity not in {"agent_first", "fresh"}
-                or self.descriptors
-                != (
-                    SavedRevisionTraceProvenance(witness.assistant_revision_id),
-                    SavedRevisionTraceProvenance(witness.user_revision_id),
-                )
+                or not witness.matches_descriptors(self.descriptors)
             ):
                 raise ValueError("surface_delta_shape")
         elif self.replacement_range is not None and len(self.descriptors) != 1:
@@ -277,7 +306,7 @@ class VerifiedSurfaceDelta:
             if (
                 type(witness) is not CompletedToolTurnWitness
                 or self.replacement is None
-                or len(self.items) != 1
+                or len(self.items) != witness.descriptor_count - 1
                 or self.route_identity not in {"agent_first", "fresh"}
                 or self.replacement.item.component_name != "messages_payload"
                 or self.items[0].component_name != "messages_payload"
@@ -286,6 +315,15 @@ class VerifiedSurfaceDelta:
                 != SavedRevisionTraceProvenance(witness.assistant_revision_id)
                 or self.items[0].provenance
                 != SavedRevisionTraceProvenance(witness.user_revision_id)
+                or any(
+                    item.component_name != "messages_payload"
+                    or item.ordinal != self.replacement.item.ordinal + offset
+                    for offset, item in enumerate(self.items, 1)
+                )
+                or not witness.matches_descriptors(
+                    (self.replacement.item.provenance,)
+                    + tuple(item.provenance for item in self.items)
+                )
             ):
                 raise ValueError("surface_delta_shape")
         elif self.replacement is not None and self.items:
@@ -408,7 +446,12 @@ def build_verified_surface_delta(
         if replacement_range is not None:
             ordinal = replacement_range.current_ordinal
             if (
-                delta_count != (2 if admission.completed_tool_turn is not None else 1)
+                delta_count
+                != (
+                    admission.completed_tool_turn.descriptor_count
+                    if admission.completed_tool_turn is not None
+                    else 1
+                )
                 or ordinal < 0
                 or ordinal >= len(full_messages) + len(full_continuations)
             ):
@@ -457,7 +500,11 @@ def build_verified_surface_delta(
             )
     replacement: VerifiedSurfaceReplacement | None = None
     if admission.replacement_range is not None:
-        if len(items) != (2 if admission.completed_tool_turn is not None else 1):
+        if len(items) != (
+            admission.completed_tool_turn.descriptor_count
+            if admission.completed_tool_turn is not None
+            else 1
+        ):
             raise ValueError("surface_delta_shape")
         replacement_range = admission.replacement_range
         if items[0].component_name != replacement_range.component_name or (

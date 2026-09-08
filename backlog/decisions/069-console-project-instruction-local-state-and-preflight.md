@@ -80,6 +80,22 @@ ordinary persistence semantics.
 
 ## Context
 
+### Amendment: capture-enabled trajectory history (TASK-31976.1, 2026-09-07)
+
+The owner explicitly requires traces to retain the project instructions the
+model received. Automatic project context therefore follows ADR-097's normal
+provider-artifact storage and credential/PII redaction rules when Capture On is
+admitted. This supersedes the exclusion from **durable captures** above; Capture
+Off, ordinary conversation messages, summaries, agent steps and logs retain the
+existing nonpersistence rules. Explicit file reads and model quotations remain
+ordinary content. Trace retention does not grant repository text authority.
+
+Tagged project context belongs to the user turn that caused its delivery. It
+does not start a new user turn, become its saved owner, or make that user's
+message independently removable by request windowing. Provider message order
+is preserved; tracing excludes only verified context artifacts when identifying
+the active saved turn and still rejects an unsaved active user message.
+
 ADR-068 established the untrusted project-context boundary, Codex filename
 precedence, lazy nested activation, and nonpersistence requirement. A later
 readiness audit found three implementation-breaking assumptions:
