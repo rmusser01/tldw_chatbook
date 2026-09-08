@@ -154,7 +154,7 @@ async def test_work_pane_editor_ready_is_ignored_off_the_editor_route() -> None:
     """The route guard: the same message off the editor route arms nothing.
 
     Same screen, same message, same starting value as the test above -- only
-    ``_library_notes_view`` differs, which is precisely the guard this pins.
+    ``_notes_state.view`` differs, which is precisely the guard this pins.
     Without both directions an inverted guard would still look green.
     """
     app = _build_test_app()

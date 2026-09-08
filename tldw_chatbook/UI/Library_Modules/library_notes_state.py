@@ -539,7 +539,7 @@ class LibraryNotesState:
     # "Untitled" placeholder instead of a literal editable "Untitled"
     # value -- the fix for typing landing at the cursor's end and
     # producing e.g. "UntitledAtlas follow-ups". Deliberately NOT used
-    # to decide GC-vs-save at exit (see ``_library_note_session_blank_id``
+    # to decide GC-vs-save at exit (see ``session_blank_id``
     # below) -- clearing on the first keystroke is correct for "stop
     # showing the placeholder" but wrong for "should this be GC'd",
     # since a user can type then delete everything back to empty
@@ -549,7 +549,7 @@ class LibraryNotesState:
 
     # LIB-14 (review round 1 fix): the id of a note created via "Blank
     # note" THIS SESSION, tracked for the whole session regardless of
-    # intermediate edits -- unlike ``_library_note_pending_blank_gc_id``
+    # intermediate edits -- unlike ``pending_blank_gc_id``
     # above, ``_mark_library_note_dirty`` never clears this. Read by
     # ``_flush_library_note_save`` to decide GC-vs-save at exit: when
     # the note being flushed IS this session's blank AND its FINAL live

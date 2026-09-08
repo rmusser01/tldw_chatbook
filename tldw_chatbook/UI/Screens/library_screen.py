@@ -16670,7 +16670,7 @@ class LibraryScreen(BaseAppScreen):
         # detail's own is_markdown -- computed here (once, at load) rather
         # than on every recompose, so a later Rendered<->Raw toggle press
         # is never silently reset back to the default by an unrelated
-        # recompose (mirrors the note editor's ``_library_note_preview``
+        # recompose (mirrors the note editor's ``_notes_state.preview``
         # not being re-derived on every render).
         self._media_state.content_mode = (
             "rendered"
@@ -18180,7 +18180,7 @@ class LibraryScreen(BaseAppScreen):
                 # (rebase note: task-4021 independently re-derived this
                 # same root cause -- the literal seed must count as blank
                 # too, or this GC branch is unreachable -- but its version
-                # lacked the ``_library_note_title_user_edited`` provenance
+                # lacked the ``_notes_state.title_user_edited`` provenance
                 # guard below; dev's fuller check is kept as-is and covers
                 # task-4021's reachability claim too.)
                 title_blank = not raw_title.strip() or (

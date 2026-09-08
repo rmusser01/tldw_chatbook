@@ -713,7 +713,7 @@ def _apply_navigation_context_state(
         # editor state FIRST (a mounted screen re-entered via this
         # deep link can still hold a previously opened note's
         # id/detail/version) then re-assert the create-note target state
-        # AFTER, since the reset flips _library_notes_view back to
+        # AFTER, since the reset flips _notes_state.view back to
         # "list" -- same reset-then-set ordering as
         # _open_library_item_by_id's notes branch.
         self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)

@@ -27448,7 +27448,7 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     assert restored._conversations_state.page_loaded is False
     assert restored._conversations_state.freshness == "uninitialized"
     # Never restored -- the notes canvas recomputes it fresh from
-    # ``_library_notes_filter`` on mount.
+    # ``_notes_state.filter`` on mount.
     assert restored._notes_state.filter_records is None
 
 
@@ -27551,8 +27551,8 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
 
 @pytest.mark.asyncio
 async def test_library_shell_restored_notes_sort_and_filter_render_on_first_paint():
-    """The notes canvas builder reads ``_library_notes_sort``/
-    ``_library_notes_filter`` at MOUNT time (the notes branch of
+    """The notes canvas builder reads ``_notes_state.sort``/
+    ``_notes_state.filter`` at MOUNT time (the notes branch of
     ``compose_content``'s ``sort_mode=``/``filter_value=``) -- restored
     values must already be reflected on first paint.
     """
