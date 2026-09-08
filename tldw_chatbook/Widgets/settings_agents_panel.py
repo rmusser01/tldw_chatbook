@@ -16,9 +16,10 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, ListItem, ListView, Static, Switch, TextArea
 
 from tldw_chatbook.Agents.agent_models import (
-    AgentDefinition,
     RUNTIME_TOOL_NAMES,
+    AgentDefinition,
 )
+from tldw_chatbook.Agents.agent_presets import BULK_READER_PRESET
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 #: Soft ceiling before the status line warns about spawn-schema bloat
@@ -106,6 +107,7 @@ class AgentsSettingsPanel(Vertical):
                 yield Switch(value=True, id="agents-enabled-switch")
             with Horizontal(classes="settings-input-row"):
                 yield Button("New", id="agents-new-button")
+                yield Button("Bulk reader", id="agents-bulk-reader-button")
                 yield Button("Save", variant="primary", id="agents-save-button")
                 yield Button("Delete", variant="error", id="agents-delete-button")
         yield Static("", id="agents-status", classes="settings-detail-row")
@@ -156,6 +158,8 @@ class AgentsSettingsPanel(Vertical):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "agents-new-button":
             self._clear_form()
+        elif event.button.id == "agents-bulk-reader-button":
+            self._load_bulk_reader_preset()
         elif event.button.id == "agents-save-button":
             await self._save()
         elif event.button.id == "agents-delete-button":
@@ -170,6 +174,24 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-tools-input", Input).value = ""
         self.query_one("#agents-enabled-switch", Switch).value = True
         self._set_status("")
+
+    def _load_bulk_reader_preset(self) -> None:
+        self._selected_id = None
+        self.query_one("#agents-name-input", Input).value = BULK_READER_PRESET.name
+        self.query_one(
+            "#agents-description-input", Input
+        ).value = BULK_READER_PRESET.description
+        self.query_one(
+            "#agents-instructions-area", TextArea
+        ).text = BULK_READER_PRESET.instructions
+        self.query_one("#agents-model-input", Input).value = ""
+        self.query_one("#agents-tools-input", Input).value = ", ".join(
+            BULK_READER_PRESET.tool_allowlist
+        )
+        self.query_one(
+            "#agents-enabled-switch", Switch
+        ).value = BULK_READER_PRESET.enabled
+        self._set_status("Choose a cheaper model from the same provider, then Save.")
 
     def _form_definition(self) -> AgentDefinition:
         # dict.fromkeys dedupes while preserving first-seen order -- "a, a"

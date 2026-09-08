@@ -2978,6 +2978,12 @@ class _StreamingModelAdapter:
                 route_actor_id, route_chain_id = recovered
             self._thread_loop.route_actor_id = route_actor_id
             self._thread_loop.route_chain_id = route_chain_id
+        # Named definitions can override the model while staying on the
+        # parent's provider endpoint. The adapter is shared by concurrent
+        # parent/child turns, so keep that override immutable and call-local.
+        call_resolution = self._resolution
+        if model and model != self._resolution.model:
+            call_resolution = dataclass_replace(self._resolution, model=model)
         gate = StreamGate()
         any_streamed = False
         native_calls: list[dict] = []
@@ -3033,7 +3039,7 @@ class _StreamingModelAdapter:
                 if not callable(prepare_request):
                     raise ValueError("Capture On agent gateway cannot prepare requests")
                 dispatch_messages = prepare_request(
-                    self._resolution,
+                    call_resolution,
                     self._trace_request_factory.build(
                         semantic_messages,
                         tools=tools or (),
@@ -3046,7 +3052,7 @@ class _StreamingModelAdapter:
                     route_actor_id=route_actor_id,
                     route_chain_id=route_chain_id,
                     continuation_target=self._continuation_target,
-                    thinking_sidecar=self._thinking_sidecar,
+                    thinking_sidecar=() if is_subagent else self._thinking_sidecar,
                     thinking_policy=self._thinking_policy,
                     thinking_owner_key=self._thinking_owner_key,
                     capture_mode=self._capture_mode,
@@ -3054,7 +3060,7 @@ class _StreamingModelAdapter:
                 stream_kwargs.pop("tools", None)
             elif continuation_groups and callable(prepare_request):
                 dispatch_messages = prepare_request(
-                    self._resolution,
+                    call_resolution,
                     build_console_request(
                         semantic_messages,
                         tools=tools or (),
@@ -3065,17 +3071,21 @@ class _StreamingModelAdapter:
                     route_actor_id=route_actor_id,
                     route_chain_id=route_chain_id,
                     continuation_target=self._continuation_target,
-                    thinking_sidecar=self._thinking_sidecar,
+                    thinking_sidecar=() if is_subagent else self._thinking_sidecar,
                     thinking_policy=self._thinking_policy,
                     thinking_owner_key=self._thinking_owner_key,
                     capture_mode=self._capture_mode,
                 )
                 stream_kwargs.pop("tools", None)
-            elif (self._continuation_sidecar or self._thinking_sidecar) and callable(
-                prepare_request
+            elif (
+                not is_subagent
+                and (self._continuation_sidecar or self._thinking_sidecar)
+                and callable(prepare_request)
             ):
+                # The constructor sidecar belongs to the primary turn. A
+                # child has its own history and must never consume it.
                 dispatch_messages = prepare_request(
-                    self._resolution,
+                    call_resolution,
                     transport_messages,
                     tools=tools,
                     route=route,
@@ -3102,7 +3112,7 @@ class _StreamingModelAdapter:
                     and not self._store.session_is_ephemeral(owner_session_id)
                 ),
                 may_emit_thinking=bool(
-                    getattr(self._resolution, "may_emit_thinking", False)
+                    getattr(call_resolution, "may_emit_thinking", False)
                 ),
             )
             from tldw_chatbook.Chat.stream_stall_watchdog import (
@@ -3111,7 +3121,7 @@ class _StreamingModelAdapter:
 
             async for chunk in watch_content_stalls(
                 self._gateway.stream_chat(
-                    self._resolution,
+                    call_resolution,
                     dispatch_messages,
                     route=route,
                     route_actor_id=route_actor_id,
@@ -3120,7 +3130,7 @@ class _StreamingModelAdapter:
                     **stream_kwargs,
                 ),
                 _stall_timeout_seconds(),
-                provider=self._resolution.provider,
+                provider=call_resolution.provider,
             ):
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
@@ -3267,14 +3277,14 @@ class _StreamingModelAdapter:
             )
             usage = _openai_usage_from_provider_call(
                 usage_payload,
-                provider=self._resolution.provider,
-                model=self._resolution.model or model or "",
+                provider=call_resolution.provider,
+                model=call_resolution.model or "",
             )
             if usage is None and call_signals is not None:
                 usage = _openai_usage_from_provider_call(
                     call_signals.usage_snapshot(),
-                    provider=self._resolution.provider,
-                    model=self._resolution.model or model or "",
+                    provider=call_resolution.provider,
+                    model=call_resolution.model or "",
                 )
         except Exception as exc:  # noqa: BLE001 — observability is never fatal
             usage = None
