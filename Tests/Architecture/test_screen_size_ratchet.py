@@ -761,30 +761,30 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # PRs each installed and their own cleanup PRs each deleted).
     # -192 + 4 + 11 + 21 = -156.
     #
-    # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N): 186
+    # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N): 185
     # of the 285 "note"-named `LibraryScreen` methods moved verbatim into
     # `LibraryNotesController`
     # (`UI/Library_Modules/library_notes_controller.py`), which the screen
     # constructs as `self._notes_controller` and delegates to under every
     # original name. Fresh `_measure()`: 35621/1290 -> 32286/1284. Line delta
     # -3335 reconciles EXACTLY, each term measured off the tree rather than
-    # estimated: -4078 removed (the 192 `FunctionDef` segments of the 186
+    # estimated: -4034 removed (the 191 `FunctionDef` segments of the 185
     # movers, decorators included); -6 for the blank line after each of the 6
     # SECOND copies of a byte-identical duplicate block dev shipped twice
     # (`7cf89de6c` + `fd505637f`, `library_screen.py:6557-6662` and
     # `:6663-6768` at the parent) -- a move cannot preserve it, since two
     # delegators cannot share one name, so both copies go and one delegator
-    # lands; +454 for the 186 one-line delegators (a delegator is 2-6 lines
+    # lands; +452 for the 185 one-line delegators (a delegator is 2-6 lines
     # once its `@on` decorator and wrapped signature are counted); +3 for the
     # function-local `library_notes_controller` import inside `__init__`;
-    # +292 for the construction site (`self._notes_controller =
-    # LibraryNotesController(...)`, 93 named dependencies under a 3-line
-    # comment). -4078 - 6 + 454 + 3 + 292 = -3335.
+    # +289 for the construction site (`self._notes_controller =
+    # LibraryNotesController(...)`, 92 named dependencies under a 3-line
+    # comment). -4034 - 6 + 452 + 3 + 289 = -3296.
     #
     # The METHOD count drops by exactly 6 (1290 -> 1284), which is the
-    # duplicate block and nothing else: 192 definitions out, 186 delegators
+    # duplicate block and nothing else: 191 definitions out, 185 delegators
     # in.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32286, 1284),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32325, 1284),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

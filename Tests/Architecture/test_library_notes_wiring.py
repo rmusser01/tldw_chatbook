@@ -34,8 +34,8 @@ own note on the collision).
 
 **Task 2 (controller PR)** adds the full-cluster ownership / same-name-
 delegator-forwarding / staticmethod-class-forwarding / controller-state-shim
-checks (``_NOTES_CLUSTER_METHOD_NAMES``, 186 names) plus a
-constructor-binding coverage check (``_NOTES_CONTROLLER_BOUND_NAMES``, 103
+checks (``_NOTES_CLUSTER_METHOD_NAMES``, 185 names) plus a
+constructor-binding coverage check (``_NOTES_CONTROLLER_BOUND_NAMES``, 102
 names) carried from the prompts and media series, which added it because the
 skills series shipped a silent production regression precisely in that gap (a
 moved body's ``getattr(self, "focused", None)`` with no ``focused`` property
@@ -43,7 +43,7 @@ bound; recipe SS3's unbound-attribute-escape entry). It also adds the
 ``on_<message>`` whitelist resolution recipe SS4's third member requires --
 run against Textual's own NAME-based dispatch rather than against a reference
 census. See ``library_notes_controller.py``'s own module docstring for the
-full 285-candidate derivation, the 99 exclusions, and the
+full 285-candidate derivation, the 100 exclusions, and the
 connected-components evidence behind the single-controller decision.
 """
 from __future__ import annotations
@@ -299,12 +299,15 @@ _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset()
 #: ``LibraryScreen`` class-body method whose name contains "note"
 #: (case-insensitive): **291 raw ``FunctionDef`` matches, 285 unique names**
 #: (the 6-name gap is a byte-identical DUPLICATE block dev shipped twice; see
-#: the controller docstring) -- minus 99 exclusions: 57 unbound-fake-self, 11
+#: the controller docstring) -- minus 100 exclusions: 57 unbound-fake-self, 11
 #: further in-file ``LibraryScreen.<name>(self, ...)`` targets, 8 further
 #: callers of that same shape, 8 further instance-attribute-monkeypatch, 5
 #: not-notes-owned, 4 further members of the ``_library_note_session``
 #: projection-property family, 3 shared-shell-helper, 1 further
-#: class-monkeypatch, 1 module-globals-coupling, 1 callback-identity.
+#: class-monkeypatch, 1 module-globals-coupling, 1 callback-identity, and 1
+#: ``partial(LibraryScreen.<name>, self, ...)`` target the first census's
+#: direct-call-argument shape could not see -- found by this task's own
+#: BATTERY, per recipe SS3's amended-RED-tuple rule.
 #: NOT a prefix/substring shortcut. See ``library_notes_controller.py``'s
 #: module docstring for the full per-name reasoning behind every exclusion.
 _NOTES_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
@@ -405,7 +408,6 @@ _NOTES_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_restore_library_note_delete_origin",
     "_restore_library_notes_after_targeted_sync",
     "_restore_library_notes_authority_focus",
-    "_restore_library_notes_browse_return_receipt",
     "_restore_library_notes_final_scroll",
     "_restore_library_notes_focus_identity",
     "_restore_library_notes_scroll_after_layout",
@@ -595,7 +597,6 @@ _NOTES_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_refresh_library_note_detail",
     "_refresh_local_source_snapshot",
     "_register_footer_shortcuts",
-    "_reload_library_notes_browse_return_receipt",
     "_replace_library_canvas_child",
     "_request_library_notes_tree_initial_load",
     "_request_library_notes_tree_slice",
@@ -626,8 +627,8 @@ def test_notes_cluster_method_names_are_genuinely_notes_named() -> None:
         n for n in _NOTES_CLUSTER_METHOD_NAMES if "note" not in n.lower()
     ]
     assert not not_notes_named, f"non-notes-named cluster entries: {not_notes_named!r}"
-    assert len(_NOTES_CLUSTER_METHOD_NAMES) == 186, (
-        f"expected 186 moved names, got {len(_NOTES_CLUSTER_METHOD_NAMES)}"
+    assert len(_NOTES_CLUSTER_METHOD_NAMES) == 185, (
+        f"expected 185 moved names, got {len(_NOTES_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_NOTES_CLUSTER_METHOD_NAMES)) == len(_NOTES_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _NOTES_CLUSTER_METHOD_NAMES"
@@ -636,7 +637,7 @@ def test_notes_cluster_method_names_are_genuinely_notes_named() -> None:
 
 @pytest.mark.unit
 def test_notes_controller_owns_its_cluster() -> None:
-    """Every one of the 186 moved names is a callable on the controller.
+    """Every one of the 185 moved names is a callable on the controller.
 
     Covers the whole cluster, not a hand-picked sample -- mirrors
     ``test_media_controller_owns_its_cluster``.
@@ -655,7 +656,7 @@ def test_notes_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_notes_handlers() -> None:
-    """Every one of the 186 moved names is a one-line screen delegator that
+    """Every one of the 185 moved names is a one-line screen delegator that
     forwards to the SAME-NAMED controller method (or, for the 3 staticmethods,
     to the module-level controller CLASS) -- unless a later cleanup task pruned
     it.
@@ -814,8 +815,8 @@ def test_notes_controller_binds_every_name_its_moved_bodies_use() -> None:
         LibraryNotesController,
     )
 
-    assert len(_NOTES_CONTROLLER_BOUND_NAMES) == 103, (
-        f"expected 103 bound names, got {len(_NOTES_CONTROLLER_BOUND_NAMES)}"
+    assert len(_NOTES_CONTROLLER_BOUND_NAMES) == 102, (
+        f"expected 102 bound names, got {len(_NOTES_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_NOTES_CONTROLLER_BOUND_NAMES)) == len(
         _NOTES_CONTROLLER_BOUND_NAMES

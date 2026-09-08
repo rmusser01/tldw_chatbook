@@ -35,9 +35,20 @@ OBSERVATION_TOKEN = "b" * 64
 
 
 def test_production_screen_derives_lasting_route_from_the_app_runtime() -> None:
+    # Wave-8 task 2 (notes controller PR) retargeted this path census: the
+    # Notes CLUSTER moved to `library_notes_controller.py`, so the handler
+    # bodies this guard reads by source text now live there while the screen
+    # keeps the `LibraryNotesSyncController(` construction site and the canvas
+    # imports. Recipe SS3 requires a hardcoded-file-path census to be retargeted
+    # in the SAME PR stage that moved the code -- unlike every other bypass
+    # shape it ships RED at the move boundary rather than staying silently
+    # green. The invariant is unchanged; only the file it is read from is.
     source = Path("tldw_chatbook/UI/Screens/library_screen.py").read_text(
         encoding="utf-8"
     )
+    cluster_source = Path(
+        "tldw_chatbook/UI/Library_Modules/library_notes_controller.py"
+    ).read_text(encoding="utf-8")
 
     controller_source = Path(
         "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py"
@@ -48,10 +59,13 @@ def test_production_screen_derives_lasting_route_from_the_app_runtime() -> None:
         "runtime.snapshot().status in _SETUP_READY_STATUSES" in controller_source
     )
     assert "lasting_available=" not in source
-    assert "LibraryNotesAddFromFilesCanvas" in source
-    assert "LibraryNotesSyncRootsCanvas" in source
+    assert "lasting_available=" not in cluster_source
+    assert "LibraryNotesAddFromFilesCanvas" in cluster_source
+    assert "LibraryNotesSyncRootsCanvas" in cluster_source
     assert "LibraryNotesSyncController(" in source
-    assert "self._library_notes_sync_controller.choose_relationship" in source
+    assert (
+        "self._library_notes_sync_controller.choose_relationship" in cluster_source
+    )
 
 
 def test_production_notes_canvas_replaces_legacy_entry_points_at_cutover() -> None:
@@ -73,9 +87,19 @@ def test_relationship_chooser_reuses_the_one_existing_import_controller() -> Non
         "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py"
     ).read_text(encoding="utf-8")
 
+    # Wave-8 task 2 (notes controller PR): same retarget as above -- the
+    # handler that calls `choose_relationship(` moved to
+    # `library_notes_controller.py`, and the "no second import controller"
+    # half is asserted over BOTH files so the invariant cannot be satisfied by
+    # the name simply having left the file this guard used to read.
+    cluster_source = Path(
+        "tldw_chatbook/UI/Library_Modules/library_notes_controller.py"
+    ).read_text(encoding="utf-8")
+
     assert controller_source.count("self._import_controller.begin_selection()") == 1
-    assert "choose_relationship(" in screen_source
+    assert "choose_relationship(" in cluster_source
     assert "_begin_library_notes_import_once" not in screen_source
+    assert "_begin_library_notes_import_once" not in cluster_source
 
 
 def test_library_widget_package_preserves_existing_exports_and_adds_sync_canvases() -> (

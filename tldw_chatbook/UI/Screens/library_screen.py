@@ -3307,9 +3307,6 @@ class LibraryScreen(BaseAppScreen):
             register_footer_shortcuts=(
                 lambda *a, **k: self._register_footer_shortcuts(*a, **k)
             ),
-            reload_library_notes_browse_return_receipt=(
-                lambda *a, **k: self._reload_library_notes_browse_return_receipt(*a, **k)
-            ),
             replace_library_canvas_child=(
                 lambda *a, **k: self._replace_library_canvas_child(*a, **k)
             ),
@@ -4666,8 +4663,50 @@ class LibraryScreen(BaseAppScreen):
             ),
         )
 
-    def _restore_library_notes_browse_return_receipt(self, receipt: LibraryNotesTreeReceipt, guard: _LibraryNotesRestoreGuard | None=None) -> None:
-        return self._notes_controller._restore_library_notes_browse_return_receipt(receipt, guard)
+    def _restore_library_notes_browse_return_receipt(
+        self,
+        receipt: LibraryNotesTreeReceipt,
+        guard: _LibraryNotesRestoreGuard | None = None,
+    ) -> None:
+        """Restore live semantic state or reload the receipt's exact ranges."""
+        if (
+            receipt.lifecycle_generation
+            != self._library_notes_tree_lifecycle_generation
+            or receipt.topology_epoch != self._library_notes_tree_topology_epoch
+        ):
+            self.run_worker(
+                self._reload_library_notes_browse_return_receipt(receipt, guard),
+                exclusive=True,
+                group="library_notes_tree:return",
+            )
+            return
+        self._library_notes_tree_expanded_ids = set(receipt.expanded_folder_ids)
+        self._library_notes_tree_selected_placement_id = receipt.selected_placement_id
+        semantic_role = receipt.focus_role
+        if receipt.focus_semantic_id:
+            semantic_role = f"{semantic_role}:{receipt.focus_semantic_id}"
+        focus = LibraryNotesFocusIdentity(
+            stage="notes",
+            region="navigator",
+            note_id=receipt.selected_note_id or None,
+            semantic_role=semantic_role or "filter",
+            scroll_offset=receipt.scroll_offset,
+        )
+        if not self._restore_library_notes_focus_identity(focus, guard):
+            return
+        rail = (
+            self._library_notes_scroll_owner("rail")
+            if receipt.rail_scroll_offset is not None
+            else None
+        )
+        if rail is not None:
+            rail.scroll_to(
+                x=receipt.rail_scroll_offset[0],
+                y=receipt.rail_scroll_offset[1],
+                animate=False,
+                force=True,
+                immediate=True,
+            )
 
     async def _reload_library_notes_browse_return_receipt(
         self,

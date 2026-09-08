@@ -326,10 +326,10 @@ _BUDGETS: dict[str, int] = {
     #        a 4-line comment saying so.
     "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4630,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
-    # born governed. 186 moved methods carrying 3,978 source lines of body,
+    # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the 93-dependency constructor, the
     # 103 binding properties and the generated state-shim loop.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5232,
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5214,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

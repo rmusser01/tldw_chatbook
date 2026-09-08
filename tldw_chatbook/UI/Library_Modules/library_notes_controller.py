@@ -87,13 +87,13 @@ changes") and the second to ``fd505637f`` ("apply work-first Notes
 sessions"). A move cannot preserve it -- two delegators cannot share one
 name -- so **both copies are removed and ONE delegator per name is
 installed**; the definition that lands on this controller is byte-identical
-to both. That is why this commit removes 4,078 source lines from the screen
-for 3,978 lines of controller body: the 100-line difference is the duplicate
+to both. That is why this commit removes 4,034 source lines from the screen
+for 3,934 lines of controller body: the 100-line difference is the duplicate
 block plus its own blank lines, and it is stated here so a reviewer reading
 the two numbers does not have to reconstruct why they differ.
 
 **Single vs. split controller: SINGLE, decided by connected components, not
-by feel.** Building the ``self.<name>`` reference graph among the 186 movers
+by feel.** Building the ``self.<name>`` reference graph among the 185 movers
 yields **one connected component of 135 names, one of 9 (the note-import
 canvas handlers), one of 2, and 50 isolated singletons**; adding an edge
 between any two movers that touch the same ``LibraryNotesState`` field
@@ -107,13 +107,17 @@ instance and the same ``_library_note_import_*`` state fields, so splitting
 them out would produce a second controller of ~13 methods sharing a wiring
 handle and a state object with the first. That buys nothing the ratchet's
 per-file governance (SS17) does not already give. The feared size did not
-materialise either: the hazard exclusions below remove 99 of the 285
-candidates, so the 186 that move carry **3,978 source lines** of body,
+materialise either: the hazard exclusions below remove 100 of the 285
+candidates, so the 185 that move carry **3,934 source lines** of body,
 putting this file within a few hundred lines of
 ``library_media_controller.py``'s 4,630.
 
-**99 of the 285 candidates excluded, not moved (186 move).** Counted as
-DISJOINT classes, in the order applied, so the numbers sum:
+**100 of the 285 candidates excluded, not moved (185 move).** Counted as
+DISJOINT classes, in the order applied, so the numbers sum. Classes 1-9
+come from the static censuses; class 10 came from this task's own battery,
+which recipe SS3 records as the EXPECTED shape of the work rather than a
+smell ("a battery-found hazard shrinking the mover set legitimately amends
+the RED tuple"):
 
 1. **57 unbound-fake-self test-bypass exclusions** (recipe SS3's first
    documented shape). Found by an ``ast`` census over ALL of ``Tests/``
@@ -247,7 +251,7 @@ DISJOINT classes, in the order applied, so the numbers sum:
 
 9. **1 module-globals-coupling exclusion** (recipe SS3's oldest shape,
    restated as the eighth numbered shape's mechanical census). The census
-   ran to completion: all **82 bare module-global names** the 186 mover
+   ran to completion: all **82 bare module-global names** the 185 mover
    bodies read, crossed against every ``library_screen``-scoped patch shape
    (direct-attribute, fully-qualified string, two-argument
    ``monkeypatch.setattr``/``patch.object``) across ALL of ``Tests/``, under
@@ -284,7 +288,36 @@ DISJOINT classes, in the order applied, so the numbers sum:
      patches an attribute OF the shared ``asyncio`` module object, which is
      the same object in every importer.
 
-10. **1 callback-identity exclusion** -- recipe SS3's TENTH bypass shape,
+10. **1 ``partial(LibraryScreen.<name>, self, ...)`` target -- a spelling of
+    classes 2/3 that this task's FIRST census could not see, and that its own
+    BATTERY caught rather than its static sweep.** The census behind classes 2
+    and 3 walked every bare ``self`` ``ast.Name`` and asked what CALL it was a
+    direct argument of; where that call's own ``func`` spelled
+    ``LibraryScreen.<x>``, both ends were excluded. That question is answered
+    "``partial``" for ``partial(LibraryScreen._restore_library_notes_browse_
+    return_receipt, self, receipt, guard)`` in ``handle_library_notes_filter``
+    and ``handle_library_notes_filter_clear`` (both themselves excluded), so
+    the TARGET was scored as an ordinary mover. It shipped into the paired
+    sweep and produced 4 branch-unique failures, 2 of them
+    ``AttributeError: 'types.SimpleNamespace' object has no attribute
+    '_notes_controller'`` from
+    ``test_library_notes_folder_navigator.py::test_clearing_filter_restores_
+    same_epoch_browse_receipt_without_touching_ranges`` -- the delegator
+    running with a fake ``self``.
+    ``_restore_library_notes_browse_return_receipt`` is excluded; no mover
+    calls it, so it needed no binding. **The standing correction, and it is
+    both stronger and cheaper than enumerating call shapes: census EVERY
+    ``LibraryScreen.<name>`` ``ast.Attribute`` reference anywhere in
+    ``library_screen.py``, whatever expression encloses it.** That form is
+    exhaustive by construction -- it cannot be defeated by ``partial``, by a
+    variable assignment, by a list literal or by whatever wrapper the next
+    refactor introduces. Run that way over the parent tree it returns **26
+    targets**, of which 23 are notes candidates and exactly one was a mover:
+    this name. Both figures belong in the record -- the direct-call-argument
+    census found 20 of the 21 notes targets, and the one it missed was the
+    only one that mattered.
+
+11. **1 callback-identity exclusion** -- recipe SS3's TENTH bypass shape,
     the media series' Form E, where the method to exclude is the CALLER and
     not the callee. ``Tests/UI/test_screen_navigation.py:3225`` replaces
     ``screen.call_after_refresh`` with a recorder, awaits
@@ -306,7 +339,7 @@ after the media series' ``ancestors`` incident is to census EVERY bare
 ``self`` ``ast.Name`` in a moved body that is not the receiver of an
 attribute access -- exhaustive by construction, rather than enumerating
 comparison operators. Run over all **285 candidates** it returns **174
-occurrences** in 74 methods; run over the **final 186 movers** it returns
+occurrences** in 74 methods; run over the **final 185 movers** it returns
 **37**: 31 ``_sync_library_canvas(self, "notes", ...)`` duck-typed forwards
 and 6 ``getattr(self, "<literal>")`` reads, every one of them bound. Both
 figures are stated because only the pair shows the census working. The
@@ -326,11 +359,11 @@ controller's own shim loop to the identical object.
 reference that is not this controller's own state is rebound under the SAME
 name, per the two binding kinds; see ``LibraryMediaController.__init__`` and
 ``ConsoleDictationController.__init__`` for the sibling worked examples).
-The binding surface was derived MECHANICALLY, by walking all 186 moved
+The binding surface was derived MECHANICALLY, by walking all 185 moved
 bodies for every ``self.<attr>`` load/store AND every ``getattr(self,
 "<literal>")`` call, then subtracting this controller's own 100 state fields
-and the movers themselves -- **100 names** -- and then adding **3 more the
-walk cannot see**, for **103**, every one pinned in
+and the movers themselves -- **99 names** -- and then adding **3 more the
+walk cannot see**, for **102**, every one pinned in
 ``test_notes_controller_binds_every_name_its_moved_bodies_use``:
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
@@ -472,7 +505,6 @@ from ...Library.library_notes_state import (
     notes_autosave_status_text,
 )
 from ...Library.library_notes_tree_paging import NotesBranchKey
-from ...Library.library_notes_tree_state import LibraryNotesTreeReceipt
 from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
@@ -537,14 +569,14 @@ if TYPE_CHECKING:
 
 
 class LibraryNotesController:
-    """Owns the Library Notes cluster (186 methods).
+    """Owns the Library Notes cluster (185 methods).
 
     Holds no state of its own beyond what it reads and writes through
     ``LibraryNotesState`` (via the injected accessor) and the shared
     shell/framework/wiring bindings below. ``LibraryScreen`` constructs
     exactly one of these, in ``__init__`` right after
     ``self._media_controller``, and keeps a one-line delegator for every one
-    of the 186 original names this cluster moved -- task 3 (the cleanup PR,
+    of the 185 original names this cluster moved -- task 3 (the cleanup PR,
     notes series 3/N) prunes the ones nothing external reaches.
     """
 
@@ -637,7 +669,6 @@ class LibraryNotesController:
         refresh_library_note_detail,
         refresh_local_source_snapshot,
         register_footer_shortcuts,
-        reload_library_notes_browse_return_receipt,
         replace_library_canvas_child,
         request_library_notes_tree_initial_load,
         request_library_notes_tree_slice,
@@ -658,7 +689,7 @@ class LibraryNotesController:
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
-        Every one of the 186 method bodies below is a byte-for-byte copy of
+        Every one of the 185 method bodies below is a byte-for-byte copy of
         the pre-extraction ``LibraryScreen`` method: no internal line was
         edited to retarget a call or an attribute. That is possible because
         this constructor binds every name those bodies reference that is not
@@ -756,7 +787,6 @@ class LibraryNotesController:
         self._refresh_library_note_detail_fn = refresh_library_note_detail
         self._refresh_local_source_snapshot_fn = refresh_local_source_snapshot
         self._register_footer_shortcuts_fn = register_footer_shortcuts
-        self._reload_library_notes_browse_return_receipt_fn = reload_library_notes_browse_return_receipt
         self._replace_library_canvas_child_fn = replace_library_canvas_child
         self._request_library_notes_tree_initial_load_fn = request_library_notes_tree_initial_load
         self._request_library_notes_tree_slice_fn = request_library_notes_tree_slice
@@ -1154,10 +1184,6 @@ class LibraryNotesController:
         return self._register_footer_shortcuts_fn
 
     @property
-    def _reload_library_notes_browse_return_receipt(self) -> Any:
-        return self._reload_library_notes_browse_return_receipt_fn
-
-    @property
     def _replace_library_canvas_child(self) -> Any:
         return self._replace_library_canvas_child_fn
 
@@ -1225,7 +1251,7 @@ class LibraryNotesController:
     def _write_library_note_export_file(self) -> Any:
         return self._write_library_note_export_file_fn
 
-    # -- moved cluster methods (186), byte-for-byte, original file order --
+    # -- moved cluster methods (185), byte-for-byte, original file order --
     def _library_note_editor_state(self) -> LibraryNoteEditorState | None:
         """Project the one canonical session snapshot into incumbent canvas state."""
         snapshot = self._library_note_session.snapshot
@@ -1649,50 +1675,6 @@ class LibraryNotesController:
             context=self._library_note_context,
             confirming_delete=self._library_note_confirming_delete,
         )
-    def _restore_library_notes_browse_return_receipt(
-        self,
-        receipt: LibraryNotesTreeReceipt,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Restore live semantic state or reload the receipt's exact ranges."""
-        if (
-            receipt.lifecycle_generation
-            != self._library_notes_tree_lifecycle_generation
-            or receipt.topology_epoch != self._library_notes_tree_topology_epoch
-        ):
-            self.run_worker(
-                self._reload_library_notes_browse_return_receipt(receipt, guard),
-                exclusive=True,
-                group="library_notes_tree:return",
-            )
-            return
-        self._library_notes_tree_expanded_ids = set(receipt.expanded_folder_ids)
-        self._library_notes_tree_selected_placement_id = receipt.selected_placement_id
-        semantic_role = receipt.focus_role
-        if receipt.focus_semantic_id:
-            semantic_role = f"{semantic_role}:{receipt.focus_semantic_id}"
-        focus = LibraryNotesFocusIdentity(
-            stage="notes",
-            region="navigator",
-            note_id=receipt.selected_note_id or None,
-            semantic_role=semantic_role or "filter",
-            scroll_offset=receipt.scroll_offset,
-        )
-        if not self._restore_library_notes_focus_identity(focus, guard):
-            return
-        rail = (
-            self._library_notes_scroll_owner("rail")
-            if receipt.rail_scroll_offset is not None
-            else None
-        )
-        if rail is not None:
-            rail.scroll_to(
-                x=receipt.rail_scroll_offset[0],
-                y=receipt.rail_scroll_offset[1],
-                animate=False,
-                force=True,
-                immediate=True,
-            )
     def _commit_library_note_widgets_before_recompose(self) -> None:
         """Move queued editor values into the canonical coordinator before teardown."""
         if (
