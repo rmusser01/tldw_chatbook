@@ -795,7 +795,38 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # second time in this program, and it is recorded rather than silently
     # repaired: correcting the terms and assuming the narrative followed is
     # exactly the failure mode SS6 describes.)
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32325, 1284),
+    #
+    # 2026-09-08, wave-8 task 3 (notes cleanup, notes series 3/3) -- THE LAST
+    # cleanup PR of the eight-wave program. Fresh `_measure()`: 32325/1284 ->
+    # 32230/1258. Line delta -95, each term measured off the tree:
+    #   -10  the ten dead imports that went unused across this wave, deleted
+    #        one whole line each (`ConflictAction`, `ConflictOutcomeKind`,
+    #        `DestructiveAdmissionOutcomeKind`, `NoteSaveOutcomeKind`,
+    #        `build_library_note_editor_state`, `notes_autosave_status_text`,
+    #        `notes_state_shim_attr`, `reduce_notes_work_session`,
+    #        `resolve_database_note_status_channels`, `RowSelection`). An
+    #        eleventh, `FileSave`, was removed in place from a shared import
+    #        line, so it costs no line. A twelfth,
+    #        `LIBRARY_NOTE_CONTENT_MAX_CHARS`, is AST-unused but PINNED by
+    #        `test_library_support_layer_surface.py`'s `_SURFACE` re-export
+    #        contract and was KEPT (the exact-name check, not a lowercase
+    #        `note` grep -- recipe SS22).
+    #   -80  the 26 pruned delegators (25 x 3 lines + `_note_word_count`'s 5,
+    #        one blank separator absorbed each).
+    #    +4  `on_screen_suspend`: its 4-line flat-name tuple collapses to a
+    #        1-line single-entry tuple (-3) and the notes autosave timer gains
+    #        the explicit `self._notes_state.autosave_timer` stop block the
+    #        ingest/prompts/media timers already have (+7).
+    #    -9  the 20-line sentinel-wrapped generated shim block replaced by its
+    #        11-line "deleted, and why" successor comment.
+    # -10 - 80 + 4 - 9 = -95.
+    #
+    # The 571 `self.<flat>` -> `self._notes_state.<field>` retargets, the 43
+    # `getattr(self, "<flat>", <default>)` receiver fixes and the 4 dotted
+    # dispatch-dict string values are line-neutral by construction (632
+    # insertions / 632 deletions before any deletion landed). The METHOD delta
+    # is exactly the 26 pruned delegators; no body was edited.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32230, 1258),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

@@ -420,14 +420,14 @@ def test_library_reader_settings_generation_uses_one_read_only_snapshot(
         for preferences in (
             screen._media_state.reader_preferences,
             screen._conversations_state.reader_preferences,
-            screen._library_notes_reader_preferences,
+            screen._notes_state.reader_preferences,
             screen._prompts_state.reader_preferences,
         )
     }
     assert shared == {(False, True, 35)}
     assert screen._media_state.reader_preferences.items_open is False
     assert screen._conversations_state.reader_preferences.items_open is True
-    assert screen._library_notes_reader_preferences.items_open is False
+    assert screen._notes_state.reader_preferences.items_open is False
     assert screen._prompts_state.reader_preferences.items_open is True
 
 
@@ -2315,7 +2315,7 @@ async def test_library_graduation_announcement_clears_on_notes_files_switch() ->
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_notes_source
+                    screen._notes_state.source
                     == library_screen_module.LIBRARY_NOTES_SOURCE_FILES
                 ),
                 message="Notes Files source switch was not admitted",
@@ -2425,7 +2425,7 @@ async def test_library_graduation_announcement_survives_cancelled_source_switch(
             await pilot.pause()
 
             assert (
-                screen._library_notes_source
+                screen._notes_state.source
                 == library_screen_module.LIBRARY_NOTES_SOURCE_DATABASE
             )
             assert "Library tools are now available." in str(
@@ -3526,7 +3526,7 @@ async def test_lasting_setup_escape_abandons_review_before_restoring_notes_focus
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
 
         assert abandoned == [root_id]
-        assert screen._library_notes_view == "list"
+        assert screen._notes_state.view == "list"
         assert getattr(screen.focused, "id", None) == "library-notes-filter"
 
 
@@ -3586,7 +3586,7 @@ async def test_lasting_setup_escape_waits_during_checking_before_any_exit(
 
         await screen.action_library_notes_escape()
 
-        assert screen._library_notes_view == "lasting_add"
+        assert screen._notes_state.view == "lasting_add"
         assert controller.snapshot.phase == "checking"
         assert screen._library_notes_footer_shortcuts() == (("wait", "current step"),)
         assert abandoned == []
@@ -4173,7 +4173,7 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
         # Narrow terminals normally hand this route to the existing compact
         # single-stage policy. Project the co-present ordinary presentation
         # explicitly so this assertion isolates its canvas-preserving bound.
-        screen._library_notes_compact = False
+        screen._notes_state.compact = False
         screen._apply_library_notes_stage_visibility()
         screen._sync_library_ordinary_rail_width_contract()
         await pilot.pause()
@@ -5157,7 +5157,7 @@ async def test_library_notes_compact_interaction_defeats_an_older_receipt() -> N
         await pilot.press("escape")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_stage == "rail",
+            lambda: screen._notes_state.stage == "rail",
             message="Compact Notes did not enter rail stage",
         )
         assert screen._library_stage_interaction_generation > stale.generation
@@ -5776,10 +5776,10 @@ async def test_library_production_width_matrix_custom_preferences(
         screen.query_one("#library-notes-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         adaptive = screen.query_one("#library-notes-reader-shell")
-        screen._library_notes_reader_layout = (
+        screen._notes_state.reader_layout = (
             library_screen_module.resolve_adaptive_reader_layout(
                 0,
-                screen._library_notes_reader_preferences,
+                screen._notes_state.reader_preferences,
                 library_screen_module.LIBRARY_NOTES_READER_PROFILE,
             )
         )
@@ -5836,7 +5836,7 @@ async def test_library_production_width_matrix_custom_preferences(
         assert adaptive.work.display
         assert adaptive.work.region.width == priority_work_width
         assert screen._library_reader_shared_preferences.library_width == saved_width
-        assert screen._library_notes_reader_preferences.library_width == saved_width
+        assert screen._notes_state.reader_preferences.library_width == saved_width
         _assert_task6_production_bounds(
             screen,
             adaptive.library,
@@ -6201,8 +6201,8 @@ async def test_hub_recents_render_as_clickable_rows_that_open_the_item():
         notes_row.press()
         await pilot.pause()
         await pilot.pause()
-        assert screen._selected_note_id == "n1"
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.selected_note_id == "n1"
+        assert screen._notes_state.view == "editor"
         assert screen._library_selected_row_id == "browse-notes"
 
 
@@ -8976,7 +8976,7 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
         def conflict_search_input_ready() -> bool:
             search_inputs = list(screen.query("#library-search-input"))
             return (
-                screen._library_note_autosave_state == "conflict"
+                screen._notes_state.autosave_state == "conflict"
                 and screen.query_one("#library-note-conflict-region").display
                 and bool(search_inputs)
                 and search_inputs[0] is search_input_before
@@ -8987,7 +8987,7 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
             search_input = search_inputs[0] if search_inputs else None
             return (
                 "The version conflict never stabilized the existing search input "
-                f"(autosave_state={screen._library_note_autosave_state!r}, "
+                f"(autosave_state={screen._notes_state.autosave_state!r}, "
                 f"search_input_mounted={search_input is not None!r}, "
                 f"search_input_stable="
                 f"{search_input is search_input_before!r}). "
@@ -9013,7 +9013,7 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
         assert service.calls == []
         assert screen._rag_search_state.history == history_before
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-        assert screen._library_note_autosave_state == "conflict"
+        assert screen._notes_state.autosave_state == "conflict"
 
 
 @pytest.mark.asyncio
@@ -13671,7 +13671,7 @@ async def test_library_conversations_reentry_does_not_load_when_dirty_editor_vet
         screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "conflict",
+            lambda: screen._notes_state.autosave_state == "conflict",
             message="The dirty-editor conflict was never reached.",
         )
         body.focus()
@@ -13684,7 +13684,7 @@ async def test_library_conversations_reentry_does_not_load_when_dirty_editor_vet
 
         assert len(app.chat_conversation_scope_service.calls) == calls_before
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-        assert screen._library_note_autosave_state == "conflict"
+        assert screen._notes_state.autosave_state == "conflict"
         mounted_body = screen.query_one("#library-note-body", TextArea)
         assert mounted_body.text == "unsaved text that must survive"
 
@@ -14728,7 +14728,7 @@ async def test_library_conversation_unmount_fence_rejects_late_completion():
                 gate.entered.wait, _GATED_RELEASE_TIMEOUT_SECONDS
             )
             shutdown = ShutdownGate()
-            old_screen._library_file_notes_workspace = shutdown
+            old_screen._notes_state.file_notes_workspace = shutdown
             pop_task = asyncio.ensure_future(host.pop_screen())
             await asyncio.wait_for(
                 shutdown.entered.wait(), _GATED_RELEASE_TIMEOUT_SECONDS
@@ -14753,7 +14753,7 @@ async def test_library_conversation_unmount_fence_rejects_late_completion():
             release_application.set()
             if not request.done():
                 await request
-            workspace = old_screen._library_file_notes_workspace
+            workspace = old_screen._notes_state.file_notes_workspace
             if isinstance(workspace, ShutdownGate):
                 workspace.release.set()
             if pop_task is not None and not pop_task.done():
@@ -17737,8 +17737,8 @@ async def test_library_shell_notes_create_deeplink_reentry_resets_stale_editor_s
         # editor is clean (not dirty), and ``apply_navigation_context``
         # takes its synchronous (no-flush-needed) path.
         await _open_note_editor(screen, pilot)
-        assert screen._selected_note_id == "n-1"
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.selected_note_id == "n-1"
+        assert screen._notes_state.view == "editor"
         assert screen._library_note_detail is not None
         assert screen._library_note_dirty is False
 
@@ -17749,12 +17749,12 @@ async def test_library_shell_notes_create_deeplink_reentry_resets_stale_editor_s
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
-        assert screen._selected_note_id == ""
-        assert screen._library_notes_view == "list"
+        assert screen._notes_state.selected_note_id == ""
+        assert screen._notes_state.view == "list"
         assert screen._library_note_detail is None
         assert screen._library_note_version is None
         assert screen._library_note_dirty is False
-        assert screen._library_note_autosave_state == "idle"
+        assert screen._notes_state.autosave_state == "idle"
 
 
 @pytest.mark.asyncio
@@ -17778,7 +17778,7 @@ async def test_library_shell_note_id_deeplink_opens_note_editor():
         await _wait_for_selector(screen, pilot, "#library-note-title")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.selected_note_id == "n-1"
         title = screen.query_one("#library-note-title", Input)
         assert title.value == "Q3 retro"
 
@@ -18215,12 +18215,12 @@ async def _wait_for_library_notes_compact(screen, pilot, expected: bool) -> None
     """Wait until the measured Library workbench breakpoint settles."""
     await _wait_for_condition(
         pilot,
-        lambda: screen._library_notes_compact is expected,
+        lambda: screen._notes_state.compact is expected,
         message=lambda: (
             "Library Notes compact state did not settle to "
             f"{expected!r}; shell width="
             f"{screen.query_one('#library-shell-grid').region.width!r}, "
-            f"actual={screen._library_notes_compact!r}."
+            f"actual={screen._notes_state.compact!r}."
         ),
     )
 
@@ -18772,7 +18772,7 @@ async def test_library_shell_notes_sort_opens_direct_choices_and_applies_one_val
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-sort")
-        assert screen._library_notes_sort == "newest"
+        assert screen._notes_state.sort == "newest"
         screen.query_one("#library-notes-sort").press()
         await _wait_for_selector(screen, pilot, "#library-notes-sort-oldest")
         assert {
@@ -18784,7 +18784,7 @@ async def test_library_shell_notes_sort_opens_direct_choices_and_applies_one_val
         }
         screen.query_one("#library-notes-sort-oldest").press()
         await pilot.pause()
-        assert screen._library_notes_sort == "oldest"
+        assert screen._notes_state.sort == "oldest"
         assert not screen.query("#library-notes-sort-choices")
 
 
@@ -18858,7 +18858,7 @@ async def test_library_shell_notes_filtered_empty_keeps_clear_and_source_truth()
         assert "No notes yet" not in _visible_text(screen)
         screen.query_one("#library-notes-filter-clear", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        assert screen._library_notes_filter == ""
+        assert screen._notes_state.filter == ""
 
 
 @pytest.mark.asyncio
@@ -18904,7 +18904,7 @@ async def test_library_shell_notes_filter_queries_search_seam():
         await pilot.pause()
         service = app.notes_scope_service
         assert service.search_calls[-1]["query"] == "retro"
-        assert screen._library_notes_filter == "retro"
+        assert screen._notes_state.filter == "retro"
 
 
 class _GatedSearchLibraryNotesScopeService(StaticLibraryNotesScopeService):
@@ -18972,7 +18972,7 @@ async def test_library_shell_notes_filter_clears_before_stale_response_lands():
         else:
             raise AssertionError("Filter submit never called search_notes.")
 
-        assert screen._library_notes_filter == "retro"
+        assert screen._notes_state.filter == "retro"
 
         # Clear the filter while the "retro" search is still gated in flight.
         clear_box = screen.query_one("#library-notes-filter", Input)
@@ -18982,15 +18982,15 @@ async def test_library_shell_notes_filter_clears_before_stale_response_lands():
         await pilot.press("enter")
         await pilot.pause()
 
-        assert screen._library_notes_filter == ""
-        assert screen._library_notes_filter_records is None
+        assert screen._notes_state.filter == ""
+        assert screen._notes_state.filter_records is None
 
         # Now release the stale "retro" response.
         service.release_event.set()
         for _ in range(20):
             await pilot.pause(0.02)
 
-        assert screen._library_notes_filter_records is None, (
+        assert screen._notes_state.filter_records is None, (
             "The stale in-flight filter response overwrote the cleared filter state."
         )
         header = str(screen.query_one("#library-notes-header").renderable)
@@ -19020,8 +19020,8 @@ async def test_library_shell_notes_row_opens_editor_with_detail():
         assert body.text == "alpha budget line"
         meta = str(screen.query_one("#library-note-meta").renderable)
         assert "v2" in meta
-        assert screen._library_notes_view == "editor"
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.view == "editor"
+        assert screen._notes_state.selected_note_id == "n-1"
 
 
 class StaticLibraryNotesKeywordsService:
@@ -19320,8 +19320,8 @@ async def test_library_note_coordinator_pending_load_keeps_back_and_discards_lat
 
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_notes_view == "list"
-        assert screen._selected_note_id == ""
+        assert screen._notes_state.view == "list"
+        assert screen._notes_state.selected_note_id == ""
         assert screen._library_note_session.snapshot is None
 
 
@@ -19385,8 +19385,8 @@ async def test_library_note_coordinator_load_failure_keeps_back_and_retry():
         await _wait_for_selector(screen, pilot, "#library-note-load-retry")
         assert screen.query("#library-note-back")
         assert "temporary detail outage" in _visible_text(screen)
-        assert screen._library_notes_view == "editor"
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.view == "editor"
+        assert screen._notes_state.selected_note_id == "n-1"
 
 
 @pytest.mark.asyncio
@@ -19410,7 +19410,7 @@ async def test_library_note_coordinator_retry_recovers_transient_load_failure():
         snapshot = screen._library_note_session.snapshot
         assert snapshot is not None
         assert snapshot.note_id == "n-1"
-        assert screen._library_note_load_state == "loaded"
+        assert screen._notes_state.load_state == "loaded"
 
 
 @pytest.mark.asyncio
@@ -19434,7 +19434,7 @@ async def test_library_note_coordinator_validation_veto_keeps_raw_title_and_focu
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_note_autosave_state == "validation"
+                screen._notes_state.autosave_state == "validation"
                 and getattr(screen.focused, "id", None) == "library-note-title"
             ),
             message="Title validation veto did not retain/restore field focus.",
@@ -19471,7 +19471,7 @@ async def test_library_note_keyword_validation_routes_to_wide_info_control(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_note_autosave_state == "validation"
+                screen._notes_state.autosave_state == "validation"
                 and getattr(screen.focused, "id", None)
                 == "library-note-context-keywords"
             ),
@@ -19492,7 +19492,7 @@ async def test_library_note_keyword_validation_routes_to_compact_context():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
-        screen._library_notes_compact = True
+        screen._notes_state.compact = True
         screen._apply_library_note_presentation_state()
 
         screen.query_one("#library-note-context").press()
@@ -19508,7 +19508,7 @@ async def test_library_note_keyword_validation_routes_to_compact_context():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_note_autosave_state == "validation"
+                screen._notes_state.autosave_state == "validation"
                 and getattr(screen.focused, "id", None)
                 == "library-note-context-keywords"
             ),
@@ -19525,8 +19525,8 @@ async def test_library_note_saved_outcome_does_not_mask_a_newer_dirty_revision()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     app.notes_service = StaticLibraryNotesKeywordsService({"n-1": []})
     screen = LibraryScreen(app)
-    screen._library_notes_view = "editor"
-    screen._selected_note_id = "n-1"
+    screen._notes_state.view = "editor"
+    screen._notes_state.selected_note_id = "n-1"
     assert (
         await screen._library_note_session.open_session("n-1")
     ).kind is NoteLoadOutcomeKind.LOADED
@@ -19540,7 +19540,7 @@ async def test_library_note_saved_outcome_does_not_mask_a_newer_dirty_revision()
 
     snapshot = screen._library_note_session.snapshot
     assert snapshot is not None and snapshot.dirty is True
-    assert screen._library_note_autosave_state == "idle"
+    assert screen._notes_state.autosave_state == "idle"
 
 
 @pytest.mark.asyncio
@@ -19722,7 +19722,7 @@ async def test_library_note_conflict_opposite_button_cannot_cancel_active_owner(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_note_autosave_state == "saved"
+                screen._notes_state.autosave_state == "saved"
                 and not screen._library_note_session.conflict_resolution_running
             ),
             message="The original conflict action did not finish and release its gate.",
@@ -19750,8 +19750,8 @@ async def test_library_shell_note_back_returns_to_list():
         _press_note_back(screen)
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
 
-        assert screen._library_notes_view == "list"
-        assert screen._selected_note_id == ""
+        assert screen._notes_state.view == "list"
+        assert screen._notes_state.selected_note_id == ""
         assert screen._library_note_detail is None
         assert not screen.query("#library-note-title")
 
@@ -19781,11 +19781,11 @@ async def test_library_shell_notes_reader_reentry_retains_editor_but_resets_work
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
 
         assert screen.query("#library-note-title")
-        assert screen._library_notes_view == "editor"
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.view == "editor"
+        assert screen._notes_state.selected_note_id == "n-1"
         assert screen._library_note_detail is not None
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
 
 
@@ -19812,7 +19812,7 @@ async def test_library_shell_note_detail_race_discards_stale_fetch():
             await pilot.pause(0.02)
         else:
             raise AssertionError("n-1 detail never loaded.")
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.selected_note_id == "n-1"
 
         # Simulate a slower in-flight fetch for the previously-selected n-2
         # completing now: it must not overwrite n-1's detail.
@@ -20078,7 +20078,7 @@ async def test_library_shell_note_save_survives_stable_delete_confirmation():
 
         screen.query_one("#library-note-save").press()
         for _ in range(150):
-            if screen._library_note_autosave_state == "saved":
+            if screen._notes_state.autosave_state == "saved":
                 break
             await pilot.pause(0.02)
         else:
@@ -20148,7 +20148,7 @@ async def test_library_shell_note_save_then_back_refreshes_list_title_age_and_or
         await pilot.pause()
         screen.query_one("#library-note-save").press()
         for _ in range(150):
-            if screen._library_note_autosave_state == "saved":
+            if screen._notes_state.autosave_state == "saved":
                 break
             await pilot.pause(0.02)
         else:
@@ -20260,7 +20260,7 @@ async def test_library_flush_pending_work_saves_dirty_note_and_reports_conflicts
 
         service.save_note = _failing_save
         assert await screen.flush_pending_work() is False
-        assert screen._library_note_autosave_state == "error"
+        assert screen._notes_state.autosave_state == "error"
         assert screen._library_note_dirty is True
 
 
@@ -20302,15 +20302,15 @@ async def test_library_destructive_transitions_abort_when_failed_save_leaves_not
     app.notes_service = Mock(get_keywords_for_note=lambda *args: [])
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-    screen._library_notes_view = "editor"
-    screen._selected_note_id = "n-current"
+    screen._notes_state.view = "editor"
+    screen._notes_state.selected_note_id = "n-current"
     load_outcome = await screen._library_note_session.open_session("n-current")
     assert load_outcome.kind is NoteLoadOutcomeKind.LOADED
     assert screen._library_note_session.mutate(
         body="unsaved body", keywords_text="alpha"
     )
-    screen._library_note_autosave_state = "idle"
-    screen._library_note_editor_armed = True
+    screen._notes_state.autosave_state = "idle"
+    screen._notes_state.editor_armed = True
     screen._media_state.selected_media_id = "media-current"
     screen._media_state.view = "list"
     screen._media_state.detail = {"id": "media-current"}
@@ -20320,12 +20320,12 @@ async def test_library_destructive_transitions_abort_when_failed_save_leaves_not
 
     preserved_state = (
         screen._library_selected_row_id,
-        screen._library_notes_view,
-        screen._selected_note_id,
+        screen._notes_state.view,
+        screen._notes_state.selected_note_id,
         screen._library_note_detail,
         screen._library_note_version,
-        screen._library_note_confirming_delete,
-        screen._library_note_editor_armed,
+        screen._notes_state.confirming_delete,
+        screen._notes_state.editor_armed,
         screen._media_state.selected_media_id,
         screen._media_state.view,
         screen._media_state.detail,
@@ -20353,16 +20353,16 @@ async def test_library_destructive_transitions_abort_when_failed_save_leaves_not
         await screen._open_library_item_by_id("notes", "n-next")
 
     assert save_calls, "the transition never reached the raising save seam"
-    assert screen._library_note_autosave_state == "error"
+    assert screen._notes_state.autosave_state == "error"
     assert screen._library_note_dirty is True
     assert (
         screen._library_selected_row_id,
-        screen._library_notes_view,
-        screen._selected_note_id,
+        screen._notes_state.view,
+        screen._notes_state.selected_note_id,
         screen._library_note_detail,
         screen._library_note_version,
-        screen._library_note_confirming_delete,
-        screen._library_note_editor_armed,
+        screen._notes_state.confirming_delete,
+        screen._notes_state.editor_armed,
         screen._media_state.selected_media_id,
         screen._media_state.view,
         screen._media_state.detail,
@@ -20404,10 +20404,10 @@ async def test_library_shell_note_flush_on_back_saves_before_view_switches():
             raise AssertionError("Back never triggered the flush save.")
 
         # The save is still sleeping: the view must not have switched yet.
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
 
         for _ in range(150):
-            if screen._library_notes_view == "list":
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
@@ -20587,14 +20587,14 @@ async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
         _press_note_back(screen)
 
         for _ in range(300):
-            if screen._library_notes_view == "list":
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
             raise AssertionError(
                 "Back never completed after the in-flight autosave resolved "
-                f"(view={screen._library_notes_view!r}, "
-                f"autosave_state={screen._library_note_autosave_state!r}, "
+                f"(view={screen._notes_state.view!r}, "
+                f"autosave_state={screen._notes_state.autosave_state!r}, "
                 f"save_started={service.save_started!r})."
             )
 
@@ -20605,7 +20605,7 @@ async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
             "A spurious self-conflict was raised even though nobody else "
             "touched the note."
         )
-        assert screen._library_note_autosave_state != "conflict"
+        assert screen._notes_state.autosave_state != "conflict"
         # The autosave's save completed; the flush then saw dirty cleared and
         # skipped its own redundant save -> exactly one save_note call, at the
         # note's actual stored version (2), never a stale-version second call.
@@ -20639,7 +20639,7 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)  # opens n-1 (seeded at version 2)
 
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.selected_note_id == "n-1"
         assert screen._library_note_version == 2
 
         # Arm a genuine save for n-1 whose fake response is deliberately
@@ -20694,7 +20694,7 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
         for _ in range(10):
             await pilot.pause(0.02)
 
-        assert screen._selected_note_id == "n-2"
+        assert screen._notes_state.selected_note_id == "n-2"
         assert screen._library_note_version == 1, (
             "n-1's stale save result clobbered n-2's version: "
             f"{screen._library_note_version!r}"
@@ -20735,7 +20735,7 @@ async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user
         screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "conflict",
+            lambda: screen._notes_state.autosave_state == "conflict",
             message="The version conflict was never reached.",
         )
 
@@ -20766,7 +20766,7 @@ async def test_library_shell_note_preview_toggle_never_bumps_version_or_autosave
     autosave interval and polls across many cycles so a phantom autosave
     triggered by the toggle's recompose (the exact failure mode the
     mount-time ``Input``/``TextArea.Changed`` armed-guard exists to
-    prevent -- see ``_library_note_editor_armed``) would be caught within
+    prevent -- see ``_notes_state.editor_armed``) would be caught within
     the window, not just missed by asserting immediately.
     """
     monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
@@ -20785,7 +20785,7 @@ async def test_library_shell_note_preview_toggle_never_bumps_version_or_autosave
 
         screen.query_one("#library-note-preview").press()
         await _wait_for_selector(screen, pilot, "#library-note-preview-body")
-        assert screen._library_note_preview is True
+        assert screen._notes_state.preview is True
 
         # Toggle back off, then wait across several autosave-interval
         # windows -- long enough that a phantom-dirty bug would have fired
@@ -20833,7 +20833,7 @@ async def test_library_shell_note_conflict_during_preview_reads_live_text():
 
         screen.query_one("#library-note-preview").press()
         await _wait_for_display(screen, pilot, "#library-note-preview-region")
-        assert screen._library_note_preview is True
+        assert screen._notes_state.preview is True
 
         _bump_note_version_externally(
             service, "n-1"
@@ -20843,7 +20843,7 @@ async def test_library_shell_note_conflict_during_preview_reads_live_text():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_note_autosave_state == "conflict"
+                screen._notes_state.autosave_state == "conflict"
                 and bool(screen.query("#library-note-body"))
             ),
             message="The version conflict was never reached.",
@@ -20861,13 +20861,13 @@ async def test_library_shell_note_conflict_during_preview_reads_live_text():
         screen.query_one("#library-note-save").press()
         await pilot.pause()
         assert len(service.save_calls) == calls_before_second_save
-        assert screen._library_note_autosave_state == "conflict"
+        assert screen._notes_state.autosave_state == "conflict"
         assert screen.query_one("#library-note-body", TextArea).text == "T2"
 
         screen.query_one("#library-note-conflict-overwrite").press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "saved",
+            lambda: screen._notes_state.autosave_state == "saved",
             message="Overwrite never saved the coordinator's latest conflict draft.",
         )
         await _wait_for_display(screen, pilot, "#library-note-editor-region")
@@ -20909,7 +20909,7 @@ async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version(
         screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "conflict",
+            lambda: screen._notes_state.autosave_state == "conflict",
             message="The version conflict was never reached.",
         )
 
@@ -20922,7 +20922,7 @@ async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version(
         def overwritten_editor_ready() -> bool:
             body_widgets = list(screen.query("#library-note-body"))
             return (
-                screen._library_note_autosave_state == "saved"
+                screen._notes_state.autosave_state == "saved"
                 and not screen.query_one("#library-note-conflict-region").display
                 and bool(body_widgets)
                 and body_widgets[0] is conflict_body
@@ -20933,7 +20933,7 @@ async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version(
             overwritten_editor_ready,
             message=lambda: (
                 "Overwrite never rendered the saved replacement editor "
-                f"(autosave_state={screen._library_note_autosave_state!r}, "
+                f"(autosave_state={screen._notes_state.autosave_state!r}, "
                 f"conflict_visible="
                 f"{screen.query_one('#library-note-conflict-region').display!r}, "
                 f"body_stable="
@@ -20978,7 +20978,7 @@ async def test_library_shell_note_conflict_overwrite_failure_exits_conflict_stat
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_note_autosave_state == "error"
+                screen._notes_state.autosave_state == "error"
                 and not screen.query_one("#library-note-conflict-region").display
                 and screen.query_one("#library-note-primary-actions").display
             ),
@@ -21019,7 +21019,7 @@ async def test_library_shell_note_conflict_overwrite_validation_focuses_field():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_note_autosave_state == "validation"
+                screen._notes_state.autosave_state == "validation"
                 and getattr(screen.focused, "id", None) == "library-note-title"
             ),
             message="Overwrite validation did not focus the vetoed title.",
@@ -21057,7 +21057,7 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "conflict",
+            lambda: screen._notes_state.autosave_state == "conflict",
             message="The version conflict was never reached.",
         )
 
@@ -21073,8 +21073,8 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
             body_widgets = list(screen.query("#library-note-body"))
             title_widgets = list(screen.query("#library-note-title"))
             return (
-                screen._library_note_autosave_state == "idle"
-                and screen._library_notes_view == "editor"
+                screen._notes_state.autosave_state == "idle"
+                and screen._notes_state.view == "editor"
                 and isinstance(detail, dict)
                 and str(detail.get("id")) == "n-1"
                 and detail.get("version") == 3
@@ -21096,8 +21096,8 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
             title_widget = title_widgets[0] if title_widgets else None
             return (
                 "Reload never rendered the fresh server-backed editor "
-                f"(autosave_state={screen._library_note_autosave_state!r}, "
-                f"view={screen._library_notes_view!r}, detail_id={detail_id!r}, "
+                f"(autosave_state={screen._notes_state.autosave_state!r}, "
+                f"view={screen._notes_state.view!r}, detail_id={detail_id!r}, "
                 f"detail_version={detail_version!r}, "
                 f"note_version={screen._library_note_version!r}, "
                 f"conflict_visible="
@@ -21116,8 +21116,8 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_note_autosave_state == "idle"
-                and screen._library_notes_view == "editor"
+                screen._notes_state.autosave_state == "idle"
+                and screen._notes_state.view == "editor"
             ),
             message="Reload never completed.",
         )
@@ -21168,7 +21168,7 @@ async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_m
         screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "conflict",
+            lambda: screen._notes_state.autosave_state == "conflict",
             message="The version conflict was never reached.",
         )
 
@@ -21181,11 +21181,11 @@ async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_m
         ).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_view == "list",
+            lambda: screen._notes_state.view == "list",
             message=lambda: (
                 "Reload never fell back to the list view for a missing note "
-                f"(stuck: view={screen._library_notes_view!r}, "
-                f"autosave_state={screen._library_note_autosave_state!r})."
+                f"(stuck: view={screen._notes_state.view!r}, "
+                f"autosave_state={screen._notes_state.autosave_state!r})."
             ),
         )
         await _wait_for_condition(
@@ -21194,9 +21194,9 @@ async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_m
             message="Reload remained mounted after the list-view recompose.",
         )
 
-        assert screen._selected_note_id == ""
+        assert screen._notes_state.selected_note_id == ""
         assert screen._library_note_detail is None
-        assert screen._library_note_autosave_state == "idle"
+        assert screen._notes_state.autosave_state == "idle"
         assert not screen.query("#library-note-conflict-reload")
 
 
@@ -21223,7 +21223,7 @@ async def test_library_shell_note_conflict_overwrite_retains_draft_when_note_mis
         screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "conflict",
+            lambda: screen._notes_state.autosave_state == "conflict",
             message="The version conflict was never reached.",
         )
 
@@ -21235,22 +21235,22 @@ async def test_library_shell_note_conflict_overwrite_retains_draft_when_note_mis
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_view == "editor"
-                and screen._library_note_autosave_state == "conflict"
+                screen._notes_state.view == "editor"
+                and screen._notes_state.autosave_state == "conflict"
                 and screen.query_one("#library-note-conflict-region").display
                 and "no longer exists" in _visible_text(screen)
             ),
             message=lambda: (
                 "Overwrite did not retain/report the missing target draft "
-                f"(stuck: view={screen._library_notes_view!r}, "
-                f"autosave_state={screen._library_note_autosave_state!r}, "
+                f"(stuck: view={screen._notes_state.view!r}, "
+                f"autosave_state={screen._notes_state.autosave_state!r}, "
                 f"conflict_visible="
                 f"{screen.query_one('#library-note-conflict-region').display!r}). "
                 f"Visible text: {_visible_text(screen)}"
             ),
         )
 
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.selected_note_id == "n-1"
         assert screen._library_note_detail is not None
         assert screen._library_note_dirty is True
         assert screen.query_one("#library-note-body", TextArea).text == "kept text"
@@ -21280,7 +21280,7 @@ async def test_library_shell_note_delete_shows_inline_confirm_without_deleting(
         screen.query_one(delete_selector).press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
 
-        assert screen._library_note_confirming_delete is True
+        assert screen._notes_state.confirming_delete is True
         assert screen.query_one("#library-note-delete-confirm")
         assert screen.query_one("#library-note-delete-cancel")
         confirm_copy = str(
@@ -21294,7 +21294,7 @@ async def test_library_shell_note_delete_shows_inline_confirm_without_deleting(
 
         service = app.notes_scope_service
         assert service.delete_calls == []
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
 
         screen.query_one("#library-note-delete-cancel").press()
         await pilot.pause()
@@ -21330,7 +21330,7 @@ async def test_library_shell_note_delete_confirm_removes_note_and_returns_to_lis
 
         service = app.notes_scope_service
         for _ in range(150):
-            if service.delete_calls and screen._library_notes_view == "list":
+            if service.delete_calls and screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
@@ -21343,9 +21343,9 @@ async def test_library_shell_note_delete_confirm_removes_note_and_returns_to_lis
         assert service.delete_calls[-1]["scope"] == "local_note"
         assert service.delete_calls[-1]["note_id"] == "n-1"
         assert service.delete_calls[-1]["version"] == 2
-        assert screen._library_note_confirming_delete is False
-        assert screen._selected_note_id == ""
-        assert screen._library_notes_view == "list"
+        assert screen._notes_state.confirming_delete is False
+        assert screen._notes_state.selected_note_id == ""
+        assert screen._notes_state.view == "list"
         assert not screen.query("#library-note-title")
         assert not any(
             "Q3 retro" in str(getattr(button, "label", ""))
@@ -21468,7 +21468,7 @@ async def test_library_shell_note_undo_blocks_concurrent_create_and_delete():
                 lambda: len(service.restore_attempts) == 1,
                 message="Undo never reached its restore gate.",
             )
-            assert screen._library_notes_mutation_in_flight is True
+            assert screen._notes_state.mutation_in_flight is True
             assert screen._begin_library_note_create() is None
 
             # Opening another note is itself refused while Undo owns the list,
@@ -21481,13 +21481,13 @@ async def test_library_shell_note_undo_blocks_concurrent_create_and_delete():
             if remaining_rows:
                 remaining_rows.first(Button).press()
                 await pilot.pause()
-            assert screen._library_notes_view == "list"
+            assert screen._notes_state.view == "list"
             assert len(service.delete_attempts) == 1
 
             restore_release.set()
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._library_notes_mutation_in_flight,
+                lambda: not screen._notes_state.mutation_in_flight,
                 message="Undo did not release the shared Notes mutation lock.",
             )
     finally:
@@ -21513,7 +21513,7 @@ async def test_library_shell_note_delete_cancel_leaves_note_intact():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_note_confirming_delete is False
+        assert screen._notes_state.confirming_delete is False
         assert screen.query_one("#library-note-delete-confirmation").display is False
         assert screen.query_one("#library-note-primary-actions").display is True
         assert screen.query_one("#library-note-delete")
@@ -21551,7 +21551,7 @@ async def test_library_shell_note_delete_confirm_does_not_arm_autosave(monkeypat
         assert len(service.save_calls) == calls_before_delete, (
             "Entering delete-confirm must not trigger an autosave."
         )
-        assert screen._library_note_confirming_delete is True
+        assert screen._notes_state.confirming_delete is True
         assert screen.query_one("#library-note-delete-confirm")
         assert screen.query_one("#library-note-delete-cancel")
 
@@ -21564,7 +21564,7 @@ async def test_library_shell_note_delete_confirm_does_not_arm_autosave(monkeypat
         assert len(service.save_calls) == calls_before_delete, (
             "Cancelling delete-confirm must not trigger an autosave either."
         )
-        assert screen._library_note_confirming_delete is False
+        assert screen._notes_state.confirming_delete is False
         assert screen.query_one("#library-note-delete-confirmation").display is False
         assert screen.query_one("#library-note-delete")
 
@@ -21622,7 +21622,7 @@ async def test_library_shell_note_delete_stale_version_keeps_editor_mounted(
         # The delete lost the optimistic-lock race (falsy result): the note
         # must still be open in the editor, not removed.
         for _ in range(150):
-            if not screen._library_note_confirming_delete:
+            if not screen._notes_state.confirming_delete:
                 break
             await pilot.pause(0.02)
         else:
@@ -21631,12 +21631,12 @@ async def test_library_shell_note_delete_stale_version_keeps_editor_mounted(
             )
         await pilot.pause()
 
-        assert screen._library_notes_view == "editor"
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.view == "editor"
+        assert screen._notes_state.selected_note_id == "n-1"
         assert screen.query_one("#library-note-delete")
         assert screen.query_one("#library-note-body") is body
         assert rearm_calls == []
-        assert screen._library_note_editor_armed is True
+        assert screen._notes_state.editor_armed is True
         if "context" in delete_selector:
             assert screen.query_one("#library-note-context-region").display is True
         assert getattr(screen.focused, "id", None) == delete_selector.removeprefix("#")
@@ -21671,11 +21671,11 @@ async def test_library_shell_filtered_delete_refreshes_list_without_ghost():
             "Reading list" in str(getattr(button, "label", ""))
             for button in screen.query(".library-notes-row")
         )
-        assert screen._library_notes_filter == "retro"
+        assert screen._notes_state.filter == "retro"
 
         screen.query_one("#library-notes-row-0").press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.selected_note_id == "n-1"
 
         screen.query_one("#library-note-delete").press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
@@ -21683,7 +21683,7 @@ async def test_library_shell_filtered_delete_refreshes_list_without_ghost():
 
         service = app.notes_scope_service
         for _ in range(150):
-            if service.delete_calls and screen._library_notes_view == "list":
+            if service.delete_calls and screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
@@ -21707,8 +21707,8 @@ async def test_library_shell_filtered_delete_refreshes_list_without_ghost():
                 f"List never settled on the refreshed (unfiltered) snapshot: {rows_text}"
             )
 
-        assert screen._library_notes_filter == ""
-        assert screen._library_notes_filter_records is None
+        assert screen._notes_state.filter == ""
+        assert screen._notes_state.filter_records is None
         filter_box = screen.query_one("#library-notes-filter", Input)
         assert filter_box.value == ""
         assert not any("Q3 retro" in text for text in rows_text), (
@@ -21749,7 +21749,7 @@ async def test_library_shell_opening_missing_note_falls_back_to_list():
         row_button.press()
 
         for _ in range(150):
-            if screen._library_notes_view == "list":
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
@@ -21763,7 +21763,7 @@ async def test_library_shell_opening_missing_note_falls_back_to_list():
         )
         assert not screen.query("#library-note-title")
         assert screen._library_note_detail is None
-        assert screen._selected_note_id == ""
+        assert screen._notes_state.selected_note_id == ""
         app.notify.assert_called_once()
         assert app.notify.call_args.kwargs.get("severity") == "warning"
 
@@ -21911,7 +21911,7 @@ async def test_library_shell_note_presentation_sync_is_idempotent_and_guarded():
         body.text = "one genuine user mutation"
         await pilot.pause()
         revision = screen._library_note_session.snapshot.draft_revision
-        timer = screen._library_notes_autosave_timer
+        timer = screen._notes_state.autosave_timer
         canvas = screen.query_one("#library-note-work-pane")
         state = screen._library_note_presentation_state()
 
@@ -21920,7 +21920,7 @@ async def test_library_shell_note_presentation_sync_is_idempotent_and_guarded():
         await pilot.pause()
 
         assert screen._library_note_session.snapshot.draft_revision == revision
-        assert screen._library_notes_autosave_timer is timer
+        assert screen._notes_state.autosave_timer is timer
 
         canvas.apply_session_state(dataclasses.replace(state, validation=True))
         assert canvas.has_class("library-note-validation")
@@ -21993,10 +21993,10 @@ async def test_library_shell_note_preview_focus_and_editor_position_survive_togg
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_last_user_scroll_focus is not None
-                and screen._library_notes_last_user_scroll_focus.semantic_role
+                screen._notes_state.last_user_scroll_focus is not None
+                and screen._notes_state.last_user_scroll_focus.semantic_role
                 == "preview-body"
-                and screen._library_notes_last_user_scroll_focus.scroll_offset
+                and screen._notes_state.last_user_scroll_focus.scroll_offset
                 == (0, int(preview_region.scroll_y))
             ),
             message="Keyboard preview scroll did not reach responsive memory.",
@@ -22032,7 +22032,7 @@ async def test_library_shell_note_context_mutates_canonical_keywords():
         snapshot = screen._library_note_session.snapshot
         assert snapshot.keywords_text == "planning, decisions"
         assert snapshot.draft_revision == before + 1
-        assert screen._library_notes_autosave_timer is not None
+        assert screen._notes_state.autosave_timer is not None
 
 
 @pytest.mark.asyncio
@@ -22175,10 +22175,10 @@ async def test_library_shell_note_back_flushes_while_previewing():
             )
 
         # The save is still sleeping: the view must not have switched yet.
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
 
         for _ in range(150):
-            if screen._library_notes_view == "list":
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
@@ -22229,8 +22229,8 @@ async def test_library_shell_note_export_pushes_file_save_dialog(
 
         dialog = host.screen_stack[-1]
         assert dialog._default_file == expected_file
-        assert screen._library_notes_operation is not None
-        assert screen._library_notes_operation.running is True
+        assert screen._notes_state.operation is not None
+        assert screen._notes_state.operation.running is True
         status_selector = (
             "#library-note-context-transfer-status"
             if "context" in action_selector
@@ -22398,8 +22398,8 @@ async def test_library_shell_note_copy_failure_stays_visible_with_recovery():
             str(screen.query_one("#library-note-transfer-status", Static).renderable)
             == "Copy failed — check clipboard access and try again."
         )
-        assert screen._library_notes_operation is not None
-        assert screen._library_notes_operation.running is False
+        assert screen._notes_state.operation is not None
+        assert screen._notes_state.operation.running is False
 
 
 @pytest.mark.asyncio
@@ -22464,8 +22464,8 @@ async def test_library_shell_note_console_failure_stays_visible_with_recovery():
             str(screen.query_one("#library-note-transfer-status", Static).renderable)
             == "Use in Console failed — check Console readiness and try again."
         )
-        assert screen._library_notes_operation is not None
-        assert screen._library_notes_operation.running is False
+        assert screen._notes_state.operation is not None
+        assert screen._notes_state.operation.running is False
 
 
 @pytest.mark.asyncio
@@ -22481,7 +22481,7 @@ async def test_library_shell_note_use_in_console_without_open_note_notifies():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        assert screen._selected_note_id == ""
+        assert screen._notes_state.selected_note_id == ""
         screen._open_selected_library_note_handoff()
         await pilot.pause()
 
@@ -22599,7 +22599,7 @@ async def test_library_shell_create_is_single_flight_and_disables_all_choices():
                 service.create_started.is_set,
                 message="Create service never entered its gated call.",
             )
-            assert screen._library_note_create_running is True
+            assert screen._notes_state.create_running is True
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -22739,7 +22739,7 @@ async def test_library_shell_persisted_create_with_open_failure_recovers_from_na
         created_row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
 
-        assert screen._selected_note_id == created_id
+        assert screen._notes_state.selected_note_id == created_id
         assert len(service.save_calls) == 1
 
 
@@ -22888,11 +22888,11 @@ async def test_library_shell_create_blank_note_lands_in_editor():
         assert call["content"] == ""
         assert call["keywords"] is None
 
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
         assert screen._library_selected_row_id == "browse-notes"
         created_note = next(n for n in service.notes if n["title"] == "Untitled")
-        assert screen._selected_note_id == created_note["id"]
-        assert screen._library_note_pending_blank_gc_id == created_note["id"]
+        assert screen._notes_state.selected_note_id == created_note["id"]
+        assert screen._notes_state.pending_blank_gc_id == created_note["id"]
         title_input = screen.query_one("#library-note-title", Input)
         assert title_input.value == ""
         assert title_input.placeholder == "Untitled"
@@ -22986,7 +22986,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
             )
             == 1
         )
-        assert screen._library_note_pending_blank_gc_id == screen._selected_note_id
+        assert screen._notes_state.pending_blank_gc_id == screen._notes_state.selected_note_id
 
         # Leave without typing anything -- Back must GC the untouched row.
         _press_note_back(screen)
@@ -23003,8 +23003,8 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
             raise AssertionError(
                 "The untouched blank note was never GC'd from the real DB."
             )
-        assert screen._library_notes_view == "list"
-        assert screen._library_note_pending_blank_gc_id is None
+        assert screen._notes_state.view == "list"
+        assert screen._notes_state.pending_blank_gc_id is None
 
 
 @pytest.mark.asyncio
@@ -23073,8 +23073,8 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_notes_view == "editor"
-        assert screen._library_note_pending_blank_gc_id == screen._selected_note_id
+        assert screen._notes_state.view == "editor"
+        assert screen._notes_state.pending_blank_gc_id == screen._notes_state.selected_note_id
         assert (
             await app.notes_scope_service.count_notes(
                 scope="local_note", user_id="default_user"
@@ -23084,7 +23084,7 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
 
         await pilot.press("escape")
         for _ in range(150):
-            if screen._library_notes_view == "list":
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
@@ -23099,8 +23099,8 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
         # GC bookkeeping flags are unconditionally cleared on any full
         # editor exit (``_reset_library_note_editor_state``), independent
         # of whether the GC delete itself ran.
-        assert screen._library_note_pending_blank_gc_id is None
-        assert screen._library_note_session_blank_id is None
+        assert screen._notes_state.pending_blank_gc_id is None
+        assert screen._notes_state.session_blank_id is None
         # Parity with the Back button's own GC test: poll for the delete
         # rather than sleeping a fixed window on a worker-owned write.
         for _ in range(150):
@@ -23144,13 +23144,13 @@ async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
 
         screen.query_one("#library-note-body", TextArea).text = "a real edit"
         await pilot.pause()
-        assert screen._library_note_pending_blank_gc_id is None, (
+        assert screen._notes_state.pending_blank_gc_id is None, (
             "A real edit must clear GC eligibility."
         )
 
         _press_note_back(screen)
         for _ in range(150):
-            if screen._library_notes_view == "list":
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
@@ -23197,8 +23197,8 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
             )
             == 1
         )
-        note_id = screen._selected_note_id
-        assert screen._library_note_session_blank_id == note_id
+        note_id = screen._notes_state.selected_note_id
+        assert screen._notes_state.session_blank_id == note_id
 
         # Type real content into the body...
         screen.query_one("#library-note-body", TextArea).text = "temp scratch text"
@@ -23206,11 +23206,11 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
         assert screen._library_note_dirty is True
         # ...the FIRST edit already cleared the display-only placeholder
         # flag (unrelated to the GC decision)...
-        assert screen._library_note_pending_blank_gc_id is None
+        assert screen._notes_state.pending_blank_gc_id is None
         # ...but the session-blank id must survive the edit: it's what the
         # fix now reads to decide GC-vs-save, and it must still be armed
         # for THIS note.
-        assert screen._library_note_session_blank_id == note_id
+        assert screen._notes_state.session_blank_id == note_id
 
         # ...then delete it all back to empty.
         screen.query_one("#library-note-body", TextArea).text = ""
@@ -23237,8 +23237,8 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
                 "not GC'd -- an empty 'Untitled' row survived, exactly "
                 "what AC#5 forbids."
             )
-        assert screen._library_notes_view == "list"
-        assert screen._library_note_session_blank_id is None
+        assert screen._notes_state.view == "list"
+        assert screen._notes_state.session_blank_id is None
 
 
 @pytest.mark.asyncio
@@ -23273,8 +23273,8 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
         await pilot.pause()
 
         # Never a session blank: only the "Blank note" create path sets this.
-        assert screen._library_note_session_blank_id is None
-        assert screen._selected_note_id == created_id
+        assert screen._notes_state.session_blank_id is None
+        assert screen._notes_state.selected_note_id == created_id
 
         screen.query_one("#library-note-title", Input).value = ""
         screen.query_one("#library-note-body", TextArea).text = ""
@@ -23283,7 +23283,7 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
 
         _press_note_back(screen)
         for _ in range(150):
-            if screen._library_notes_view == "list":
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
@@ -23333,7 +23333,7 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
         await _wait_for_selector(screen, pilot, "#library-note-title")
         await pilot.pause()
         await pilot.pause()
-        note_id = screen._selected_note_id
+        note_id = screen._notes_state.selected_note_id
 
         screen.query_one("#library-note-body", TextArea).text = "will be autosaved"
         await pilot.pause()
@@ -23353,7 +23353,7 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
         # An intermediate autosave must NOT exempt this note from GC --
         # only an explicit Save press does that (see
         # ``handle_library_note_save``).
-        assert screen._library_note_session_blank_id == note_id
+        assert screen._notes_state.session_blank_id == note_id
 
         # Now empty it back out and exit without an explicit Save.
         screen.query_one("#library-note-body", TextArea).text = ""
@@ -23405,20 +23405,20 @@ async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
         await _wait_for_selector(screen, pilot, "#library-note-title")
         await pilot.pause()
         await pilot.pause()
-        note_id = screen._selected_note_id
+        note_id = screen._notes_state.selected_note_id
 
         # The user types the seed's own spelling, on purpose, and leaves
         # the body empty -- a perfectly ordinary "I'll name it later" note.
         screen.query_one("#library-note-title", Input).value = "Untitled"
         await pilot.pause()
-        assert screen._library_note_title_user_edited is True, (
+        assert screen._notes_state.title_user_edited is True, (
             "Typing in the title field must record that the seed is no "
             "longer untouched."
         )
 
         _press_note_back(screen)
         for _ in range(150):
-            if screen._library_notes_view == "list":
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
@@ -23467,7 +23467,7 @@ async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_tri
         await pilot.pause()
         screen.query_one("#library-note-body", TextArea).text = ""
         await pilot.pause()
-        assert screen._library_note_title_user_edited is False
+        assert screen._notes_state.title_user_edited is False
 
         _press_note_back(screen)
         for _ in range(150):
@@ -23653,14 +23653,14 @@ async def test_library_shell_discard_new_note_deletes_untouched_create():
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
         discard = await _wait_for_display(screen, pilot, "#library-note-discard-new")
-        created_id = screen._selected_note_id
+        created_id = screen._notes_state.selected_note_id
 
         discard.press()
         await _wait_for_condition(
             pilot,
             lambda: (
                 bool(app.notes_scope_service.delete_calls)
-                and not screen._library_notes_mutation_in_flight
+                and not screen._notes_state.mutation_in_flight
             ),
             message="Discard did not finish deleting the untouched new note.",
         )
@@ -23837,12 +23837,12 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
         await pilot.pause()
         return
     if state == "filtered-empty":
-        screen._library_notes_filter = "[none] Ω very long filter query"
-        screen._library_notes_filter_records = []
+        screen._notes_state.filter = "[none] Ω very long filter query"
+        screen._notes_state.filter_records = []
     elif state == "sort-choice":
-        screen._library_notes_sort_choices_visible = True
+        screen._notes_state.sort_choices_visible = True
     elif state == "selection":
-        screen._library_notes_select_mode = True
+        screen._notes_state.select_mode = True
     else:
         raise AssertionError(f"Unsupported Navigator state: {state}")
     screen.refresh(recompose=True)
@@ -24213,7 +24213,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
         screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "validation",
+            lambda: screen._notes_state.autosave_state == "validation",
             message="Validation geometry state never appeared.",
         )
     elif state == "conflict":
@@ -24444,7 +24444,7 @@ async def test_library_shell_create_from_template_uses_template_fields():
         # Template keywords ride along on create -- the standalone screen
         # applies them, so Library parity requires them at the seam too.
         assert call["keywords"] == ["meeting", "notes"]
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
 
 
 def _fake_import_dialog_result(screen, selected_path):
@@ -24605,8 +24605,8 @@ async def test_library_shell_search_result_open_note_lands_in_editor():
         await _wait_for_selector(screen, pilot, "#library-note-title")
         for _ in range(120):
             if (
-                screen._selected_note_id == "n-1"
-                and screen._library_notes_view == "editor"
+                screen._notes_state.selected_note_id == "n-1"
+                and screen._notes_state.view == "editor"
             ):
                 break
             await pilot.pause(0.02)
@@ -26661,9 +26661,9 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
     elif row_id == LIBRARY_ROW_BROWSE_NOTES:
         screen._library_loaded = True
         screen._library_lookup_error = None
-        screen._library_notes_source = "database"
-        screen._library_notes_sort = "oldest"
-        screen._library_notes_filter = "retro"
+        screen._notes_state.source = "database"
+        screen._notes_state.sort = "oldest"
+        screen._notes_state.filter = "retro"
     elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
         _apply_continue_prompt_scope(
             screen,
@@ -26751,7 +26751,7 @@ def test_library_landing_continue_receipt_rejects_file_notes_and_media_trash():
     file_notes = LibraryScreen(app)
     file_notes._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     file_notes._library_loaded = True
-    file_notes._library_notes_source = "files"
+    file_notes._notes_state.source = "files"
 
     media_trash = LibraryScreen(app)
     media_trash._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
@@ -26825,7 +26825,7 @@ def test_library_landing_continue_projects_scope_without_private_query_copy() ->
     assert action.adjustment == "Item views resume at the source list."
     assert "PRIVATE NEEDLE" not in repr(action)
 
-    screen._library_notes_compact = True
+    screen._notes_state.compact = True
     compact_action = screen._library_landing_canvas_state().continue_action
     assert compact_action == action
     assert "PRIVATE NEEDLE" not in repr(compact_action)
@@ -26998,7 +26998,7 @@ def test_library_landing_from_library_uses_only_trustworthy_cached_summaries() -
     screen._library_lifecycle = LibraryLifecycle.GRADUATED
     screen._library_loaded = True
     screen._library_lookup_error = None
-    screen._library_notes_source = "files"
+    screen._notes_state.source = "files"
     screen._local_source_records = {
         "notes": (
             {"note_id": "missing-title", "title": "   "},
@@ -27018,7 +27018,7 @@ def test_library_landing_from_library_uses_only_trustworthy_cached_summaries() -
         ("media", "media-2", "Field recording"),
         ("conversations", "chat-1", "Planning session"),
     ]
-    assert screen._library_notes_source == "files"
+    assert screen._notes_state.source == "files"
 
     screen._library_lookup_error = "Source snapshot unavailable."
     assert screen._library_landing_canvas_state().recent_items == ()
@@ -27149,7 +27149,7 @@ async def test_library_returning_landing_geometry_keyboard_and_compact_focus_sta
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_compact
+                screen._notes_state.compact
                 and continue_button.has_focus
                 and screen.query_one("#library-rail").display
                 and screen.query_one("#library-canvas").display
@@ -27162,14 +27162,14 @@ async def test_library_returning_landing_geometry_keyboard_and_compact_focus_sta
         await pilot.resize_terminal(170, 48)
         await _wait_for_condition(
             pilot,
-            lambda: not screen._library_notes_compact and continue_button.has_focus,
+            lambda: not screen._notes_state.compact and continue_button.has_focus,
             message="Wide transition did not restore the prior landing identity.",
         )
 
         await pilot.resize_terminal(100, 30)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_compact,
+            lambda: screen._notes_state.compact,
             message="Second compact transition did not settle.",
         )
         newer = screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_PROMPTS}", Button)
@@ -27178,7 +27178,7 @@ async def test_library_returning_landing_geometry_keyboard_and_compact_focus_sta
         await pilot.resize_terminal(170, 48)
         await _wait_for_condition(
             pilot,
-            lambda: not screen._library_notes_compact,
+            lambda: not screen._notes_state.compact,
             message="Second wide transition did not settle.",
         )
         assert newer.has_focus
@@ -27244,9 +27244,9 @@ async def test_library_landing_continue_reapplies_database_notes_scope_after_adm
     original._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     original._library_loaded = True
     original._library_lookup_error = None
-    original._library_notes_source = "database"
-    original._library_notes_sort = "oldest"
-    original._library_notes_filter = "retro"
+    original._notes_state.source = "database"
+    original._notes_state.sort = "oldest"
+    original._notes_state.filter = "retro"
     restored = LibraryScreen(app)
     restored.restore_state(original.save_state())
     host = LibraryHarness(app, screen=restored)
@@ -27260,14 +27260,14 @@ async def test_library_landing_continue_reapplies_database_notes_scope_after_adm
             pilot,
             lambda: (
                 screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-                and screen._library_notes_filter == "retro"
+                and screen._notes_state.filter == "retro"
                 and bool(screen.query("#library-notes-row-0"))
                 and "Reading list" not in _visible_text(screen)
             ),
             message="Continue did not restore the Database Notes filter.",
         )
 
-        assert screen._library_notes_sort == "oldest"
+        assert screen._notes_state.sort == "oldest"
         assert "Q3 retro" in _visible_text(screen)
         assert "Reading list" not in _visible_text(screen)
 
@@ -27359,8 +27359,8 @@ def test_library_shell_restore_state_degrades_editor_view_without_matching_id():
 
     notes_screen = LibraryScreen(app)
     notes_screen.restore_state({"library_notes_view": "editor", "selected_note_id": ""})
-    assert notes_screen._library_notes_view == "list"
-    assert notes_screen._selected_note_id == ""
+    assert notes_screen._notes_state.view == "list"
+    assert notes_screen._notes_state.selected_note_id == ""
 
     media_screen = LibraryScreen(app)
     media_screen.restore_state(
@@ -27423,9 +27423,9 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
         limit=20,
         offset=0,
     )
-    original._library_notes_sort = "oldest"
-    original._library_notes_filter = "retro"
-    original._library_notes_filter_records = ["must never be persisted"]
+    original._notes_state.sort = "oldest"
+    original._notes_state.filter = "retro"
+    original._notes_state.filter_records = ["must never be persisted"]
     original._conversations_state.query = "quarterly"
     original._conversations_state.page_loaded = True
     original._conversations_state.freshness = "fresh"
@@ -27440,8 +27440,8 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     restored.restore_state(state)
 
     assert restored._media_state.type_filter == "audio"
-    assert restored._library_notes_sort == "oldest"
-    assert restored._library_notes_filter == "retro"
+    assert restored._notes_state.sort == "oldest"
+    assert restored._notes_state.filter == "retro"
     assert restored._conversations_state.requested_query == "quarterly"
     assert restored._conversations_state.query == ""
     assert restored._conversations_state.page_records == ()
@@ -27449,7 +27449,7 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     assert restored._conversations_state.freshness == "uninitialized"
     # Never restored -- the notes canvas recomputes it fresh from
     # ``_library_notes_filter`` on mount.
-    assert restored._library_notes_filter_records is None
+    assert restored._notes_state.filter_records is None
 
 
 def test_library_shell_restore_state_defaults_per_pane_filters_on_garbage_values():
@@ -27476,8 +27476,8 @@ def test_library_shell_restore_state_defaults_per_pane_filters_on_garbage_values
     # library_media_type_filter key is ignored, and the scope parser's
     # own defaults apply.
     assert screen._media_state.type_filter is None
-    assert screen._library_notes_sort == "newest"
-    assert screen._library_notes_filter == ""
+    assert screen._notes_state.sort == "newest"
+    assert screen._notes_state.filter == ""
     assert screen._conversations_state.query == ""
 
 
@@ -27847,11 +27847,11 @@ async def test_library_shell_restored_notes_editor_with_deleted_note_falls_back_
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         for _ in range(120):
-            if screen._library_notes_view == "list":
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
 
-        assert screen._library_notes_view == "list"
+        assert screen._notes_state.view == "list"
         assert notified  # _notify_library_note_missing_warning fired
 
 
@@ -31365,7 +31365,7 @@ async def test_library_note_measured_breakpoint_is_exact_and_stable(
 
         shell_width = screen.query_one("#library-shell-grid").region.width
         assert shell_width == terminal_width
-        assert screen._library_notes_compact is expected_compact
+        assert screen._notes_state.compact is expected_compact
 
         for _ in range(4):
             crossing_width = 120 if expected_compact else 119
@@ -31418,7 +31418,7 @@ async def test_library_note_compact_deep_link_intent_opens_notes_stage(
         await _wait_for_library_notes_compact(screen, pilot, True)
         await _wait_for_selector(screen, pilot, selector)
 
-        assert screen._library_notes_stage == "notes"
+        assert screen._notes_state.stage == "notes"
         assert screen._library_notes_focus_region() == expected_region
         assert screen.query_one("#library-rail").display is False
         assert screen.query_one("#library-canvas").display is items_visible
@@ -31441,12 +31441,12 @@ async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -
 
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_notes_stage == "rail"
-        assert screen._library_notes_explicit_stage_intent is False
+        assert screen._notes_state.stage == "rail"
+        assert screen._notes_state.explicit_stage_intent is False
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
-        assert screen._library_notes_stage == "rail"
+        assert screen._notes_state.stage == "rail"
         assert screen.query_one("#library-rail").display is True
         assert screen.query_one("#library-canvas").display is False
         assert getattr(screen.focused, "row_id", None) == LIBRARY_ROW_BROWSE_NOTES
@@ -31514,7 +31514,7 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
         screen.query_one("#library-notes-sort-title", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_sort == "title",
+            lambda: screen._notes_state.sort == "title",
             message="Notes title scope did not settle.",
         )
         await pilot.pause()
@@ -31526,17 +31526,17 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_filter == "scope"
-                and screen._library_notes_filter_records is not None
+                screen._notes_state.filter == "scope"
+                and screen._notes_state.filter_records is not None
             ),
             message=lambda: (
                 "Filtered Notes scope did not settle: "
                 f"value={notes_filter.value!r}, focused={screen.focused!r}, "
-                f"filter={screen._library_notes_filter!r}, "
+                f"filter={screen._notes_state.filter!r}, "
                 f"calls={app.notes_scope_service.search_calls!r}."
             ),
         )
-        assert len(screen._library_notes_filter_records) == 32
+        assert len(screen._notes_state.filter_records) == 32
         assert len(screen.query(".library-notes-row")) >= 20
 
         rail = screen.query_one("#library-rail")
@@ -31565,16 +31565,16 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
             message=lambda: (
                 "Editor Back did not restore the selected note row: "
                 f"focused={screen.focused!r}, "
-                f"pending={screen._library_notes_pending_focus_identity!r}, "
-                f"waits={screen._library_notes_pending_focus_waits_for_snapshot!r}, "
+                f"pending={screen._notes_state.pending_focus_identity!r}, "
+                f"waits={screen._notes_state.pending_focus_waits_for_snapshot!r}, "
                 f"list_scroll={screen.query_one('#library-notes-list').scroll_y!r}."
             ),
         )
 
-        assert screen._library_notes_source == "database"
-        assert screen._library_notes_filter == "scope"
-        assert screen._library_notes_sort == "title"
-        assert screen._library_notes_tree_selected_placement_id == placement_id
+        assert screen._notes_state.source == "database"
+        assert screen._notes_state.filter == "scope"
+        assert screen._notes_state.sort == "title"
+        assert screen._notes_state.tree_selected_placement_id == placement_id
         assert screen.query_one("#library-notes-filter", Input).value == "scope"
         assert (
             int(screen.query_one("#library-notes-list").scroll_y) == before_list_scroll
@@ -31602,7 +31602,7 @@ async def test_library_note_task_return_receipt_respects_newer_user_focus() -> N
         receipt = screen._capture_library_notes_browse_return_receipt(
             note_id=str(row.note_id)
         )
-        stale_generation = screen._library_notes_focus_intent_generation
+        stale_generation = screen._notes_state.focus_intent_generation
         guard = library_screen_module._LibraryNotesRestoreGuard(
             focus_generation=stale_generation
         )
@@ -31614,7 +31614,7 @@ async def test_library_note_task_return_receipt_respects_newer_user_focus() -> N
             pilot,
             lambda: (
                 newer_target.has_focus
-                and screen._library_notes_focus_intent_generation > stale_generation
+                and screen._notes_state.focus_intent_generation > stale_generation
             ),
             message="Newer rail focus did not advance Notes focus authority.",
         )
@@ -31735,7 +31735,7 @@ async def test_library_note_compact_stage_drills_in_and_back_without_losing_orig
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        assert screen._library_notes_stage == "notes"
+        assert screen._notes_state.stage == "notes"
         assert screen.query_one("#library-rail").display is False
         assert screen.query_one("#library-canvas").display is True
 
@@ -31753,7 +31753,7 @@ async def test_library_note_compact_stage_drills_in_and_back_without_losing_orig
             message=lambda: (
                 "Editor Back did not restore the originating note row: "
                 f"focused={screen.focused!r}, "
-                f"pending={screen._library_notes_pending_focus_identity!r}, "
+                f"pending={screen._notes_state.pending_focus_identity!r}, "
                 "rows="
                 f"{[getattr(row, 'note_id', None) for row in screen.query('.library-notes-row')]}"
             ),
@@ -31761,7 +31761,7 @@ async def test_library_note_compact_stage_drills_in_and_back_without_losing_orig
 
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_notes_stage == "rail"
+        assert screen._notes_state.stage == "rail"
         assert screen.query_one("#library-rail").display is True
         assert screen.query_one("#library-canvas").display is False
         assert screen.query_one("#library-note-work-pane").display is True
@@ -31805,7 +31805,7 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
         body.focus()
         await pilot.pause()
         before = (
-            screen._library_notes_stage,
+            screen._notes_state.stage,
             screen._library_notes_active_region(),
             screen._library_note_session.snapshot,
             body.selection,
@@ -31820,7 +31820,7 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
             await pilot.pause()
 
         after = (
-            screen._library_notes_stage,
+            screen._notes_state.stage,
             screen._library_notes_active_region(),
             screen._library_note_session.snapshot,
             body.selection,
@@ -31966,7 +31966,7 @@ async def test_library_note_breakpoint_round_trip_restores_editor_focus_tuple() 
         selection = body.selection
         scroll_y = body.scroll_y
         coordinator = screen._library_note_session
-        receipt = screen._library_notes_browse_return_receipt
+        receipt = screen._notes_state.browse_return_receipt
         assert receipt is not None
         assert screen.query_one("#library-rail").display is False
         assert screen.query_one("#library-canvas").display is True
@@ -31976,7 +31976,7 @@ async def test_library_note_breakpoint_round_trip_restores_editor_focus_tuple() 
         await pilot.resize_terminal(100, 30)
         await _wait_for_library_notes_compact(screen, pilot, True)
         assert screen._library_note_session is coordinator
-        assert screen._library_notes_browse_return_receipt is receipt
+        assert screen._notes_state.browse_return_receipt is receipt
         assert screen.query_one("#library-notes-task-return", Button).display is False
         assert screen.query_one("#library-note-back", Button).display is True
         await pilot.resize_terminal(170, 48)
@@ -31984,7 +31984,7 @@ async def test_library_note_breakpoint_round_trip_restores_editor_focus_tuple() 
 
         restored = screen.query_one("#library-note-body", TextArea)
         assert screen._library_note_session is coordinator
-        assert screen._library_notes_browse_return_receipt is receipt
+        assert screen._notes_state.browse_return_receipt is receipt
         assert restored is body
         assert screen.focused is restored
         assert restored.selection == selection
@@ -32028,10 +32028,10 @@ async def test_library_note_deliberate_scroll_override_replaces_responsive_memor
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_last_user_scroll_focus is not None
-                and screen._library_notes_last_user_scroll_focus.semantic_role
+                screen._notes_state.last_user_scroll_focus is not None
+                and screen._notes_state.last_user_scroll_focus.semantic_role
                 == "preview-body"
-                and screen._library_notes_last_user_scroll_focus.scroll_offset == (0, 2)
+                and screen._notes_state.last_user_scroll_focus.scroll_offset == (0, 2)
             ),
             message="Preview scroll did not reach event-driven responsive memory.",
         )
@@ -32055,8 +32055,8 @@ async def test_library_note_deliberate_scroll_override_replaces_responsive_memor
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_last_user_scroll_focus is not None
-                and screen._library_notes_last_user_scroll_focus.scroll_offset == (0, 0)
+                screen._notes_state.last_user_scroll_focus is not None
+                and screen._notes_state.last_user_scroll_focus.scroll_offset == (0, 0)
             ),
             message="Deliberate wide-layout scroll did not reach stable memory.",
         )
@@ -32116,10 +32116,10 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_notes_interaction_focus is not None
-                    and screen._library_notes_interaction_focus.semantic_role
+                    screen._notes_state.interaction_focus is not None
+                    and screen._notes_state.interaction_focus.semantic_role
                     == before.semantic_role
-                    and screen._library_notes_interaction_focus.scroll_offset
+                    and screen._notes_state.interaction_focus.scroll_offset
                     == before.scroll_offset
                 ),
                 message=(
@@ -32221,7 +32221,7 @@ async def test_library_note_unsafe_session_outranks_rail_focus_on_compact_entry(
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
 
-        assert screen._library_notes_stage == "notes"
+        assert screen._notes_state.stage == "notes"
         assert screen.query_one("#library-canvas").display is False
         assert screen.query_one("#library-rail").display is False
         assert screen.query_one("#library-note-work-pane").display is True
@@ -32250,8 +32250,8 @@ async def test_library_note_delete_confirmation_outranks_rail_focus_on_compact_e
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
 
-        assert screen._library_notes_stage == "notes"
-        assert screen._library_note_confirming_delete is True
+        assert screen._notes_state.stage == "notes"
+        assert screen._notes_state.confirming_delete is True
         assert screen.query_one("#library-note-delete-confirmation").display is True
         assert getattr(screen.focused, "id", None) == "library-note-delete-cancel"
 
@@ -32275,8 +32275,8 @@ async def test_library_note_load_failure_outranks_rail_focus_on_compact_entry() 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
 
-        assert screen._library_notes_stage == "notes"
-        assert screen._library_note_load_state == "failed"
+        assert screen._notes_state.stage == "notes"
+        assert screen._notes_state.load_state == "failed"
         assert screen.query_one("#library-canvas").display is False
         assert screen.query_one("#library-rail").display is False
         assert screen.query_one("#library-note-work-pane").display is True
@@ -32295,13 +32295,13 @@ async def test_library_note_newer_selection_cancels_pending_back_focus() -> None
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen._library_notes_pending_focus_identity = LibraryNotesFocusIdentity(
+        screen._notes_state.pending_focus_identity = LibraryNotesFocusIdentity(
             stage="notes",
             region="navigator",
             note_id="n-1",
             semantic_role="note-row:n-1",
         )
-        screen._library_notes_pending_focus_waits_for_snapshot = True
+        screen._notes_state.pending_focus_waits_for_snapshot = True
 
         screen.query_one("#library-notes-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
@@ -32316,7 +32316,7 @@ async def test_library_note_newer_selection_cancels_pending_back_focus() -> None
         screen._release_library_notes_focus_after_snapshot()
         await pilot.pause()
 
-        assert screen._library_notes_pending_focus_identity is None
+        assert screen._notes_state.pending_focus_identity is None
         assert screen._library_note_session.snapshot.note_id == "n-2"
         assert screen._library_notes_focus_region() == "editor"
         assert getattr(screen.focused, "id", None) == "library-note-body"
@@ -32389,7 +32389,7 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
         await pilot.pause()
         stale_identity = screen._capture_library_notes_focus_identity()
         assert stale_identity.scroll_offset == (0, 9)
-        stale_generation = screen._library_notes_focus_intent_generation
+        stale_generation = screen._notes_state.focus_intent_generation
         guard = library_screen_module._LibraryNotesRestoreGuard(
             focus_generation=stale_generation
         )
@@ -32409,7 +32409,7 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
             pilot,
             lambda: (
                 screen.focused is preview
-                and screen._library_notes_focus_intent_generation > stale_generation
+                and screen._notes_state.focus_intent_generation > stale_generation
             ),
             message="User focus intent did not advance its generation.",
         )
@@ -32489,7 +32489,7 @@ async def test_library_note_stale_recompose_capture_cannot_rewind_newer_presenta
         newer_revision = screen._library_note_session.snapshot.draft_revision
         assert newer_revision > stale.draft_revision
 
-        screen._library_note_editor_armed = False
+        screen._notes_state.editor_armed = False
         body = screen.query_one("#library-note-body", TextArea)
         with body.prevent(TextArea.Changed):
             body.text = "stale rendered draft"
@@ -32499,8 +32499,8 @@ async def test_library_note_stale_recompose_capture_cannot_rewind_newer_presenta
         assert screen._library_note_session.snapshot.body == "newer draft"
         assert screen._library_note_session.snapshot.draft_revision == newer_revision
         assert screen.query_one("#library-note-body", TextArea).text == "newer draft"
-        assert screen._library_note_editor_armed is True
-        assert screen._library_note_preview is True
+        assert screen._notes_state.editor_armed is True
+        assert screen._notes_state.preview is True
         assert screen.query_one("#library-note-preview-region").display is True
 
 
@@ -32534,7 +32534,7 @@ async def test_library_note_recompose_captures_queued_widget_change_before_disar
         assert snapshot is not None
         assert snapshot.body == "queued draft before recompose"
         assert screen.query_one("#library-note-body", TextArea).text == snapshot.body
-        assert screen._library_note_editor_armed is True
+        assert screen._notes_state.editor_armed is True
 
 
 @pytest.mark.asyncio
@@ -32660,17 +32660,17 @@ async def test_library_note_shortcut_navigation_cannot_bypass_failed_flush() -> 
         await pilot.press("ctrl+n")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_autosave_state == "error",
+            lambda: screen._notes_state.autosave_state == "error",
             message="Ctrl+N did not surface its failed flush.",
         )
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
         assert screen._library_note_session.snapshot.body == "unsaved shortcut draft"
 
         await pilot.press("escape")
         await pilot.pause()
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
         assert screen._library_note_session.snapshot.dirty is True
 
 
@@ -32778,7 +32778,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             message="Reload did not resolve the conflict.",
         )
         await wait_footer("esc notes")
-        assert screen._library_note_shortcut_status == ""
+        assert screen._notes_state.shortcut_status == ""
 
 
 @pytest.mark.asyncio
@@ -32845,7 +32845,7 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         await pilot.press("escape")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_stage == "rail",
+            lambda: screen._notes_state.stage == "rail",
             message="Navigator Escape did not return to the Library rail.",
         )
         await _wait_for_condition(
@@ -32905,21 +32905,21 @@ async def test_library_note_escape_hierarchy_cannot_bypass_conflict() -> None:
         await pilot.press("escape")
         await pilot.pause()
         assert screen.query_one("#library-note-context-region").display is False
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
 
         screen.query_one("#library-note-context").press()
         await _wait_for_display(screen, pilot, "#library-note-context-region")
         screen.query_one("#library-note-context-delete").press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
-        assert screen._library_note_confirming_delete is True
+        assert screen._notes_state.confirming_delete is True
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_note_confirming_delete is False
-        assert screen._library_note_context is True
-        assert screen._library_note_shortcut_status == ""
+        assert screen._notes_state.confirming_delete is False
+        assert screen._notes_state.context is True
+        assert screen._notes_state.shortcut_status == ""
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_note_context is False
+        assert screen._notes_state.context is False
 
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "local conflict text"
@@ -32934,11 +32934,11 @@ async def test_library_note_escape_hierarchy_cannot_bypass_conflict() -> None:
 
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_notes_view == "editor"
-        assert screen._library_notes_stage == "notes"
+        assert screen._notes_state.view == "editor"
+        assert screen._notes_state.stage == "notes"
         assert screen._library_note_session.snapshot.in_conflict is True
         assert screen.query_one("#library-note-conflict-region").display is True
-        assert "Conflict locked" in screen._library_note_shortcut_status
+        assert "Conflict locked" in screen._notes_state.shortcut_status
 
         screen.query_one("#library-note-conflict-reload").press()
         await _wait_for_condition(
@@ -32949,7 +32949,7 @@ async def test_library_note_escape_hierarchy_cannot_bypass_conflict() -> None:
             ),
             message="Reload did not resolve the conflict after Escape refusal.",
         )
-        assert screen._library_note_shortcut_status == ""
+        assert screen._notes_state.shortcut_status == ""
 
 
 # ---------------------------------------------------------------------------
@@ -33010,7 +33010,7 @@ async def test_library_note_pilot_coalesces_three_edits_and_back_waits_for_chain
             _press_note_back(screen)
 
             await asyncio.sleep(0.05)
-            assert screen._library_notes_view == "editor"
+            assert screen._notes_state.view == "editor"
             assert len(service.save_attempts) == 1
 
             first_save_release.set()
@@ -33020,12 +33020,12 @@ async def test_library_note_pilot_coalesces_three_edits_and_back_waits_for_chain
                 await asyncio.sleep(0.01)
             else:
                 raise AssertionError("The coalesced latest save never started.")
-            assert screen._library_notes_view == "editor"
+            assert screen._notes_state.view == "editor"
 
             latest_save_release.set()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_notes_view == "list",
+                lambda: screen._notes_state.view == "list",
                 message="Back did not wait for the complete save chain.",
             )
 
@@ -33135,7 +33135,7 @@ async def test_library_note_pilot_overwrite_keeps_edits_from_fetch_and_save() ->
             overwrite_save_release.set()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_note_autosave_state == "saved",
+                lambda: screen._notes_state.autosave_state == "saved",
                 message="Overwrite did not save the newest canonical draft.",
             )
 
@@ -33240,7 +33240,7 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
         admission = screen._library_note_session.destructive_admission
         assert admission is not None
         assert screen._library_note_session.destructive_running is False
-        assert screen._library_note_context is False
+        assert screen._notes_state.context is False
         assert screen.query_one("#library-note-editor-region").display is True
         delete_action.press()
         await pilot.pause()
@@ -33261,8 +33261,8 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
         await pilot.press("escape")
         await _wait_for_display(screen, pilot, "#library-note-context-region")
         assert screen._library_note_session.destructive_admission is None
-        assert screen._library_note_confirming_delete is False
-        assert screen._library_note_context is True
+        assert screen._notes_state.confirming_delete is False
+        assert screen._notes_state.context is True
         assert getattr(screen.focused, "id", None) == "library-note-context-delete"
         assert context.scroll_y == origin_scroll
 
@@ -33307,13 +33307,13 @@ async def test_library_note_delete_captures_context_origin_before_gated_flush() 
             # suspended at the real threaded save seam. The initiating origin
             # must remain Context even though current presentation changes.
             await screen.action_library_notes_escape()
-            assert screen._library_note_context is False
+            assert screen._notes_state.context is False
             save_release.set()
             await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
 
             await pilot.press("escape")
             await _wait_for_display(screen, pilot, "#library-note-context-region")
-            assert screen._library_note_context is True
+            assert screen._notes_state.context is True
             assert getattr(screen.focused, "id", None) == (
                 "library-note-context-delete"
             )
@@ -33378,19 +33378,19 @@ async def test_library_note_pilot_delete_running_blocks_duplicate_delete_edits_a
             await pilot.press("escape")
             await pilot.pause()
             assert len(service.delete_attempts) == 1
-            assert screen._library_note_confirming_delete is True
+            assert screen._notes_state.confirming_delete is True
             assert screen._library_note_session.snapshot == snapshot_before
-            assert "running" in screen._library_note_shortcut_status.lower()
+            assert "running" in screen._notes_state.shortcut_status.lower()
 
             delete_release.set()
             if delete_succeeds:
                 await _wait_for_selector(screen, pilot, "#library-notes-list")
-                assert screen._library_notes_view == "list"
+                assert screen._notes_state.view == "list"
                 assert screen._library_note_session.snapshot is None
             else:
                 await _wait_for_display(screen, pilot, "#library-note-context-region")
                 assert screen._library_note_session.destructive_admission is None
-                assert screen._library_note_delete_receipt is None
+                assert screen._notes_state.delete_receipt is None
                 assert "(2)" in str(screen.query_one("#library-row-browse-notes").label)
                 snapshot_after = screen._library_note_session.snapshot
                 assert snapshot_after is not None
@@ -33511,11 +33511,11 @@ async def test_library_note_pilot_duplicate_discard_runs_one_delete_and_blocks_e
             await pilot.press("escape")
             await pilot.pause()
             assert len(service.delete_attempts) == 1
-            assert screen._library_notes_view == "editor"
+            assert screen._notes_state.view == "editor"
 
             delete_release.set()
             await _wait_for_selector(screen, pilot, "#library-notes-list")
-            assert screen._library_notes_view == "list"
+            assert screen._notes_state.view == "list"
             assert screen._library_note_session.snapshot is None
     finally:
         delete_release.set()
@@ -33628,14 +33628,14 @@ async def _task10_open_notes_navigator(screen, pilot) -> None:
         lambda: (
             screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and (
-                not screen._library_notes_compact
-                or screen._library_notes_stage == "notes"
+                not screen._notes_state.compact
+                or screen._notes_state.stage == "notes"
             )
         ),
         message=lambda: (
             "Keyboard activation did not enter Notes Navigator: "
             f"selected={screen._library_selected_row_id!r}, "
-            f"stage={screen._library_notes_stage!r}."
+            f"stage={screen._notes_state.stage!r}."
         ),
     )
     await _wait_for_selector(screen, pilot, "#library-notes-filter")
@@ -33734,7 +33734,7 @@ async def test_library_note_keyboard_capability_matrix(
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-notes-sort-oldest"
             )
-            assert screen._library_notes_sort == "oldest"
+            assert screen._notes_state.sort == "oldest"
             return
 
         if capability == "create_discard":
@@ -33803,7 +33803,7 @@ async def test_library_note_keyboard_capability_matrix(
                 lambda: isinstance(host.screen_stack[-1], FileOpen),
                 message="Keyboard Import never opened FileOpen.",
             )
-            assert screen._library_notes_view == "import"
+            assert screen._notes_state.view == "import"
             assert (
                 screen._library_note_import_controller.snapshot.phase.value == "select"
             )
@@ -33830,15 +33830,15 @@ async def test_library_note_keyboard_capability_matrix(
                 screen, pilot, "#library-notes-select-toggle"
             )
             await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
-            assert screen._library_notes_row_selection.count == 1
+            assert screen._notes_state.row_selection.count == 1
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-notes-select-all"
             )
-            assert screen._library_notes_row_selection.count == 2
+            assert screen._notes_state.row_selection.count == 2
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-notes-select-clear"
             )
-            assert screen._library_notes_row_selection.count == 0
+            assert screen._notes_state.row_selection.count == 0
             await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-notes-export-selected"
@@ -33891,8 +33891,8 @@ async def test_library_note_keyboard_capability_matrix(
                 message="The debounce timer never autosaved the keyboard edit.",
             )
             assert body.text.endswith("s")
-            assert screen._library_notes_autosave_timer is None
-            assert screen._library_note_autosave_state == "saved"
+            assert screen._notes_state.autosave_timer is None
+            assert screen._notes_state.autosave_state == "saved"
 
             monkeypatch.setattr(
                 library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600
@@ -33902,7 +33902,7 @@ async def test_library_note_keyboard_capability_matrix(
             )
             await pilot.press("end", "e")
             await pilot.pause()
-            assert screen._library_notes_autosave_timer is not None
+            assert screen._notes_state.autosave_timer is not None
             await _task10_activate_with_keyboard(screen, pilot, "#library-note-save")
             await _wait_for_condition(
                 pilot,
@@ -33914,11 +33914,11 @@ async def test_library_note_keyboard_capability_matrix(
         if capability == "preview_edit":
             await _task10_activate_with_keyboard(screen, pilot, "#library-note-preview")
             await _wait_for_display(screen, pilot, "#library-note-preview-region")
-            assert screen._library_note_preview is True
+            assert screen._notes_state.preview is True
             await _task10_activate_with_keyboard(screen, pilot, "#library-note-edit")
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_note_preview is False,
+                lambda: screen._notes_state.preview is False,
                 message="Keyboard Edit did not leave Preview.",
             )
             return
@@ -33973,7 +33973,7 @@ async def test_library_note_keyboard_capability_matrix(
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-note-delete-cancel"
             )
-            assert screen._library_note_confirming_delete is False
+            assert screen._notes_state.confirming_delete is False
             await _task10_activate_with_keyboard(screen, pilot, f"{prefix}delete")
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-note-delete-confirm"
@@ -34191,25 +34191,25 @@ async def test_library_note_fifty_cycle_breakpoint_and_presentation_lifecycle() 
             screen.query_one("#library-note-preview", Button).press()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_note_preview,
+                lambda: screen._notes_state.preview,
                 message="Preview did not open during the 50-cycle gate.",
             )
             screen.query_one("#library-note-edit", Button).press()
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._library_note_preview,
+                lambda: not screen._notes_state.preview,
                 message="Preview did not close during the 50-cycle gate.",
             )
             screen.query_one("#library-note-context", Button).press()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_note_context,
+                lambda: screen._notes_state.context,
                 message="Context did not open during the 50-cycle gate.",
             )
             screen.query_one("#library-note-context-back", Button).press()
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._library_note_context,
+                lambda: not screen._notes_state.context,
                 message="Context did not close during the 50-cycle gate.",
             )
 
@@ -34217,7 +34217,7 @@ async def test_library_note_fifty_cycle_breakpoint_and_presentation_lifecycle() 
         assert len(screen.query("#library-notes-canvas")) == 1
         for selector, original in stable.items():
             assert screen.query_one(selector) is original
-        assert screen._library_notes_autosave_timer is None
+        assert screen._notes_state.autosave_timer is None
         assert not any(
             worker.node is screen and worker.group.startswith("library_note")
             for worker in host.workers
@@ -34407,10 +34407,10 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
             if worker.node is screen and worker.group in note_worker_groups
         }
         lasting_sync_controller = screen._library_notes_sync_controller
-        baseline_timer_ref = screen._library_notes_autosave_timer
+        baseline_timer_ref = screen._notes_state.autosave_timer
         assert baseline_active_groups == set()
         assert baseline_timer_ref is None
-        assert screen._library_notes_auto_sync_timer is None
+        assert screen._notes_state.auto_sync_timer is None
         assert not hasattr(screen, "_arm_library_notes_auto_sync_timer")
 
         exercised_groups = set()
@@ -34453,7 +34453,7 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
             lambda: len(app.notes_scope_service.save_calls) == saves_before + 1,
             message="Pre-route explicit Save never completed.",
         )
-        assert screen._library_notes_autosave_timer is None
+        assert screen._notes_state.autosave_timer is None
 
         await _task10_focus_with_keyboard(screen, pilot, "#library-note-body")
         await pilot.press("end", "c")
@@ -34507,7 +34507,7 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         await pilot.pause()
         assert screen._library_note_session is coordinator
         assert screen._library_notes_sync_controller is lasting_sync_controller
-        assert screen._library_notes_autosave_timer is None
+        assert screen._notes_state.autosave_timer is None
         final_active_groups = {
             worker.group
             for worker in host.workers
@@ -34515,7 +34515,7 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         }
         assert exercised_groups == note_worker_groups
         assert final_active_groups == baseline_active_groups
-        assert screen._library_notes_autosave_timer is baseline_timer_ref
+        assert screen._notes_state.autosave_timer is baseline_timer_ref
         assert canvas_lifecycle["mounted"] > 100
         # The adaptive destination retains two LibraryNotesCanvas owners:
         # the list itself and its LibraryNoteWorkPane subclass.
@@ -34538,11 +34538,11 @@ async def test_library_note_remount_restores_only_persistent_view_state(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _task10_open_note_editor_with_keyboard(screen, pilot)
-        screen._library_notes_filter = "retro"
-        screen._library_notes_sort = "oldest"
-        screen._library_note_preview = True
-        screen._library_note_context = True
-        screen._library_note_confirming_delete = True
+        screen._notes_state.filter = "retro"
+        screen._notes_state.sort = "oldest"
+        screen._notes_state.preview = True
+        screen._notes_state.context = True
+        screen._notes_state.confirming_delete = True
         await _wait_for_condition(
             pilot,
             lambda: screen._library_loaded and not screen._library_lookup_error,
@@ -34552,9 +34552,9 @@ async def test_library_note_remount_restores_only_persistent_view_state(
 
     restored = LibraryScreen(app)
     restored.restore_state(state)
-    assert restored._library_note_preview is False
-    assert restored._library_note_context is False
-    assert restored._library_note_confirming_delete is False
+    assert restored._notes_state.preview is False
+    assert restored._notes_state.context is False
+    assert restored._notes_state.confirming_delete is False
     host2 = LibraryHarness(app, screen=restored)
 
     async with host2.run_test(size=terminal_size) as pilot:
@@ -34565,17 +34565,17 @@ async def test_library_note_remount_restores_only_persistent_view_state(
         await _wait_for_selector(screen2, pilot, "#library-notes-filter")
         await _wait_for_condition(
             pilot,
-            lambda: screen2._library_notes_filter == "retro",
+            lambda: screen2._notes_state.filter == "retro",
             message="Restored Notes filter never settled.",
         )
         assert screen2._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-        assert screen2._selected_note_id == ""
-        assert screen2._library_notes_view == "list"
-        assert screen2._library_notes_filter == "retro"
-        assert screen2._library_notes_sort == "oldest"
-        assert screen2._library_note_preview is False
-        assert screen2._library_note_context is False
-        assert screen2._library_note_confirming_delete is False
+        assert screen2._notes_state.selected_note_id == ""
+        assert screen2._notes_state.view == "list"
+        assert screen2._notes_state.filter == "retro"
+        assert screen2._notes_state.sort == "oldest"
+        assert screen2._notes_state.preview is False
+        assert screen2._notes_state.context is False
+        assert screen2._notes_state.confirming_delete is False
         assert screen2.query_one("#library-note-work-empty").display is True
 
 
@@ -34627,9 +34627,9 @@ async def test_library_note_unmount_clears_notes_timers_and_workers() -> None:
         body = await _task10_focus_with_keyboard(screen, pilot, "#library-note-body")
         body.text = "dirty draft with a pending autosave"
         await pilot.pause()
-        assert screen._library_notes_autosave_timer is not None
+        assert screen._notes_state.autosave_timer is not None
 
-        assert screen._library_notes_auto_sync_timer is None
+        assert screen._notes_state.auto_sync_timer is None
         assert not hasattr(screen, "_arm_library_notes_auto_sync_timer")
         screen.run_worker(asyncio.sleep(30), group="library_note_create")
         await pilot.pause()
@@ -34642,7 +34642,7 @@ async def test_library_note_unmount_clears_notes_timers_and_workers() -> None:
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_notes_autosave_timer is None
+        assert screen._notes_state.autosave_timer is None
         assert screen._library_notes_sync_controller is lasting_sync_controller
         import_cancel.assert_called_once_with()
         assert not any(

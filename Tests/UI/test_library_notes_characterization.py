@@ -109,7 +109,7 @@ async def test_notes_new_folder_opens_the_folder_name_dialog() -> None:
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_notes_tree(host, pilot)
-        assert screen._library_notes_tree_selected_placement_id == ""
+        assert screen._notes_state.tree_selected_placement_id == ""
 
         screen.query_one("#library-notes-folder-new", Button).press()
         for _ in range(6):
@@ -118,7 +118,7 @@ async def test_notes_new_folder_opens_the_folder_name_dialog() -> None:
         assert type(host.screen).__name__ == "LibraryNoteFolderNameDialog"
         # The protected-folder branch is the only one that writes a notice;
         # with no selection it must stay untouched.
-        assert screen._library_notes_notice == ""
+        assert screen._notes_state.notice == ""
 
 
 @pytest.mark.asyncio
@@ -138,15 +138,15 @@ async def test_work_pane_editor_ready_arms_dirty_tracking_on_the_editor_route() 
         screen = await _open_notes_tree(host, pilot)
         screen.query_one("#library-notes-tree-note-1", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
-        assert screen._library_notes_view == "editor"
-        assert screen._selected_note_id == "n-1"
+        assert screen._notes_state.view == "editor"
+        assert screen._notes_state.selected_note_id == "n-1"
 
-        screen._library_note_editor_armed = False
+        screen._notes_state.editor_armed = False
         screen.post_message(LibraryNoteWorkPane.EditorReady())
         for _ in range(4):
             await pilot.pause()
 
-        assert screen._library_note_editor_armed is True
+        assert screen._notes_state.editor_armed is True
 
 
 @pytest.mark.asyncio
@@ -166,10 +166,10 @@ async def test_work_pane_editor_ready_is_ignored_off_the_editor_route() -> None:
         screen.query_one("#library-notes-tree-note-1", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
 
-        screen._library_note_editor_armed = False
-        screen._library_notes_view = "list"
+        screen._notes_state.editor_armed = False
+        screen._notes_state.view = "list"
         screen.post_message(LibraryNoteWorkPane.EditorReady())
         for _ in range(4):
             await pilot.pause()
 
-        assert screen._library_note_editor_armed is False
+        assert screen._notes_state.editor_armed is False

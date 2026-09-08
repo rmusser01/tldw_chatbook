@@ -749,18 +749,18 @@ def _apply_navigation_context_state(
             self._begin_library_note_load(note_id)
         else:
             self._library_note_session.close_session()
-            self._selected_note_id = note_id
-            self._library_notes_view = "editor"
-            self._library_note_load_state = "loading"
-            self._library_note_load_message = ""
-            self._library_note_autosave_state = "idle"
-            self._library_note_confirming_delete = False
-            self._library_note_preview = False
-            self._library_note_editor_armed = False
+            self._notes_state.selected_note_id = note_id
+            self._notes_state.view = "editor"
+            self._notes_state.load_state = "loading"
+            self._notes_state.load_message = ""
+            self._notes_state.autosave_state = "idle"
+            self._notes_state.confirming_delete = False
+            self._notes_state.preview = False
+            self._notes_state.editor_armed = False
         # A deep link never owns the current blank-note GC identity.
-        self._library_note_pending_blank_gc_id = None
-        self._library_note_session_blank_id = None
-        self._library_note_title_user_edited = False
+        self._notes_state.pending_blank_gc_id = None
+        self._notes_state.session_blank_id = None
+        self._notes_state.title_user_edited = False
     if open_source_type:
         self._set_library_destination_with_conversation_fence(
             {
@@ -780,9 +780,9 @@ def _apply_navigation_context_state(
             self._media_state.selected_media_id = open_source_id
             self._media_state.view = "list"
         elif open_source_type == "notes":
-            self._selected_note_id = open_source_id
+            self._notes_state.selected_note_id = open_source_id
             self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
-            self._library_notes_view = "list"
+            self._notes_state.view = "list"
         elif open_source_type == "conversations":
             self._selected_conversation_id = open_source_id
         elif open_source_type == "prompt":
@@ -802,10 +802,10 @@ def _apply_navigation_context_state(
     # canvas, not just the rail switch, or the key works unadvertised.
     self._register_footer_shortcuts()
     if self._library_notes_workflow_active():
-        self._library_notes_stage = "notes"
-        self._library_notes_explicit_stage_intent = not self.is_mounted
+        self._notes_state.stage = "notes"
+        self._notes_state.explicit_stage_intent = not self.is_mounted
     else:
-        self._library_notes_explicit_stage_intent = False
+        self._notes_state.explicit_stage_intent = False
     if self.is_mounted:
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
             self.run_worker(

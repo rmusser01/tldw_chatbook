@@ -1663,7 +1663,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 3 | **ingest** — **complete** (wave-5 Tasks 1–3) | 23 | 20 fields moved to `LibraryIngestState` (single `_library_ingest_` prefix, no plural variant); 56 of 78 "ingest"-named method candidates moved to ONE `LibraryIngestController` (22 excluded: 4 `@work` framework-decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-monkeypatch); 6 of 56 screen delegators pruned at cleanup. This series' own state PR found the "seventh bypass shape" (an `object.__new__`-bypassed fixture's flat-name seed breaking the instant the state shim installs, not deferrable to cleanup) — a review-found CRITICAL: 2 tests left RED at HEAD in `Tests/UI/test_parakeet_v2_install_ui.py`, the one file whose filename and test names contain neither "ingest" nor "library" and which the task's own `-k`-filtered sweep therefore could not see, a no-red-ships violation (the same task's separate 24-vs-27-site count error in its own report was a distinct Important finding, not this CRITICAL) — and its controller PR's post-landing review found a SECOND review-found CRITICAL, the "eighth" bypass shape (a moved body's bare module global patched at the OLD module path by a green-but-vacuous test, `_resolve_ingest_source`) — both widened the bypass catalogue for every subsequent subsystem. See §20 for the series' actual, as-landed numbers, and §20's own "Wave-5 close" subsection for the wave-level pin trajectory, verification battery, and lessons |
 | 4 | **prompts** — **complete** (wave-6 Tasks 1–3) | 41 | 43 fields moved to `LibraryPromptsState` (a three-way prefix split, the skills precedent: 31 `_library_prompt_*` singular + 11 `_library_prompts_*` plural + 1 bare `_selected_prompt_id`, resolved by a single `prompt_state_shim_attr()`; 3 further prompt-named `__init__` attributes are WIRING — live `LibraryPromptHistoryController`/`LibraryPromptBrowseController`/`LibraryPromptCollectionsController` instances — and stayed on the screen); 139 of 161 "prompt"-named method candidates moved to ONE `LibraryPromptsController`, the largest single move of this program (22 excluded: 14 unbound-fake-self, 3 instance-attribute-monkeypatch, 2 screen-identity, 2 module-globals-coupling, 1 merely-delegate-to-existing-controller property); 39 of 139 screen delegators pruned at cleanup (~28%). This series' cleanup found a genuinely NEW delegator-prune hazard the prior five did not: Textual's `on_<Message>` NAME-dispatched handlers (`MessagePump._get_dispatch_methods` resolves them off `Message.handler_name`, not off `@on`), which a reference-count census reports as zero-referenced and whose deletion would silently unhook the screen from six messages — folded into §4's transform whitelist as its THIRD member, since media and notes both almost certainly own name-dispatched handlers too. See §21 for the series' actual, as-landed numbers, and §21's own "Wave-6 close" subsection for the wave-level pin trajectory, verification battery, sweep evidence and lessons |
 | 4 | **media** — **complete** (wave-7 Tasks 1–3) | 55 | 82 of 85 media-named attributes moved to `LibraryMediaState` (TWO prefix families, not three: `_library_media_*` for 81 + the bare `_selected_media_id`; "media" is already singular and plural, so no plural constant exists. The other 3 are 2 WIRING — live `LibraryMediaBrowseController`/`LibraryMediaTrashBrowseController` instances — and 1 BLOCKED, `_library_pending_list_entry_media_return`, a member of a four-field shell family whose writers span Media/Notes/Prompts/Skills); 140 of 251 media-named method candidates moved to ONE `LibraryMediaController` (**111 exclusions**, the largest exclusion set of this program: 73 unbound-fake-self, 16 instance-attribute-monkeypatch, 8 `inspect.getsource` source-census, 4 module-globals-coupling, 3 screen-identity in a MEMBERSHIP form — `self in <widget>.ancestors`, which §3's own `is`/`is not` census cannot see — 2 class-monkeypatch, 2 bypassed-construction lifecycle, 1 callback-identity, 1 shared shell helper, 1 generic dispatcher). At **44%** of the cluster that is by far the highest exclusion rate of the program, and the cause is TEST DEBT, not entanglement: **89 of the 111** are unbound-fake-self (73) or instance-attribute monkeypatch (16) — fixture shapes, each removable by retargeting a test — against just 4 module-globals-coupling and 5 genuine screen-identity/lifecycle couplings. **7 of the 16 monkeypatch exclusions have ZERO mover callers today** (`_analyze_one_library_media_item`, `_exit_library_media_select_mode`, `_focus_library_media_grip_if_current`, `_library_media_unanalyzed_ids`, `_notify_library_media_analysis_warning`, `_request_library_media_type`, `_start_library_media_analyze`), i.e. they are held by §3's conservative opening rule rather than by a demonstrated bypass, and are the named MOVE candidates for a later, separately-motivated PR — re-evaluated at the cleanup and DECLINED, see §22. 22 of 140 screen delegators pruned at cleanup (15.71%). Media owns ZERO `on_<message>` name-dispatched handlers, so §4's third whitelist member is inert here. Its cleanup is the largest of the program — 36 CHANGED `Tests/` files across four roots (UI 32, Architecture 2, Live 1, Media 1; zero in `Tests/Library`, whose only hit was prose), driven by a boundary-matched census of the 82 moved field names measuring 1,214 occurrences across 36 files at task 1 and 1,204 across 34 at the wave close's own re-derivation. The two 36s are DIFFERENT file sets whose roots do not coincide (census: UI 31 / Library 1 / Architecture 1 / Live 1, zero in `Tests/Media`); the "five roots" figure quoted earlier in this program is their union — see §22 — and added a FIFTH census spelling to §3: a COMPUTED attribute name (`ast.JoinedStr`) in a shared dispatcher, invisible to all four prior spellings and a silent production defect if missed. See §22 for the series' actual, as-landed numbers |
-| 4 | notes | 72 | most scarred; its sync controller (`canvas_sync.py`) already lives in `UI/Library_Modules/` from PR 0a |
+| 4 | **notes** — **complete** (wave-8 Tasks 1–3) | 72 | The FINAL extraction wave. 100 of 105 notes-named `__init__` attributes moved to `LibraryNotesState` — FOUR prefix families, one more than any prior subsystem (73 `_library_notes_*`, 21 `_library_note_*`, 5 `_library_file_notes_*` and the bare `_selected_note_id`), because notes owns TWO reader destinations (`"notes"` and `"notes_files"`) and the Folder-Files family must keep its marker or all three reader-preferences pairs collapse onto one field. The other 5 are 3 WIRING (live `LibraryNoteImportController`/`LibraryNotesSyncController`/`DatabaseNoteSessionCoordinator` instances) and 2 BLOCKED (`_library_notes_programmatic_focus_target`, `_library_notes_restoring_focus` — the only 2 of 12 cross-tagged fields with an other-subsystem-named WRITER; the other 10 are read-only from Media and moved, which is the read/write refinement of §2's ≥2-subsystems rule this series made explicit). 185 of 285 notes-named method candidates moved to ONE `LibraryNotesController` (**100 exclusions** across 11 disjoint classes: 57 unbound-fake-self, 11 in-file `LibraryScreen.<x>(self, …)` targets, 8 callers of that shape, 8 instance-attribute-monkeypatch, 5 not-notes-owned, 4 `_library_note_session` projection-property family, 3 shared shell helper, 1 class-monkeypatch, 1 module-globals-coupling, 1 `partial(LibraryScreen.<x>, self, …)` target found by the BATTERY, 1 test-bound-and-captured). Notes owns ZERO `on_<message>` name-dispatched handlers — its 93 `@on` methods carry 36 Message-typed decorators over 35 names and NOT ONE `Message.handler_name` equals its method's name — so §4's third whitelist member is inert here too, proven both directions and pinned by `test_no_notes_handler_is_name_dispatched_by_textual`. 26 of 185 screen delegators pruned at cleanup (14.05%). The cleanup is the second largest of the program — 1,031 attribute retargets across 26 `Tests/` files in four roots (UI 22, Live 1, ProductionApp 1, Architecture 2 counting the two guard files), 11 fixture nestings, 571 screen-side retargets and 43 `getattr` receiver fixes — and it added a SIXTH census spelling to §3 (an unbound `LibraryScreen.<name>` `ast.Attribute` inside any enclosing expression, from task 2's `partial` incident) plus the first DUAL-RECEIVER form of §3's fifth spelling: notes hands the shared `canvas_sync.py` dispatchers a bare controller `self` from 31 moved bodies, so a dotted `_notes_state.…` spelling that resolves only on the screen is half a fix, and the guard has to exercise both receivers or it passes vacuously (mutation-verified both ways). See §23 for the series' actual, as-landed numbers |
 | 5 | final shell pass | — | residual focus/lifecycle plumbing, delegator table tidy, `compose_content` reduced to the region-yielding skeleton |
 
 Roughly 35–50 small PRs total; every intermediate state ships (no feature
@@ -6185,3 +6185,262 @@ recorded; max gap 41–129 against 54–195, again faster at the low end).
    UNION and describes neither. **When two derived counts coincide, say
    which one each downstream fact belongs to before the coincidence hardens
    into a claim.**
+
+## 23. The notes series, as landed — the eighth and FINAL extraction wave
+
+Branch `refactor/library-decomp-wave8-notes`, wave start `889e12b86`. After
+this series `LibraryScreen` is a shell plus shell-owned surfaces: **no
+generated flat-state shim block remains in `library_screen.py` for any
+subsystem**, and phase C (the resident-canvas click-freeze fix, this
+program's founding motivation) begins as its own motivated series.
+
+### Fields/methods moved, per task
+
+| Task | What | Screen after |
+|---|---|---|
+| 1 | 100 of 105 notes-named `__init__` attributes → `LibraryNotesState` (3 WIRING instances and 2 BLOCKED fields stayed). FOUR prefix families — 73 `_library_notes_*`, 21 `_library_note_*`, 5 `_library_file_notes_*`, 1 bare `_selected_note_id` — resolved by one `notes_state_shim_attr()` | 35777 → 35621 lines, 1290 methods |
+| 2 | 185 of 285 notes-named methods → `LibraryNotesController` (100 exclusions across 11 disjoint classes) | 35621/1290 → 32325/1284; controller born-governed at 5254 |
+| 3 | Cleanup: 571 screen-side attribute retargets + 43 `getattr` receiver fixes + 4 dotted dispatch-dict values; 1,031 test attribute retargets across 26 files; shim block deleted; 26 delegators pruned; 11 dead imports removed | 32325/1284 → **32230/1258**; controller 5254 → 5276 |
+
+### The cleanup's own census — SIX spellings, before and after
+
+Over `tldw_chatbook/` + all of `Tests/` + `Docs/` + `backlog/` + `scripts/`
++ `Helper_Scripts/`, `ast`-based throughout (never substring or
+regex-over-source: `_library_notes_filter` is a proper prefix of
+`_library_notes_filter_records`, `_library_notes_filter_generation` and five
+more, so a substring retarget corrupts names — the wave-7 lesson, and here
+it has eight live instances rather than one).
+
+| Spelling | 100 field names | 185 mover names | 100 exclusion names |
+|---|---|---|---|
+| attribute | 2,061 | 685 | 492 |
+| `LibraryScreen.<name>` attribute (the SIXTH spelling) | 0 | **0** | 196 |
+| bare quoted string | 73 | 194 | 79 |
+| kwarg | 61 | 12 | 17 |
+| `def` | 4 | 371 | 149 |
+| bare `ast.Name` | 0 | 0 | 8 |
+| runtime f-string | 3 | 1 | 1 |
+| **total** | **2,202** | **1,263** | **942** |
+
+The sixth spelling's row is the one worth reading: **zero movers are
+referenced as an unbound `LibraryScreen.<name>`, and 196 exclusion
+references are** — which is exactly the shape task 2's battery found the
+hard way (`partial(LibraryScreen._restore_library_notes_browse_return_
+receipt, self, …)`), reclassified as an exclusion, and which this census
+re-confirms was the last of its kind in the cluster.
+
+After the cleanup the field census is **467** hits, and the residue is fully
+accounted for: 410 in `library_notes_controller.py` (its own permanent shim
+loop, which is what keeps the 185 moved bodies byte-for-byte), 17 in
+`Docs/superpowers/reviews/evidence/task-23019/task23019_scenarios.py` (a
+frozen evidence script — the standing precedent that leaves the skills
+series' own spelling there two waves on), 13 + 3 in
+`library_media_controller.py` / `library_conversation_reader_controller.py`
+(their own cross-subsystem accessor PROPERTY names, whose screen-side lambdas
+were retargeted), 10 in `Research_Workspace_Modules/quick_notes_section.py`
+(a FALSE POSITIVE — a different class's own `self._selected_note_id`; recipe
+§18's "check the RECEIVER, not just the string"), 9 + 3 in the notes and
+media wiring tests' literal pins, 1 in `canvas_sync.py` (the f-string leg,
+now unreachable for notes), and 1 in `test_notes_sync_cutover.py` (the guard
+task 4 files). **`library_screen.py` carries ZERO flat notes references in
+any spelling.**
+
+### The fifth spelling, in its first DUAL-RECEIVER form
+
+Notes is the third and last kind to need `canvas_sync.py`'s dotted branch —
+and the first where the dotted spelling has to resolve on TWO receivers.
+`_apply_library_row_toggle` is only ever handed the SCREEN in production
+(all four call sites are `library_screen.py` methods that stayed screen-
+resident), but its sibling `_sync_library_canvas` is handed a bare
+CONTROLLER `self` by 31 of the 185 movers, and its notes leg reads
+`_library_notes_focus_intent_generation` off that receiver. So:
+
+- the branch was added as `"_notes_state.row_selection" if kind == "notes"`,
+  and `canvas_sync.py:456`'s `partial(getattr, screen, "_library_notes_focus_
+  intent_generation")` became `partial(operator.attrgetter("_notes_state.
+  focus_intent_generation"), screen)` — attrgetter re-reads BOTH hops per
+  call, exactly as the `partial(getattr, …)` it replaces did;
+- `LibraryNotesController` gained a `_notes_state` accessor property (the
+  file's own existing `_media_state`/`_prompts_state` shape), so both dotted
+  spellings resolve on either receiver. No moved body spells
+  `self._notes_state`; the accessor exists solely for the shared dispatchers.
+
+**The guard is parametrized over the receiver, and both legs are
+mutation-verified** (`Tests/UI/test_library_selection_updates.py::test_notes_
+row_toggle_resolves_the_dotted_state_path[screen|controller]`; the controller
+leg subclasses the REAL `LibraryNotesController`, overriding only the three
+framework-service properties a double cannot assign over, so the accessor
+under test is the production one):
+
+| Mutation | `[screen]` | `[controller]` | conversations/media precedents |
+|---|---|---|---|
+| notes branch reverted in `canvas_sync.py` | **FAILS** (`fallback recompose must not fire`) | passes — the controller's own shim loop still resolves the flat name | both stay GREEN |
+| controller's `_notes_state` accessor removed | passes | **FAILS** (same fallback assertion) | both stay GREEN |
+
+The second row is the finding: **a screen-only guard would have passed while
+the controller receiver silently took the full-screen recompose fallback.**
+Any future subsystem whose movers forward a bare `self` into a shared
+dispatcher inherits this — census the RECEIVERS of the dispatcher, not just
+the spelling.
+
+### A live defect this census found in the MEDIA branch (not fixed here)
+
+Running the same receiver analysis over the sibling branch shows wave-7's own
+dotted retarget is incomplete. `canvas_sync.py:437` does
+`screen._media_state.selected_media_id = media_state.selected_id` inside
+`_sync_library_canvas`'s media leg, and `library_media_controller.py:2692`
+and `:2701` (`handle_library_media_select_all` /
+`handle_library_media_select_clear`, both movers, both reached from a real
+screen delegator's `@on(Button.Pressed)`) call `_sync_library_canvas(self,
+"media")` with a CONTROLLER `self`. `LibraryMediaController` has no
+`_media_state` (only `_media_state_accessor`; verified at runtime,
+`hasattr(...) is False`), so that assignment raises `AttributeError`, the
+dispatcher's own `except Exception` swallows it into
+`logger.debug("Library media canvas sync failed.")` plus
+`screen.refresh(recompose=True)`, and every media "Select all"/"Clear" press
+silently takes the whole-screen recompose the Tier-1 design exists to avoid.
+Out of scope for a notes cleanup (a different subsystem's file, and a
+behaviour fix rather than a mechanical retarget) — **filed at the wave close**
+along with the symmetric four-line remedy (`LibraryMediaController` gains the
+same `_media_state` accessor property, and the media guard gains a
+`[controller]` leg).
+
+### Delegator census — 159 KEEP, 26 PRUNED (14.05%)
+
+`ast`-based over the roots above, excluding only the controller module, each
+name's own delegator body, and the wiring test's own pin tuple; a `def` is
+never counted as a caller. Then re-checked one by one with a broad `git grep`
+over EVERY file type.
+
+| Class | N |
+|---|---|
+| KEEP — §4 whitelist, unconditional (**70 `@on` + 4 `action_*`**) | **74** |
+| KEEP — genuine external caller | **85** |
+| PRUNE — zero references, not whitelisted | **26** |
+
+`on_<message>` name-dispatched handlers: **0** — §4's third whitelist member
+is inert for notes exactly as it was for media, and task 2 proved it in BOTH
+directions (35 Message-typed decorators over 35 handler names, not one
+`Message.handler_name` equal to its own method's name; and of the 113 distinct
+`handler_name`s across `tldw_chatbook/Widgets/Library`, the only ones that ARE
+`LibraryScreen` methods are 4 Textual builtins and the 7 prompts-owned ones).
+`test_no_notes_handler_is_name_dispatched_by_textual` keeps it proven, so the
+member has now been exercised with evidence twice and fired once (prompts).
+
+Prune fraction **26/185 = 14.05%**, the second lowest of the program: export
+4.55% < ingest 10.71% < **notes 14.05%** < media 15.71% < skills 18.60% <
+collections 21.88% < prompts 28.06% < search+RAG 28.57% < conversations
+29.51%. **Idempotence re-derived on the post-cleanup tree**: 159 survivors,
+of which 74 are whitelist members and 85 have a genuine caller — zero further
+would-prune names.
+
+### Import verification — 11 dead, 1 saved
+
+Derived as a DIFFERENCE (AST-unused at the wave start `889e12b86` vs. now),
+never as an absolute unused list. **And derived twice**: a first pass that
+treated any name appearing inside ANY string as "used" (a conservatism for
+`TYPE_CHECKING` forward refs) returned 10 and MISSED two — `RowSelection`
+(which task 1 had already predicted would go dead) and `FileSave`, both of
+which survive only in long docstring prose. Re-run counting only
+annotation-shaped strings (≤80 chars) it returns both. **The lesson: a
+string-tolerant unused-import census is a lower bound; run the strict variant
+too and adjudicate the difference by reading.**
+
+The `_SURFACE` check by EXACT NAME against
+`Tests/Architecture/test_library_support_layer_surface.py` saved **1 of 12**:
+`LIBRARY_NOTE_CONTENT_MAX_CHARS`, which spells the subsystem word UPPERCASE —
+the fourth consecutive series in which that check pays, and the third in which
+the UPPERCASE spelling is what a lowercase grep would have missed. The
+alias-scoped re-export grep (wave-7's added rule: search every alias tests
+actually import the module AS — here `library_screen`, `library_screen_module`,
+`library_module`, `screen_module`, derived by `ast`) returned **zero** live
+consumers for the other 11, each of which was independently confirmed live
+inside the controller by a per-name occurrence count.
+
+### Test retarget — 26 files, four roots, and 11 fixture nestings
+
+1,031 attribute retargets (`<recv>.<flat>` → `<recv>._notes_state.<field>`),
+applied at `ast` attribute spans back-to-front, single-line only, the tool
+reporting and refusing rather than guessing (**zero refusals**). 61 flat
+kwargs became 11 nested `_notes_state=SimpleNamespace(...)` fixtures — 8
+mechanical contiguous runs, 3 hand-reordered first because a non-field entry
+sat inside the run (a WIRING attribute, a projection `@property` name, method
+stand-ins and test-local counters), each with a one-line comment saying why
+the moved kwarg is not a state field.
+
+**Three `_notes_state` seeds were needed for doubles that are not
+`LibraryScreen`s**, found by the Store-context binding-site census media's
+own 19-test incident taught (`test_library_resize_focus_gates_t23025.py`'s
+stage-signature fake, and the TWO `App` stand-ins in
+`test_library_multiselect_notes.py` that `_apply_library_row_toggle` is
+driven against). The second of those two was missed by the first pass and
+caught by running the file — **a receiver census that enumerates receiver
+NAMES misses a second class with the same name in a different scope**; the
+count to trust is the one taken per binding site, not per name.
+
+Two string-spelling retargets carry the whole invariant of their guard:
+
+- `Tests/UI/test_library_adaptive_reader_closeout.py`'s
+  `DESTINATION_CONTRACT["notes"]` → `"_notes_state.reader_preferences"` /
+  `"_notes_state.reader_layout"`. Notes is the EIGHTH and last destination to
+  take the dotted form, so every entry in that contract is dotted now and the
+  `operator.attrgetter` reads that made the passthrough possible are no
+  longer load-bearing for any of them.
+- `Tests/UI/test_screen_navigation.py::test_files_back_navigation_workspace_
+  contract_matches_real_workspace` AST-walks four screen methods for
+  attributes accessed on the workspace and matches the receiver by the
+  literal string `"_library_file_notes_workspace"`. After the retarget the
+  receiver is `self._notes_state.file_notes_workspace`, so the string became
+  `"file_notes_workspace"`. Left alone the visitor matches nothing and the
+  contract set goes EMPTY — a LOUD red, not a vacuous pass, which is why this
+  belongs in the same commit rather than deferred.
+
+### Modal inventory — 2 rows repointed, proven by construction
+
+`Tests/UI/test_library_modal_dismissal.py` gained
+`_OwnerScope(_NOTES_CONTROLLER_FILE, "LibraryNotesController")` FIRST (without
+it a repointed edge is never discovered and the bidirectional assertion fails
+the other way), then `_export_library_note` (`FileSave`) and
+`handle_library_notes_lasting_folder_requested` (`FileOpen`) were repointed.
+The other SIX notes rows stay on `LibraryScreen`: `_push_library_note_import_
+picker`, `handle_library_notes_folder_{new,rename,move,remove}` and
+`_choose_library_notes_placement_target` are all task-2 exclusions and are
+still screen-resident. The file is still the TASK-31815 blocked guard (pre-RED
+at discovery on the unrelated skills-era `_present_library_skills_import_
+choice_if_needed` constructor), so the repoint was proven by CONSTRUCTION:
+running the file's own `_discover_library_modal_edges` against the notes scope
+alone returns **2 discovered, 2 declared, zero undeclared, zero missing,
+exact match including each modal's concrete type**.
+
+### Field-name prose sweep
+
+Tokenize-based (COMMENT and STRING tokens only) over the 100 deleted field
+names AND the 26 pruned method names, across `tldw_chatbook/`, all of
+`Tests/`, `Docs/`, `backlog/`, `scripts/` and `Helper_Scripts/`, plus a plain
+line scan of `*.md`/`*.toml`/`*.tsv`/`*.txt`.
+
+**462 raw prose occurrences across 112 files.** Narrowed by the recipe's own
+±3-line screen-attribution filter to 87, and then by excluding frozen
+historical records (`Docs/superpowers/{plans,specs,reviews}/`,
+`backlog/tasks/`, `backlog/docs/test-health-baseline-*`,
+`backlog/docs/lessons-*`, `.superpowers/`) to **9 candidates, every one
+read**. Verdicts: **6 class-3 defects, all fixed and all line-neutral** — two
+`library_conversation_reader_controller.py` docstring sites and one
+`library_conversations_controller.py` site naming `_selected_note_id` /
+`_library_notes_focus_intent_generation` as live screen fields (a DIFFERENT
+subsystem's file, the class the prompts series' review found and the reason
+this census is repo-wide), one `library_conversation_reader_controller.py`
+accessor docstring, `library_notes_state.py`'s own "the state PR keeps …"
+paragraph (past-tensed, and pointed at the controller's surviving copy), and
+one `test_library_shell.py` cross-reference. The remaining 3 are class 1/2 and
+were left: the successor comment in `library_screen.py`, and
+`library_notes_state.py`'s two-line past-tense narrative of the cutover
+guard's flipped red, which carries its own commit citation.
+
+**A refinement to the census's own method:** the ±3-line filter alone gave 87
+candidates, of which 78 were frozen-record noise — and a third of the raw 462
+were FILENAME matches (`test_library_file_notes_workspace.py` contains the
+field name `_library_file_notes_workspace`). Excluding frozen roots and
+filename-shaped matches is what makes the read tractable at this subsystem's
+scale; state both filters when quoting the count, because the raw number is a
+property of the filter, not of the tree.

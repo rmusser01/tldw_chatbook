@@ -403,3 +403,102 @@ def test_media_row_toggle_resolves_the_dotted_state_path():
     # checked flag the canvas reads back was set.
     assert str(button.label).startswith("☑")
     assert button._library_media_checked is True
+
+
+@pytest.mark.parametrize("receiver_kind", ("screen", "controller"))
+def test_notes_row_toggle_resolves_the_dotted_state_path(receiver_kind: str):
+    """wave-8 task 3: the notes row-selection object moved to
+    ``screen._notes_state.row_selection``, so the dispatcher's COMPUTED name
+    (``f"_library_{kind}_row_selection"``) can no longer reach it and the
+    "notes" branch must take the DOTTED form -- the third and last kind to
+    need it, after "conversations" and "media" above.
+
+    This is the guard the fifth census spelling needs (recipe §3): a name
+    built at runtime appears nowhere in the source, so no reference census
+    can see it go stale, and the failure is SILENT -- the ``attrgetter``
+    raises, ``_apply_library_row_toggle``'s own ``except Exception`` swallows
+    it, and the targeted patch degrades into the full-screen recompose the
+    Tier-1 design exists to avoid. Making ``refresh`` raise is what turns
+    that silent degradation into a red test.
+
+    **Why this one is parametrized over the RECEIVER, unlike its two
+    siblings.** Notes' cluster hands the sibling ``_sync_library_canvas``
+    dispatcher a bare ``self`` from 31 moved bodies, so a shared dispatcher's
+    ``screen`` argument is a ``LibraryNotesController`` as often as it is a
+    ``LibraryScreen``. A dotted spelling that resolves only on the screen is
+    therefore only half a fix, and a screen-only guard would pass while the
+    controller leg silently took the fallback. The ``controller`` leg builds
+    the REAL ``LibraryNotesController`` class (subclassed only to stub the
+    three framework-service properties a double cannot assign over) so the
+    ``_notes_state`` accessor under test is the production one.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import _apply_library_row_toggle
+
+    class _Selection:
+        count = 1
+
+        @staticmethod
+        def is_selected(_row_id):
+            return True
+
+    class _Recorder:
+        disabled = True
+        tooltip = None
+
+        @staticmethod
+        def update(_text):
+            return None
+
+    class _NotesState:
+        row_selection = _Selection()
+
+    def _query_one(_selector, _cls=None):
+        return _Recorder()
+
+    def _query(selector):
+        # `.library-notes-row` -> the sibling rows sharing this note id;
+        # `#library-note-work-pane` -> absent, so the work-pane leg no-ops.
+        return (button,) if selector == ".library-notes-row" else ()
+
+    def _refresh(**_kwargs):
+        raise AssertionError("fallback recompose must not fire")
+
+    label_rest = " Shared note\n    today"
+    button = Button(f"☐ {label_rest}")
+    button._library_row_label_rest = label_rest  # as the canvas stashes it
+    button.note_id = "n1"
+
+    if receiver_kind == "screen":
+
+        class _Screen:
+            _notes_state = _NotesState()
+            query_one = staticmethod(_query_one)
+            query = staticmethod(_query)
+            refresh = staticmethod(_refresh)
+
+        receiver = _Screen()
+    else:
+
+        class _Controller(LibraryNotesController):
+            # `_notes_state` is deliberately NOT overridden -- the real
+            # accessor property on `LibraryNotesController` is the thing
+            # under test. `query_one`/`query`/`refresh` are framework-service
+            # properties on that class, so they can only be stubbed by
+            # overriding them here, never by instance assignment.
+            def __init__(self, state):
+                self._notes_state_accessor = lambda: state
+
+            query_one = staticmethod(_query_one)
+            query = staticmethod(_query)
+            refresh = staticmethod(_refresh)
+
+        receiver = _Controller(_NotesState())
+
+    _apply_library_row_toggle(receiver, "notes", button, "n1")
+
+    # Reached the real patch path: the notes glyph (marker + space, unlike
+    # media/conversations) was flipped in place on the matching row.
+    assert str(button.label).startswith("☑ ")

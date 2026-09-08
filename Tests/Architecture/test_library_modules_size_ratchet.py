@@ -335,7 +335,21 @@ _BUDGETS: dict[str, int] = {
     # and 102 the property count -- both measured off the class body; the
     # fix round that removed one dependency and one property corrected the
     # wiring-test pin and this row's number, but not this sentence.)
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5254,
+    #
+    # 2026-09-08, wave-8 task 3 (notes cleanup, notes series 3/3): 5254 ->
+    # 5276 (+22), and every one of those lines is ONE new binding property
+    # plus its docstring -- `_notes_state`, this cluster's own state object
+    # under the screen's own name. No moved body was touched (a cleanup PR
+    # prunes the SCREEN's delegators, never the controller's methods), and no
+    # moved body spells `self._notes_state` either: they all read the flat
+    # `_library_notes_<field>` properties from the generated shim loop, which
+    # is what keeps them byte-for-byte. The accessor exists for the SHARED
+    # `canvas_sync.py` dispatchers, which 31 of this cluster's methods hand a
+    # bare `self`, so their dotted spellings have to resolve on EITHER
+    # receiver. Mutation-verified: removing it reds
+    # `test_notes_row_toggle_resolves_the_dotted_state_path[controller]` and
+    # leaves the `[screen]` leg green.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5276,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

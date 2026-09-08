@@ -177,9 +177,11 @@ def _apply_library_row_toggle(
             ``#library-<kind>-export-selected`` action-strip ids, plus the
             row-selection object: for "conversations" that is the dotted
             path ``screen._conversations_state.row_selection`` (extracted
-            to ``LibraryConversationsState``, task 6/9) and for "media" the
+            to ``LibraryConversationsState``, task 6/9), for "media" the
             dotted path ``screen._media_state.row_selection`` (extracted to
-            ``LibraryMediaState``, wave-7); for every other,
+            ``LibraryMediaState``, wave-7) and for "notes" the dotted path
+            ``screen._notes_state.row_selection`` (extracted to
+            ``LibraryNotesState``, wave-8); for every other,
             not-yet-extracted kind it is still the flat attribute
             ``screen._library_<kind>_row_selection``. ``operator.attrgetter``
             resolves both shapes identically -- see the dispatch comment in
@@ -194,7 +196,8 @@ def _apply_library_row_toggle(
             row-selection object described under ``kind`` above (dotted
             ``screen._conversations_state.row_selection`` for
             conversations, dotted ``screen._media_state.row_selection`` for
-            media, flat ``screen._library_<kind>_row_selection``
+            media, dotted ``screen._notes_state.row_selection`` for notes,
+            flat ``screen._library_<kind>_row_selection``
             for every other kind) by the caller -- read back here (single
             source of truth) rather than inferred by flipping the old
             marker text.
@@ -219,11 +222,19 @@ def _apply_library_row_toggle(
         # the f-string spelling below can no longer reach it -- the exact
         # "computed name silently stops resolving" shape this dispatch
         # comment exists to warn about.
+        # (wave-8 task 3) Notes is the third and LAST -- every extraction
+        # wave is landed, so the f-string leg below is now reached only by
+        # kinds that never had a state object at all. `_notes_state` also
+        # resolves on `LibraryNotesController` (it declares the accessor
+        # property for exactly this reason), because 31 notes movers hand
+        # the sibling `_sync_library_canvas` dispatcher a controller `self`.
         row_selection_attribute = (
             "_conversations_state.row_selection"
             if kind == "conversations"
             else "_media_state.row_selection"
             if kind == "media"
+            else "_notes_state.row_selection"
+            if kind == "notes"
             else f"_library_{kind}_row_selection"
         )
         selection = operator.attrgetter(row_selection_attribute)(screen)
@@ -450,10 +461,14 @@ def _sync_library_canvas(
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
             sync_kwargs = screen._library_notes_list_canvas_kwargs()
             sync_kwargs["deferred_guard"] = deferred_guard
+            # (wave-8 task 3) `focus_intent_generation` moved to
+            # `LibraryNotesState`; the receiver here is the screen OR the
+            # notes controller (31 movers forward a bare `self`), and
+            # `operator.attrgetter` re-reads BOTH hops on every call, exactly
+            # as the `partial(getattr, screen, "<flat>")` it replaces did.
             sync_kwargs["focus_intent_generation"] = partial(
-                getattr,
+                operator.attrgetter("_notes_state.focus_intent_generation"),
                 screen,
-                "_library_notes_focus_intent_generation",
             )
             shell = build_library_shell_state(
                 screen._build_library_shell_input(),

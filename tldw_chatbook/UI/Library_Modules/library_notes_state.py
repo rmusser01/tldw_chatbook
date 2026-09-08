@@ -8,13 +8,15 @@ since Notes likewise carries a bare-underscore extra-prefix field and an
 entangled reader-preferences group, and additionally carries a SECOND
 reader-preferences destination of its own). Every field here was moved verbatim
 out of ``LibraryScreen.__init__`` in ``tldw_chatbook/UI/Screens/
-library_screen.py`` -- same default, same type, same comment. The state PR keeps
+library_screen.py`` -- same default, same type, same comment. The state PR KEPT
 every original ``_library_notes_<field>``/``_library_note_<field>``/
 ``_library_file_notes_<field>``/``_selected_note_id`` attribute name alive as a
 generated getter/setter ``@property`` shim on ``LibraryScreen``, between
-sentinel comments, so no method body has to be edited; task 3 (the cleanup PR)
-retargets every one of those references to ``self._notes_state.<field>`` and
-DELETES that screen block.
+sentinel comments, so no method body had to be edited; task 3 (the cleanup PR)
+retargeted every one of those references to ``self._notes_state.<field>`` and
+DELETED that screen block -- the identical generated loop lives on
+``LibraryNotesController`` now, one layer down, and is what keeps the moved
+bodies byte-for-byte.
 
 **Note on the two ``library_notes_state`` modules (basename collision).**
 This file (``tldw_chatbook/UI/Library_Modules/library_notes_state.py``) is the

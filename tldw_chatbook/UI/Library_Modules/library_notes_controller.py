@@ -955,6 +955,28 @@ class LibraryNotesController:
         return self._media_state_accessor()
 
     @property
+    def _notes_state(self) -> Any:
+        """This cluster's OWN state object, under the screen's own name.
+
+        (wave-8 task 3.) No moved body spells ``self._notes_state`` -- every
+        one of them reads a flat ``_library_notes_<field>`` property from the
+        generated shim loop at the bottom of this file, and that is how the
+        byte-for-byte canon keeps them unedited. This accessor exists for the
+        SHARED dispatchers in ``canvas_sync.py``, which are handed a bare
+        ``self`` by 31 of this cluster's methods and therefore have to resolve
+        the notes state on EITHER receiver: the screen (``LibraryScreen.
+        _notes_state``) or this controller. Without it, the dotted spellings
+        the notes cleanup introduced there (``_notes_state.row_selection`` in
+        ``_apply_library_row_toggle``, ``_notes_state.focus_intent_generation``
+        in ``_sync_library_canvas``) resolve on the screen and raise on the
+        controller -- an ``AttributeError`` the dispatcher's own
+        ``except Exception`` swallows into a full-screen recompose, with no
+        exception and no red test. See this series' task-3 report for the
+        measured precedent where exactly that happened.
+        """
+        return self._notes_state_accessor()
+
+    @property
     def _prompts_state(self) -> Any:
         return self._prompts_state_accessor()
 

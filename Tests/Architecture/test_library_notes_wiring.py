@@ -95,62 +95,49 @@ _NOTES_BLOCKED_SCREEN_ATTRS: tuple[str, ...] = (
 
 
 @pytest.mark.unit
-def test_state_object_fields_match_the_shim_surface() -> None:
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+def test_state_object_declares_the_censused_field_count() -> None:
+    """The half of the old shim-surface pin that never needed the screen.
 
+    (wave-8 task 3.) `test_state_object_fields_match_the_shim_surface` asserted
+    both that the dataclass declares the censused 100 fields AND that every one
+    of them has a generated `@property` on `LibraryScreen`. The second half is
+    now the OPPOSITE invariant -- see
+    `test_the_screen_no_longer_carries_a_notes_state_shim` -- and the
+    controller's own permanent loop is pinned by
+    `test_notes_controller_exposes_every_state_field` and
+    `test_every_controller_shim_reads_and_writes_its_own_state_field`.
+    """
     field_names = {f.name for f in dataclasses.fields(LibraryNotesState)}
     assert field_names, "state object is empty"
     assert len(field_names) == _EXPECTED_NOTES_STATE_FIELD_COUNT, (
         f"expected {_EXPECTED_NOTES_STATE_FIELD_COUNT} notes fields, "
         f"got {len(field_names)}"
     )
-    missing = []
-    for name in sorted(field_names):
-        shim_attr = notes_state_shim_attr(name)
-        if not isinstance(getattr(LibraryScreen, shim_attr, None), property):
-            missing.append(shim_attr)
-    assert not missing, f"no screen shim property found for: {missing!r}"
 
 
 @pytest.mark.unit
-def test_every_shim_reads_and_writes_its_own_state_field() -> None:
-    """Each generated property is a real two-way shim, not a stub.
+def test_the_screen_no_longer_carries_a_notes_state_shim() -> None:
+    """The cleanup PR's own inverse pin: ABSENCE, asserted by name.
 
-    A getter/setter pair that existed but bound the WRONG field (the
-    closure-binding trap a `for` loop over `dataclasses.fields` invites --
-    every generated property capturing the LAST field unless the name is bound
-    as a default argument) would satisfy a bare `isinstance(..., property)`
-    check while silently aliasing 100 names onto one field. This round-trips a
-    distinct sentinel through every name to rule that out.
+    (wave-8 task 3.) The generated block between the BEGIN/END sentinels in
+    `library_screen.py` is deleted; every screen-side reference reads
+    `self._notes_state.<field>` directly. A re-introduced shim (or a stray
+    same-named property arriving from anywhere else) fails here rather than
+    silently restoring the flat surface this series exists to remove.
     """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-    screen = object.__new__(LibraryScreen)
-    state = LibraryNotesState()
-    screen._notes_state = state
-
-    field_names = sorted(f.name for f in dataclasses.fields(LibraryNotesState))
-    read_mismatch = []
-    write_mismatch = []
-    for name in field_names:
-        shim_attr = notes_state_shim_attr(name)
-        if getattr(screen, shim_attr) is not getattr(state, name):
-            read_mismatch.append(shim_attr)
-        sentinel = object()
-        setattr(screen, shim_attr, sentinel)
-        if getattr(state, name) is not sentinel:
-            write_mismatch.append(shim_attr)
-        if getattr(screen, shim_attr) is not sentinel:
-            read_mismatch.append(shim_attr)
-    assert not read_mismatch, f"shim getters do not read their field: {read_mismatch!r}"
-    assert not write_mismatch, (
-        f"shim setters do not write their field: {write_mismatch!r}"
+    resurrected = [
+        notes_state_shim_attr(f.name)
+        for f in dataclasses.fields(LibraryNotesState)
+        if isinstance(
+            getattr(LibraryScreen, notes_state_shim_attr(f.name), None), property
+        )
+    ]
+    assert not resurrected, (
+        "LibraryScreen carries flat notes-state shim properties again: "
+        f"{resurrected!r}"
     )
-
-    # Every field ended up holding a DISTINCT sentinel -- proof no two shims
-    # share one underlying field.
-    written = [getattr(state, name) for name in field_names]
-    assert len({id(value) for value in written}) == len(field_names)
 
 
 @pytest.mark.unit
@@ -286,12 +273,49 @@ def test_the_four_member_list_entry_focus_family_stays_screen_owned() -> None:
     assert not shimmed, f"shell family members were shimmed: {shimmed!r}"
 
 
-#: Filled in by this series' own cleanup task (task 3, notes series 3/N): the
-#: moved names whose screen delegator has ZERO references outside its own body
-#: anywhere in the repo, across all five census spellings. Empty at the
-#: controller PR, exactly as every prior series' own wiring test carried it
-#: between its task 2 and task 3.
-_NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset()
+#: Filled in by this series' own cleanup task (task 3, notes series 3/3): the
+#: moved names whose screen delegator had ZERO references outside its own body
+#: anywhere in the repo, across all SIX census spellings (attribute, bare
+#: quoted string, kwarg, bare ``ast.Name``, unbound ``LibraryScreen.<name>``
+#: attribute, and the runtime f-string), over ``tldw_chatbook/`` + every
+#: ``Tests/`` root + ``Docs/`` + ``backlog/`` + ``scripts/`` +
+#: ``Helper_Scripts/``, and then re-checked one by one with a broad ``git
+#: grep`` over EVERY file type. A ``def`` is never counted as a caller (recipe
+#: SS4's ``on_<Message>`` incident). The 74 whitelist-exempt names (70 ``@on``
+#: + 4 ``action_*``) are exempt from the census outright; SS4's third member,
+#: ``on_<message>`` NAME dispatch, contributes ZERO for notes and
+#: ``test_no_notes_handler_is_name_dispatched_by_textual`` keeps that proven.
+#: 26 of 185 = 14.05%.
+_NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
+    (
+        "_apply_library_note_saved_presentation",
+        "_apply_library_notes_operation_state",
+        "_defer_library_notes_settled_focus_restore",
+        "_exit_library_notes_lasting_sync",
+        "_focus_library_note_import_control",
+        "_focus_library_notes_lasting_control",
+        "_install_library_notes_scroll_observers",
+        "_library_note_meta_base_line",
+        "_library_note_session_is_unsafe",
+        "_library_note_status_line",
+        "_library_notes_authority_root",
+        "_library_notes_fallback_focus_target",
+        "_library_notes_operation_is_current_and_active",
+        "_move_library_notes_operation",
+        "_note_word_count",
+        "_queue_library_notes_scroll_interaction",
+        "_record_library_notes_presented_focus",
+        "_record_library_notes_scroll_interaction",
+        "_remember_library_notes_responsive_focus",
+        "_resolve_library_note_conflict",
+        "_restore_library_notes_final_scroll",
+        "_restore_library_notes_scroll_after_layout",
+        "_restore_library_notes_scroll_offset",
+        "_run_library_note_import_check",
+        "_selected_library_note_handoff_payload",
+        "_settle_library_notes_final_scroll",
+    )
+)
 
 
 #: Every method Task 2 moved into ``LibraryNotesController``, under its

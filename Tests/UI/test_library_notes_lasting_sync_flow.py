@@ -128,14 +128,14 @@ async def test_mounted_production_projection_is_inert_and_names_nearest_valid_ac
         def compose(self) -> ComposeResult:
             yield LibraryNotesCanvas(
                 mode="lasting_add",
-                lasting_sync_snapshot=screen._library_notes_lasting_sync_snapshot,
+                lasting_sync_snapshot=screen._notes_state.lasting_sync_snapshot,
                 compact=True,
             )
 
     app = _Host()
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
-        assert screen._library_notes_lasting_sync_snapshot.lasting_available is False
+        assert screen._notes_state.lasting_sync_snapshot.lasting_available is False
         keep = app.query_one("#notes-add-keep-synced", Button)
         assert keep.disabled is False
         assert "Unavailable" in app.export_screenshot(simplify=True)
