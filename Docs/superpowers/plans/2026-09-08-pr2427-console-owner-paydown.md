@@ -37,9 +37,9 @@ Files: `chat_screen.py`, `UI/Console_Modules/settings_durability.py`, `UI/Consol
 
 Files: `chat_screen.py`, `UI/Console_Modules/settings_navigation.py`, `wiring.py`, exact probe tests.
 
-- [ ] Move static `_test_console_connection` to `ConsoleSettingsNavigationController`, adjusting its relative import to the same endpoint-probe module; keep exact purpose/identity/result behavior.
-- [ ] Retarget callsites and private tests, retaining bounded endpoint-probe/failure controls. Test a replaced callable where current wiring permits it.
-- [ ] Run affected complete probe/navigation files, review, and commit separately from Task 2.
+- [x] Move static `_test_console_connection` to `ConsoleSettingsNavigationController`, adjusting its relative import to the same endpoint-probe module; keep exact purpose/identity/result behavior.
+- [x] Retarget callsites and private tests, retaining bounded endpoint-probe/failure controls. Test a replaced callable where current wiring permits it.
+- [x] Run affected complete probe/navigation files, review, and commit separately from Task 2. Complete four-file group:750 passed; private-delegate architecture:66 passed. Independent spec and correctness reviews pass. Evidence is recorded in the reconciliation report.
 
 ## Task 4: Existing session handoff owner
 

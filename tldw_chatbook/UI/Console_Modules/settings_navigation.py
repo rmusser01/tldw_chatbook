@@ -35,7 +35,9 @@ from ...Chat.Chat_Deps import (
 )
 from ...Chat.provider_test_evidence import (
     ConsoleGenerationTestRequest,
+    ProviderDraftIdentity,
     ProviderGenerationProbeResult,
+    ProviderProbeResult,
 )
 from ...Constants import TAB_SETTINGS
 from .settings_diagnostics import log_settings_failure
@@ -90,7 +92,6 @@ class ConsoleSettingsNavigationController:
         _provider_readiness_app_config: Callable[..., Any],
         _providers_models_for_console_settings: Callable[..., Any],
         _sync_native_console_chat_ui: Callable[..., Any],
-        _test_console_connection: Callable[..., Any],
         call_after_refresh: Callable[..., Any],
         notify: Callable[..., Any],
         pop_screen: Callable[..., Any],
@@ -133,7 +134,6 @@ class ConsoleSettingsNavigationController:
             _providers_models_for_console_settings
         )
         self._sync_native_console_chat_ui = _sync_native_console_chat_ui
-        self._test_console_connection = _test_console_connection
         self.call_after_refresh = call_after_refresh
         self.notify = notify
         self.pop_screen = pop_screen
@@ -165,6 +165,24 @@ class ConsoleSettingsNavigationController:
     @property
     def screen_stack(self) -> Any:
         return self.screen_stack_accessor()
+
+    @staticmethod
+    async def _test_console_connection(
+        identity: ProviderDraftIdentity,
+    ) -> ProviderProbeResult:
+        """Run the existing bounded model-catalog probe for one exact draft."""
+        from ..Screens.settings_endpoint_probe import (
+            SettingsEndpointProbePurpose,
+            probe_settings_endpoint,
+            provider_probe_result_from_settings_outcome,
+        )
+
+        outcome = await probe_settings_endpoint(
+            identity.connection_identity[1],
+            provider=identity.provider_key,
+            purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+        )
+        return provider_probe_result_from_settings_outcome(outcome)
 
     async def _test_console_generation(
         self,

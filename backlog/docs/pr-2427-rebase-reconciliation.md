@@ -426,3 +426,37 @@ The Qodo transaction repair was published as
 complete 22-test evidence. Both that thread and the historically inapplicable
 LoopDeps thread are resolved. Additional commits still require final-head
 review. No merge or gate bypass has been performed.
+
+## Approved owner paydown: Console connection probe
+
+The user approved the existing-owner Console/Library moves and scoped CSS
+paydown. Plans were recorded at `72cbe56243`. Console plan Task3 now moves
+the bounded connection probe to the existing settings-navigation controller,
+removing its superseded constructor argument and screen wiring. The method
+is source-identical except for its relative import; the imported endpoint
+probe remains lazy. Two private test receivers were retargeted without
+changing their request/result assertions, and production modal opening now
+checks callback identity for both the original and a post-construction
+replacement. No numeric cap or UI contract changed.
+
+Evidence: the original focused test passed; the retargeted test failed for
+the absent owner method, then passed after the move. The complete endpoint
+probe, UI session settings, Chat session settings, and controller wiring
+files pass **750 tests** in343.78seconds, including the real loopback model
+endpoint. The complete private-delegate architecture file passes **66 tests**.
+Independent spec and correctness reviews, changed-range formatting, scoped
+Ruff, and diff checks pass. Logs:
+`/private/tmp/pr2427-probe-{baseline,owner-red,owner-green,owner-complete,architecture}.log`.
+ChatScreen loses22lines and one method; this is one completed cluster, not
+qualification of the remaining screen-size excess.
+
+All six derived-artifact preflight checks pass on this local checkpoint,
+including concurrently regenerated narrow-selector stylesheets. Evidence:
+`/private/tmp/pr2427-css-probe-preflight.log`. CSS appearance qualification
+and other owner clusters remain open. The latest remote inspection found
+dev at `c37d611368b2c1ac0f137db54085de032fb12b89`; a new rebase remains
+required after saving qualified work. Published head `c27723b623` still fails
+only the two previously identified CSS budget cases in its Perf Guard job
+34192417774, while derived-artifact checks pass. No newly posted inline
+review comments appeared after05:55UTC in that inspection. No merge was
+attempted.
