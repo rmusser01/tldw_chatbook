@@ -54,6 +54,16 @@ Reason: direct implementation of approved persistence, admission and recovery li
 ADR required: yes
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: direct source-lifetime implementation; any approved compound interface decision will amend ADR126. ADR024 citation provenance and ADR037 persona separation remain unchanged.
+
+### Phase12 implementation plan — actual Persona Visual lifetimes
+
+1. Establish behavioral RED at actual file publication/core activation and workspace/native/UI boundaries; obtain controller source-backed ruling before helper expansion.
+2. Bind exact configured Persona Visual sources and finite preselected publication, workspace, import and runtime members; preserve custom ordinary routes and source-native uncertainty.
+3. Integrate actual screen creator, executor and result lifetimes, source-thread DB retirement, dirty editor preservation and retained cleanup evidence.
+4. Verify targeted source/domain/native/census guards and static checks, self-review and commit this bounded phase; preserve In Progress and unchecked ACs.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved persistence lifecycle; preserve ADR074/067/032 and record the bounded controller ruling.
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -581,3 +591,36 @@ migration/local-target-context matrix: **22 passed**. New/changed Python fatal
 Ruff, new-module format checks and diff whitespace checks passed. A testing lesson
 records the real native-callable fault-injection provenance trap. No additional
 broad sweep or runtime qualification was performed.
+
+### Task10 phase12 implementation notes — Persona Visual source/native and UI lifetime
+
+Implemented the actual canonical Persona Visual repository, immutable publication,
+workspace/import candidate and runtime-asset lifetimes using existing storage/core
+admission. Rulings70–73 retain exact source/issued-object identity, fixed native
+paths, positive FD retirement and dirty/error/cleanup ownership. The real UI
+publish worker composes only its bound local Persona source for the late guard.
+An actual public-guard/UI deadlock RED required omitting the new visual mutex only
+from authenticated publication; existing optimistic activation and native scopes
+remain. The shared thread-drain helper now observes actual callback completion;
+concrete Persona jobs close only newly created source-thread DB borrowers.
+
+Actual custom/optional-clear/replace/import UI saves activate the next version;
+required-state clear preserves the dirty draft and refuses invalid publication.
+Native partial/before/after uncertainty excludes an independent maintainer; normal
+worker retirement lets it observe matching real core locators and asset bytes.
+Concurrent publications retain one optimistic winner and owned loser cleanup;
+concurrent source cleanup cannot activate stale bytes. Exact positive cleanup
+reconciles only its own source/UI blocker.
+
+Targeted covering evidence: publication/lifetime69passed; cleanup/workspace/import
+55passed; raw/core/private186passed; Persona/shared widgets42passed; affected Shared
+Visual cancellation7passed; clear contract3passed; final cleanup-reference1passed.
+Counts overlap. Remaining final static/caller evidence and exact commands/log paths
+are in `.superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase12-report.md`.
+The source census and retired-owner guard passed; two inherited unchanged TTS path
+literals and inherited diagnostic owner/config-sink drift remain explicit. Only
+the changed Persona UI diagnostic digest was reconciled after AST-equivalence
+review. Reused ADR-126; no new schema/visual feature/archive capability or broad
+manifest refresh. No full suite, external generation, network, real user data,
+startup release, responder or Complete qualification. Task31993 remains In Progress
+with all three ACs unchecked; Shared Visual Identity and whole Task10 review remain.

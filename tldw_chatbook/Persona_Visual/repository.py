@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Backup_Recovery import persona_visual_participants as visual_lifetime
+
 import hashlib
 import json
 import re
@@ -146,8 +148,12 @@ class PersonaVisualRepository:
     """Read and atomically write Persona Visual graphs; migrations own schema."""
 
     def __init__(self, db: CharactersRAGDB) -> None:
+        if self in visual_lifetime._repositories:
+            raise RuntimeError("persona_visual_repository_reinitialized")
         self.db = db
+        visual_lifetime.bind_repository(self)
 
+    @visual_lifetime.repository_guard
     def get_active_persona_pack(self, persona_id: str) -> PersonaVisualGraph | None:
         """Return the Persona's active graph, ignoring inactive bindings/packs."""
 
@@ -160,6 +166,7 @@ class PersonaVisualRepository:
         except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_read_failed") from None
 
+    @visual_lifetime.repository_guard
     def _get_active_asset_storage_key(
         self,
         identity: PersonaVisualIdentity,
@@ -244,6 +251,7 @@ class PersonaVisualRepository:
         except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_read_failed") from None
 
+    @visual_lifetime.repository_guard
     def activate_new_pack(
         self,
         *,
@@ -335,6 +343,7 @@ class PersonaVisualRepository:
         except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_write_failed") from None
 
+    @visual_lifetime.repository_guard
     def publish_version(
         self,
         *,

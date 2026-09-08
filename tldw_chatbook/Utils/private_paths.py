@@ -457,7 +457,23 @@ def _runtime_operation(path=None):
     return raw._runtime_operation(path) if raw is not None else None
 
 
+def _visual_native_scope():
+    visual = sys.modules.get("tldw_chatbook.Backup_Recovery.persona_visual_participants")
+    state = getattr(visual._local, "state", None) if visual is not None else None
+    return (visual, state) if state is not None and state.helper is not None else (None, None)
+
+
+def _native_mkdir(*args, **kwargs):
+    visual, state = _visual_native_scope()
+    if state is not None:
+        return visual.mkdir(*args, **kwargs)
+    return os.mkdir(*args, **kwargs)
+
+
 def _native_open(*args, **kwargs):
+    visual, state = _visual_native_scope()
+    if state is not None:
+        return visual.native_open(*args, **kwargs)
     operation = _runtime_operation()
     fd = os.open(*args, **kwargs)
     if operation is not None:
@@ -467,6 +483,9 @@ def _native_open(*args, **kwargs):
 
 
 def _native_close(fd):
+    visual, state = _visual_native_scope()
+    if state is not None:
+        return visual.native_close(fd)
     operation = _runtime_operation()
     if operation is None:
         os.close(fd)
@@ -493,6 +512,18 @@ def _admitted_file(function):
     @functools.wraps(function)
     def admitted(path, *args, **kwargs):
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        visual = sys.modules.get("tldw_chatbook.Backup_Recovery.persona_visual_participants")
+        visual_state = getattr(visual._local, "state", None) if visual is not None else None
+        if visual_state is not None:
+            if function.__name__ != "secure_private_directory":
+                raise RuntimeError("persona_visual_helper_not_supported")
+            state = visual.private_directory(path)
+            previous_helper = state.helper
+            state.helper = lexical_path(path)
+            try:
+                return function(path, *args, **kwargs)
+            finally:
+                state.helper = previous_helper
         operation = _runtime_operation(lexical_path(path))
         if operation is not None:
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
@@ -1351,7 +1382,7 @@ def secure_private_directory(
                             reason="missing_component_in_shared_sticky_parent",
                         )
                     ) from None
-                os.mkdir(
+                _native_mkdir(
                     component,
                     mode=_PRIVATE_DIRECTORY_MODE,
                     dir_fd=current_fd,

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Backup_Recovery import persona_visual_participants as visual_lifetime
+from tldw_chatbook.Backup_Recovery.persona_visual_participants import (
+    native_open as _native_open, native_close as _native_close,
+)
+
 import hashlib
+from functools import wraps
 import json
 import os
 import re
@@ -142,6 +148,21 @@ class _Candidate:
         return f"pvi1:{self.secret}:{self.name}"
 
 
+def _import_errors(function):
+    @wraps(function)
+    def mapped(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except PersonaVisualImportError:
+            raise
+        except visual_lifetime.PersonaVisualNativeError:
+            raise
+        except Exception:
+            raise PersonaVisualImportError("persona_visual_import_invalid" if function.__name__ == "import_persona_visual_pack" else "persona_visual_import_cleanup_denied") from None
+    return mapped
+
+
+@_import_errors
 def import_persona_visual_pack(
     archive_path: os.PathLike[str] | str,
     *,
@@ -154,87 +175,71 @@ def import_persona_visual_pack(
     """Validate one server-compatible archive into an unpublished review draft."""
 
     candidate: _Candidate | None = None
-    try:
+    with visual_lifetime.request():
+        root = Path(staging_root)
+        source_binding = visual_lifetime.source_for(root.parent.parent)
         cancelled = _cancel_checker(cancel_event)
         _raise_if_cancelled(cancelled)
-        source = _pin_source(archive_path)
-        root = _private_staging_root(staging_root)
-        _raise_if_cancelled(cancelled)
+        with visual_lifetime.files(source_binding, (Path(archive_path),)):
+            source = _pin_source(archive_path)
+        # Only memory is inspected between the independently admitted source read
+        # and extraction. No destination exists before its finite names are fixed.
         with zipfile.ZipFile(BytesIO(source.data), "r") as archive:
             members = _validated_members(archive)
             outer = _json_member(archive, members, "manifest.json")
-            checksums = _checksums(
-                _json_member(archive, members, "checksums/sha256.json")
-            )
+            checksums = _checksums(_json_member(archive, members, "checksums/sha256.json"))
             pack = _pack(_json_member(archive, members, "metadata/pack.json"))
-            asset_records = _assets(
-                _json_member(archive, members, "metadata/assets.json")
-            )
-            _validate_declarations(
-                archive,
-                members,
-                outer,
-                checksums,
-                asset_records,
-                cancelled,
-            )
-            _preflight_space(root, members)
-            candidate = _create_candidate(root)
-            draft_assets = _extract_assets(
-                archive,
-                members,
-                asset_records,
-                candidate,
-                cancelled,
-            )
-            candidate = _candidate_with_assets(candidate, draft_assets)
-            manifest_document = pack["visual_manifest"]
-            manifest_json = _canonical_text(manifest_document)
-            _write_private(candidate.root / "manifest.json", manifest_json.encode())
-            draft = create_persona_visual_import_draft(
-                persona_id=persona_id,
-                persona_revision=persona_revision,
-                expected_identity=expected_identity,
-                title=pack["title"],
-                description="Imported Persona Visual pack",
-                manifest_json=manifest_json,
-                assets=draft_assets,
-            )
-        _raise_if_cancelled(cancelled)
-        if not _source_identity_current(
-            source.path,
-            source.identity,
-            source.sha256,
-        ):
-            raise PersonaVisualImportError("persona_visual_import_stale")
-        _candidate_current(candidate)
-        return PersonaVisualImportReview(
-            schema_version=PERSONA_VISUAL_PACK_SCHEMA,
-            archive_sha256=source.sha256,
-            pack_title=draft.title,
-            asset_count=len(draft.assets),
-            state_count=len(json.loads(draft.manifest_json)["states"]),
-            draft=draft,
-            cleanup_candidate=candidate.capability,
-            _candidate_name=candidate.name,
-            _candidate_identity=candidate.identity,
-        )
-    except PersonaVisualImportError as exc:
-        cleanup_candidate = _cleanup_failed_candidate(candidate)
-        if cleanup_candidate is not None and exc.cleanup_candidate is None:
-            exc.cleanup_candidate = cleanup_candidate
-        raise
-    except (KeyboardInterrupt, SystemExit):
-        _cleanup_failed_candidate(candidate)
-        raise
-    except Exception:
-        cleanup_candidate = _cleanup_failed_candidate(candidate)
-        raise PersonaVisualImportError(
-            "persona_visual_import_invalid",
-            cleanup_candidate=cleanup_candidate,
-        ) from None
+            asset_records = _assets(_json_member(archive, members, "metadata/assets.json"))
+            _validate_declarations(archive, members, outer, checksums, asset_records, cancelled)
+            name = f".import-{uuid4().hex}"
+            candidate_path = root / name
+            names = tuple(f"{index:03d}{_FORMAT_BY_MIME[record['mime_type']][1]}" for index, record in enumerate(asset_records))
+            outputs = (candidate_path / _MARKER_NAME, candidate_path / "manifest.json",
+                       *(candidate_path / "assets" / leaf for leaf in names))
+            directories = (root.parent, root, candidate_path, candidate_path / "assets")
+            with visual_lifetime.files(source_binding, (source.path,) + outputs, directories,
+                                       writing=outputs + directories) as native_scope:
+                try:
+                    root = _private_staging_root(staging_root)
+                    _raise_if_cancelled(cancelled)
+                    _preflight_space(root, members)
+                    candidate = _create_candidate(root, name=name)
+                    draft_assets = _extract_assets(archive, members, asset_records, candidate, cancelled)
+                    candidate = _candidate_with_assets(candidate, draft_assets)
+                    manifest_json = _canonical_text(pack["visual_manifest"])
+                    _write_private(candidate.root / "manifest.json", manifest_json.encode())
+                    draft = create_persona_visual_import_draft(
+                        persona_id=persona_id, persona_revision=persona_revision,
+                        expected_identity=expected_identity, title=pack["title"],
+                        description="Imported Persona Visual pack", manifest_json=manifest_json,
+                        assets=draft_assets,
+                    )
+                    _raise_if_cancelled(cancelled)
+                    if not _source_identity_current(source.path, source.identity, source.sha256):
+                        raise PersonaVisualImportError("persona_visual_import_stale")
+                    _candidate_current(candidate)
+                    native_scope.result = visual_lifetime.issue(PersonaVisualImportReview(
+                        schema_version=PERSONA_VISUAL_PACK_SCHEMA,
+                        archive_sha256=source.sha256, pack_title=draft.title,
+                        asset_count=len(draft.assets), state_count=len(json.loads(draft.manifest_json)["states"]),
+                        draft=draft, cleanup_candidate=candidate.capability,
+                        _candidate_name=candidate.name, _candidate_identity=candidate.identity,
+                    ), source_binding)
+                    return native_scope.result
+                except PersonaVisualImportError as exc:
+                    cleanup_candidate = _cleanup_failed_candidate(candidate)
+                    if cleanup_candidate is not None and exc.cleanup_candidate is None:
+                        exc.cleanup_candidate = cleanup_candidate
+                    raise
+                except (KeyboardInterrupt, SystemExit):
+                    _cleanup_failed_candidate(candidate)
+                    raise
+                except Exception:
+                    cleanup_candidate = _cleanup_failed_candidate(candidate)
+                    raise PersonaVisualImportError("persona_visual_import_invalid", cleanup_candidate=cleanup_candidate) from None
 
 
+@_import_errors
 def persona_visual_import_source_root(
     review: PersonaVisualImportReview,
     *,
@@ -242,11 +247,20 @@ def persona_visual_import_source_root(
 ) -> Path:
     """Return the private publication source only while its exact lease is current."""
 
-    candidate = _review_candidate(review, staging_root)
-    _candidate_current(candidate)
-    return candidate.root
+    with visual_lifetime.request():
+        root = Path(staging_root)
+        source = visual_lifetime.candidate_source(review, root.parent.parent)
+        candidate_root = root / review._candidate_name
+        outputs = (candidate_root / _MARKER_NAME, candidate_root / "manifest.json",
+                   *(candidate_root / asset.source_storage_key for asset in review.draft.assets))
+        directories = (root, candidate_root, candidate_root / "assets")
+        with visual_lifetime.files(source, outputs, directories, writing=(root,)):
+            candidate = _review_candidate(review, staging_root)
+            _candidate_current(candidate)
+            return candidate.root
 
 
+@_import_errors
 def cleanup_persona_visual_import_review(
     review: PersonaVisualImportReview,
     *,
@@ -254,10 +268,20 @@ def cleanup_persona_visual_import_review(
 ) -> bool:
     """Delete only the exact module-issued staging identity for one review."""
 
-    candidate = _review_candidate(review, staging_root)
-    if not _delete_candidate(candidate):
-        raise PersonaVisualImportError("persona_visual_import_cleanup_denied")
-    return True
+    with visual_lifetime.request():
+        root = Path(staging_root)
+        source = visual_lifetime.candidate_source(review, root.parent.parent)
+        candidate_root = root / review._candidate_name
+        outputs = (candidate_root / _MARKER_NAME, candidate_root / "manifest.json",
+                   *(candidate_root / asset.source_storage_key for asset in review.draft.assets))
+        directories = (root, candidate_root, candidate_root / "assets")
+        with visual_lifetime.files(source, outputs, directories, writing=outputs + directories) as native_scope:
+            native_scope.candidate_cleanup = review
+            candidate = _review_candidate(review, staging_root)
+            if not _delete_candidate(candidate):
+                raise PersonaVisualImportError("persona_visual_import_cleanup_denied")
+            native_scope.result = True
+            return True
 
 
 def _pin_source(value: os.PathLike[str] | str) -> _SourceSnapshot:
@@ -276,14 +300,14 @@ def _pin_source(value: os.PathLike[str] | str) -> _SourceSnapshot:
     ):
         raise ValueError
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    descriptor = os.open(path, flags)
+    descriptor = _native_open(path, flags)
     try:
         opened = os.fstat(descriptor)
         data = _read_fd(descriptor, before.st_size)
         after = os.fstat(descriptor)
         named = os.lstat(path)
     finally:
-        os.close(descriptor)
+        _native_close(descriptor)
     identity = _file_identity(before)
     if (
         _file_identity(opened) != identity
@@ -568,10 +592,10 @@ def _preflight_space(root: Path, members: Mapping[str, zipfile.ZipInfo]) -> None
         raise ValueError
 
 
-def _create_candidate(root: Path) -> _Candidate:
-    name = f".import-{uuid4().hex}"
+def _create_candidate(root: Path, *, name: str | None = None) -> _Candidate:
+    name = name or f".import-{uuid4().hex}"
     candidate = root / name
-    candidate.mkdir(mode=0o700)
+    visual_lifetime.mkdir(candidate, mode=0o700)
     metadata = os.lstat(candidate)
     if not _private_directory(metadata):
         raise ValueError
@@ -579,7 +603,7 @@ def _create_candidate(root: Path) -> _Candidate:
     identity = (metadata.st_dev, metadata.st_ino)
     marker = _marker(secret, name, identity)
     _write_private(candidate / _MARKER_NAME, marker.encode())
-    (candidate / "assets").mkdir(mode=0o700)
+    visual_lifetime.mkdir(candidate / "assets", mode=0o700)
     return _Candidate(candidate, name, identity, secret, ())
 
 
@@ -612,7 +636,7 @@ def _extract_assets(
         target = candidate.root / "assets" / target_name
         digest = hashlib.sha256()
         written = 0
-        descriptor = os.open(
+        descriptor = _native_open(
             target,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
             0o600,
@@ -631,7 +655,7 @@ def _extract_assets(
                     _write_all(descriptor, chunk)
             os.fsync(descriptor)
         finally:
-            os.close(descriptor)
+            _native_close(descriptor)
         if written != record["byte_count"] or digest.hexdigest() != record["sha256"]:
             raise ValueError
         frame_count, duration_ms = _inspect_image(target, record)
@@ -659,7 +683,12 @@ def _extract_assets(
 
 
 def _inspect_image(path: Path, record: Mapping[str, Any]) -> tuple[int, int | None]:
-    with Image.open(path) as image:
+    descriptor = _native_open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        data = _read_fd(descriptor, record["byte_count"])
+    finally:
+        _native_close(descriptor)
+    with Image.open(BytesIO(data)) as image:
         if (
             image.format != _FORMAT_BY_MIME[record["mime_type"]][0]
             or image.width != record["width"]
@@ -739,9 +768,9 @@ def _candidate_current(candidate: _Candidate) -> None:
         raise PersonaVisualImportError("persona_visual_import_cleanup_denied") from None
     finally:
         if candidate_fd >= 0:
-            os.close(candidate_fd)
+            _native_close(candidate_fd)
         if root_fd >= 0:
-            os.close(root_fd)
+            _native_close(root_fd)
 
 
 def _cleanup_failed_candidate(candidate: _Candidate | None) -> str | None:
@@ -767,7 +796,7 @@ def _delete_candidate(candidate: _Candidate, *, allow_partial: bool = False) -> 
         ):
             return False
         directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        assets_fd = os.open("assets", directory_flags, dir_fd=candidate_fd)
+        assets_fd = _native_open("assets", directory_flags, dir_fd=candidate_fd)
         if not _private_directory(os.fstat(assets_fd)):
             return False
         actual_assets = tuple(os.listdir(assets_fd))
@@ -786,10 +815,10 @@ def _delete_candidate(candidate: _Candidate, *, allow_partial: bool = False) -> 
         if not actual_root.issubset(allowed_root):
             return False
         for name in actual_assets:
-            os.unlink(name, dir_fd=assets_fd)
-        os.close(assets_fd)
+            visual_lifetime.unlink(name, dir_fd=assets_fd)
+        _native_close(assets_fd)
         assets_fd = -1
-        os.rmdir("assets", dir_fd=candidate_fd)
+        visual_lifetime.rmdir("assets", dir_fd=candidate_fd)
         if "manifest.json" in actual_root:
             manifest = os.stat(
                 "manifest.json",
@@ -798,8 +827,8 @@ def _delete_candidate(candidate: _Candidate, *, allow_partial: bool = False) -> 
             )
             if not stat.S_ISREG(manifest.st_mode) or manifest.st_nlink != 1:
                 return False
-            os.unlink("manifest.json", dir_fd=candidate_fd)
-        os.unlink(_MARKER_NAME, dir_fd=candidate_fd)
+            visual_lifetime.unlink("manifest.json", dir_fd=candidate_fd)
+        visual_lifetime.unlink(_MARKER_NAME, dir_fd=candidate_fd)
         named = os.stat(
             candidate.name,
             dir_fd=root_fd,
@@ -811,24 +840,24 @@ def _delete_candidate(candidate: _Candidate, *, allow_partial: bool = False) -> 
             opened.st_ino,
         ) != candidate.identity:
             return False
-        os.rmdir(candidate.name, dir_fd=root_fd)
+        visual_lifetime.rmdir(candidate.name, dir_fd=root_fd)
         return True
     except Exception:
         return False
     finally:
         if assets_fd >= 0:
-            os.close(assets_fd)
+            _native_close(assets_fd)
         if candidate_fd >= 0:
-            os.close(candidate_fd)
+            _native_close(candidate_fd)
         if root_fd >= 0:
-            os.close(root_fd)
+            _native_close(root_fd)
 
 
 def _open_candidate(candidate: _Candidate) -> tuple[int, int]:
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    root_fd = os.open(candidate.root.parent, directory_flags)
+    root_fd = _native_open(candidate.root.parent, directory_flags)
     try:
-        candidate_fd = os.open(candidate.name, directory_flags, dir_fd=root_fd)
+        candidate_fd = _native_open(candidate.name, directory_flags, dir_fd=root_fd)
         opened = os.fstat(candidate_fd)
         named = os.stat(
             candidate.name,
@@ -844,13 +873,13 @@ def _open_candidate(candidate: _Candidate) -> tuple[int, int]:
             raise ValueError
         return root_fd, candidate_fd
     except Exception:
-        os.close(root_fd)
+        _native_close(root_fd)
         raise
 
 
 def _read_marker(candidate_fd: int) -> str:
     flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
-    descriptor = os.open(_MARKER_NAME, flags, dir_fd=candidate_fd)
+    descriptor = _native_open(_MARKER_NAME, flags, dir_fd=candidate_fd)
     try:
         opened = os.fstat(descriptor)
         named = os.stat(
@@ -872,7 +901,7 @@ def _read_marker(candidate_fd: int) -> str:
         data = _read_fd(descriptor, 64)
         return data.decode("ascii")
     finally:
-        os.close(descriptor)
+        _native_close(descriptor)
 
 
 def _marker(secret: str, name: str, identity: tuple[int, int]) -> str:
@@ -894,7 +923,7 @@ def _private_directory(metadata: os.stat_result) -> bool:
 
 
 def _write_private(path: Path, data: bytes) -> None:
-    descriptor = os.open(
+    descriptor = _native_open(
         path,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
         0o600,
@@ -903,7 +932,7 @@ def _write_private(path: Path, data: bytes) -> None:
         _write_all(descriptor, data)
         os.fsync(descriptor)
     finally:
-        os.close(descriptor)
+        _native_close(descriptor)
 
 
 def _write_all(descriptor: int, data: bytes) -> None:

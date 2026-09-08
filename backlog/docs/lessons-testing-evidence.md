@@ -5838,3 +5838,18 @@ Inject at a source-owned boundary when capability checks identify native functio
 Do not modify capability sets to make a fault wrapper look qualified. Confirm the
 stack reaches the intended real IO/close and distinguish an earlier safety refusal
 from the behavioral regression being tested.
+
+## Public callback composition can reveal a missed lock inversion (TASK-31993)
+
+**Incident.** Phase12's installed Persona Visual call-site search found only the
+UI publication guard. A supported ordinary public guard reading the actual bound
+Persona service nevertheless deadlocked against UI save: public publication held
+the new visual mutex and waited for Persona; UI held Persona and waited for visual.
+A bounded private-process schedule reached both barriers and timed out. Removing
+that new mutex only from authenticated immutable publication made the same actual
+schedule complete; concurrent publication still had one optimistic winner and an
+explicit loser with owned cleanup. Other visual source locks were preserved.
+
+When adding a lock around a public callback, test its supported source composition
+against actual competing callers. Searching installed callback sites alone cannot
+prove the public API preserves its previous lock ordering.

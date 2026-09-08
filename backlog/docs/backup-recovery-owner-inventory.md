@@ -291,7 +291,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Notes/template_store.py | merge_templates | dump | 1 | unsupported | notes.templates phase8 raw source lifetime; runtime composition pending |
-| tldw_chatbook/Utils/private_paths.py | _MCPAppendStream.write | write | 1 | generic_boundary | exact MCP history append native lifetime; other sources ordinary |
 | tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator.__init__ | secure_private_directory | 2 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._add_character_dependency | dump | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
@@ -590,45 +589,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Notifications/client_notifications_db.py | ClientNotificationsDB._get_connection | connect_private_sqlite | 1 | qualified | notifications.client |
 | tldw_chatbook/Notifications/event_state_repository.py | EventStateRepository | inherits:BaseDB | 1 | qualified | runtime.event_state |
 | tldw_chatbook/Notifications/event_state_repository.py | EventStateRepository._get_connection | connect_private_sqlite | 1 | qualified | runtime.event_state |
-| tldw_chatbook/Persona_Visual/assets.py | _decode_selected_frame | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/assets.py | _open_profile_root | open | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/assets.py | _read_profile_file_fallback | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/assets.py | _read_profile_file_secure | open | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | _decode | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | _read_marker | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_private | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_private | write | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_workspace_asset | open | 6 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_workspace_asset | write | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | cleanup_persona_visual_authoring_workspace | open | 6 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | create_persona_visual_authoring_workspace | mkdir | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | create_persona_visual_authoring_workspace | secure_private_directory | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _create_candidate | mkdir | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _delete_candidate | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _extract_assets | open | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _inspect_image | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _member_digest | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _open_candidate | open | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _pin_source | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _private_staging_root | secure_private_directory | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _read_marker | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _write_all | write | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _write_private | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | import_persona_visual_pack | ZipFile | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _cleanup_marker_current | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _delete_pinned_directory | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _open_absolute_directory_chain | open | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _pin_publication_file | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _pin_source_asset | open | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _publication_files_current | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _source_entry_current | open | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _write_private_file | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _write_private_file | write | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | cleanup_persona_visual_publication_candidate | open | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | cleanup_persona_visual_publication_candidate | secure_private_directory | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | publish_persona_visual | mkdir | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | publish_persona_visual | open | 3 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | publish_persona_visual | secure_private_directory | 1 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/runtime.py | _validated_portrait | open | 1 | unsupported | assets |
 | tldw_chatbook/Prompt_Management/Prompts_Interop.py | <module> | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Prompt_Management/Prompts_Interop.py | <module> | write | 2 | unsupported | miscellaneous |
@@ -914,11 +874,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/Screens/image_gen_demo_screen.py | ImageGenDemoScreen._render_result | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/library_screen.py | LibraryScreen._write_library_note_export_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/library_screen.py | LibraryScreen._write_library_prompt_export_file | write_text | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | write_text | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | write_bytes | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._write_text_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/settings_config_adapter.py | SettingsConfigAdapter.validate_config_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/settings_image_gen_defaults.py | load_user_image_generation_table | open | 1 | unsupported | files |
 | tldw_chatbook/UI/Screens/settings_screen.py | SettingsScreen._handle_about_link | open | 1 | unsupported | miscellaneous |
@@ -999,20 +954,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Utils/note_importers.py | JSONImporter.parse_file | open | 1 | unsupported | files |
 | tldw_chatbook/Utils/note_importers.py | YAMLImporter.parse_file | open | 1 | unsupported | files |
 | tldw_chatbook/Utils/paths.py | get_project_databases_dir | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Utils/private_paths.py | _native_open | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | _prepare_application_owned_parent | secure_private_directory | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.replace | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.unlink | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | write | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | atomic_private_write_text | atomic_private_write_bytes | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | create_private_text | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | create_private_text | secure_private_directory | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | create_private_text | write | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | open_private_binary | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | open_private_text_append | open_private_text_append_stream | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | mkdir | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Utils/private_paths.py | secure_private_directory | mkdir | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/secure_temp_files.py | create_secure_temp_file | write | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/secure_temp_files.py | secure_delete_file | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/secure_temp_files.py | secure_delete_file | write | 1 | generic_boundary | generic |
@@ -1191,10 +1132,6 @@ The control owner now exclusively creates bounded version-1 before/after write i
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.delete_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.write_text | os.unlink | 1 | external_input | external-notes-workspace-or-export |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | cleanup_persona_visual_authoring_workspace | os.unlink | 2 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_workspace_asset | os.unlink | 1 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/importer.py | _delete_candidate | os.unlink | 3 | unsupported | assets |
-| tldw_chatbook/Persona_Visual/publication.py | _delete_pinned_directory | os.unlink | 1 | unsupported | assets |
 | tldw_chatbook/TTS/audio_cpp_guided_launch.py | AudioCppGeneratedLaunchArtifact.cleanup | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_cpp_guided_launch.py | _remove_partial_artifact | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | os.unlink | 2 | unsupported | tts |
@@ -1558,7 +1495,7 @@ release startup holds. A read-only/copy ID grants no ordinary-writer bypass.
 | generation.styles | data/image_generation_styles | `Media_Creation.generation_templates` installed template directory; participant pending. |
 | tokenizers.custom | canonical ~/.config/tldw_cli/tokenizers, exact installed tokenizer owner root | `Utils.custom_tokenizers.CustomTokenizerManager.__init__`, `install_tokenizer`, `save_mappings`; participant pending. No environment model-cache inference. |
 | skills | data/skills; known tldw_chatbook_skills.json, skills/, trust/ | Runtime `default_local_skills_store_dir` now delegates the pure recovery selector. `LocalSkillsService._save_index`, `_write_bytes_atomic`, `_write_text_atomic`, create/import/remove/script lifecycle; `Skills_Interop.atomic_write` and trust-store `_atomic_write_bytes`/`_atomic_write_json` require full participant lifetimes. Trust manifests/grants/snapshots are historical bytes, never imported execution authority. |
-| persona.assets | data/persona_visual | `publish_persona_visual`, publication candidate cleanup, importer and authoring-workspace materialization/cleanup; participant pending. Qualified core42 `persona_visual_assets` current/retained locators require exact source size/hash. |
+| persona.assets | data/persona_visual | `publish_persona_visual`, publication candidate cleanup, importer and authoring-workspace materialization/cleanup; concrete source/native lifetime implemented in phase12, aggregate app/headless qualification pending. Qualified core42 `persona_visual_assets` current/retained locators require exact source size/hash. |
 | persona.visual_identity | data/visual_identities | `Character_Chat.visual_identity.publish_visual_identity_candidate` and cleanup/materialization; actual manual pack assets plus preview locators. Participant pending. Unknown source kinds refuse. |
 | persona.visual_identity_builtin | Only referenced built-in files and ancestors under installed package/assets | Exact owning pack `source_kind=builtin`, core42 schema, checked relative path/size/SHA256. No whole-package traversal. Captured bytes never authorize installation or overwriting package assets. |
 | chat.attachments | Same physical core DB, message_attachments.data and core image BLOBs | Exact core/attachment cohort with physical identity first. Delegates checked core capture/schema; no new raw writer. |
@@ -2350,3 +2287,82 @@ entries already matched the checked manifest, so no manifest change was needed. 
 and the exact remaining delta are external `/private/tmp/task10-phase11-diagnostic-*.json`.
 This does not waive or claim the full diagnostic census green. Runtime coverage,
 startup release/reacquire, responder and Complete/replacement exposure remain off.
+
+### Task10 phase12 exact changed-source census
+
+Persona Visual source/native participation is implemented for the exact canonical
+`PersonaVisualRepository` core binding; `publish_persona_visual` and issued
+publication cleanup; workspace create/stage/adopt/cleanup; import external read,
+fixed extraction, source-root verification and cleanup; and secure/fallback asset
+reads. `persona_visual_participants` keeps every operation, pre-body allocation
+uncertainty and unretired FD in the existing storage pause/drain registry. It
+provides source `close_admission/drain/resume`, `safe_point(profile)` and the actual
+screen's `persona_visual_maintenance_state()`. These return source/dirty/pending
+evidence; they do not qualify application capture or release startup admission.
+Ordinary external sources receive no installed across-pause authority and remain
+visible in storage's operation/pending registry while active.
+
+The actual Persona screen reserves its snapshot/configure, staging, import,
+preview, publication and cleanup lifetimes through real native callback/result
+completion. It closes only a new source-thread DB borrower. Published native-close
+errors retain materialized identities and error/cleanup state; only an actual
+matching positively cleaned candidate clears its own blocker. Maintenance
+inspection never invokes `_drain_persona_visual_authoring`'s user-discard route.
+
+Shared Visual Identity is the next interacting cohort: screen
+`_save_visual_identity_pack` still calls generic `_drain_to_thread` for
+`publish_visual_identity_candidate` and `cleanup_visual_identity_publication_candidate`;
+its actual candidate/style/stage/reference/provider generation/cancel paths and
+source-thread borrowers still need independent source qualification. The shared
+helper's cancellation fix grants no IO permission. `_save_character_worker`'s existing
+`persist_character` callback also uses that lifetime helper and remains a separate
+actual source/caller boundary. Existing Shared Visual Identity cancellation and
+character persistence cancellation checks exercise the helper change only.
+`Chat/attachment_core.py`, Character_Chat expression/visual-identity stores, image
+provider jobs, app/headless aggregate quiescence, caches and the local responder
+must not be marked passive or excluded by this Persona-only evidence. Runtime
+asset reads here do not authorize arbitrary renderer/generation callbacks.
+
+| Module | Symbol | Call | Count | Classification | Cohort |
+| --- | --- | --- | ---: | --- | --- |
+| tldw_chatbook/Backup_Recovery/persona_visual_participants.py | _open_native | open | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Backup_Recovery/persona_visual_participants.py | mkdir | mkdir | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Backup_Recovery/persona_visual_participants.py | unlink | os.unlink | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/assets.py | _decode_selected_frame | open | 1 | memory | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/authoring_workspace.py | _decode | open | 1 | memory | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_private | write | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_workspace_asset | write | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/authoring_workspace.py | create_persona_visual_authoring_workspace | mkdir | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/authoring_workspace.py | create_persona_visual_authoring_workspace | secure_private_directory | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/importer.py | _create_candidate | mkdir | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/importer.py | _extract_assets | open | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/importer.py | _inspect_image | open | 1 | memory | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/importer.py | _member_digest | open | 1 | memory | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/importer.py | _private_staging_root | secure_private_directory | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/importer.py | _write_all | write | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/importer.py | import_persona_visual_pack | ZipFile | 1 | memory | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/publication.py | _write_private_file | write | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/publication.py | cleanup_persona_visual_publication_candidate | secure_private_directory | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/publication.py | publish_persona_visual | mkdir | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Persona_Visual/publication.py | publish_persona_visual | secure_private_directory | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | write_bytes | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._write_text_file | write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/private_paths.py | _MCPAppendStream.write | write | 1 | generic_boundary | exact MCP history append native lifetime; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | _native_mkdir | mkdir | 2 | generic_boundary | private helper; exact visual secure-directory native bridge; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | _native_open | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | _prepare_application_owned_parent | secure_private_directory | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.replace | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.unlink | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | write | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_text | atomic_private_write_bytes | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | create_private_text | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | create_private_text | secure_private_directory | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | create_private_text | write | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | open_private_binary | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | open_private_text_append | open_private_text_append_stream | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | mkdir | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | secure_private_directory | mkdir | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |

@@ -432,6 +432,16 @@ def test_capability_fallback_rejects_identity_ambiguity(
 
     monkeypatch.setattr(assets_module.os, "O_NOFOLLOW", 0)
     monkeypatch.setattr(assets_module.os, "lstat", changed_lstat)
+    original_snapshot = assets_module._snapshot_directories
+
+    def snapshot_at_reader_boundary(directories):
+        nonlocal calls
+        # Admission also probes parents. Anchor this reader-specific injector at
+        # the actual fallback snapshot, not a process-global lstat call count.
+        calls = 0
+        return original_snapshot(directories)
+
+    monkeypatch.setattr(assets_module, "_snapshot_directories", snapshot_at_reader_boundary)
 
     with pytest.raises(PersonaVisualAssetError):
         load_persona_visual_asset(

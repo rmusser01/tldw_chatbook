@@ -705,3 +705,69 @@ async def test_preview_cancellation_drains_selected_decode_before_release(
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await preview
+
+
+@pytest.mark.parametrize("route", ["custom", "clear", "clear-required", "replace", "import"])
+async def test_actual_local_visual_editor_publishes_issued_sources(
+    monkeypatch, mock_app_instance, stub_characters, local_scope, tmp_path, route
+):
+    """Real configure/edit/save, real profile assets and core activation."""
+    from dataclasses import replace
+    from Tests.Persona_Visual.test_persona_visual_publication import _snapshot
+    from Tests.Persona_Visual.test_persona_visual_importer import _write_archive
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery import profile_paths
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+    from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
+
+    profile = config.get_user_data_dir()
+    db_path = profile_paths.database_path(config._CONFIG_CACHE, "chachanotes_db_path")
+    db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    db = CharactersRAGDB(db_path, "persona-ui-native")
+    mock_app_instance.chachanotes_db = db
+    source = tmp_path / "original-pack"
+    source.mkdir(mode=0o700)
+    seed = replace(_snapshot(source, persona_revision=2), persona_id="p-1")
+    if route == "clear":
+        import json
+        manifest = json.loads(seed.manifest_json)
+        manifest["state_catalog"]["deep_focus"] = {"label": "Deep focus", "kind": "mood"}
+        manifest["states"]["deep_focus"] = {"animation_id": "idle"}
+        seed = replace(seed, manifest_json=json.dumps(manifest, sort_keys=True, separators=(",", ":")))
+    original = publish_persona_visual(PersonaVisualRepository(db), seed,
+        source_root=source, profile_root=profile, authority_guard=lambda: True)
+    app = PersonasTestApp(mock_app_instance)
+    try:
+        async with app.run_test() as pilot:
+            screen = await _open_editor(pilot)
+            assert screen._persona_visual_authoring is not None
+            assert screen._persona_visual_authoring.draft.expected_identity == original.new_identity
+            if route == "custom":
+                assert await screen._stage_persona_visual_custom("deep_focus", "Deep focus", "mood")
+            elif route == "clear":
+                assert await screen._stage_persona_visual_clear("deep_focus")
+            elif route == "clear-required":
+                assert await screen._stage_persona_visual_clear("error")
+            elif route == "replace":
+                assert await screen._stage_persona_visual_replacement("idle", _png())
+            else:
+                archive = _write_archive(tmp_path / "review.tldw-persona-vpack")
+                assert await screen._import_persona_visual_from_path(str(archive))
+            assert screen.persona_visual_maintenance_state() == "needs-user-save/discard"
+            notices = []
+            monkeypatch.setattr(screen, "_notify", lambda message, *args: notices.append(message))
+            if route == "clear-required":
+                assert not await screen._save_persona_visual_pack()
+                assert notices == ["Persona Visual draft is incomplete."]
+                assert screen._persona_visual_authoring.dirty
+                assert PersonaVisualRepository(db).get_active_persona_pack("p-1").identity == original.new_identity
+                return
+            assert await screen._save_persona_visual_pack(), notices
+            graph = PersonaVisualRepository(db).get_active_persona_pack("p-1")
+            assert graph.identity != original.new_identity
+            assert graph.identity.version_number == 2
+            assert not screen._persona_visual_retained_cleanup
+            assert screen._persona_visual_pending == 0
+    finally:
+        db.close_connection()

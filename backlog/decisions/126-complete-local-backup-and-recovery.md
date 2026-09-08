@@ -348,3 +348,52 @@ exact service/job boundaries. A cancelled awaiter is not native worker/transport
 completion. Source-only private test children retire only their own quiescent
 startup for independent native evidence; production startup/responder/Complete
 qualification remains unavailable pending whole Task10 implementation and review.
+
+### Task10 phase12 — concrete Persona Visual lifetimes (rulings70–73)
+
+Actual Persona Visual repository/core operations, runtime asset file readers,
+issued authoring workspaces, imported review candidates and immutable publication
+now participate through `Backup_Recovery/persona_visual_participants.py`. This
+private bridge reuses storage pending/native leases and existing core operations;
+it adds no generic owner/coordinator or transferable callback authority. Source
+selection validates the exact loaded config, registered canonical core repository
+and profile. Candidate issuance uses actual object identity, complete dataclass
+shape and native candidate/marker/member identities; copied fields or tokens do
+not create installed authority. Custom roots retain their ordinary contracts.
+
+Each actual producer fixes all selected inputs, UUID outputs and private directory
+paths before effects. Native gates and identities are rechecked before activating
+the compound scope. Native descriptors are strongly adopted immediately and held
+until a positively successful close. Partial construction and uncertain closes
+remain visible to local drain and independent native maintenance. The private
+helper extension is limited to `secure_private_directory` on selected exact dirs.
+Archive external read/validation and fixed candidate extraction remain separately
+admitted phases. Runtime decode reads bounded bytes under its actual file scope.
+
+Installed publication source/profile overlap is permitted only for exact current
+core graph locators/metadata or actual issued candidate members. Source and output
+candidate trees remain disjoint; existing destination candidates refuse before
+effects. The concrete Personas UI publication worker retains its exact bound local
+Persona source before visual scopes so the existing late eligibility guard can
+finish after pause. A real public-guard/UI concurrency schedule proved that adding
+a profile-global visual mutex here inverted Persona and visual locks. Only the
+authenticated actual publication producer omits that new mutex: unique output
+paths, immutable source checks and existing optimistic core activation remain its
+correctness boundary. Workspace, import and cleanup serialization is unchanged.
+
+The existing `_drain_to_thread` now waits for actual callback completion despite
+independent Task/Future cancellation; this is lifetime bookkeeping, never IO
+permission. Concrete Persona job reservations span selectors, source/native work,
+result/cache/cleanup handling and new source-thread DB borrower retirement.
+Preexisting DB borrowers remain owned by their existing source. Dirty drafts and
+failed cleanup references are retained by nondestructive maintenance inspection.
+Successful cleanup retires only the matched issued candidate's filesystem blocker
+after reference checks and positive native retirement; uncertain native failures
+and unrelated blockers cannot be erased by another successful operation.
+
+This establishes source and concrete Persona UI evidence only. Shared Visual
+Identity candidate/generation/publication lifetimes, other app/headless owners and
+aggregate responder/startup composition still require their own Task10 work.
+Required-state clear continues to produce a reviewable, unpublishable dirty draft;
+clearing an optional state preserves existing valid publication behavior. No new
+visual feature, capture reader, archive capability or Complete claim is introduced.

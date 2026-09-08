@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Backup_Recovery import persona_visual_participants as visual_lifetime
+from tldw_chatbook.Backup_Recovery.persona_visual_participants import (
+    native_open as _native_open, native_close as _native_close,
+)
+
 import errno
+from functools import wraps
 import hashlib
 import json
 import os
@@ -57,13 +63,14 @@ _CLEANUP_MARKER_NAME = ".persona-visual-cleanup"
 class PersonaVisualPublicationError(ValueError):
     """A stable path-free publication failure with an optional cleanup capability."""
 
-    __slots__ = ("category", "cleanup_candidate")
+    __slots__ = ("category", "cleanup_candidate", "result")
 
     def __init__(self, category: str, *, cleanup_candidate: str | None = None) -> None:
         if type(category) is not str or not category.startswith(_ERROR_PREFIX):
             category = "persona_visual_publication_failed"
         self.category = category
         self.cleanup_candidate = cleanup_candidate
+        self.result = None
         super().__init__(category)
 
 
@@ -118,6 +125,20 @@ class _PinnedPublicationFile:
     sha256: str
 
 
+def _publication_errors(function):
+    @wraps(function)
+    def mapped(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except visual_lifetime.bootstrap.RecoveryRequired as error:
+            mapped_error = PersonaVisualPublicationError("persona_visual_cleanup_denied" if function.__name__.startswith("cleanup") else "persona_visual_publication_denied", cleanup_candidate=getattr(error, "cleanup_candidate", None))
+            mapped_error.result = getattr(error, "result", None)
+            raise mapped_error from None
+    return mapped
+
+
+@_publication_errors
+@visual_lifetime.repository_guard
 def publish_persona_visual(
     repository: PersonaVisualRepository,
     snapshot: PersonaVisualPublicationSnapshot,
@@ -155,7 +176,7 @@ def publish_persona_visual(
     if not _posix_guards_available():
         raise PersonaVisualPublicationError("persona_visual_publication_denied")
 
-    source_path, profile_path = _publication_roots(source_root, profile_root)
+    source_path, profile_path = _publication_roots(source_root, profile_root, repository=repository, snapshot=snapshot)
     current = _preflight_identity(repository, snapshot)
 
     pack_token = uuid4().hex
@@ -168,260 +189,284 @@ def publish_persona_visual(
     final_token = f"{versions_relpath}/{final_name}"
     versions_path = profile_path / versions_relpath
 
-    source_chain: list[int] = []
-    pinned_sources: list[_PinnedSource] = []
-    profile_chain: list[tuple[Path, int]] = []
-    versions_fd = -1
-    staging_fd = -1
-    materialized_assets_fd = -1
-    materialized_files: list[_PinnedPublicationFile] = []
-    renamed = False
-    staging_cleanup_attempted = False
+    source_binding = visual_lifetime.repository_source(repository)
+    if source_binding is not None and source_binding.profile != profile_path:
+        raise PersonaVisualPublicationError("persona_visual_publication_denied")
+    filenames = tuple(f"{index:03d}{_SUFFIXES[metadata.mime_type]}" for index, (_, metadata) in enumerate(assets))
+    candidates = (versions_path / staging_name, versions_path / final_name)
+    output_files = tuple(candidate / leaf for candidate in candidates
+                         for leaf in (_CLEANUP_MARKER_NAME, "manifest.json", *(f"assets/{name}" for name in filenames)))
+    directories = (profile_path, profile_path / "persona_visual", profile_path / "persona_visual/packs",
+                   versions_path.parent, versions_path, *(p for c in candidates for p in (c, c / "assets")))
+    source_files = tuple(source_path / name for name, _ in assets)
+    if any(visual_lifetime._identity(candidate) is not None for candidate in candidates) or any(
+        asset == candidate or candidate in asset.parents
+        for asset in source_files for candidate in candidates
+    ):
+        raise PersonaVisualPublicationError("persona_visual_publication_denied")
+    with visual_lifetime.files(source_binding, source_files + output_files, directories,
+                               writing=output_files + directories, repository=repository) as native_scope:
+        source_chain: list[int] = []
+        pinned_sources: list[_PinnedSource] = []
+        profile_chain: list[tuple[Path, int]] = []
+        versions_fd = -1
+        staging_fd = -1
+        materialized_assets_fd = -1
+        materialized_files: list[_PinnedPublicationFile] = []
+        renamed = False
+        staging_cleanup_attempted = False
 
-    def retained_candidate() -> str | None:
-        nonlocal staging_cleanup_attempted
-        if (
-            versions_fd >= 0
-            and staging_fd >= 0
-            and _entry_matches_fd(versions_fd, final_name, staging_fd)
-        ):
-            return _cleanup_capability(final_token, cleanup_secret)
-        if (
-            versions_fd >= 0
-            and staging_fd >= 0
-            and _entry_matches_fd(versions_fd, staging_name, staging_fd)
-        ):
-            staging_cleanup_attempted = True
-            if not _delete_pinned_directory(versions_fd, staging_name, staging_fd):
-                return _cleanup_capability(staging_token, cleanup_secret)
-        return None
+        def retained_candidate() -> str | None:
+            nonlocal staging_cleanup_attempted
+            if (
+                versions_fd >= 0
+                and staging_fd >= 0
+                and _entry_matches_fd(versions_fd, final_name, staging_fd)
+            ):
+                return visual_lifetime.remember_publication(_cleanup_capability(final_token, cleanup_secret), versions_path / final_name)
+            if (
+                versions_fd >= 0
+                and staging_fd >= 0
+                and _entry_matches_fd(versions_fd, staging_name, staging_fd)
+            ):
+                staging_cleanup_attempted = True
+                if not _delete_pinned_directory(versions_fd, staging_name, staging_fd):
+                    return visual_lifetime.remember_publication(_cleanup_capability(staging_token, cleanup_secret), versions_path / staging_name)
+            return None
 
-    try:
-        source_chain = _open_absolute_directory_chain(source_path)
-        source_fd = source_chain[-1]
-        pinned_sources = [
-            _pin_source_asset(source_fd, source, metadata)
-            for source, metadata in assets
-        ]
-
-        for directory in (
-            profile_path,
-            profile_path / "persona_visual",
-            profile_path / "persona_visual/packs",
-            profile_path / f"persona_visual/packs/{pack_token}",
-            versions_path,
-        ):
-            privacy = secure_private_directory(
-                directory, create=True, application_owned=True
-            )
-            if not privacy.verified_private:
-                raise PermissionError
-        opened_profile = _open_absolute_directory_chain(versions_path)
-        profile_chain = _identify_directory_chain(versions_path, opened_profile)
-        versions_fd = opened_profile[-1]
-        # Ownership moves to profile_chain; it closes the same descriptor list.
-
-        os.mkdir(staging_name, mode=0o700, dir_fd=versions_fd)
-        staging_fd = os.open(
-            staging_name,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-            dir_fd=versions_fd,
-        )
-        staging_identity = os.fstat(staging_fd)
-        marker_raw = _cleanup_marker(
-            cleanup_secret,
-            final_token,
-            (staging_identity.st_dev, staging_identity.st_ino),
-        )
-        _write_private_file(staging_fd, _CLEANUP_MARKER_NAME, marker_raw)
-        assets_fd = -1
         try:
-            os.mkdir("assets", mode=0o700, dir_fd=staging_fd)
-            assets_fd = os.open(
+            source_chain = _open_absolute_directory_chain(source_path)
+            source_fd = source_chain[-1]
+            pinned_sources = [
+                _pin_source_asset(source_fd, source, metadata)
+                for source, metadata in assets
+            ]
+
+            for directory in (
+                profile_path,
+                profile_path / "persona_visual",
+                profile_path / "persona_visual/packs",
+                profile_path / f"persona_visual/packs/{pack_token}",
+                versions_path,
+            ):
+                privacy = secure_private_directory(
+                    directory, create=True, application_owned=True
+                )
+                if not privacy.verified_private:
+                    raise PermissionError
+            opened_profile = _open_absolute_directory_chain(versions_path)
+            profile_chain = _identify_directory_chain(versions_path, opened_profile)
+            versions_fd = opened_profile[-1]
+            # Ownership moves to profile_chain; it closes the same descriptor list.
+
+            visual_lifetime.mkdir(staging_name, mode=0o700, dir_fd=versions_fd)
+            staging_fd = _native_open(
+                staging_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=versions_fd,
+            )
+            staging_identity = os.fstat(staging_fd)
+            marker_raw = _cleanup_marker(
+                cleanup_secret,
+                final_token,
+                (staging_identity.st_dev, staging_identity.st_ino),
+            )
+            _write_private_file(staging_fd, _CLEANUP_MARKER_NAME, marker_raw)
+            assets_fd = -1
+            try:
+                visual_lifetime.mkdir("assets", mode=0o700, dir_fd=staging_fd)
+                assets_fd = _native_open(
+                    "assets",
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=staging_fd,
+                )
+                asset_rows: list[dict[str, Any]] = []
+                for index, ((_, metadata), pinned) in enumerate(
+                    zip(assets, pinned_sources)
+                ):
+                    filename = f"{index:03d}{_SUFFIXES[metadata.mime_type]}"
+                    _write_private_file(assets_fd, filename, pinned.data)
+                    asset_rows.append(
+                        _repository_asset_row(
+                            metadata,
+                            storage_relpath=f"{final_token}/assets/{filename}",
+                        )
+                    )
+                _sync_directory(assets_fd)
+            finally:
+                if assets_fd >= 0:
+                    _native_close(assets_fd)
+
+            manifest_raw = snapshot.manifest_json.encode("utf-8")
+            _write_private_file(staging_fd, "manifest.json", manifest_raw)
+            _sync_directory(staging_fd)
+            materialized_assets_fd = _native_open(
                 "assets",
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=staging_fd,
             )
-            asset_rows: list[dict[str, Any]] = []
-            for index, ((_, metadata), pinned) in enumerate(
-                zip(assets, pinned_sources)
-            ):
-                filename = f"{index:03d}{_SUFFIXES[metadata.mime_type]}"
-                _write_private_file(assets_fd, filename, pinned.data)
-                asset_rows.append(
-                    _repository_asset_row(
-                        metadata,
-                        storage_relpath=f"{final_token}/assets/{filename}",
-                    )
-                )
-            _sync_directory(assets_fd)
-        finally:
-            if assets_fd >= 0:
-                os.close(assets_fd)
-
-        manifest_raw = snapshot.manifest_json.encode("utf-8")
-        _write_private_file(staging_fd, "manifest.json", manifest_raw)
-        _sync_directory(staging_fd)
-        materialized_assets_fd = os.open(
-            "assets",
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-            dir_fd=staging_fd,
-        )
-        materialized_files.append(
-            _pin_publication_file(
-                staging_fd,
-                _CLEANUP_MARKER_NAME,
-                marker_raw,
-            )
-        )
-        materialized_files.append(
-            _pin_publication_file(staging_fd, "manifest.json", manifest_raw)
-        )
-        for index, pinned in enumerate(pinned_sources):
-            filename = f"{index:03d}{_SUFFIXES[assets[index][1].mime_type]}"
             materialized_files.append(
-                _pin_publication_file(materialized_assets_fd, filename, pinned.data)
-            )
-        if not _all_source_entries_current(
-            source_path, source_chain[-1], pinned_sources
-        ):
-            raise PermissionError
-        if not _directory_chain_current(profile_chain):
-            raise PermissionError
-        atomic_replace(
-            staging_name,
-            final_name,
-            src_dir_fd=versions_fd,
-            dst_dir_fd=versions_fd,
-        )
-        renamed = True
-        if not _entry_matches_fd(versions_fd, final_name, staging_fd):
-            raise PermissionError
-        _sync_directory(versions_fd)
-
-        try:
-            caller_current = authority_guard() is True
-        except Exception:
-            caller_current = False
-        if not caller_current:
-            raise PersonaVisualPublicationError(
-                "persona_visual_authority_changed",
-                cleanup_candidate=retained_candidate(),
-            )
-
-        guard_failure: str | None = None
-
-        def final_guard() -> bool:
-            nonlocal guard_failure
-            filesystem_current = bool(
-                _all_source_entries_current(
-                    source_path, source_chain[-1], pinned_sources
+                _pin_publication_file(
+                    staging_fd,
+                    _CLEANUP_MARKER_NAME,
+                    marker_raw,
                 )
-                and _directory_chain_current(profile_chain)
-                and _entry_matches_fd(versions_fd, final_name, staging_fd)
-                and _entry_matches_fd(staging_fd, "assets", materialized_assets_fd)
-                and _publication_files_current(materialized_files)
             )
+            materialized_files.append(
+                _pin_publication_file(staging_fd, "manifest.json", manifest_raw)
+            )
+            for index, pinned in enumerate(pinned_sources):
+                filename = f"{index:03d}{_SUFFIXES[assets[index][1].mime_type]}"
+                materialized_files.append(
+                    _pin_publication_file(materialized_assets_fd, filename, pinned.data)
+                )
+            if not _all_source_entries_current(
+                source_path, source_chain[-1], pinned_sources
+            ):
+                raise PermissionError
+            if not _directory_chain_current(profile_chain):
+                raise PermissionError
+            atomic_replace(
+                staging_name,
+                final_name,
+                src_dir_fd=versions_fd,
+                dst_dir_fd=versions_fd,
+            )
+            visual_lifetime.published(versions_path / staging_name, versions_path / final_name)
+            renamed = True
+            if not _entry_matches_fd(versions_fd, final_name, staging_fd):
+                raise PermissionError
+            _sync_directory(versions_fd)
+
             try:
                 caller_current = authority_guard() is True
             except Exception:
                 caller_current = False
-            if not filesystem_current:
-                guard_failure = "persona_visual_publication_denied"
-                return False
             if not caller_current:
-                guard_failure = "persona_visual_authority_changed"
-                return False
-            guard_failure = None
-            return True
+                raise PersonaVisualPublicationError(
+                    "persona_visual_authority_changed",
+                    cleanup_candidate=retained_candidate(),
+                )
 
-        manifest_storage = f"{final_token}/manifest.json"
-        try:
-            if snapshot.expected_identity is None:
-                graph = repository.activate_new_pack(
-                    persona_id=snapshot.persona_id,
-                    title=snapshot.title,
-                    description=snapshot.description,
-                    source_kind=snapshot.source_kind,
-                    source_context=context,
-                    manifest=manifest,
-                    manifest_storage_relpath=manifest_storage,
-                    assets=asset_rows,
-                    expected_persona_revision=snapshot.persona_revision,
-                    authority_guard=final_guard,
+            guard_failure: str | None = None
+
+            def final_guard() -> bool:
+                nonlocal guard_failure
+                try:
+                    filesystem_current = bool(
+                        _all_source_entries_current(
+                            source_path, source_chain[-1], pinned_sources
+                        )
+                        and _directory_chain_current(profile_chain)
+                        and _entry_matches_fd(versions_fd, final_name, staging_fd)
+                        and _entry_matches_fd(staging_fd, "assets", materialized_assets_fd)
+                        and _publication_files_current(materialized_files)
+                    )
+                except Exception:
+                    filesystem_current = False
+                try:
+                    caller_current = authority_guard() is True
+                except Exception:
+                    caller_current = False
+                if not filesystem_current:
+                    guard_failure = "persona_visual_publication_denied"
+                    return False
+                if not caller_current:
+                    guard_failure = "persona_visual_authority_changed"
+                    return False
+                guard_failure = None
+                return True
+
+            manifest_storage = f"{final_token}/manifest.json"
+            try:
+                if snapshot.expected_identity is None:
+                    graph = repository.activate_new_pack(
+                        persona_id=snapshot.persona_id,
+                        title=snapshot.title,
+                        description=snapshot.description,
+                        source_kind=snapshot.source_kind,
+                        source_context=context,
+                        manifest=manifest,
+                        manifest_storage_relpath=manifest_storage,
+                        assets=asset_rows,
+                        expected_persona_revision=snapshot.persona_revision,
+                        authority_guard=final_guard,
+                    )
+                else:
+                    graph = repository.publish_version(
+                        persona_id=snapshot.persona_id,
+                        manifest=manifest,
+                        manifest_storage_relpath=manifest_storage,
+                        assets=asset_rows,
+                        expected_identity=snapshot.expected_identity,
+                        expected_persona_revision=snapshot.persona_revision,
+                        authority_guard=final_guard,
+                    )
+            except ValueError as error:
+                category = (
+                    guard_failure
+                    if str(error) == "persona_visual_authority_changed"
+                    and guard_failure is not None
+                    else _repository_error_category(str(error))
                 )
-            else:
-                graph = repository.publish_version(
-                    persona_id=snapshot.persona_id,
-                    manifest=manifest,
-                    manifest_storage_relpath=manifest_storage,
-                    assets=asset_rows,
-                    expected_identity=snapshot.expected_identity,
-                    expected_persona_revision=snapshot.persona_revision,
-                    authority_guard=final_guard,
-                )
-        except ValueError as error:
-            category = (
-                guard_failure
-                if str(error) == "persona_visual_authority_changed"
-                and guard_failure is not None
-                else _repository_error_category(str(error))
+                raise PersonaVisualPublicationError(
+                    category, cleanup_candidate=retained_candidate()
+                ) from None
+            except (CharactersRAGDBError, sqlite3.Error, OSError, RuntimeError, TypeError):
+                raise PersonaVisualPublicationError(
+                    "persona_visual_database_failed",
+                    cleanup_candidate=retained_candidate(),
+                ) from None
+            native_scope.result = PersonaVisualPublicationResult(
+                old_identity=None if current is None else current.identity,
+                new_identity=graph.identity,
+                cleanup_candidate=None,
             )
+            return native_scope.result
+        except KeyboardInterrupt as interruption:
+            if renamed and _entry_matches_fd(versions_fd, final_name, staging_fd):
+                cleanup_candidate = visual_lifetime.remember_publication(_cleanup_capability(final_token, cleanup_secret), versions_path / final_name)
+                try:
+                    deleted = cleanup_persona_visual_publication_candidate(
+                        repository,
+                        cleanup_candidate,
+                        profile_root=profile_path,
+                    )
+                except BaseException:
+                    deleted = False
+                if not deleted:
+                    interruption.cleanup_candidate = cleanup_candidate
+            raise
+        except PersonaVisualPublicationError:
+            raise
+        except PermissionError:
             raise PersonaVisualPublicationError(
-                category, cleanup_candidate=retained_candidate()
-            ) from None
-        except (CharactersRAGDBError, sqlite3.Error, OSError, RuntimeError, TypeError):
-            raise PersonaVisualPublicationError(
-                "persona_visual_database_failed",
+                "persona_visual_publication_denied",
                 cleanup_candidate=retained_candidate(),
             ) from None
-        return PersonaVisualPublicationResult(
-            old_identity=None if current is None else current.identity,
-            new_identity=graph.identity,
-            cleanup_candidate=None,
-        )
-    except KeyboardInterrupt as interruption:
-        if renamed and _entry_matches_fd(versions_fd, final_name, staging_fd):
-            cleanup_candidate = _cleanup_capability(final_token, cleanup_secret)
-            try:
-                deleted = cleanup_persona_visual_publication_candidate(
-                    repository,
-                    cleanup_candidate,
-                    profile_root=profile_path,
-                )
-            except BaseException:
-                deleted = False
-            if not deleted:
-                interruption.cleanup_candidate = cleanup_candidate
-        raise
-    except PersonaVisualPublicationError:
-        raise
-    except PermissionError:
-        raise PersonaVisualPublicationError(
-            "persona_visual_publication_denied",
-            cleanup_candidate=retained_candidate(),
-        ) from None
-    except (OSError, TypeError, ValueError, OverflowError):
-        raise PersonaVisualPublicationError(
-            "persona_visual_publication_failed",
-            cleanup_candidate=retained_candidate(),
-        ) from None
-    finally:
-        if (
-            not renamed
-            and not staging_cleanup_attempted
-            and versions_fd >= 0
-            and staging_fd >= 0
-        ):
-            _delete_pinned_directory(versions_fd, staging_name, staging_fd)
-        if staging_fd >= 0:
-            os.close(staging_fd)
-        if materialized_assets_fd >= 0:
-            os.close(materialized_assets_fd)
-        _close_descriptors(source_chain)
-        _close_descriptors([descriptor for _path, descriptor in profile_chain])
+        except (OSError, TypeError, ValueError, OverflowError):
+            raise PersonaVisualPublicationError(
+                "persona_visual_publication_failed",
+                cleanup_candidate=retained_candidate(),
+            ) from None
+        finally:
+            if (
+                not renamed
+                and not staging_cleanup_attempted
+                and versions_fd >= 0
+                and staging_fd >= 0
+            ):
+                _delete_pinned_directory(versions_fd, staging_name, staging_fd)
+            if staging_fd >= 0:
+                _native_close(staging_fd)
+            if materialized_assets_fd >= 0:
+                _native_close(materialized_assets_fd)
+            _close_descriptors(source_chain)
+            _close_descriptors([descriptor for _path, descriptor in profile_chain])
 
 
+@_publication_errors
+@visual_lifetime.repository_guard
 def cleanup_persona_visual_publication_candidate(
     repository: PersonaVisualRepository,
     cleanup_candidate: str,
@@ -447,70 +492,76 @@ def cleanup_persona_visual_publication_candidate(
         raise PersonaVisualPublicationError("persona_visual_cleanup_denied") from None
     candidate_path = profile_path / cleanup_path
     versions_path = candidate_path.parent
-    chain: list[int] = []
-    candidate_fd = -1
-    connection: sqlite3.Connection | None = None
-    reservation = False
-    try:
-        if not versions_path.is_relative_to(profile_path):
-            raise PermissionError
-        directory = profile_path
-        for component in versions_path.relative_to(profile_path).parts:
-            privacy = secure_private_directory(
-                directory, create=False, application_owned=True
-            )
-            if not privacy.verified_private:
-                raise PermissionError
-            directory /= component
-        privacy = secure_private_directory(
-            versions_path, create=False, application_owned=True
-        )
-        if not privacy.verified_private:
-            raise PermissionError
-        chain = _open_absolute_directory_chain(versions_path)
-        versions_fd = chain[-1]
-        candidate_fd = os.open(
-            candidate_path.name,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-            dir_fd=versions_fd,
-        )
-        if not _owned_private_directory(candidate_fd) or not _entry_matches_fd(
-            versions_fd, candidate_path.name, candidate_fd
-        ):
-            raise PermissionError
-        if not _cleanup_marker_current(
-            candidate_fd,
-            cleanup_path,
-            cleanup_secret,
-        ):
-            raise PermissionError
-        connection = repository.db.get_connection()
-        connection.execute("BEGIN IMMEDIATE")
-        reservation = True
-        if _storage_reference_exists(connection, cleanup_path):
-            raise PersonaVisualPublicationError("persona_visual_cleanup_referenced")
-        if not _entry_matches_fd(versions_fd, candidate_path.name, candidate_fd):
-            raise PermissionError
-        if not _delete_pinned_directory(versions_fd, candidate_path.name, candidate_fd):
-            raise PermissionError
-        _sync_directory(versions_fd)
-        if _storage_reference_exists(connection, cleanup_path):
-            raise PersonaVisualPublicationError("persona_visual_cleanup_referenced")
-        connection.commit()
-        reservation = False
-        return True
-    except PersonaVisualPublicationError:
-        raise
-    except sqlite3.Error:
-        raise PersonaVisualPublicationError("persona_visual_database_failed") from None
-    except (OSError, PermissionError, RuntimeError, TypeError, ValueError):
-        raise PersonaVisualPublicationError("persona_visual_cleanup_denied") from None
-    finally:
-        if reservation and connection is not None:
-            connection.rollback()
-        if candidate_fd >= 0:
-            os.close(candidate_fd)
-        _close_descriptors(chain)
+    with visual_lifetime.request():
+        source, selected = visual_lifetime.publication_selection(repository, cleanup_candidate, profile_path, candidate_path)
+        directories = tuple(reversed(candidate_path.parents[:len(candidate_path.parts)-len(profile_path.parts)])) + (candidate_path, candidate_path / "assets")
+        with visual_lifetime.files(source, selected, directories, writing=selected + directories, repository=repository) as native_scope:
+            chain: list[int] = []
+            candidate_fd = -1
+            connection: sqlite3.Connection | None = None
+            reservation = False
+            try:
+                if not versions_path.is_relative_to(profile_path):
+                    raise PermissionError
+                directory = profile_path
+                for component in versions_path.relative_to(profile_path).parts:
+                    privacy = secure_private_directory(
+                        directory, create=False, application_owned=True
+                    )
+                    if not privacy.verified_private:
+                        raise PermissionError
+                    directory /= component
+                privacy = secure_private_directory(
+                    versions_path, create=False, application_owned=True
+                )
+                if not privacy.verified_private:
+                    raise PermissionError
+                chain = _open_absolute_directory_chain(versions_path)
+                versions_fd = chain[-1]
+                candidate_fd = _native_open(
+                    candidate_path.name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=versions_fd,
+                )
+                if not _owned_private_directory(candidate_fd) or not _entry_matches_fd(
+                    versions_fd, candidate_path.name, candidate_fd
+                ):
+                    raise PermissionError
+                if not _cleanup_marker_current(
+                    candidate_fd,
+                    cleanup_path,
+                    cleanup_secret,
+                ):
+                    raise PermissionError
+                connection = repository.db.get_connection()
+                connection.execute("BEGIN IMMEDIATE")
+                reservation = True
+                if _storage_reference_exists(connection, cleanup_path):
+                    raise PersonaVisualPublicationError("persona_visual_cleanup_referenced")
+                if not _entry_matches_fd(versions_fd, candidate_path.name, candidate_fd):
+                    raise PermissionError
+                if not _delete_pinned_directory(versions_fd, candidate_path.name, candidate_fd):
+                    raise PermissionError
+                _sync_directory(versions_fd)
+                if _storage_reference_exists(connection, cleanup_path):
+                    raise PersonaVisualPublicationError("persona_visual_cleanup_referenced")
+                connection.commit()
+                reservation = False
+                native_scope.publication_cleanup = cleanup_candidate
+                native_scope.result = True
+                return True
+            except PersonaVisualPublicationError:
+                raise
+            except sqlite3.Error:
+                raise PersonaVisualPublicationError("persona_visual_database_failed") from None
+            except (OSError, PermissionError, RuntimeError, TypeError, ValueError):
+                raise PersonaVisualPublicationError("persona_visual_cleanup_denied") from None
+            finally:
+                if reservation and connection is not None:
+                    connection.rollback()
+                if candidate_fd >= 0:
+                    _native_close(candidate_fd)
+                _close_descriptors(chain)
 
 
 def _validate_snapshot(
@@ -738,7 +789,7 @@ def _cleanup_marker_current(
             cleanup_path,
             (candidate.st_dev, candidate.st_ino),
         )
-        marker_fd = os.open(
+        marker_fd = _native_open(
             _CLEANUP_MARKER_NAME,
             os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
             dir_fd=candidate_fd,
@@ -768,12 +819,13 @@ def _cleanup_marker_current(
         return False
     finally:
         if marker_fd >= 0:
-            os.close(marker_fd)
+            _native_close(marker_fd)
 
 
 def _publication_roots(
     source_root: os.PathLike[str] | str,
     profile_root: os.PathLike[str] | str,
+    *, repository: PersonaVisualRepository, snapshot: PersonaVisualPublicationSnapshot,
 ) -> tuple[Path, Path]:
     try:
         source = _canonical_root(source_root, must_exist=True)
@@ -783,7 +835,8 @@ def _publication_roots(
             or source.is_relative_to(profile)
             or profile.is_relative_to(source)
         ):
-            raise ValueError
+            if not visual_lifetime.validate_publication_sources(repository, snapshot, source, profile):
+                raise ValueError
         return source, profile
     except Exception:
         raise PersonaVisualPublicationError(
@@ -809,10 +862,10 @@ def _canonical_root(value: os.PathLike[str] | str, *, must_exist: bool) -> Path:
 
 def _open_absolute_directory_chain(path: Path) -> list[int]:
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    descriptors = [os.open(os.sep, flags)]
+    descriptors = [_native_open(os.sep, flags)]
     try:
         for component in path.parts[1:]:
-            descriptors.append(os.open(component, flags, dir_fd=descriptors[-1]))
+            descriptors.append(_native_open(component, flags, dir_fd=descriptors[-1]))
         return descriptors
     except BaseException:
         _close_descriptors(descriptors)
@@ -859,7 +912,7 @@ def _pin_source_asset(
     file_fd = -1
     try:
         for component in parts[:-1]:
-            child = os.open(
+            child = _native_open(
                 component,
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=current,
@@ -872,7 +925,7 @@ def _pin_source_asset(
                 raise ValueError
             directory_identities.append(identity)
             current = child
-        file_fd = os.open(
+        file_fd = _native_open(
             parts[-1],
             os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
             dir_fd=current,
@@ -906,7 +959,7 @@ def _pin_source_asset(
         )
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
+            _native_close(file_fd)
         _close_descriptors(opened_directories)
 
 
@@ -937,7 +990,7 @@ def _source_entry_current(source_root_fd: int, source: _PinnedSource) -> bool:
     file_fd = -1
     try:
         for component, expected in zip(source.parts[:-1], source.directory_identities):
-            child = os.open(
+            child = _native_open(
                 component,
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=current,
@@ -945,14 +998,22 @@ def _source_entry_current(source_root_fd: int, source: _PinnedSource) -> bool:
             opened_directories.append(child)
             named = os.stat(component, dir_fd=current, follow_symlinks=False)
             opened = os.fstat(child)
+            native_scope = visual_lifetime.current()
+            selected_directory = native_scope.descriptors.get(child) if native_scope is not None else None
+            # Creating this publication changes timestamps on its own preselected
+            # ancestor directories. Their native inode stays pinned; exact leaf
+            # metadata and bytes below are still revalidated in full.
+            own_parent = native_scope is not None and selected_directory in native_scope.writable
+            named_identity = _file_identity(named)
+            opened_identity = _file_identity(opened)
             if (
                 not stat.S_ISDIR(named.st_mode)
-                or _file_identity(named) != expected
-                or _file_identity(opened) != expected
+                or (named_identity[:2] != expected[:2] if own_parent else named_identity != expected)
+                or (opened_identity[:2] != expected[:2] if own_parent else opened_identity != expected)
             ):
                 return False
             current = child
-        file_fd = os.open(
+        file_fd = _native_open(
             source.parts[-1],
             os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
             dir_fd=current,
@@ -978,7 +1039,7 @@ def _source_entry_current(source_root_fd: int, source: _PinnedSource) -> bool:
         return False
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
+            _native_close(file_fd)
         _close_descriptors(opened_directories)
 
 
@@ -995,7 +1056,7 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
 def _pin_publication_file(
     parent_fd: int, name: str, expected: bytes
 ) -> _PinnedPublicationFile:
-    file_fd = os.open(
+    file_fd = _native_open(
         name,
         os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
         dir_fd=parent_fd,
@@ -1020,13 +1081,13 @@ def _pin_publication_file(
             sha256=hashlib.sha256(expected).hexdigest(),
         )
     finally:
-        os.close(file_fd)
+        _native_close(file_fd)
 
 
 def _publication_files_current(files: list[_PinnedPublicationFile]) -> bool:
     try:
         for pinned in files:
-            file_fd = os.open(
+            file_fd = _native_open(
                 pinned.name,
                 os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
                 dir_fd=pinned.parent_fd,
@@ -1058,7 +1119,7 @@ def _publication_files_current(files: list[_PinnedPublicationFile]) -> bool:
                 ):
                     return False
             finally:
-                os.close(file_fd)
+                _native_close(file_fd)
         return True
     except (OSError, ValueError):
         return False
@@ -1105,7 +1166,7 @@ def _repository_asset_row(
 def _write_private_file(directory_fd: int, name: str, data: bytes) -> None:
     if type(name) is not str or "/" in name or "\\" in name or name in {"", ".", ".."}:
         raise ValueError
-    descriptor = os.open(
+    descriptor = _native_open(
         name,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
         0o600,
@@ -1121,7 +1182,7 @@ def _write_private_file(directory_fd: int, name: str, data: bytes) -> None:
             written += count
         os.fsync(descriptor)
     finally:
-        os.close(descriptor)
+        _native_close(descriptor)
 
 
 def _sync_directory(descriptor: int) -> None:
@@ -1159,7 +1220,7 @@ def _delete_pinned_directory(parent_fd: int, name: str, pinned_fd: int) -> bool:
         for child in os.listdir(pinned_fd):
             child_stat = os.stat(child, dir_fd=pinned_fd, follow_symlinks=False)
             if stat.S_ISDIR(child_stat.st_mode):
-                child_fd = os.open(
+                child_fd = _native_open(
                     child,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                     dir_fd=pinned_fd,
@@ -1170,14 +1231,14 @@ def _delete_pinned_directory(parent_fd: int, name: str, pinned_fd: int) -> bool:
                     if not _delete_pinned_directory(pinned_fd, child, child_fd):
                         return False
                 finally:
-                    os.close(child_fd)
+                    _native_close(child_fd)
             else:
                 if not stat.S_ISREG(child_stat.st_mode):
                     return False
-                os.unlink(child, dir_fd=pinned_fd)
+                visual_lifetime.unlink(child, dir_fd=pinned_fd)
         if not _entry_matches_fd(parent_fd, name, pinned_fd):
             return False
-        os.rmdir(name, dir_fd=parent_fd)
+        visual_lifetime.rmdir(name, dir_fd=parent_fd)
         return True
     except OSError:
         return False
@@ -1238,7 +1299,7 @@ def _posix_guards_available() -> bool:
 def _close_descriptors(descriptors: list[int]) -> None:
     for descriptor in reversed(descriptors):
         try:
-            os.close(descriptor)
+            _native_close(descriptor)
         except OSError:
             pass
 
