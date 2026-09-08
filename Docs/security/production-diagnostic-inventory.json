@@ -11433,6 +11433,12 @@
           "kind": "open_private_text_append_stream",
           "method": "open_private_text_append_stream",
           "scope": "_config_interprocess_lock"
+        },
+        {
+          "digest": "19f05166171daf75",
+          "kind": "open_private_text_append_stream",
+          "method": "open_private_text_append_stream",
+          "scope": "_default_data_root_lock"
         }
       ]
     }

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 00:30'
-updated_date: '2026-09-08 01:14'
+updated_date: '2026-09-08 01:52'
 labels:
   - bug
   - storage
@@ -71,4 +71,8 @@ Restored-source verification: 448 targeted tests passed, 2 Windows-only skips; t
 All 15 profile-owned path architecture checks pass in the isolated worktree after the prompt helper census update.
 
 Final Qodo remediation evidence: Ubuntu 24.04 run https://github.com/rmusser01/tldw_chatbook/actions/runs/34175776357 tested c36dcd38388d6fe955d79b4f3412b024d17f444d on Python 3.11, 3.12, and 3.13. Every job passed 446 tests with 4 platform skips, passed installed tldw-cli startup under 0775 and 0755 ancestors, and uploaded JUnit artifacts. This synchronize-triggered run verifies the workflow fix. All six Qodo threads received fix/evidence replies and were resolved. Performance and GGUF platform evidence checks passed. Baseline lint comparison for config.py, Prompts_Dump.py, the architecture test, and its scanner finds no new diagnostics; new storage tests pass lint/format. No production or test code changes follow this evidence; this task-completion commit will receive its own exact-head CI run before merge.
+
+Final required-gate follow-up: PR Fast Lane passed all 755 tests at rebased head f8df957a9. The sole artifact mismatch was the intentional _default_data_root_lock call to open_private_text_append_stream (digest 19f05166171daf75). Reviewed the full reported delta and source: the stable private 0600 lock file is created empty and used only for interprocess locking, with no stream writes in the lock context. The diagnostic statement comparison against dev reports 115 unchanged calls (zero additions, removals, or re-indentations). Regenerated Docs/security/production-diagnostic-inventory.json to record this intended file-stream owner under ADR-127. No runtime behavior changes accompany the pin update.
+
+Inventory regeneration completed with project Python 3.12. Semantic JSON comparison verifies exactly the reviewed _default_data_root_lock sink was added and every other inventory field is unchanged. Rebased cleanly onto dev d547eef4a before regeneration.
 <!-- SECTION:NOTES:END -->
