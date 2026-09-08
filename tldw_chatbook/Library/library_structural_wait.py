@@ -15,11 +15,17 @@ copy cannot drift between them.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 #: How long a wait may stay quiet before it must admit it is still working.
 STRUCTURAL_WAIT_PATIENCE_SECONDS = 3.0
+
+#: Surfaces that own a structural wait. The screen keeps one registry slot,
+#: so each surface renders only the wait it started.
+WAIT_OWNER_FILE_NOTES = "file-notes"
+WAIT_OWNER_SKILL_IMPORT = "skill-import"
+WAIT_OWNER_EXPORT = "export"
 
 
 @dataclass
@@ -33,11 +39,16 @@ class StructuralWait:
         cancel: Callable that abandons the operation, or ``None`` when the
             operation genuinely cannot be abandoned. A ``None`` cancel is
             never advertised as one.
+        owner: Which Library surface started it. The screen keeps one
+            registry slot for every surface, so each renders the wait only
+            when it is its own -- a running export must never show up as a
+            folder change's status line.
     """
 
     label: str
     started_at: float
     cancel: Callable[[], None] | None = None
+    owner: str = ""
     _cancelled: bool = field(default=False, init=False, repr=False)
 
     def status_line(

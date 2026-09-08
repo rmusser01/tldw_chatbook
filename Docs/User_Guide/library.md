@@ -409,6 +409,12 @@ returning from its item) focuses the list's first row, so ↑/↓/Enter work
 immediately without tabbing to find it. Escape then reads the surface
 you're on:
 
+- **While a long operation is running** (a Folder files folder change, a
+  skill import, an export bundle write) — Escape, the back cue and Ctrl+Q
+  all still work. A wait that outlives about three seconds says so in its
+  own status line ("… · still working · Cancel") and offers a **Cancel**
+  beside it; what a wait can refuse is a *second* write of the same kind,
+  never your way out.
 - **On the plain list** — Escape moves focus to the rail's **Search
   Library…** box in the full Library, or **Import…** in Get started; it never
   leaves the canvas or changes what's shown.
@@ -692,3 +698,7 @@ time) can be fixed in one action once a provider IS configured — "Analyze
 N skipped" above the import queue, over every skipped id currently in the
 queue. Details on the
 [import & export](library/import-and-export.md) page.)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: Library's
+structural waits report "still working · Cancel" past three seconds and never
+gate Escape, the back cue, the palette or Quit).*

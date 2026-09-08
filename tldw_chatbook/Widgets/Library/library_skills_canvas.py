@@ -1467,6 +1467,17 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             id="library-skills-import-status",
             markup=False,
         )
+        # task-32055: the way out of an import that will not land. Mounted
+        # (display-toggled) whenever one is running so the screen's in-place
+        # patch of the status line can reveal it without a recompose.
+        structural_cancel = Button(
+            "Cancel",
+            id="library-structural-wait-cancel",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        structural_cancel.display = self.import_in_flight
+        yield structural_cancel
         if self.import_recovery_actions:
             yield Static(
                 "\n".join(f"• {action}" for action in self.import_recovery_actions),

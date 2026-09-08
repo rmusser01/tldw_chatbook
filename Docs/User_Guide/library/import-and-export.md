@@ -247,7 +247,7 @@ destination, or leaving the Import canvas cancels pending consent.
 | "quality: thumbnail" | Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, hovering the button always shows a tooltip naming the same reason it's disabled (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
-| "Cancel" | Visible only while an export is running; stops it. |
+| "Cancel" | Visible only while an export is running; stops it. The quiet line above reads "Exporting (N items)…", and once the write has run for about three seconds it becomes "Exporting (N items)… · still working · Cancel" pointing at this button. Pressing it leaves "Cancelling…" until the run reports back. |
 | "Last export: …" | Appears after the first successful export this session; names the exact path written and how long ago, and stays until the next successful export replaces it. |
 
 ## Common tasks
@@ -856,3 +856,7 @@ collapsed **"Import behavior"** panel's own title carrying the toggle's
 state while the fold is closed ("Import behavior · analysis on" / "·
 analysis off", AC#6), previously undocumented. No behaviour changed on
 this page; verified by reading the current source strings.)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: the export
+bundle write reports "still working · Cancel" past three seconds, beside the
+Cancel button it already shipped).*

@@ -28,6 +28,9 @@ def test_cancel_apply_ignores_stale_run():
             error="x",
         ),
         _update_library_export_canvas_after_run=lambda: calls.append("update"),
+        # task-32055: the terminal completion path clears the screen's one
+        # structural wait, so the fake screen models that slot too.
+        _end_library_structural_wait=lambda owner: None,
     )
     LibraryScreen._apply_library_export_cancelled(fake, 4)  # 4 != 9
     assert fake._export_state.running is True
@@ -44,6 +47,7 @@ def test_cancel_apply_current_run_sets_cancelled_status():
             error="x",
         ),
         _update_library_export_canvas_after_run=lambda: calls.append("update"),
+        _end_library_structural_wait=lambda owner: None,
     )
     LibraryScreen._apply_library_export_cancelled(fake, 9)
     assert fake._export_state.running is False
@@ -60,6 +64,7 @@ def test_cancel_handler_sets_event():
             status="",
         ),
         _refresh_library_export_status_line=lambda: None,
+        _end_library_structural_wait=lambda owner: None,
     )
     LibraryScreen.handle_library_export_cancel(fake, None)
     assert fake._export_state.cancel_event.is_set()

@@ -89,6 +89,11 @@ class LibrarySkillImportCoordinator:
         self._pending_package: RemoteSkillPackage | _PendingDirectory | None = None
         self._accepted_input = ""
         self._selected_candidate = ""
+        # task-32055: the accepted operation, retained only so an explicit
+        # user Cancel has something to stop. Outer (incidental) cancellation
+        # is still absorbed by ``_await_terminal_operation``.
+        self._operation: asyncio.Task[None] | None = None
+        self._cancel_requested = False
 
     @property
     def snapshot(self) -> LibrarySkillImportSnapshot:
@@ -157,6 +162,7 @@ class LibrarySkillImportCoordinator:
         )
         self._accepted_input = accepted_input
         self._selected_candidate = ""
+        self._cancel_requested = False
         self.update(
             row_open=True,
             path=self._display_path(accepted_input),
@@ -220,7 +226,26 @@ class LibrarySkillImportCoordinator:
                 self._accepted_input, runtime_app=runtime_app
             )
         )
+        self._operation = operation
         await self._await_terminal_operation(operation, runtime_app=runtime_app)
+
+    def cancel_running_import(self) -> bool:
+        """Stop waiting on the accepted import (task-32055).
+
+        The import itself runs on a worker thread that cannot be
+        interrupted, so this abandons the *wait*, not necessarily the
+        write -- which is why the receipt it settles tells the user to
+        check the skills list rather than claiming nothing happened.
+
+        Returns:
+            True when an in-flight import was actually abandoned.
+        """
+        operation = self._operation
+        if operation is None or operation.done() or not self._snapshot.in_flight:
+            return False
+        self._cancel_requested = True
+        operation.cancel()
+        return True
 
     async def _await_terminal_operation(
         self, operation: asyncio.Task[None], *, runtime_app: Any
@@ -262,6 +287,7 @@ class LibrarySkillImportCoordinator:
                 package, candidate, runtime_app=runtime_app
             )
         )
+        self._operation = operation
         await self._await_terminal_operation(operation, runtime_app=runtime_app)
 
     async def _run_candidate_and_settle(
@@ -300,7 +326,7 @@ class LibrarySkillImportCoordinator:
             )
             outcome = self._success(name)
         except asyncio.CancelledError:
-            outcome = _LibrarySkillImportOutcome("Could not import that skill.")
+            outcome = self._cancelled_outcome()
         except Exception:
             logger.warning("Library selected skill import failed.")
             outcome = _LibrarySkillImportOutcome(
@@ -320,7 +346,7 @@ class LibrarySkillImportCoordinator:
         try:
             outcome = await self._import(raw_path)
         except asyncio.CancelledError:
-            outcome = _LibrarySkillImportOutcome("Could not import that skill.")
+            outcome = self._cancelled_outcome()
         except Exception:
             logger.warning("Library skill import worker failed unexpectedly.")
             outcome = _LibrarySkillImportOutcome("Could not import that skill.")
@@ -720,6 +746,21 @@ class LibrarySkillImportCoordinator:
         if validate_text_input(text, max_length=64, allow_html=False):
             return text
         return ""
+
+    def _cancelled_outcome(self) -> _LibrarySkillImportOutcome:
+        """Receipt for a cancelled import, honest about what it can promise.
+
+        task-32055: an explicit Cancel stops the wait, but the import runs
+        on a worker thread that cannot be interrupted, so it may still have
+        landed. Say that instead of claiming nothing happened.
+        """
+        if not self._cancel_requested:
+            return _LibrarySkillImportOutcome("Could not import that skill.")
+        self._cancel_requested = False
+        return _LibrarySkillImportOutcome(
+            "Import cancelled · check the skills list before retrying.",
+            retryable=True,
+        )
 
     @staticmethod
     def _success(skill_name: str) -> _LibrarySkillImportOutcome:
