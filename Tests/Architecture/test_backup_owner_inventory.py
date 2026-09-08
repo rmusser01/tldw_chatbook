@@ -54,70 +54,21 @@ PRODUCER_CALLS = frozenset(
 def census(source: str) -> Counter:
     result = Counter()
 
+    tree = ast.parse(source)
+    imported_candidates = {}
+    # This is a conservative call census, not Python name/signature inference.
+    # Gather every imported function alias before walking calls; an import in a
+    # different scope can add candidates but can never overwrite/remove one.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                imported_candidates.setdefault(alias.asname or alias.name, set()).add(
+                    alias.name
+                )
+
     class Visitor(ast.NodeVisitor):
         def __init__(self):
             self.scope = []
-            self.imports = {}
-
-        def visit_Import(self, node):
-            for alias in node.names:
-                bound_name = alias.asname or alias.name.split(".")[0]
-                self.imports[bound_name] = alias.name if alias.asname else bound_name
-
-        def visit_ImportFrom(self, node):
-            for alias in node.names:
-                module = "." * node.level + (node.module or "")
-                self.imports[alias.asname or alias.name] = f"{module}.{alias.name}"
-
-        def call_identity(self, node):
-            if isinstance(node, ast.Name):
-                return self.imports.get(
-                    node.id, "builtins.open" if node.id == "open" else None
-                )
-            if isinstance(node, ast.Attribute):
-                if isinstance(node.value, ast.Call):
-                    factory = self.call_identity(node.value.func)
-                    if factory in {
-                        "pathlib.Path",
-                        "pathlib.PosixPath",
-                        "pathlib.WindowsPath",
-                    }:
-                        return f"{factory}().{node.attr}"
-                parent = self.call_identity(node.value)
-                if parent is not None:
-                    return f"{parent}.{node.attr}"
-            return None
-
-        def is_known_read_only_open(self, node, identity):
-            # Interpret positional modes only after establishing the signature.
-            # Unknown receivers may take a filename first; os.open takes flags.
-            if identity in {"builtins.open", "io.open", "_io.open"}:
-                mode_index = 1
-            elif identity in {
-                "pathlib.Path().open",
-                "pathlib.PosixPath().open",
-                "pathlib.WindowsPath().open",
-            }:
-                mode_index = 0
-            else:
-                return False
-            if any(isinstance(arg, ast.Starred) for arg in node.args) or any(
-                keyword.arg is None for keyword in node.keywords
-            ):
-                return False
-            mode = next(
-                (keyword.value for keyword in node.keywords if keyword.arg == "mode"),
-                node.args[mode_index]
-                if len(node.args) > mode_index
-                else ast.Constant("r"),
-            )
-            return isinstance(mode, ast.Constant) and mode.value in {
-                "r",
-                "rb",
-                "rt",
-                "br",
-                "tr",
-            }
 
         def visit_ClassDef(self, node):
             self.scope.append(node.name)
@@ -140,16 +91,16 @@ def census(source: str) -> Counter:
                 if isinstance(node.func, ast.Attribute)
                 else getattr(node.func, "id", "")
             )
-            identity = self.call_identity(node.func)
-            canonical_name = identity.rsplit(".", 1)[-1] if identity else name
-            name = "open" if "open" in {name, canonical_name} else canonical_name
-            if name == "open" and self.is_known_read_only_open(node, identity):
-                return self.generic_visit(node)
-            if name in PRODUCER_CALLS:
-                result[(".".join(self.scope) or "<module>", name)] += 1
+            candidates = {name}
+            if isinstance(node.func, ast.Name):
+                candidates.update(imported_candidates.get(node.func.id, ()))
+            # Even literal read-only opens remain candidates: parameters, local
+            # assignments and other ordinary bindings can change their meaning.
+            for candidate in candidates & PRODUCER_CALLS:
+                result[(".".join(self.scope) or "<module>", candidate)] += 1
             self.generic_visit(node)
 
-    Visitor().visit(ast.parse(source))
+    Visitor().visit(tree)
     return result
 
 
@@ -240,7 +191,7 @@ def test_census_keeps_ambiguous_open_signatures_and_dynamic_arguments():
         assert census(source)[("<module>", "open")] == 1, source
 
 
-def test_census_excludes_only_known_read_only_open_signatures():
+def test_census_retains_unshadowed_read_only_opens_as_conservative_candidates():
     examples = (
         'open("store.bin")',
         'open("store.bin", "rb")',
@@ -251,4 +202,34 @@ def test_census_excludes_only_known_read_only_open_signatures():
         'import pathlib as paths\npaths.Path("store.bin").open()',
     )
     for source in examples:
-        assert census(source)[("<module>", "open")] == 0, source
+        assert census(source)[("<module>", "open")] == 1, source
+
+
+def test_census_retains_bare_opens_under_normal_python_bindings():
+    examples = (
+        'def save(open):\n    open("r")',
+        'open = writer\nopen("r")',
+        'def open(mode): pass\nopen("r")',
+        '(lambda open: open("r"))(writer)',
+        'for open in writers:\n    open("r")',
+        'with writer_context() as open:\n    open("r")',
+        'try: pass\nexcept Writer as open:\n    open("r")',
+        '[open("r") for open in writers]',
+        '(open := writer)\nopen("r")',
+        'match writer:\n    case {"writer": open}:\n        open("r")',
+    )
+    for source in examples:
+        assert (
+            sum(count for (_, call), count in census(source).items() if call == "open")
+            == 1
+        ), source
+
+
+def test_function_local_import_cannot_hide_module_open_or_imported_alias():
+    examples = (
+        'import custom as helper\ndef unrelated():\n    import io as helper\nhelper.open("store.bin", "r")',
+        'from custom import open as writer\ndef unrelated():\n    from json import load as writer\nwriter("r")',
+        'from io import open as writer\ndef unrelated():\n    from custom import action as writer\nwriter("store.bin", "wb")',
+    )
+    for source in examples:
+        assert census(source)[("<module>", "open")] == 1, source

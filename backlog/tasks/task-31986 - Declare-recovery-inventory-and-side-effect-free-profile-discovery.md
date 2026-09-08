@@ -57,7 +57,7 @@ Reason: direct implementation of ADR-126; preserve ADR-029/030/036/059/060 bound
 Implemented the ADR-126 inventory foundation with frozen owner/schema/context models,
 pure canonical config/database selectors, installed-owner registration, strict selected
 TOML discovery, physical alias/root/dependency classification, and a checked census of
-876 exact producer-symbol/call rows plus all 59 SQLite policy owners. Discovery does
+978 exact producer-symbol/call rows plus all 59 SQLite policy owners. Discovery does
 not bootstrap config, instantiate services, open SQLite, read keyrings, or create
 profiles. Custom database paths remain baseline app-owned content; unresolved owner
 cohorts and unknown durable files explicitly block completeness.
@@ -109,3 +109,22 @@ behavioral RED (2 failed, 4 passed in 6.30s), then GREEN after the fix/census re
 passed; git diff --check passed. The read-only Python 3.12.11 interpreter path above
 was used. Exact evidence is appended to the execution report; status and ACs remain
 In Progress/unchecked for independent re-review.
+
+### Review fix round 2: conservative open census
+
+Independent re-review found bare-open shadowing and function-local import alias
+leakage could still suppress candidates. Per controller ruling, the scanner now
+retains every syntactic open/attribute-open call, including literal read-only forms,
+and cumulatively retains imported function aliases. It does not infer signatures
+or runtime mutation. Synthetic no-I/O controls cover both findings, ten ordinary
+binding forms, and unshadowed read-only calls. The exact census is 978 rows: 102
+added unsupported candidates and 10 increased counts; all prior per-symbol
+classifications/cohorts and 59 SQLite declarations remain intact. Runtime production
+code is unchanged; this supersedes round 1 signature inference.
+
+Focused behavioral RED: 3 failed, 5 passed in 6.06s. Final focused architecture
+GREEN: 8 passed, 4 existing warnings in 8.33s. Scoped Ruff E9/F63/F7/F82, format and
+git diff checks pass. Exact covering commands/output and self-review are in the
+execution report. ADR required: no; this test-only guard fix implements existing
+ADR-126 without changing ownership/runtime boundaries. Status/ACs remain In
+Progress/unchecked for independent controller re-review.

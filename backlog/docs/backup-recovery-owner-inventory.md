@@ -19,11 +19,13 @@ owner. Raw connection counts are supplemented by private writers, writable opens
 file exports, directory creators, model persistence APIs, keyring writers, and
 BaseDB subclasses. Calls are inventoried by exact module, qualified symbol,
 normalized call name, and count; no module-wide allowlist permits new producers.
-Module imports and from-import aliases are resolved before open-call modes
-are interpreted. Known builtin/io opens take the mode after the filename;
-known Path-constructor bound opens take the mode first. Unknown receivers,
-os.open flags, dynamic modes and expanded argument lists remain inventoried.
-A receiver name alone never proves a Path.open signature. Dynamic reflection/custom
+Every syntactic bare or attribute `open` call remains a candidate, including
+literal read-only forms: ordinary Python bindings can change the callable's meaning.
+From-import function aliases are accumulated across the source before visiting calls;
+shadowing or a different scope can add candidates but cannot remove them. This census
+does not infer runtime signatures or prove that a candidate writes durable data.
+Newly retained candidates stay unsupported pending specific owner review; existing
+per-symbol exclusions remain explicit. Dynamic reflection/custom
 third-party persistence cannot be proven absent by static AST scanning; a new persistence API must extend
 the scanner vocabulary as part of owner review. Runtime unknown-root detection is
 an additional fail-closed boundary, not a substitute for that review.
@@ -204,7 +206,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 ## Exact persistence producer symbols
 
 A row is a reviewed **source candidate**, not a claim its entire module is durable.
-The refreshed census contains 876 rows. Its qualified symbol is the locator-consumer
+The refreshed census contains 978 rows. Its qualified symbol is the locator-consumer
 evidence; where canonical root selection is not yet extracted, the cohort table explicitly records that resolver
 blocker. New calls in an existing symbol also change the expected count and fail.
 
@@ -224,12 +226,18 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/inventory.py | discover | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Character_Chat/Character_Chat_Lib.py | export_character_card_to_png | makedirs | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/Character_Chat_Lib.py | export_character_card_to_png | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/Character_Chat_Lib.py | extract_json_from_image_file | open | 1 | unsupported | files |
+| tldw_chatbook/Character_Chat/Character_Chat_Lib.py | extract_json_from_image_file | open | 2 | unsupported | files |
+| tldw_chatbook/Character_Chat/Character_Chat_Lib.py | import_and_save_character_from_file_with_outcome | open | 2 | unsupported | files |
+| tldw_chatbook/Character_Chat/Character_Chat_Lib.py | inspect_character_card_tts_attachment | open | 2 | unsupported | files |
 | tldw_chatbook/Character_Chat/Character_Chat_Lib.py | load_character_and_image | open | 1 | unsupported | files |
+| tldw_chatbook/Character_Chat/Character_Chat_Lib.py | load_character_card_from_file | open | 2 | unsupported | files |
+| tldw_chatbook/Character_Chat/Character_Chat_Lib.py | load_chat_history_from_file_and_save_to_db | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | export_dictionary_to_file | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | export_dictionary_to_file | write | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | get_chat_dicts_folder | mkdir | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | import_dictionary_from_file | copy2 | 1 | unsupported | files |
+| tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | import_dictionary_from_file | open | 1 | unsupported | files |
+| tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | parse_user_dict_markdown_file | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/expression_set_io.py | _candidate_pairs | ZipFile | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/expression_set_io.py | _detect_ext | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/expression_set_io.py | _resolve_vpack_expression_set | open | 1 | unsupported | files |
@@ -274,6 +282,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chat/prompt_history.py | PromptHistory._append_impl.write_history | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/prompt_history.py | PromptHistory._append_impl.write_history | write | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/prompt_history.py | PromptHistory.load.read_history | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chat/prompt_template_manager.py | load_template | open | 1 | unsupported | files |
 | tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chat_Grammars_Interop/local_chat_grammars_service.py | LocalChatGrammarsService._persist | mkdir | 1 | unsupported | files |
 | tldw_chatbook/Chat_Grammars_Interop/local_chat_grammars_service.py | LocalChatGrammarsService._persist | write_text | 1 | unsupported | files |
@@ -319,14 +328,26 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._extract_private_archive | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._extract_private_archive | secure_private_directory | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._extract_private_archive | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._import_characters | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._import_conversations | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._import_kept_briefings | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._import_media | open | 2 | unsupported | miscellaneous |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._import_notes | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._import_prompts | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter.import_chatbook | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter.preview_chatbook | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chatbooks/database_paths.py | secure_chatbook_directory | secure_private_directory | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chatbooks/local_chatbook_service.py | LocalChatbookService._load_registry | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chunking/Chunk_Lib.py | load_document | open | 1 | unsupported | files |
 | tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager._get_user_templates_dir | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager._load_template_from_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chunking/engine/chunker.py | Chunker.chunk_file_stream | open | 1 | unsupported | files |
+| tldw_chatbook/Coding/code_mapper.py | SimpleIO.read_text | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/DB/AgentRuns_DB.py | AgentRunsDB | inherits:BaseDB | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB._get_thread_connection | connect_private_sqlite | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB.backup_database | backup_connection_to_private | 1 | unsupported | sqlite |
@@ -356,13 +377,19 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/DB/private_sqlite.py | migrate_profile_store_to_candidate | connect_private_sqlite_descriptor | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | open_canonical_profile_migration_destination | secure_private_directory | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | open_profile_migration_boundary_destination | secure_private_directory | 1 | generic_boundary | generic |
+| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader._load_config | open | 1 | unsupported | evals |
 | tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | dump | 1 | unsupported | evals |
 | tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | mkdir | 1 | unsupported | evals |
 | tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | open | 1 | unsupported | evals |
+| tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_csv_dataset | open | 1 | unsupported | evals |
+| tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_json_dataset | open | 1 | unsupported | evals |
+| tldw_chatbook/Evals/dataset_validator.py | DatasetValidator._load_dataset | open | 3 | unsupported | evals |
 | tldw_chatbook/Evals/eval_orchestrator.py | EvaluationOrchestrator.create_task_from_template | mkdir | 1 | unsupported | evals |
 | tldw_chatbook/Evals/eval_orchestrator.py | EvaluationOrchestrator.export_results | dump | 1 | unsupported | evals |
 | tldw_chatbook/Evals/eval_orchestrator.py | EvaluationOrchestrator.export_results | open | 2 | unsupported | evals |
 | tldw_chatbook/Evals/eval_orchestrator.py | quick_eval | mkdir | 1 | unsupported | evals |
+| tldw_chatbook/Evals/eval_runner.py | DatasetLoader._load_csv_dataset | open | 1 | unsupported | evals |
+| tldw_chatbook/Evals/eval_runner.py | DatasetLoader._load_json_dataset | open | 1 | unsupported | evals |
 | tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.create_sample_dataset | dump | 1 | unsupported | evals |
 | tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.create_sample_dataset | open | 1 | unsupported | evals |
 | tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.export_template_as_file | dump | 2 | unsupported | evals |
@@ -380,6 +407,12 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_markdown | open | 1 | unsupported | evals |
 | tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_markdown | write | 1 | unsupported | evals |
 | tldw_chatbook/Evals/specialized_runners.py | CodeExecutionRunner._execute_code | write_text | 1 | unsupported | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._detect_file_format | open | 1 | unsupported | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._detect_format | open | 1 | unsupported | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_csv_task | open | 1 | unsupported | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_custom_task | open | 1 | unsupported | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_eleuther_task | open | 1 | unsupported | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_huggingface_task | open | 1 | unsupported | evals |
 | tldw_chatbook/Evals/task_loader.py | TaskLoader.export_task | dump | 4 | unsupported | evals |
 | tldw_chatbook/Evals/task_loader.py | TaskLoader.export_task | open | 3 | unsupported | evals |
 | tldw_chatbook/Event_Handlers/Chat_Events/chat_image_events.py | ChatImageHandler.get_image_info | open | 1 | unsupported | miscellaneous |
@@ -412,7 +445,8 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py | TTSEventHandler._stream_response_via_sink | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/note_ingest_events.py | handle_ingest_notes_import_now_button_pressed.import_worker_notes | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/note_ingest_events.py | handle_ingest_notes_import_now_button_pressed.import_worker_notes | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Event_Handlers/note_ingest_events.py | handle_ingest_notes_import_now_button_pressed.import_worker_notes | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Event_Handlers/note_ingest_events.py | handle_ingest_notes_import_now_button_pressed.import_worker_notes | open | 2 | unsupported | miscellaneous |
+| tldw_chatbook/Event_Handlers/notes_events.py | load_note_templates | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | mkdir | 1 | unsupported | files |
 | tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | write_text | 1 | unsupported | files |
 | tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py | ComfyUIImageAdapter._download_output | open | 2 | unsupported | miscellaneous |
@@ -453,18 +487,24 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py | save_summary_to_file | makedirs | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py | save_summary_to_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py | save_summary_to_file | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/LLM_Calls/Summarization_General_Lib.py | extract_metadata_and_content | open | 1 | unsupported | files |
+| tldw_chatbook/LLM_Calls/Summarization_General_Lib.py | extract_text_from_input | open | 1 | unsupported | files |
 | tldw_chatbook/LLM_Calls/realtime/openai_session.py | OpenAIRealtimeSession.connect | connect | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Calls/realtime/transport.py | WsTransport.connect | connect | 1 | process_artifact | process |
 | tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py | ModelCatalogDiskStore.load_into | open | 1 | disposable | diagnostics |
 | tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py | ModelCatalogDiskStore.save | mkdir | 1 | disposable | diagnostics |
 | tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py | ModelCatalogDiskStore.save | write_bytes | 1 | disposable | diagnostics |
+| tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py | _process_markup_or_plain_text | open | 2 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py | ingest_text_file | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py | process_mobi | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py | process_zip_of_epubs | ZipFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/Document_Processing_Lib.py | process_rtf | open | 1 | unsupported | files |
 | tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | extract_images_from_pdf | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | extract_images_from_pdf | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | extract_visual_features | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | preprocess_image_for_ocr | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | process_image | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Local_Ingestion/OCR_Backends.py | DocextOCRBackend.process_image | open | 2 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/OCR_Backends.py | DocextOCRBackend.process_image | open | 3 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/OCR_Backends.py | DocextOCRBackend.process_pdf | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/OCR_Backends.py | DocextOCRBackend.process_pdf | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/OCR_Backends.py | EasyOCRBackend.process_image | open | 1 | unsupported | miscellaneous |
@@ -486,6 +526,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_buffer_with_parakeet_mlx | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_with_parakeet_mlx | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_with_parakeet_onnx | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_with_remote_whisper | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend.transcribe_buffer | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend.transcribe_buffer | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/transcription_service.py | _has_known_parakeet_v2_receipt | open | 1 | unsupported | miscellaneous |
@@ -524,6 +565,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._load_reading_import_csv | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._sync_archive_snapshot_source_items | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._sync_archive_snapshot_source_items | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Media_Creation/generation_templates.py | _load_directory_templates | open | 1 | unsupported | files |
 | tldw_chatbook/Media_Creation/image_generation_service.py | ImageGenerationService._setup_output_directory | mkdir | 3 | unsupported | miscellaneous |
 | tldw_chatbook/Media_Creation/image_generation_service.py | ImageGenerationService.generate_custom | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Media_Creation/image_generation_service.py | ImageGenerationService.generate_custom | write | 1 | unsupported | miscellaneous |
@@ -559,6 +601,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._verify_payload | open | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService.import_local_gguf | open | 2 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService.import_local_gguf | write | 1 | unsupported | models |
+| tldw_chatbook/Models/evaluation_state.py | EvaluationState.load_from_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.directory | mkdir | 1 | unsupported | notes |
@@ -645,9 +688,11 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Persona_Visual/runtime.py | _validated_portrait | open | 1 | unsupported | assets |
 | tldw_chatbook/Prompt_Management/Prompts_Interop.py | <module> | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Prompt_Management/Prompts_Interop.py | <module> | write | 2 | unsupported | miscellaneous |
+| tldw_chatbook/Prompt_Management/Prompts_Interop.py | import_prompts_from_files | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager.__init__ | mkdir | 1 | unsupported | rag |
+| tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._load_custom_profiles | open | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._migrate_legacy_blob | dump | 1 | unsupported | rag |
-| tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._migrate_legacy_blob | open | 1 | unsupported | rag |
+| tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._migrate_legacy_blob | open | 2 | unsupported | rag |
 | tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._save_one | dump | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._save_one | open | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager.end_experiment | dump | 1 | unsupported | rag |
@@ -662,10 +707,12 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/RAG_Search/eval/regression.py | RegressionDetector._save_atomic | dump | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/pipeline_builder_simple.py | load_pipelines_from_toml | copy2 | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/pipeline_builder_simple.py | load_pipelines_from_toml | mkdir | 1 | unsupported | rag |
+| tldw_chatbook/RAG_Search/pipeline_builder_simple.py | load_pipelines_from_toml | open | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/pipeline_loader.py | PipelineLoader.export_pipeline_config | dump | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/pipeline_loader.py | PipelineLoader.export_pipeline_config | open | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/pipeline_loader.py | PipelineLoader.load_pipeline_config | copy2 | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/pipeline_loader.py | PipelineLoader.load_pipeline_config | mkdir | 1 | unsupported | rag |
+| tldw_chatbook/RAG_Search/pipeline_loader.py | PipelineLoader.load_pipeline_config | open | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/simplified/collection_indexes.py | _client | PersistentClient | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/simplified/rag_service.py | RAGService._connect_chacha_readonly | connect_private_sqlite | 1 | unsupported | rag |
 | tldw_chatbook/RAG_Search/simplified/rag_service.py | RAGService._connect_prompts_readonly | connect_private_sqlite | 1 | unsupported | rag |
@@ -700,9 +747,10 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Skills_Interop/skill_trust_store.py | _atomic_write_bytes | write_bytes | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/skill_trust_store.py | _atomic_write_json | write_text | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/skill_trust_store.py | _ensure_trust_directory | mkdir | 1 | unsupported | skills |
+| tldw_chatbook/Study_Interop/local_study_service.py | LocalStudyService.import_flashcards_json_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Subscriptions/briefing_audio.py | _looks_like_wav | open | 1 | unsupported | subscriptions |
 | tldw_chatbook/Subscriptions/briefing_audio.py | briefing_audio_dir | secure_private_directory | 1 | unsupported | subscriptions |
-| tldw_chatbook/Subscriptions/briefing_export.py | _copy_episode_audio_file | open | 1 | unsupported | subscriptions |
+| tldw_chatbook/Subscriptions/briefing_export.py | _copy_episode_audio_file | open | 2 | unsupported | subscriptions |
 | tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | open | 1 | unsupported | subscriptions |
 | tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | write | 1 | unsupported | subscriptions |
 | tldw_chatbook/Subscriptions/site_config_manager.py | SiteConfigManager.export_configs | write_text | 1 | unsupported | subscriptions |
@@ -728,7 +776,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/audio_player.py | SimpleAudioPlayer.resume | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_service.py | AudioService._convert_with_soundfile | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | write | 1 | unsupported | tts |
-| tldw_chatbook/TTS/audiobook_generator.py | AudioBookGenerator._combine_chapters | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/audiobook_generator.py | AudioBookGenerator._combine_chapters | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/audiobook_generator.py | AudioBookGenerator._combine_chapters | write | 2 | unsupported | tts |
 | tldw_chatbook/TTS/audiobook_generator.py | AudioBookGenerator._generate_chapter_audio | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audiobook_generator.py | AudioBookGenerator._generate_chapter_audio | write | 1 | unsupported | tts |
@@ -737,12 +785,13 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._send_command | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._tensor_to_wav_bytes | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._transcribe_audio | write | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.list_voices_with_metadata | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.save_reference_voice | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.save_reference_voice_with_metadata | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.save_reference_voice_with_metadata | dump | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.save_reference_voice_with_metadata | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | suppress_output | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox_isolated.py | ChatterboxIsolatedBackend._read_response | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/chatterbox_isolated.py | ChatterboxIsolatedBackend._read_response | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_isolated.py | ChatterboxIsolatedBackend._send_command | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_process.py | <module> | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_process.py | main | open | 5 | unsupported | tts |
@@ -756,9 +805,13 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.export_profile | write | 7 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.import_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.import_profile | mkdir | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.import_profile | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.load_profiles | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.save_profiles | dump | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.save_profiles | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend.__init__ | mkdir | 2 | unsupported | tts |
+| tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend._load_voice_profiles | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend._prepare_messages | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend._save_voice_profiles | dump | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend._save_voice_profiles | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend.create_voice_profile | copy2 | 1 | unsupported | tts |
@@ -774,6 +827,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.export_profile | write | 6 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.import_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.import_profile | mkdir | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.import_profile | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.load_profiles | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.restore_from_backup | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.save_profiles | dump | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.save_profiles | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend.__init__ | secure_private_directory | 2 | unsupported | tts |
@@ -787,6 +843,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._generate_pytorch_with_timestamps | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._initialize_onnx | makedirs | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._initialize_onnx | write | 2 | unsupported | tts |
+| tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._load_saved_blends | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend.initialize | mkdir | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/voice_manager_base.py | VoiceManagerBase.__init__ | mkdir | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_namespace.py | admit_zero_reusable_tombstone | open | 1 | unsupported | tts |
@@ -867,8 +924,11 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Tools/file_operation_tools.py | WriteFileTool.execute | open | 2 | external_input | external |
 | tldw_chatbook/Tools/file_operation_tools.py | WriteFileTool.execute | write | 2 | external_input | external |
 | tldw_chatbook/Tools/file_operation_tools.py | _tool_sandbox_root | mkdir | 1 | external_input | external |
+| tldw_chatbook/Tools/local_tool_impls.py | edit_file | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/local_tool_impls.py | edit_file | write_bytes | 1 | external_input | external |
+| tldw_chatbook/Tools/local_tool_impls.py | read_file | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/local_tool_impls.py | write_file | write_bytes | 1 | external_input | external |
+| tldw_chatbook/Tools/patch_tool_impls.py | patch_files | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/patch_tool_impls.py | patch_files | write_bytes | 1 | external_input | external |
 | tldw_chatbook/Tools/web_tool_impls.py | _describe_archive | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tools/web_tool_impls.py | _describe_image | open | 2 | unsupported | miscellaneous |
@@ -877,6 +937,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/Chatbooks_Window_Improved.py | ChatbooksWindowImproved._scan_chatbooks | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow._export_to_zip_worker | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow._export_to_zip_worker | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow._export_to_zip_worker | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow.generate_compilation._read_selected_files | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow.handle_node_selected._read_local_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/image.py | ConsoleImageController._h3_reference_from_snapshot | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/message.py | ConsoleMessageController._save_console_message_image._write_images_to_disk | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/message.py | ConsoleMessageController._save_console_message_image._write_images_to_disk | write_bytes | 1 | unsupported | miscellaneous |
@@ -897,13 +960,16 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/Logs_Window.py | LogsWindow.append_record | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget._generate_audiobook | write | 4 | unsupported | miscellaneous |
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget._handle_export_location | copy2 | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget._handle_file_selection | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget._preview_chapter_audio | write | 2 | unsupported | miscellaneous |
+| tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget._update_voice_options | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget.audiobook_generation_complete | write | 3 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._begin_console_realtime_reply_audio | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._connect_console_realtime | connect | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._load_sidebar_state | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/image_gen_demo_screen.py | ImageGenDemoScreen._render_result | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/library_screen.py | LibraryScreen._write_library_note_export_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/library_screen.py | LibraryScreen._write_library_prompt_export_file | write_text | 1 | unsupported | miscellaneous |
@@ -913,14 +979,21 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | write_bytes | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._write_text_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/settings_config_adapter.py | SettingsConfigAdapter.validate_config_file | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/settings_image_gen_defaults.py | load_user_image_generation_table | open | 1 | unsupported | files |
 | tldw_chatbook/UI/Screens/settings_screen.py | SettingsScreen._handle_about_link | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/settings_video_gen_defaults.py | load_user_video_generation_table | open | 1 | unsupported | files |
 | tldw_chatbook/UI/Screens/watchlists_collections_screen.py | WatchlistsCollectionsScreen._open_item_in_browser | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/audio_cpp_runtime_card.py | AudioCppRuntimeCard.apply_observation | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_playback_mixin.py | SpeechPlaybackMixin._generation_complete | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_playback_mixin.py | SpeechPlaybackMixin._handle_audio_export | copy2 | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_playback_mixin.py | SpeechPlaybackMixin._store_delivered_artifact | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Speech/speech_settings_mixin.py | SpeechSettingsMixin._export_voice_blends | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_settings_mixin.py | SpeechSettingsMixin._handle_export_file | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_settings_mixin.py | SpeechSettingsMixin._handle_export_file | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Speech/speech_settings_mixin.py | SpeechSettingsMixin._handle_import_file | open | 2 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Speech/speech_settings_mixin.py | SpeechSettingsMixin._load_kokoro_voice_blends | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Speech/speech_settings_mixin.py | SpeechSettingsMixin._show_add_voice_blend_dialog | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Speech/speech_settings_mixin.py | SpeechSettingsMixin._update_default_voice_options | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_synthesis_mixin.py | SpeechSynthesisMixin._generate_tts | write | 4 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_single_worker | copy_private_sqlite | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_single_worker | create_private_text | 1 | unsupported | miscellaneous |
@@ -936,6 +1009,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._export_notes_worker | secure_private_directory | 2 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._get_schema_version | connect_private_sqlite | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._integrity_worker | connect_private_sqlite | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._perform_database_restore | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._restore_single_database | secure_private_directory | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._restore_single_worker | copy_private_sqlite | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._restore_single_worker | mkdir | 1 | unsupported | miscellaneous |
@@ -949,12 +1023,17 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py | VoiceSetupStep._play_sample | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/stts_profile_library.py | STTSProfileLibrary._write_profile_export | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Splash_Screens/custom/custom_image.py | CustomImageEffect._load_and_convert_image | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/Utils.py | FileProcessor.detect_encoding | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/Utils.py | FileProcessor.read_file_content | open | 3 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | ensure_directory_exists | makedirs | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/Utils.py | generate_unique_identifier | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/Utils.py | safe_read_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | save_segments_to_json | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | save_segments_to_json | makedirs | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | save_segments_to_json | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | save_to_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | save_to_file | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/Utils.py | verify_checksum | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_copy | copy2 | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_copy | mkdir | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | mkdir | 1 | generic_boundary | generic |
@@ -962,15 +1041,22 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | mkdir | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | write | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.__init__ | makedirs | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager._load_mappings | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.install_tokenizer | copy2 | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.save_mappings | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.save_mappings | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/egress.py | guarded_fetch_requests | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/fd_protection.py | protect_file_descriptors | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/file_handlers.py | DataFileHandler._process_csv | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/file_handlers.py | DataFileHandler._process_json | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/file_handlers.py | DataFileHandler._process_yaml | dump | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/file_handlers.py | DataFileHandler._process_yaml | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/instance_lock.py | acquire_profile_instance_lock | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/instance_lock.py | acquire_profile_instance_lock | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/log_widget_manager.py | LogWidgetManager.update_log | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/note_importers.py | CSVImporter.parse_file | open | 1 | unsupported | files |
+| tldw_chatbook/Utils/note_importers.py | JSONImporter.parse_file | open | 1 | unsupported | files |
+| tldw_chatbook/Utils/note_importers.py | YAMLImporter.parse_file | open | 1 | unsupported | files |
 | tldw_chatbook/Utils/paths.py | get_project_databases_dir | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/private_paths.py | _follow_trusted_symlink | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/private_paths.py | _open_directory_component | open | 1 | generic_boundary | generic |
@@ -1001,17 +1087,26 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Video_Generation/video_store.py | VideoStore._root_lease | mkdir | 1 | process_artifact | process |
 | tldw_chatbook/Video_Generation/video_store.py | VideoStore._root_lease | open | 1 | process_artifact | process |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | create_filtered_sitemap | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | load_bookmarks | open | 2 | unsupported | miscellaneous |
+| tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | load_hashes | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | recursive_scrape | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | recursive_scrape.save_progress | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | recursive_scrape.save_progress | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | save_hashes | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | save_hashes | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | scrape_and_convert_with_filter | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | scrape_and_convert_with_filter | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | _private_cookie_clone | open | 1 | external_input | external |
+| tldw_chatbook/Web_Scraping/Article_Scraper/importers.py | _load_from_chromium_json | open | 1 | unsupported | files |
+| tldw_chatbook/Web_Scraping/Article_Scraper/importers.py | _load_from_firefox_html | open | 1 | unsupported | files |
+| tldw_chatbook/Web_Scraping/Confluence/confluence_main.py | scrape_confluence_with_config | open | 1 | unsupported | files |
+| tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | _private_cookie_clone | open | 2 | external_input | external |
 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | _private_cookie_clone | secure_private_directory | 1 | external_input | external |
 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | get_chrome_cookies | connect_private_sqlite | 1 | external_input | external |
+| tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | get_chrome_cookies | open | 1 | unsupported | external |
 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | get_edge_cookies | connect_private_sqlite | 1 | external_input | external |
+| tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | get_edge_cookies | open | 1 | unsupported | external |
 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | get_firefox_cookies | connect_private_sqlite | 1 | external_input | external |
+| tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | get_safari_cookies | open | 1 | unsupported | external |
 | tldw_chatbook/Widgets/Chat_Widgets/chat_message_enhanced.py | ChatMessageEnhanced._render_pixelated | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Chat_Widgets/chat_message_enhanced.py | ChatMessageEnhanced._render_regular | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_context_modal.py | ConsoleContextModal._save_json | mkdir | 1 | unsupported | miscellaneous |
@@ -1021,6 +1116,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleTranscript._append_paint_log | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage.__init__ | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._create_backup | copy2 | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._read_data | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | SQLiteStorage._connect | connect_private_sqlite | 2 | unsupported | miscellaneous |
@@ -1034,12 +1130,15 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/audio_troubleshooting_dialog.py | AudioTroubleshootingDialog.on_select_changed | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/chunk_preview_modal.py | ChunkPreviewModal.export_preview | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/chunk_preview_modal.py | ChunkPreviewModal.export_preview | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Widgets/emoji_picker.py | load_recent_emojis | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/file_extraction_dialog.py | FileExtractionDialog._save_files | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/project_skills_import_modal.py | _read_loose_skill_file_sync | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.__init__ | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor._load_user_themes | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.load_user_theme | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_export_theme | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_export_theme | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_export_theme | open | 1 | unsupported | miscellaneous |
@@ -1056,7 +1155,10 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/app.py | TldwCli._display_buffered_logs | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app.py | TldwCli._ensure_tts_profile_repository.open_repository | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app.py | TldwCli._setup_buffered_logging.PersistentLogHandler.emit | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/app.py | _generated_css_is_stale | open | 2 | unsupported | miscellaneous |
+| tldw_chatbook/app.py | _generated_css_is_stale._sha256 | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app.py | _ingest_pool_real_stderr | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/app.py | _load_css_build_manifest | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app.py | _save_css_build_manifest | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app.py | main_cli_runner | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/config.py | _config_interprocess_lock | create_private_text | 1 | unsupported | config |
@@ -1075,6 +1177,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/config.py | load_openai_mappings | open | 1 | unsupported | config |
 | tldw_chatbook/config.py | load_settings | mkdir | 1 | unsupported | config |
 | tldw_chatbook/config.py | read_cli_config_backup_serialized | open_private_binary | 1 | unsupported | config |
+| tldw_chatbook/css/build_css.py | _file_sha256 | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/css/build_css.py | build_css | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/css/build_css.py | build_css | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/css/build_css.py | build_screen_css | write_text | 2 | unsupported | miscellaneous |
@@ -1086,6 +1189,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/runtime_policy/server_credentials.py | KeyringServerCredentialStore.set_scoped_secret | set_password | 1 | unsupported | runtime |
 | tldw_chatbook/runtime_policy/source_state.py | RuntimeSourceStateStore.load | open_private_binary | 1 | unsupported | runtime |
 | tldw_chatbook/runtime_policy/source_state.py | RuntimeSourceStateStore.save | atomic_private_write_text | 1 | unsupported | runtime |
+| tldw_chatbook/tldw_api/utils.py | prepare_files_for_httpx | open | 1 | unsupported | server |
 
 ## Targeted evidence
 
