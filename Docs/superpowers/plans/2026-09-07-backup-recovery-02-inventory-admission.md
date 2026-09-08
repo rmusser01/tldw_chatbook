@@ -682,7 +682,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-9"></a>
 ## Task 9: Add recovery inventory for configuration durable files and optional content
 
-**Backlog:** [TASK-31992](../../../backlog/tasks/task-31992%20-%20Add-recovery-inventory-for-configuration-durable-files-and-optional-content.md) — To Do.
+**Backlog:** [TASK-31992](../../../backlog/tasks/task-31992%20-%20Add-recovery-inventory-for-configuration-durable-files-and-optional-content.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -707,7 +707,7 @@ def config_adapter() -> OwnerAdapter: ...
 # TTS/Persona/Skills/Model_Artifacts recovery.py each exports recovery_adapters().
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_file_inventory.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_file_inventory.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -719,19 +719,19 @@ def test_empty_directory_is_an_inventory_item(tmp_path):
     assert any(item.path == empty and item.status == "included_directory" for item in items)
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_file_inventory.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_file_inventory.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Declare config/current history, templates, internal prompts, skill/local definitions, persona artwork, voice references and TTS profile store, durable generated/saved assets, and remaining private-file census owners. Keep diagnostic files, disposable caches, backup outputs, journals, and rollback directories explicitly classified.
+- [x] **Step 3:** Declare config/current history, templates, internal prompts, skill/local definitions, persona artwork, voice references and TTS profile store, durable generated/saved assets, and remaining private-file census owners. Keep diagnostic files, disposable caches, backup outputs, journals, and rollback directories explicitly classified.
 
-- [ ] **Step 4:** Represent regular files and empty directories with stable logical IDs and explicit parent relationships; detect file/directory collisions, aliases, links, nested mounts, unsupported metadata, and unknown durable entries. Use checked path helpers; no recursive symlink following.
+- [x] **Step 4:** Represent regular files and empty directories with stable logical IDs and explicit parent relationships; detect file/directory collisions, aliases, links, nested mounts, unsupported metadata, and unknown durable entries. Use checked path helpers; no recursive symlink following.
 
-- [ ] **Step 5:** Model external roots, model payloads, diagnostics, and current temporary media as separate opt-in selections. A configured app database outside the default directory remains baseline. Qualified model adapters may resolve only selected dependencies inside an identified store; do not follow generic links.
+- [x] **Step 5:** Model external roots, model payloads, diagnostics, and current temporary media as separate opt-in selections. A configured app database outside the default directory remains baseline. Qualified model adapters may resolve only selected dependencies inside an identified store; do not follow generic links.
 
-- [ ] **Step 6:** Config adapters expose known managed secret locations for the credential task and pure relocation rules. They do not sanitize arbitrary user prose or decrypt unknown secret blobs opportunistically.
+- [x] **Step 6:** Config adapters expose known managed secret locations for the credential task and pure relocation rules. They do not sanitize arbitrary user prose or decrypt unknown secret blobs opportunistically.
 
-- [ ] **Step 7:** Test nested empty trees, private permissions, custom assets, selected model dependency links, excluded output roots, and unavailable external roots. Reconcile every remaining file census row; unresolved rows must keep Complete unavailable.
+- [x] **Step 7:** Test nested empty trees, private permissions, custom assets, selected model dependency links, excluded output roots, and unavailable external roots. Reconcile every remaining file census row; unresolved rows must keep Complete unavailable.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -745,7 +745,7 @@ elif stat.S_ISDIR(entry_mode):
 # Persist even empty directories; checked owner paths still govern descent.
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -753,11 +753,11 @@ python -m pytest Tests/Backup_Recovery/test_file_inventory.py -q
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): add recovery inventory for configuration durable files and optional content`. Recheck task-ID collisions
   before merge and preserve unrelated work.
