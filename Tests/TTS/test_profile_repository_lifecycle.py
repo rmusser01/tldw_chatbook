@@ -372,18 +372,24 @@ async def test_repository_open_recovers_before_access_and_publishes_exact_bounda
 
     def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
         events.append("sqlite")
-        return real_connect(*args, **kwargs)
+        connection = real_connect(*args, **kwargs)
+        assert not connection.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
+        return connection
 
     def tracked_open(*args: object, **kwargs: object) -> sqlite3.Connection:
         events.append("open")
-        return real_open(*args, **kwargs)
+        connection = real_open(*args, **kwargs)
+        assert not connection.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
+        return connection
 
     def tracked_schema_connect(
         *args: object,
         **kwargs: object,
     ) -> sqlite3.Connection:
         events.append("schema_sqlite")
-        return real_schema_connect(*args, **kwargs)
+        connection = real_schema_connect(*args, **kwargs)
+        assert not connection.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
+        return connection
 
     monkeypatch.setattr(
         module, "recover_profile_migration_publication", tracked_recover
@@ -396,7 +402,34 @@ async def test_repository_open_recovers_before_access_and_publishes_exact_bounda
 
     repository = module.TTSProfileRepository(database_path)
     await repository.open()
+    assert (
+        await repository._submit_operation(
+            lambda c: c.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
+        )
+    ).value is True
+    await repository._submit_operation(
+        lambda c: c.execute(
+            "UPDATE tts_generation_profiles SET display_name='Committed', normalized_name='committed'"
+        )
+    )
     await repository.close()
+    assert Path(f"{database_path}-wal").stat().st_size > 0
+    for _ in range(2):
+        reopened = module.TTSProfileRepository(database_path)
+        await reopened.open()
+        assert (
+            await reopened._submit_operation(
+                lambda c: c.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
+            )
+        ).value is True
+        assert (
+            await reopened._submit_operation(
+                lambda c: c.execute(
+                    "SELECT display_name FROM tts_generation_profiles"
+                ).fetchone()[0]
+            )
+        ).value == "Committed"
+        await reopened.close()
 
     assert "recover" in events
     with sqlite3.connect(database_path) as active:
@@ -872,9 +905,10 @@ async def test_restore_deadline_during_candidate_copy_preserves_active_without_r
     await _create_profile_store(candidate_path, "Candidate")
     real_migrate = module.migrate_profile_store_to_candidate
     expired = False
+    clock_origin = module._monotonic()
 
     def clock() -> float:
-        return 10.0 if expired else 0.0
+        return clock_origin + (10.0 if expired else 0.0)
 
     def expire_during_copy(*args: object, **kwargs: object) -> object:
         nonlocal expired
@@ -896,6 +930,9 @@ async def test_restore_deadline_during_candidate_copy_preserves_active_without_r
         assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
         assert not tuple(tmp_path.glob("*.migration-publication.json"))
     finally:
+        # Restore's injected deadline is exhausted; cleanup gets its independent
+        # real-clock budget rather than a permanently advanced test clock.
+        expired = False
         await repository.close()
 
 
@@ -1318,8 +1355,21 @@ async def test_initialized_store_reopens_with_exact_live_authority(
     try:
         authority = cast(Any, repository._connection)
         assert authority.selected == database_path.resolve(strict=False)
-        assert authority.file_fd >= 0
-        assert set(authority.sidecar_fds) == {"-wal", "-shm"}
+
+        def inspect_remote_authority(connection: Any) -> None:
+            from tldw_chatbook.DB.private_sqlite_process import OperationDeadline
+
+            assert not hasattr(connection, "file_fd")
+            assert not hasattr(connection, "sidecar_fds")
+            exported = connection.export_restore_authority(
+                deadline=OperationDeadline(None)
+            )
+            assert (
+                exported.main.ino > 0 and exported.wal.ino > 0 and exported.shm.ino > 0
+            )
+            assert connection.verified_parent_fd(deadline=OperationDeadline(None)) >= 0
+
+        await repository._submit_operation(inspect_remote_authority)
         assert repository._lease is not None
         assert repository._lease.mode is ProfileStoreLockMode.SHARED
     finally:
@@ -1412,7 +1462,7 @@ async def test_normal_exact_open_never_serializes_or_selects_reference_blob(
     finally:
         connection.close()
 
-    real_connect = module._profile_schema.connect_private_sqlite
+    real_connect = module._profile_schema._connect_registered_sqlite
 
     class NoSerializeOrBlobProxy:
         def __init__(self, owned: sqlite3.Connection) -> None:
@@ -1448,7 +1498,7 @@ async def test_normal_exact_open_never_serializes_or_selects_reference_blob(
         return opened
 
     monkeypatch.setattr(
-        module._profile_schema, "connect_private_sqlite", proxied_connect
+        module._profile_schema, "_connect_registered_sqlite", proxied_connect
     )
     repository = module.TTSProfileRepository(database_path)
     await repository.open()
@@ -1568,7 +1618,7 @@ async def test_current_shared_proof_rejects_active_substitution_during_exact_ope
         await _create_profile_store(replacement, "Foreign current")
     original_before = database_path.read_bytes()
     replacement_before = replacement.read_bytes()
-    real_connect = module._profile_schema.connect_private_sqlite
+    real_connect = module._profile_schema._connect_registered_sqlite
     swapped = False
 
     def swap_before_path_open(
@@ -1585,7 +1635,7 @@ async def test_current_shared_proof_rejects_active_substitution_during_exact_ope
 
     monkeypatch.setattr(
         module._profile_schema,
-        "connect_private_sqlite",
+        "_connect_registered_sqlite",
         swap_before_path_open,
     )
     repository = module.TTSProfileRepository(database_path)
@@ -1626,7 +1676,7 @@ async def test_current_shared_proof_rejects_publication_artifact_inserted_during
         f".profiles.sqlite3.migration-publication.json{journal_suffix}"
     )
     evidence = b"foreign publication evidence"
-    real_connect = module._profile_schema.connect_private_sqlite
+    real_connect = module._profile_schema._connect_registered_sqlite
     inserted_once = False
 
     def insert_before_path_open(
@@ -1643,7 +1693,7 @@ async def test_current_shared_proof_rejects_publication_artifact_inserted_during
 
     monkeypatch.setattr(
         module._profile_schema,
-        "connect_private_sqlite",
+        "_connect_registered_sqlite",
         insert_before_path_open,
     )
     repository = module.TTSProfileRepository(database_path)
@@ -1656,6 +1706,10 @@ async def test_current_shared_proof_rejects_publication_artifact_inserted_during
         assert database_path.read_bytes() == active_before
         assert inserted.read_bytes() == evidence
     finally:
+        with pytest.raises(ProfileRepositoryError):
+            await repository.close()
+        assert inserted.read_bytes() == evidence
+        inserted.rename(tmp_path / f"preserved-publication{journal_suffix}")
         await repository.close()
 
 
@@ -1672,7 +1726,7 @@ async def test_current_shared_proof_rechecks_publication_namespace_at_late_gaps(
     evidence = b"late foreign publication evidence"
     await _create_profile_store(database_path, "Current")
     active_before = database_path.read_bytes()
-    real_connect = module._profile_schema.connect_private_sqlite
+    real_connect = module._profile_schema._connect_registered_sqlite
     real_revalidate = module.revalidate_exact_current_profile_store
     inserted = False
 
@@ -1723,7 +1777,7 @@ async def test_current_shared_proof_rechecks_publication_namespace_at_late_gaps(
 
     monkeypatch.setattr(
         module._profile_schema,
-        "connect_private_sqlite",
+        "_connect_registered_sqlite",
         proxied_connect,
     )
     monkeypatch.setattr(
@@ -1739,6 +1793,10 @@ async def test_current_shared_proof_rechecks_publication_namespace_at_late_gaps(
         assert database_path.read_bytes() == active_before
         assert journal.read_bytes() == evidence
     finally:
+        with pytest.raises(ProfileRepositoryError):
+            await repository.close()
+        assert journal.read_bytes() == evidence
+        journal.rename(tmp_path / "preserved-late-publication")
         await repository.close()
 
 
@@ -1750,6 +1808,10 @@ async def test_current_shared_proof_refuses_orphan_sqlite_sidecar_without_migrat
 ) -> None:
     database_path = tmp_path / "profiles.sqlite3"
     await _create_profile_store(database_path, "Current")
+    # Normal live close deliberately retains checkpointed WAL/SHM. This fixture
+    # needs an actual orphan, with no live owner and no opposite sidecar.
+    for suffix in ("-wal", "-shm"):
+        Path(f"{database_path}{suffix}").unlink(missing_ok=True)
     active_before = database_path.read_bytes()
     orphan = Path(f"{database_path}{orphan_suffix}")
     orphan.write_bytes(b"foreign orphan sidecar")
@@ -1784,7 +1846,7 @@ async def test_current_shared_proof_retains_exact_sqlite_sidecar_identity(
     )
     sidecar = Path(f"{database_path}{sidecar_suffix}")
     retained_sidecar = tmp_path / f"retained{sidecar_suffix}"
-    real_connect = module._profile_schema.connect_private_sqlite
+    real_connect = module._profile_schema._connect_registered_sqlite
     substituted = False
 
     def substitute_sidecar_after_path_open(
@@ -1805,7 +1867,7 @@ async def test_current_shared_proof_retains_exact_sqlite_sidecar_identity(
 
     monkeypatch.setattr(
         module._profile_schema,
-        "connect_private_sqlite",
+        "_connect_registered_sqlite",
         substitute_sidecar_after_path_open,
     )
     second = module.TTSProfileRepository(database_path)
@@ -1815,10 +1877,12 @@ async def test_current_shared_proof_retains_exact_sqlite_sidecar_identity(
         assert substituted is True
         assert second.state is ProfileRepositoryState.UNAVAILABLE
     finally:
-        await second.close()
+        with pytest.raises(ProfileRepositoryError):
+            await second.close()
         foreign = tmp_path / f"quarantined-foreign{sidecar_suffix}"
         os.replace(sidecar, foreign)
         os.replace(retained_sidecar, sidecar)
+        await second.close()
         await first.close()
 
 
@@ -1839,7 +1903,7 @@ async def test_current_shared_proof_rejects_main_swap_with_live_wal_pair(
     )
     await _create_profile_store(replacement, "Foreign current")
     replacement_before = replacement.read_bytes()
-    real_connect = module._profile_schema.connect_private_sqlite
+    real_connect = module._profile_schema._connect_registered_sqlite
     swapped = False
 
     def swap_main_after_sidecar_pin(
@@ -1856,7 +1920,7 @@ async def test_current_shared_proof_rejects_main_swap_with_live_wal_pair(
 
     monkeypatch.setattr(
         module._profile_schema,
-        "connect_private_sqlite",
+        "_connect_registered_sqlite",
         swap_main_after_sidecar_pin,
     )
     second = module.TTSProfileRepository(database_path)
@@ -4039,21 +4103,15 @@ async def test_close_failure_retains_real_shared_lease_and_connection_fail_close
         assert connection.closed is False
         assert leases[0].acquired is True
         assert not _phase_threads(events, "lease-1.release")
-        assert executors[0].shutdown_calls == 1
+        assert executors[0].shutdown_calls == 0
         await _assert_exclusive_lease_blocked(database_path)
-        assert await repository.close() == ProfileStoreResult(
-            generation=2,
-            value=None,
-        )
-        assert executors[0].shutdown_calls == 1
+        with pytest.raises(ProfileRepositoryError):
+            await repository.close()
+        assert executors[0].shutdown_calls == 0
     finally:
         connection.close_error = None
-        if not connection.closed:
-            connection.close()
-        if leases and leases[0].acquired:
-            await asyncio.to_thread(leases[0].release)
-        repository._connection = None
-        repository._lease = None
+        await repository.close()
+    assert executors[0].shutdown_calls == 1
 
     assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
 
@@ -4089,17 +4147,13 @@ async def test_close_preserves_connection_cleanup_control_and_retains_lease(
         assert connection.closed is False
         assert leases[0].acquired is True
         assert not _phase_threads(events, "lease.release")
-        assert executors[0].shutdown_calls == 1
+        assert executors[0].shutdown_calls == 0
         assert repository.state is ProfileRepositoryState.CLOSED
         assert repository.terminal is True
     finally:
         connection.close_error = None
-        if not connection.closed:
-            connection.close()
-        if leases[0].acquired:
-            leases[0].release()
-        repository._connection = None
-        repository._lease = None
+        await repository.close()
+    assert executors[0].shutdown_calls == 1
 
 
 @pytest.mark.asyncio
@@ -4391,6 +4445,15 @@ def test_restore_checkpoint_caps_busy_wait_to_remaining_deadline(
     observed_checkpoint_timeout: int | None = None
     timeout_updates: list[int] = []
     progress_handlers: list[tuple[object, int]] = []
+    path = tmp_path / "profiles.sqlite3"
+    module._profile_schema.open_profile_store(path).close()
+    exact = module._profile_schema.open_exact_current_profile_store(path)
+    try:
+        captured_authority = exact.export_restore_authority(
+            deadline=module.OperationDeadline(None)
+        )
+    finally:
+        exact.close()
     events: list[tuple[str, int]] = []
     lease = _RecordingLease(events)
     lease.acquired = True
@@ -4404,6 +4467,9 @@ def test_restore_checkpoint_caps_busy_wait_to_remaining_deadline(
 
     class Connection:
         busy_timeout = 5_000
+
+        def export_restore_authority(self, *, deadline: object) -> object:
+            return captured_authority
 
         def execute(self, statement: str) -> Cursor:
             nonlocal now, observed_checkpoint_timeout
@@ -5899,6 +5965,7 @@ async def test_restore_hostile_monotonic_fails_before_lifecycle_mutation(
     before = {
         path.name: path.read_bytes() for path in tmp_path.iterdir() if path.is_file()
     }
+    real_clock = module._monotonic
     monkeypatch.setattr(module, "_monotonic", clock)
 
     try:
@@ -5914,6 +5981,7 @@ async def test_restore_hostile_monotonic_fails_before_lifecycle_mutation(
             if path.is_file()
         } == before
     finally:
+        monkeypatch.setattr(module, "_monotonic", real_clock)
         await repository.close()
 
 
@@ -6406,7 +6474,9 @@ async def test_restore_expired_immediately_after_exclusive_acquire_does_not_stag
         _draft("Original"),
         UUID("00000000-0000-4000-8000-000000000099"),
     )
-    now = 0.0
+    real_clock = module._monotonic
+    clock_origin = real_clock()
+    now = clock_origin
     candidate_copy_called = False
 
     class DelayedExclusiveLease(real_lease_type):
@@ -6414,7 +6484,7 @@ async def test_restore_expired_immediately_after_exclusive_acquire_does_not_stag
             nonlocal now
             result = super().acquire()
             if self.mode is ProfileStoreLockMode.EXCLUSIVE:
-                now = 11.0
+                now = clock_origin + 11.0
             return result
 
     def unexpected_candidate_copy(*_args: object, **_kwargs: object) -> object:
@@ -6443,11 +6513,12 @@ async def test_restore_expired_immediately_after_exclusive_acquire_does_not_stag
         assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
         page = await repository.list_profiles()
         assert [profile.display_name for profile in page.value.profiles] == ["Original"]
-        now = 0.0
+        monkeypatch.setattr(module, "_monotonic", real_clock)
         await repository.backup_to(followup_backup)
         validate_profile_candidate(followup_backup)
         await _assert_exclusive_lease_blocked(database_path)
     finally:
+        monkeypatch.setattr(module, "_monotonic", real_clock)
         await repository.close()
 
 
@@ -6487,6 +6558,7 @@ async def test_restore_post_admission_timing_failure_settles_original_store_open
         await _wait_thread_event(operation_started)
 
     timing_calls = 0
+    real_clock = module._monotonic
 
     def sequenced_monotonic() -> float:
         nonlocal timing_calls
@@ -6514,6 +6586,7 @@ async def test_restore_post_admission_timing_failure_settles_original_store_open
         assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
         assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
     finally:
+        monkeypatch.setattr(module, "_monotonic", real_clock)
         release_operation.set()
         if admission is not None:
             with pytest.raises(ProfileRepositoryError) as stale:

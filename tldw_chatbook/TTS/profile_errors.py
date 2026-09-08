@@ -60,6 +60,7 @@ _REPOSITORY_CODES = frozenset(
         "reference_unavailable",
         "restore_failed",
         "restoring",
+        "restart_required",
         "runtime_unsupported",
         "schema_corrupt",
         "schema_partial",
@@ -116,7 +117,9 @@ class ProfileRepositoryError(_ProfileError, RuntimeError):
             else "operation_failed"
         )
         message = (
-            "TTS profile repository unavailable: SQLite runtime lacks required "
+            "TTS profile repository unavailable: restart is required."
+            if safe_code == "restart_required"
+            else "TTS profile repository unavailable: SQLite runtime lacks required "
             "close-policy support."
             if safe_code == "runtime_unsupported"
             else f"TTS profile repository failed: {safe_code}"

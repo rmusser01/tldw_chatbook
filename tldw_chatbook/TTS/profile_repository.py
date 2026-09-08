@@ -7,8 +7,9 @@ import math
 import os
 import sqlite3
 import stat
-import threading
+import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -20,6 +21,7 @@ from unicodedata import category as _unicode_category
 from unicodedata import normalize as _unicode_normalize
 from uuid import UUID, uuid4
 
+import tldw_chatbook.TTS.profile_schema as _profile_schema
 from tldw_chatbook.DB.private_sqlite import (
     ProfileMigrationBoundaryDestination,
     backup_connection_to_private,
@@ -30,7 +32,11 @@ from tldw_chatbook.DB.private_sqlite import (
     migrate_profile_store_to_candidate,
     open_canonical_profile_migration_destination,
 )
-import tldw_chatbook.TTS.profile_schema as _profile_schema
+from tldw_chatbook.DB.private_sqlite_process import (
+    HELPER_ADMISSION,
+    OperationDeadline,
+    TTSAdmissionLatchedError,
+)
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_candidate import (
     ProfileMigrationBoundary,
@@ -45,8 +51,10 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     ProfileMigrationPublicationStage,
 )
 from tldw_chatbook.TTS.profile_migration_namespace import (
+    HelperNamespaceIdentity,
     MigrationTombstoneKey,
     ParentAuthority,
+    _same_parent_with_link_delta,
     admit_zero_reusable_tombstone,
     prepare_reusable_tombstone,
     remove_exact,
@@ -77,15 +85,17 @@ from tldw_chatbook.TTS.profile_reference_types import (
     MAX_REFERENCE_COUNT,
     MAX_REFERENCE_TOTAL_BYTES,
     CanonicalTTSCloneReference,
-    TTSCloneReference,
     TTSCloneRecipeRequirement,
+    TTSCloneReference,
 )
 from tldw_chatbook.TTS.profile_schema import (
     CURRENT_PROFILE_SCHEMA_VERSION,
-    ExactProfileStoreCleanupError,
     ExactProfileStoreAuthorityError,
+    ExactProfileStoreCleanupError,
     ExactProfileStoreNotCurrentError,
+    ExactProfileStoreProofLostError,
     PostInitProfileStoreAuthority,
+    _ExactCurrentProfileConnection,
     capture_post_init_profile_store_authority,
     decode_assigned_snapshot,
     decode_assignment,
@@ -95,17 +105,17 @@ from tldw_chatbook.TTS.profile_schema import (
     encode_profile,
     encode_utc_datetime,
     encode_uuid,
-    open_profile_store,
     open_exact_current_profile_store,
+    open_profile_store,
     revalidate_exact_current_profile_store,
     validate_profile_candidate,
     validate_profile_store_rows,
 )
+from tldw_chatbook.TTS.profile_sqlite_policy import require_native_close_policy_support
 from tldw_chatbook.TTS.profile_store_lock import (
     ProfileStoreLease,
     ProfileStoreLockMode,
 )
-from tldw_chatbook.TTS.profile_sqlite_policy import require_native_close_policy_support
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -120,9 +130,8 @@ from tldw_chatbook.TTS.profile_types import (
     TTSProfileDraft,
     TTSProfilePage,
 )
-from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils import private_paths
-
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
@@ -1106,6 +1115,8 @@ def _fresh_repository_error(
 ) -> ProfileRepositoryError:
     """Recreate one structured error without its traceback, chain, or notes."""
 
+    if isinstance(error, ExactProfileStoreProofLostError):
+        return ProfileRepositoryError("restart_required")
     if isinstance(error, ExactProfileStoreAuthorityError):
         return ExactProfileStoreAuthorityError()
 
@@ -1127,6 +1138,8 @@ def _raise_operation_error(error: BaseException) -> None:
 
     if not isinstance(error, Exception):
         raise error
+    if isinstance(error, TTSAdmissionLatchedError):
+        raise _repository_error("restart_required")
     if isinstance(error, ProfileRepositoryError):
         raise _fresh_repository_error(error)
     raise _repository_error("operation_failed")
@@ -1145,6 +1158,8 @@ def _raise_with_cleanup_precedence(
             raise cleanup_error
     if any(cleanup_error is not None for cleanup_error in cleanup_errors):
         raise _repository_error("operation_failed")
+    if isinstance(primary_error, TTSAdmissionLatchedError):
+        raise _repository_error("restart_required")
     if isinstance(primary_error, ProfileRepositoryError):
         raise _fresh_repository_error(primary_error)
     if primary_error is not None:
@@ -1216,7 +1231,8 @@ class TTSProfileRepository:
         self._connection: sqlite3.Connection | None = None
         self._lease: ProfileStoreLease | None = None
         self._exact_authority_quarantined = False
-        self._restore_sidecar_identities: dict[str, os.stat_result] = {}
+        self._helper_restart_required = False
+        self._restore_sidecar_identities: dict[str, HelperNamespaceIdentity] = {}
         self._restore_parent_authority: ParentAuthority | None = None
         self._reusable_tombstones: dict[MigrationTombstoneKey, os.stat_result] = {}
         self._active_database_path: Path | None = None
@@ -1335,6 +1351,8 @@ class TTSProfileRepository:
 
         async with lifecycle_lock:
             with self._state_lock:
+                if self._helper_restart_required:
+                    raise _repository_error("restart_required")
                 if self._terminal:
                     raise _repository_error("terminal")
                 if self._state is ProfileRepositoryState.OPEN:
@@ -1342,6 +1360,8 @@ class TTSProfileRepository:
                         generation=self._generation,
                         value=None,
                     )
+                if HELPER_ADMISSION.tts_proof_lost:
+                    raise _repository_error("restart_required")
                 state_error = self._open_state_error_locked()
                 if state_error is not None:
                     raise _repository_error(state_error)
@@ -1478,6 +1498,11 @@ class TTSProfileRepository:
                 "operation_failed",
             )
             revalidate_exact_current_profile_store(connection, active_path)
+        except ExactProfileStoreProofLostError as error:
+            self._connection = error.connection
+            self._lease = lease
+            self._active_database_path = active_path
+            self._worker_seal_exact_authority(error)
         except BaseException as error:
             body_error = error
 
@@ -1557,8 +1582,16 @@ class TTSProfileRepository:
             except ExactProfileStoreNotCurrentError:
                 self._worker_release_unproven_shared(lease, active_path)
                 return None
+            except ExactProfileStoreProofLostError as error:
+                self._connection = cast(sqlite3.Connection, error.connection)
+                self._lease = lease
+                self._active_database_path = active_path
+                self._worker_seal_exact_authority(error)
             except ExactProfileStoreCleanupError as error:
                 connection = cast(sqlite3.Connection, error.connection)
+                self._worker_retain_failed_connection(connection, active_path)
+                self._lease = lease
+                self._exact_authority_quarantined = True
                 raise
             return lease, connection
         except BaseException as error:
@@ -1955,6 +1988,20 @@ class TTSProfileRepository:
                         file_identity=prepared,
                         tombstone_key=destination_key,
                     )
+                    parent_fd, _leaf = private_paths._open_verified_parent(
+                        active_path, missing_leaf_allowed=False
+                    )
+                    try:
+                        current_parent = os.fstat(parent_fd)
+                        if not _same_parent_with_link_delta(
+                            current_parent,
+                            parent.identity,
+                            link_delta=-1 if sys.platform == "darwin" else 0,
+                        ):
+                            raise _repository_error("migration_failed")
+                        parent = ParentAuthority(current_parent)
+                    finally:
+                        os.close(parent_fd)
                 else:
                     known[destination_key] = prepared
             except Exception:
@@ -3147,15 +3194,17 @@ class TTSProfileRepository:
         if connection is None or lease is None:
             raise _repository_error("invalid_state")
         self._worker_revalidate_exact_authority(connection)
-        exact_connection = cast(object, connection)
-        sidecar_fds = getattr(exact_connection, "sidecar_fds", {})
-        parent_fd = getattr(exact_connection, "parent_fd", -1)
-        if isinstance(sidecar_fds, dict) and type(parent_fd) is int and parent_fd >= 0:
-            self._restore_sidecar_identities = {
-                suffix: os.fstat(descriptor)
-                for suffix, descriptor in sidecar_fds.items()
-            }
-            self._restore_parent_authority = ParentAuthority(os.fstat(parent_fd))
+        exact_connection = cast(_ExactCurrentProfileConnection, connection)
+        authority = exact_connection.export_restore_authority(
+            deadline=OperationDeadline(deadline)
+        )
+        self._restore_sidecar_identities = {
+            "-wal": HelperNamespaceIdentity(authority.wal),
+            "-shm": HelperNamespaceIdentity(authority.shm),
+        }
+        self._restore_parent_authority = ParentAuthority(
+            HelperNamespaceIdentity(authority.parent)
+        )
         _require_restore_time(deadline)
         timeout_row = connection.execute("PRAGMA busy_timeout").fetchone()
         if (
@@ -4988,6 +5037,8 @@ class TTSProfileRepository:
         return _OperationAdmission(generation=generation, future=future)
 
     def _normal_state_error_locked(self) -> str | None:
+        if self._helper_restart_required:
+            return "restart_required"
         if self._terminal:
             return "terminal"
         if self._state is ProfileRepositoryState.CLOSED:
@@ -5043,7 +5094,18 @@ class TTSProfileRepository:
         selected_path = (
             self._active_database_path if active_path is None else active_path
         )
-        revalidate_exact_current_profile_store(connection, selected_path)
+        try:
+            revalidate_exact_current_profile_store(connection, selected_path)
+        except ExactProfileStoreProofLostError:
+            with self._state_lock:
+                self._exact_authority_quarantined = True
+                self._helper_restart_required = True
+                if not self._terminal:
+                    self._state = ProfileRepositoryState.UNAVAILABLE
+            HELPER_ADMISSION.latch_tts_proof_loss()
+            # Preserve this internal subtype through transaction unwinding so
+            # its existing authority fence forbids rollback after proof loss.
+            raise
 
     def _worker_seal_exact_authority(
         self,
@@ -5055,6 +5117,11 @@ class TTSProfileRepository:
             if not self._terminal:
                 self._state = ProfileRepositoryState.UNAVAILABLE
             self._exact_authority_quarantined = True
+            if isinstance(error, ExactProfileStoreProofLostError):
+                self._helper_restart_required = True
+                HELPER_ADMISSION.latch_tts_proof_loss()
+        if self._helper_restart_required:
+            raise _repository_error("restart_required") from None
         _raise_with_cleanup_precedence(error)
 
     def _worker_state_error_locked(self, generation: int) -> str | None:
@@ -5114,8 +5181,13 @@ class TTSProfileRepository:
         lifecycle_lock = self._bind_or_check_loop()
         async with lifecycle_lock:
             with self._state_lock:
+                if self._helper_restart_required:
+                    raise _repository_error("restart_required")
                 if self._terminal:
-                    if not self._exact_authority_quarantined:
+                    if (
+                        not self._exact_authority_quarantined
+                        and self._connection is None
+                    ):
                         return ProfileStoreResult(
                             generation=self._generation,
                             value=None,
@@ -5172,7 +5244,9 @@ class TTSProfileRepository:
 
         with self._state_lock:
             authority_quarantined = self._exact_authority_quarantined
-        if cleanup_error is not None and authority_quarantined:
+        if cleanup_error is not None and (
+            authority_quarantined or self._connection is not None
+        ):
             _raise_cleanup_errors(cleanup_error)
 
         shutdown_error: BaseException | None = None
@@ -5196,6 +5270,8 @@ class TTSProfileRepository:
     def _worker_cleanup(self) -> None:
         """Close SQLite before its lease, only under revalidated authority."""
 
+        if self._helper_restart_required:
+            raise _repository_error("restart_required")
         self._clear_reference_damage_markers()
         connection = self._connection
         lease = self._lease
@@ -5203,7 +5279,10 @@ class TTSProfileRepository:
         residual_error: BaseException | None = None
         lease_error: BaseException | None = None
 
-        if connection is not None:
+        if connection is not None and not (
+            isinstance(connection, _ExactCurrentProfileConnection)
+            and connection._sqlite_closed
+        ):
             try:
                 self._worker_revalidate_exact_authority(connection)
             except ExactProfileStoreAuthorityError:
@@ -5212,26 +5291,67 @@ class TTSProfileRepository:
                 raise
             with self._state_lock:
                 self._exact_authority_quarantined = False
-            parent_fd = getattr(cast(object, connection), "parent_fd", -1)
-            active_path = self._active_database_path
+            deadline = OperationDeadline(time.monotonic() + 5.0)
             if (
-                self._reusable_tombstones
-                and active_path is not None
-                and type(parent_fd) is int
-                and parent_fd >= 0
+                isinstance(connection, _ExactCurrentProfileConnection)
+                and connection.in_transaction
             ):
+                connection.rollback()
+            self._worker_revalidate_exact_authority(connection)
+            active_path = self._active_database_path
+            if self._reusable_tombstones and isinstance(
+                connection, _ExactCurrentProfileConnection
+            ):
+                if active_path is None:
+                    raise _repository_error("operation_failed")
+                parent_fd = connection.verified_parent_fd(deadline=deadline)
                 try:
                     self._worker_settle_reusable_tombstones(active_path, parent_fd)
                 except BaseException:
                     with self._state_lock:
                         self._exact_authority_quarantined = True
                     raise
+            if isinstance(connection, _ExactCurrentProfileConnection):
+                self._worker_revalidate_exact_authority(connection)
+                checkpoint: object = None
+
+                def checkpoint_once() -> None:
+                    nonlocal checkpoint
+                    try:
+                        checkpoint = connection.execute(
+                            "PRAGMA main.wal_checkpoint(PASSIVE)"
+                        ).fetchone()
+                    except sqlite3.Error as error:
+                        if (
+                            getattr(error, "sqlite_errorcode", None)
+                            != sqlite3.SQLITE_BUSY
+                        ):
+                            raise
+                        checkpoint = (1, -1, -1)
+
+                _run_with_restore_progress(
+                    connection, deadline.expires_at, checkpoint_once
+                )
+                if (
+                    not isinstance(checkpoint, (tuple, sqlite3.Row))
+                    or len(checkpoint) != 3
+                    or any(type(value) is not int for value in checkpoint)
+                    or checkpoint[0] not in (0, 1)
+                    or not (
+                        (checkpoint[1] == -1 and checkpoint[2] == -1)
+                        or 0 <= checkpoint[2] <= checkpoint[1]
+                    )
+                ):
+                    raise _repository_error("operation_failed")
+                self._worker_revalidate_exact_authority(connection)
         elif self._exact_authority_quarantined:
             raise _repository_error("operation_failed")
 
         if connection is not None:
             try:
                 connection.close()
+            except ExactProfileStoreProofLostError as error:
+                self._worker_seal_exact_authority(error)
             except BaseException as error:
                 connection_error = error
             if connection_error is None:

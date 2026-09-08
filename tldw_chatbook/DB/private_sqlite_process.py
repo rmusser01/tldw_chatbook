@@ -52,6 +52,14 @@ class HelperTimeoutError(RuntimeError):
         super().__init__("private_sqlite_helper_timeout")
 
 
+class TTSAdmissionLatchedError(HelperUnavailableError):
+    """New retained TTS ownership requires a fresh process after proof loss."""
+
+
+class HelperPreDispatchTimeoutError(HelperTimeoutError):
+    """A control request expired before entering the exchange state machine."""
+
+
 class HelperProtocolError(RuntimeError):
     """The private channel failed its closed protocol."""
 
@@ -105,6 +113,21 @@ class HelperAdmission:
         # Strong ownership survives a failed start/cleanup and caller unwinding.
         self._owners: set[HelperReservation] = set()
         self._local = threading.local()
+        self._tts_proof_lost = False
+
+    def latch_tts_proof_loss(self) -> None:
+        """Refuse new retained admissions, including current capacity waiters."""
+        self._check_process()
+        with self._condition:
+            self._tts_proof_lost = True
+            self._condition.notify_all()
+
+    @property
+    def tts_proof_lost(self) -> bool:
+        """Read the process latch before allocating another repository worker."""
+        self._check_process()
+        with self._condition:
+            return self._tts_proof_lost
 
     def _check_process(self) -> None:
         # Check before touching an inherited lock, which may be held at fork.
@@ -129,6 +152,8 @@ class HelperAdmission:
         budget = deadline.bounded(5.0)
         with self._condition:
             while True:
+                if retained and self._tts_proof_lost:
+                    raise TTSAdmissionLatchedError()
                 wait_seconds = budget.remaining(5.0)
                 if (
                     self._used["transient"] + transient <= 4
@@ -418,11 +443,13 @@ class HelperLease:
             raise HelperProtocolError()
         if self._busy or self._failed or self._reaped_child:
             raise HelperUnavailableError()
-        remaining = deadline.remaining(5.0)
-        # Marking a handoff does not settle the enclosing initialization budget.
-        # Only a retained lease surviving owner exit starts its separate lifetime.
-        if not self._reservation._closed or self not in self._reservation._handoffs:
-            remaining = min(remaining, self._reservation._deadline.remaining(5.0))
+        try:
+            remaining = deadline.remaining(5.0)
+            # Marking a handoff does not settle the initialization budget.
+            if not self._reservation._closed or self not in self._reservation._handoffs:
+                remaining = min(remaining, self._reservation._deadline.remaining(5.0))
+        except HelperTimeoutError:
+            raise HelperPreDispatchTimeoutError() from None
         budget = OperationDeadline(time.monotonic() + remaining)
         return self._exchange(
             encode_frame({"version": 1, "operation": operation}), operation, budget
