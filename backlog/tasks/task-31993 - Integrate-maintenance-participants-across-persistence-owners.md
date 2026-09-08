@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 23:53'
-updated_date: '2026-09-08 17:38'
+updated_date: '2026-09-08 21:57'
 labels:
   - backup-recovery
 dependencies:
@@ -64,6 +64,18 @@ Reason: direct source-lifetime implementation; any approved compound interface d
 ADR required: yes
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: direct implementation of approved persistence lifecycle; preserve ADR074/067/032 and record the bounded controller ruling.
+
+### Phase13 implementation plan — Shared Visual Identity source/native lifetimes
+
+1. Reproduce actual post-rename/core pause RED, then obtain the controller ruling for this concrete source/native bridge before production.
+2. Bind exact configured profile/core/source identities; reserve before candidate, seed, runtime and publication selectors; preserve existing candidate/seed locks and public ordinary behavior.
+3. Preselect finite source/output/cleanup members, retain actual native resources and committed/uncertain outcomes, and integrate concrete reaction-pack save/cleanup caller retirement.
+4. Verify actual pause, identity, dirty draft, fork/stale graph, native uncertainty and ordinary portability with targeted source/domain/UI/native cases only.
+5. Update ADR126 rationale, source inventories and concrete remaining generation/app/headless routes; self-review scoped diff, run focused guards/static checks, commit and dual-report. Keep Task31993 In Progress and all ACs unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of approved maintenance lifetimes under ruling74; ADR067/074 separation and ADR032 package immutability remain.
+
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -624,3 +636,15 @@ review. Reused ADR-126; no new schema/visual feature/archive capability or broad
 manifest refresh. No full suite, external generation, network, real user data,
 startup release, responder or Complete qualification. Task31993 remains In Progress
 with all three ACs unchecked; Shared Visual Identity and whole Task10 review remain.
+
+### Task10 phase13 implementation notes — Shared Visual Identity source/native and UI lifetimes
+
+Implemented actual Shared Visual Identity candidate issuance, selected manual/builtin readers, immutable publication/core activation, exact cleanup, public repository operations, config Samira seed and concrete Personas reaction jobs through the separate visual_identity_participants bridge. Strong native descriptors/streams and existing pending/core lifetimes survive pause and cancellation; close uncertainty and original cleanup/result associations remain retained. Existing candidate/seed locks, ordinary injectable APIs, shared/builtin forks, binding guards and partial card-then-pack seed outcomes remain intact. Canonical UI row restoration is issued only to the original candidate and remains dirty before replacements; maintenance never discards it.
+
+ADR required: yes. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Rulings74–78 record exact source/native authority, path-free canonical restoration, suppression of admission discovery during public atomic replacement/repository guard evaluation and only three authenticated internal repository result-read edges. No generic callback authority, global source mutex, schema change or installed package mutation.
+
+Actual REDs covered file-rename/core pause, runtime read/UI selector admission, canonical restoration, actual duplicate publication, copied candidate/same-path other DB cleanup, public callback/guard borrowing and source-error plus borrower-close error association. Final source/repository iteration: 65 passed and two internal result-read failures, both corrected; exact amended source/guard/native/UI covering selection14passed and callback selection7passed. Earlier ordinary domain141passed with a Windows-only skip and one subsequently corrected error-category failure; cleanup/fork10passed, seed/canonical8passed, shared helper6passed and selected UI27passed. Counts overlap. Exact commands, intermediate fixture corrections and full logs are in .superpowers/sdd/2026-09-07-complete-local-backup-restore/task-10-phase13-report.md and its identical external copy.
+
+Changed-source census is exact. The combined census guard has24passed and3inherited failures: two unchanged TTS/recovery.py profile literals and existing13diagnostic-owner/config-sink drift. Only the changed visual source diagnostic digest was refreshed after identical diagnostic-call AST proof; unrelated debt remains visible. Fatal Ruff, new-file formatting and scoped diff checks pass. Self-review retained ordinary callback behavior and sole cleanup/native references.
+
+INCOMPLETE — phase complete, Task10 continuation required. Task31993 stays In Progress with all three ACs unchecked. Mandatory remaining routes include external image-generation runtime, the analogous earlier PersonaVisual public callback seam, TTS/runtime/credential cohorts, actual app/headless aggregation/startup/responder retirement and whole Task10 independent review. No full suite, live generation, network, user data, startup release or Complete promotion.

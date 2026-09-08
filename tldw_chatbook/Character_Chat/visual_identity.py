@@ -23,6 +23,7 @@ from uuid import uuid4
 from loguru import logger
 from PIL import Image, UnidentifiedImageError
 
+from tldw_chatbook.Backup_Recovery import visual_identity_participants as visual_lifetime
 from tldw_chatbook.config import get_user_data_dir
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.private_paths import secure_private_directory
@@ -343,6 +344,7 @@ class VisualIdentityCandidate:
     _publishing: bool = field(default=False, init=False, repr=False)
     _published: bool = field(default=False, init=False, repr=False)
     _lock: Any = field(default_factory=threading.RLock, init=False, repr=False)
+    _maintenance_identity: object = field(default=None, init=False, repr=False)
 
     @property
     def replaced_expression_keys(self) -> tuple[str, ...]:
@@ -423,6 +425,7 @@ class VisualIdentityCandidate:
                     "visual_identity_candidate_published"
                 )
             self._cancelled = True
+            visual_lifetime.forget_cancelled(self)
 
     def _existing_expression_key(self, value: str) -> str:
         key = normalize_expression_key(value)
@@ -479,6 +482,7 @@ _OPERATIONAL_EXPRESSION_KEYS = {
 _LEGACY_OPERATIONAL_STATES = frozenset({"thinking", "speaking", "error"})
 
 
+@visual_lifetime.db_guard
 def resolve_visual_identity(
     db: Any,
     *,
@@ -1118,6 +1122,7 @@ def parse_visual_identity_manifest_json(
     )
 
 
+@visual_lifetime.reader_guard
 def load_visual_identity_asset(
     asset: VisualIdentityManifestAsset,
     *,
@@ -1170,15 +1175,21 @@ def load_visual_identity_asset(
     return LoadedVisualIdentityAsset(asset=asset, data=data)
 
 
+@visual_lifetime.reader_guard
 def _read_builtin_asset(parts: tuple[str, ...], *, expected_bytes: int) -> bytes:
     try:
         candidate = resources.files("tldw_chatbook").joinpath("assets", *parts)
-        with candidate.open("rb") as stream:
-            return _read_stream_bounded(stream, expected_bytes=expected_bytes)
+        selected = (candidate,) if isinstance(candidate, os.PathLike) else ()
+        active = visual_lifetime.current()
+        source = active.source if active is not None else None
+        with visual_lifetime.files(source, selected):
+            with visual_lifetime.resource_stream(candidate) as stream:
+                return _read_stream_bounded(stream, expected_bytes=expected_bytes)
     except (OSError, RuntimeError, TypeError, AttributeError, zipfile.BadZipFile):
         raise ValueError("visual_identity_asset_unavailable") from None
 
 
+@visual_lifetime.reader_guard
 def _read_user_asset(
     parts: tuple[str, ...],
     *,
@@ -1186,18 +1197,23 @@ def _read_user_asset(
     user_data_dir: str | Path | None,
 ) -> bytes:
     assets_root, candidate = _confined_user_asset_path(parts, user_data_dir)
-    if _supports_secure_dir_fd():
-        return _read_user_asset_secure(
-            assets_root,
-            parts,
-            expected_bytes=expected_bytes,
-        )
-    return _read_user_asset_fallback(
-        assets_root,
-        candidate,
-        parts,
-        expected_bytes=expected_bytes,
-    )
+    try:
+        source = visual_lifetime.source_for(assets_root.parent)
+        with visual_lifetime.files(source, (candidate,)):
+            if _supports_secure_dir_fd():
+                return _read_user_asset_secure(
+                    assets_root,
+                    parts,
+                    expected_bytes=expected_bytes,
+                )
+            return _read_user_asset_fallback(
+                assets_root,
+                candidate,
+                parts,
+                expected_bytes=expected_bytes,
+            )
+    except visual_lifetime.bootstrap.RecoveryRequired:
+        raise ValueError("visual_identity_path_invalid") from None
 
 
 def _confined_user_asset_path(
@@ -1247,11 +1263,11 @@ def _read_user_asset_secure(
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
     try:
-        root_fd = os.open(assets_root, flags | os.O_DIRECTORY)
+        root_fd = visual_lifetime.native_open(assets_root, flags | os.O_DIRECTORY)
         opened_fds.append(root_fd)
         parent_fd = root_fd
         for component in parts[:-1]:
-            directory_fd = os.open(
+            directory_fd = visual_lifetime.native_open(
                 component,
                 flags | os.O_DIRECTORY,
                 dir_fd=parent_fd,
@@ -1262,7 +1278,7 @@ def _read_user_asset_secure(
             parent_fd = directory_fd
 
         leaf = parts[-1]
-        leaf_fd = os.open(leaf, flags | os.O_NONBLOCK, dir_fd=parent_fd)
+        leaf_fd = visual_lifetime.native_open(leaf, flags | os.O_NONBLOCK, dir_fd=parent_fd)
         opened_fds.append(leaf_fd)
         opened_stat = os.fstat(leaf_fd)
         if not stat.S_ISREG(opened_stat.st_mode):
@@ -1283,7 +1299,7 @@ def _read_user_asset_secure(
     finally:
         for descriptor in reversed(opened_fds):
             try:
-                os.close(descriptor)
+                visual_lifetime.native_close(descriptor)
             except OSError:
                 pass
 
@@ -1318,20 +1334,18 @@ def _read_user_asset_fallback(
     flags |= getattr(os, "O_BINARY", 0)
     try:
         _verify_fallback_directories(assets_root, parts)
-        descriptor = os.open(candidate, flags)
+        descriptor = visual_lifetime.native_open(candidate, flags)
         opened_stat = os.fstat(descriptor)
         if not stat.S_ISREG(opened_stat.st_mode):
             raise ValueError("visual_identity_path_invalid")
         _verify_fallback_directories(assets_root, parts)
         _verify_fallback_identity(candidate, opened_stat)
-        with os.fdopen(descriptor, "rb", closefd=True) as stream:
-            descriptor = None
-            _verify_fallback_directories(assets_root, parts)
-            _verify_fallback_identity(candidate, opened_stat)
-            data = _read_stream_bounded(stream, expected_bytes=expected_bytes)
-            _verify_fallback_directories(assets_root, parts)
-            _verify_fallback_identity(candidate, opened_stat)
-            return data
+        _verify_fallback_directories(assets_root, parts)
+        _verify_fallback_identity(candidate, opened_stat)
+        data = _read_fd_bounded(descriptor, expected_bytes=expected_bytes)
+        _verify_fallback_directories(assets_root, parts)
+        _verify_fallback_identity(candidate, opened_stat)
+        return data
     except ValueError:
         raise
     except OSError as error:
@@ -1346,7 +1360,7 @@ def _read_user_asset_fallback(
     finally:
         if descriptor is not None:
             try:
-                os.close(descriptor)
+                visual_lifetime.native_close(descriptor)
             except OSError:
                 pass
 
@@ -1774,6 +1788,7 @@ def _image_duration_ms(image: Image.Image, frame_count: int) -> int:
     return duration_ms
 
 
+@visual_lifetime.db_guard
 def create_visual_identity_candidate(
     db: Any, *, actor_kind: str, actor_id: int | str
 ) -> VisualIdentityCandidate:
@@ -1797,7 +1812,7 @@ def create_visual_identity_candidate(
         raise ValueError("visual_identity_source_context_invalid") from None
     if not isinstance(source_context, dict):
         raise ValueError("visual_identity_source_context_invalid")
-    return VisualIdentityCandidate(
+    return visual_lifetime.issue(VisualIdentityCandidate(
         actor_kind=actor_kind,
         actor_id=str(actor_id),
         old_pack_id=int(pack["id"]),
@@ -1812,9 +1827,11 @@ def create_visual_identity_candidate(
         original_default_expression_key=str(graph["version"]["default_expression_key"]),
         source_context=dict(source_context),
         assets=tuple(dict(asset) for asset in graph["assets"]),
-    )
+    ), db)
 
 
+@visual_lifetime.publication_errors
+@visual_lifetime.db_guard
 def publish_visual_identity_candidate(
     db: Any,
     candidate: VisualIdentityCandidate,
@@ -1846,305 +1863,347 @@ def publish_visual_identity_candidate(
             raise VisualIdentityPublicationError("visual_identity_candidate_invalid")
         candidate._publishing = True
 
-    repository = VisualIdentityRepository(db)
     try:
-        live = repository.get_active_actor_pack(
-            candidate.actor_kind, candidate.actor_id
-        )
-        active_binding_count = repository.count_active_pack_bindings(
-            candidate.old_pack_id
-        )
-    except (
-        CharactersRAGDBError,
-        sqlite3.Error,
-        OSError,
-        RuntimeError,
-        TypeError,
-        ValueError,
-    ):
-        _reset_candidate_publication(candidate)
-        raise VisualIdentityPublicationError(
-            "visual_identity_database_failed"
-        ) from None
-    if live is None or (
-        int(live["binding"]["id"]),
-        int(live["pack"]["id"]),
-        int(live["version"]["id"]),
-        int(live["binding"]["version"]),
-        int(live["pack"]["version"]),
-    ) != (
-        candidate.old_binding_id,
-        candidate.old_pack_id,
-        candidate.old_version_id,
-        candidate.old_binding_version,
-        candidate.old_pack_version,
-    ):
-        _reset_candidate_publication(candidate)
-        raise VisualIdentityPublicationError("visual_identity_binding_changed")
-
-    try:
-        profile_root, assets_root = _visual_identity_publication_roots(user_data_dir)
-        fork_pack = candidate.source_kind == "builtin" or active_binding_count > 1
-        profile_pack_token = _publication_pack_token(candidate, force_new=fork_pack)
-    except VisualIdentityPublicationError:
-        _reset_candidate_publication(candidate)
-        raise
-    publication_token = uuid4().hex
-    versions_root = assets_root / "packs" / profile_pack_token / "versions"
-    staging_name = f".staging-{publication_token}"
-    final_name = publication_token
-    staging_dir = versions_root / staging_name
-    final_dir = versions_root / final_name
-    staging_relpath = staging_dir.relative_to(assets_root).as_posix()
-    final_relpath = final_dir.relative_to(assets_root).as_posix()
-    posix_guards = _publication_posix_guards_available()
-    chain: list[tuple[int, str, int, Path]] = []
-    secured_identities: dict[Path, tuple[int, int]] = {}
-    staging_identity: tuple[int, int] | None = None
-    versions_fd = -1
-    staging_fd = -1
-
-    def retained_candidate_relpath() -> str | None:
-        return _remaining_publication_candidate_relpath(
-            posix_guards=posix_guards,
-            versions_fd=versions_fd,
-            staging_fd=staging_fd,
-            final_name=final_name,
-            final_relpath=final_relpath,
-        )
-
-    def discard_unpublished_staging(retained_relpath: str | None) -> str | None:
-        if retained_relpath is None and posix_guards and versions_fd >= 0:
-            if not _discard_staging_directory(versions_fd, staging_name, staging_fd):
-                if _entry_matches_fd(versions_fd, staging_name, staging_fd):
-                    return staging_relpath
-        return retained_relpath
-
-    try:
-        for directory in (
-            profile_root,
-            assets_root,
-            assets_root / "packs",
-            versions_root.parent,
-            versions_root,
+        repository = VisualIdentityRepository(db)
+        try:
+            live = repository.get_active_actor_pack(
+                candidate.actor_kind, candidate.actor_id
+            )
+            active_binding_count = repository.count_active_pack_bindings(
+                candidate.old_pack_id
+            )
+        except (
+            CharactersRAGDBError,
+            sqlite3.Error,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
         ):
-            privacy = secure_private_directory(
-                directory, create=True, application_owned=True
-            )
-            if not (privacy.verified_private if posix_guards else privacy.usable):
-                raise PermissionError
-            secured_identities[directory] = _path_identity(directory)
-        if posix_guards:
-            try:
-                chain = _open_publication_chain(versions_root)
-            except OSError:
-                raise PermissionError from None
-            versions_fd = chain[-1][2]
-            if not _publication_chain_matches(chain, secured_identities):
-                raise PermissionError
-        staging_privacy = secure_private_directory(
-            staging_dir, create=True, application_owned=True
-        )
-        if not (
-            staging_privacy.verified_private if posix_guards else staging_privacy.usable
-        ):
-            raise PermissionError
-        staging_identity = _path_identity(staging_dir)
-        if posix_guards:
-            staging_fd = os.open(
-                staging_name,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                dir_fd=versions_fd,
-            )
-            write_file = lambda name, data: _write_private_publication_file(
-                staging_fd, name, data
-            )
-            read_file = lambda name, limit: _read_private_publication_file(
-                staging_fd, name, max_bytes=limit
-            )
-        else:
-            write_file = lambda name, data: _write_private_publication_path(
-                staging_dir, name, data
-            )
-            read_file = lambda name, limit: _read_private_publication_path(
-                staging_dir, name, limit
-            )
-
-        assets, manifest = _materialize_visual_identity_candidate(
-            candidate,
-            write_file=write_file,
-            final_relpath=final_relpath,
-            profile_pack_token=profile_pack_token,
-            user_data_dir=profile_root,
-        )
-        manifest_raw = json.dumps(
-            manifest,
-            allow_nan=False,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        write_file("manifest.json", manifest_raw)
-        _verify_materialized_candidate(read_file, assets)
-        _sync_publication_directory(staging_fd if posix_guards else staging_dir)
-        with candidate._lock:
-            candidate._ensure_editable()
-            namespace_current = (
-                _publication_chain_matches(chain, secured_identities)
-                if posix_guards
-                else _path_chain_matches(secured_identities, profile_root=profile_root)
-            )
-            if not namespace_current:
-                raise PermissionError
-            if posix_guards:
-                atomic_replace(
-                    staging_name,
-                    final_name,
-                    src_dir_fd=versions_fd,
-                    dst_dir_fd=versions_fd,
-                )
-            else:
-                atomic_replace(staging_dir, final_dir)
-            namespace_current = (
-                _publication_chain_matches(chain, secured_identities)
-                and _entry_matches_fd(versions_fd, final_name, staging_fd)
-                if posix_guards
-                else _path_chain_matches(secured_identities, profile_root=profile_root)
-                and staging_identity is not None
-                and _path_matches_identity(final_dir, staging_identity)
-            )
-            if not namespace_current:
-                if posix_guards:
-                    _discard_pinned_directory(versions_fd, final_name, staging_fd)
-                raise VisualIdentityPublicationError(
-                    "visual_identity_publication_denied"
-                )
-            published_read = (
-                read_file
-                if posix_guards
-                else lambda name, limit: _read_private_publication_path(
-                    final_dir, name, limit
-                )
-            )
-            _verify_materialized_candidate(published_read, assets)
-            _sync_publication_directory(versions_fd if posix_guards else versions_root)
-
-            def publication_guard() -> bool:
-                if posix_guards:
-                    return _publication_chain_matches(
-                        chain, secured_identities
-                    ) and _entry_matches_fd(versions_fd, final_name, staging_fd)
-                return (
-                    _path_chain_matches(secured_identities, profile_root=profile_root)
-                    and staging_identity is not None
-                    and _path_matches_identity(final_dir, staging_identity)
-                )
-
-            try:
-                if fork_pack:
-                    graph = repository.activate_pack(
-                        pack={
-                            "title": f"{candidate.title} (Profile Copy)",
-                            "description": candidate.description,
-                            "default_expression_key": candidate.default_expression_key,
-                            "source_kind": "manual",
-                            "source_context": {
-                                "profile_pack_id": profile_pack_token,
-                                "forked_from_pack_id": candidate.old_pack_id,
-                                "forked_from_version_id": candidate.old_version_id,
-                            },
-                        },
-                        manifest=manifest,
-                        assets=assets,
-                        actor_kind=candidate.actor_kind,
-                        actor_id=candidate.actor_id,
-                        expected_active_identity=(
-                            candidate.old_pack_id,
-                            candidate.old_version_id,
-                        ),
-                        expected_binding_id=candidate.old_binding_id,
-                        expected_binding_version=candidate.old_binding_version,
-                        expected_source_pack_version=candidate.old_pack_version,
-                        publication_guard=publication_guard,
-                    )
-                else:
-                    graph = repository.publish_version(
-                        candidate.old_pack_id,
-                        manifest=manifest,
-                        assets=assets,
-                        actor_kind=candidate.actor_kind,
-                        actor_id=candidate.actor_id,
-                        default_expression_key=candidate.default_expression_key,
-                        expected_active_version_id=candidate.old_version_id,
-                        expected_binding_id=candidate.old_binding_id,
-                        expected_binding_version=candidate.old_binding_version,
-                        expected_pack_version=candidate.old_pack_version,
-                        require_single_active_binding=True,
-                        publication_guard=publication_guard,
-                    )
-            except ValueError as error:
-                if str(error) == "visual_identity_binding_changed":
-                    category = "visual_identity_binding_changed"
-                elif str(error) == "visual_identity_publication_changed":
-                    category = "visual_identity_publication_denied"
-                else:
-                    category = "visual_identity_database_failed"
-                raise VisualIdentityPublicationError(category) from None
-            except (
-                CharactersRAGDBError,
-                sqlite3.Error,
-                OSError,
-                RuntimeError,
-                TypeError,
-            ):
-                raise VisualIdentityPublicationError(
-                    "visual_identity_database_failed"
-                ) from None
-            candidate._published = True
-            candidate._publishing = False
-    except VisualIdentityPublicationError as error:
-        retained_relpath = retained_candidate_relpath()
-        retained_relpath = discard_unpublished_staging(retained_relpath)
-        _reset_candidate_publication(candidate)
-        if error.cleanup_candidate_relpath is None and retained_relpath is not None:
+            _reset_candidate_publication(candidate)
             raise VisualIdentityPublicationError(
-                error.category, cleanup_candidate_relpath=retained_relpath
+                "visual_identity_database_failed"
             ) from None
-        raise
-    except PermissionError:
-        retained_relpath = retained_candidate_relpath()
-        retained_relpath = discard_unpublished_staging(retained_relpath)
-        _reset_candidate_publication(candidate)
-        raise VisualIdentityPublicationError(
-            "visual_identity_publication_denied",
-            cleanup_candidate_relpath=retained_relpath,
-        ) from None
-    except (OSError, TypeError, ValueError, OverflowError) as error:
-        retained_relpath = retained_candidate_relpath()
-        retained_relpath = discard_unpublished_staging(retained_relpath)
-        _reset_candidate_publication(candidate)
-        raise VisualIdentityPublicationError(
-            (
-                "visual_identity_publication_failed"
-                if isinstance(error, OSError) and retained_relpath == final_relpath
-                else "visual_identity_candidate_invalid"
-            ),
-            cleanup_candidate_relpath=retained_relpath,
-        ) from None
+        if live is None or (
+            int(live["binding"]["id"]),
+            int(live["pack"]["id"]),
+            int(live["version"]["id"]),
+            int(live["binding"]["version"]),
+            int(live["pack"]["version"]),
+        ) != (
+            candidate.old_binding_id,
+            candidate.old_pack_id,
+            candidate.old_version_id,
+            candidate.old_binding_version,
+            candidate.old_pack_version,
+        ):
+            _reset_candidate_publication(candidate)
+            raise VisualIdentityPublicationError("visual_identity_binding_changed")
+
+        try:
+            profile_root, assets_root = _visual_identity_publication_roots(user_data_dir)
+            fork_pack = candidate.source_kind == "builtin" or active_binding_count > 1
+            profile_pack_token = _publication_pack_token(candidate, force_new=fork_pack)
+        except VisualIdentityPublicationError:
+            _reset_candidate_publication(candidate)
+            raise
+        publication_token = uuid4().hex
+        versions_root = assets_root / "packs" / profile_pack_token / "versions"
+        staging_name = f".staging-{publication_token}"
+        final_name = publication_token
+        staging_dir = versions_root / staging_name
+        final_dir = versions_root / final_name
+        staging_relpath = staging_dir.relative_to(assets_root).as_posix()
+        final_relpath = final_dir.relative_to(assets_root).as_posix()
+        source_binding = visual_lifetime.candidate_source(candidate, db, profile_root)
+        try:
+            filenames = tuple(_publication_candidate_filename(index, stored, candidate._replacements.get(str(stored["expression_key"])))
+                              for index, stored in enumerate(candidate.assets) if str(stored["expression_key"]) not in candidate._cleared)
+        except (KeyError, ValueError, TypeError):
+            raise VisualIdentityPublicationError("visual_identity_candidate_invalid") from None
+        output_files = tuple(directory / name for directory in (staging_dir, final_dir) for name in ("manifest.json", *filenames))
+        directories = (profile_root, assets_root, assets_root / "packs", versions_root.parent, versions_root, staging_dir, final_dir)
+        source_files = tuple(_visual_identity_source_path(stored, candidate.source_kind, profile_root)
+                             for stored in candidate.assets if str(stored["expression_key"]) not in candidate._cleared and str(stored["expression_key"]) not in candidate._replacements)
+        if any(not isinstance(path, os.PathLike) for path in source_files):
+            source_binding = None
+            source_files = tuple(path for path in source_files if isinstance(path, os.PathLike))
+        if any(visual_lifetime._identity(path) is not None for path in (staging_dir, final_dir)):
+            _reset_candidate_publication(candidate)
+            raise VisualIdentityPublicationError("visual_identity_publication_denied")
+        with visual_lifetime.files(source_binding, source_files + output_files, directories,
+                                   writing=output_files + directories, repository=db, candidate=candidate) as native_scope:
+            posix_guards = _publication_posix_guards_available()
+            chain: list[tuple[int, str, int, Path]] = []
+            secured_identities: dict[Path, tuple[int, int]] = {}
+            staging_identity: tuple[int, int] | None = None
+            versions_fd = -1
+            staging_fd = -1
+
+            def retained_candidate_relpath() -> str | None:
+                if posix_guards and versions_fd >= 0 and staging_fd >= 0 and _entry_matches_fd(versions_fd, final_name, staging_fd):
+                    active = visual_lifetime.current()
+                    if active.descriptors.get(staging_fd) == staging_dir:
+                        visual_lifetime.published(staging_dir, final_dir)
+                return _remaining_publication_candidate_relpath(
+                    posix_guards=posix_guards,
+                    versions_fd=versions_fd,
+                    staging_fd=staging_fd,
+                    final_name=final_name,
+                    final_relpath=final_relpath,
+                )
+
+            def discard_unpublished_staging(retained_relpath: str | None) -> str | None:
+                if retained_relpath is None and posix_guards and versions_fd >= 0:
+                    if not _discard_staging_directory(versions_fd, staging_name, staging_fd):
+                        if _entry_matches_fd(versions_fd, staging_name, staging_fd):
+                            retained_relpath = staging_relpath
+                if retained_relpath is not None:
+                    visual_lifetime.remember_publication(retained_relpath, assets_root / retained_relpath)
+                return retained_relpath
+
+            try:
+                for directory in (
+                    profile_root,
+                    assets_root,
+                    assets_root / "packs",
+                    versions_root.parent,
+                    versions_root,
+                ):
+                    privacy = secure_private_directory(
+                        directory, create=True, application_owned=True
+                    )
+                    if not (privacy.verified_private if posix_guards else privacy.usable):
+                        raise PermissionError
+                    secured_identities[directory] = _path_identity(directory)
+                if posix_guards:
+                    try:
+                        chain = _open_publication_chain(versions_root)
+                    except OSError:
+                        raise PermissionError from None
+                    versions_fd = chain[-1][2]
+                    if not _publication_chain_matches(chain, secured_identities):
+                        raise PermissionError
+                staging_privacy = secure_private_directory(
+                    staging_dir, create=True, application_owned=True
+                )
+                if not (
+                    staging_privacy.verified_private if posix_guards else staging_privacy.usable
+                ):
+                    raise PermissionError
+                staging_identity = _path_identity(staging_dir)
+                if posix_guards:
+                    staging_fd = visual_lifetime.native_open(
+                        staging_name,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=versions_fd,
+                    )
+                    write_file = lambda name, data: _write_private_publication_file(
+                        staging_fd, name, data
+                    )
+                    read_file = lambda name, limit: _read_private_publication_file(
+                        staging_fd, name, max_bytes=limit
+                    )
+                else:
+                    write_file = lambda name, data: _write_private_publication_path(
+                        staging_dir, name, data
+                    )
+                    read_file = lambda name, limit: _read_private_publication_path(
+                        staging_dir, name, limit
+                    )
+
+                assets, manifest = _materialize_visual_identity_candidate(
+                    candidate,
+                    write_file=write_file,
+                    final_relpath=final_relpath,
+                    profile_pack_token=profile_pack_token,
+                    user_data_dir=profile_root,
+                )
+                manifest_raw = json.dumps(
+                    manifest,
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                write_file("manifest.json", manifest_raw)
+                _verify_materialized_candidate(read_file, assets)
+                _sync_publication_directory(staging_fd if posix_guards else staging_dir)
+                with candidate._lock:
+                    candidate._ensure_editable()
+                    namespace_current = (
+                        _publication_chain_matches(chain, secured_identities)
+                        if posix_guards
+                        else _path_chain_matches(secured_identities, profile_root=profile_root)
+                    )
+                    if not namespace_current:
+                        raise PermissionError
+                    if posix_guards:
+                        visual_lifetime.replace_publication(
+                            atomic_replace,
+                            staging_name,
+                            final_name,
+                            src_dir_fd=versions_fd,
+                            dst_dir_fd=versions_fd,
+                        )
+                    else:
+                        visual_lifetime.replace_publication(atomic_replace, staging_dir, final_dir)
+                    try:
+                        visual_lifetime.published(staging_dir, final_dir)
+                    except visual_lifetime.bootstrap.RecoveryRequired:
+                        parent_current = _publication_chain_matches(chain, secured_identities) if posix_guards else _path_chain_matches(secured_identities, profile_root=profile_root)
+                        if parent_current and staging_identity is not None and _path_matches_identity(final_dir, staging_identity):
+                            raise VisualIdentityPublicationError("visual_identity_candidate_invalid") from None
+                        raise
+                    namespace_current = (
+                        _publication_chain_matches(chain, secured_identities)
+                        and _entry_matches_fd(versions_fd, final_name, staging_fd)
+                        if posix_guards
+                        else _path_chain_matches(secured_identities, profile_root=profile_root)
+                        and staging_identity is not None
+                        and _path_matches_identity(final_dir, staging_identity)
+                    )
+                    if not namespace_current:
+                        if posix_guards:
+                            _discard_pinned_directory(versions_fd, final_name, staging_fd)
+                        raise VisualIdentityPublicationError(
+                            "visual_identity_publication_denied"
+                        )
+                    published_read = (
+                        read_file
+                        if posix_guards
+                        else lambda name, limit: _read_private_publication_path(
+                            final_dir, name, limit
+                        )
+                    )
+                    _verify_materialized_candidate(published_read, assets)
+                    _sync_publication_directory(versions_fd if posix_guards else versions_root)
+
+                    def publication_guard() -> bool:
+                        if posix_guards:
+                            return _publication_chain_matches(
+                                chain, secured_identities
+                            ) and _entry_matches_fd(versions_fd, final_name, staging_fd)
+                        return (
+                            _path_chain_matches(secured_identities, profile_root=profile_root)
+                            and staging_identity is not None
+                            and _path_matches_identity(final_dir, staging_identity)
+                        )
+
+                    try:
+                        if fork_pack:
+                            graph = repository.activate_pack(
+                                pack={
+                                    "title": f"{candidate.title} (Profile Copy)",
+                                    "description": candidate.description,
+                                    "default_expression_key": candidate.default_expression_key,
+                                    "source_kind": "manual",
+                                    "source_context": {
+                                        "profile_pack_id": profile_pack_token,
+                                        "forked_from_pack_id": candidate.old_pack_id,
+                                        "forked_from_version_id": candidate.old_version_id,
+                                    },
+                                },
+                                manifest=manifest,
+                                assets=assets,
+                                actor_kind=candidate.actor_kind,
+                                actor_id=candidate.actor_id,
+                                expected_active_identity=(
+                                    candidate.old_pack_id,
+                                    candidate.old_version_id,
+                                ),
+                                expected_binding_id=candidate.old_binding_id,
+                                expected_binding_version=candidate.old_binding_version,
+                                expected_source_pack_version=candidate.old_pack_version,
+                                publication_guard=publication_guard,
+                            )
+                        else:
+                            graph = repository.publish_version(
+                                candidate.old_pack_id,
+                                manifest=manifest,
+                                assets=assets,
+                                actor_kind=candidate.actor_kind,
+                                actor_id=candidate.actor_id,
+                                default_expression_key=candidate.default_expression_key,
+                                expected_active_version_id=candidate.old_version_id,
+                                expected_binding_id=candidate.old_binding_id,
+                                expected_binding_version=candidate.old_binding_version,
+                                expected_pack_version=candidate.old_pack_version,
+                                require_single_active_binding=True,
+                                publication_guard=publication_guard,
+                            )
+                    except ValueError as error:
+                        if str(error) == "visual_identity_binding_changed":
+                            category = "visual_identity_binding_changed"
+                        elif str(error) == "visual_identity_publication_changed":
+                            category = "visual_identity_publication_denied"
+                        else:
+                            category = "visual_identity_database_failed"
+                        raise VisualIdentityPublicationError(category) from None
+                    except (
+                        CharactersRAGDBError,
+                        sqlite3.Error,
+                        OSError,
+                        RuntimeError,
+                        TypeError,
+                    ):
+                        raise VisualIdentityPublicationError(
+                            "visual_identity_database_failed"
+                        ) from None
+                    native_scope.result = VisualIdentityPublicationResult(
+                        actor_kind=candidate.actor_kind, actor_id=candidate.actor_id,
+                        old_pack_id=candidate.old_pack_id, old_version_id=candidate.old_version_id,
+                        new_pack_id=int(graph["pack"]["id"]), new_version_id=int(graph["version"]["id"]),
+                        version_directory=final_dir,
+                    )
+                    candidate._published = True
+                    candidate._publishing = False
+            except VisualIdentityPublicationError as error:
+                retained_relpath = retained_candidate_relpath()
+                retained_relpath = discard_unpublished_staging(retained_relpath)
+                _reset_candidate_publication(candidate)
+                if error.cleanup_candidate_relpath is None and retained_relpath is not None:
+                    raise VisualIdentityPublicationError(
+                        error.category, cleanup_candidate_relpath=retained_relpath
+                    ) from None
+                raise
+            except PermissionError:
+                retained_relpath = retained_candidate_relpath()
+                retained_relpath = discard_unpublished_staging(retained_relpath)
+                _reset_candidate_publication(candidate)
+                raise VisualIdentityPublicationError(
+                    "visual_identity_publication_denied",
+                    cleanup_candidate_relpath=retained_relpath,
+                ) from None
+            except (OSError, TypeError, ValueError, OverflowError) as error:
+                retained_relpath = retained_candidate_relpath()
+                retained_relpath = discard_unpublished_staging(retained_relpath)
+                _reset_candidate_publication(candidate)
+                raise VisualIdentityPublicationError(
+                    (
+                        "visual_identity_publication_failed"
+                        if isinstance(error, OSError) and retained_relpath == final_relpath
+                        else "visual_identity_candidate_invalid"
+                    ),
+                    cleanup_candidate_relpath=retained_relpath,
+                ) from None
+            finally:
+                if staging_fd >= 0:
+                    visual_lifetime.native_close(staging_fd)
+                if chain:
+                    _close_publication_chain(chain)
+            return VisualIdentityPublicationResult(
+                actor_kind=candidate.actor_kind,
+                actor_id=candidate.actor_id,
+                old_pack_id=candidate.old_pack_id,
+                old_version_id=candidate.old_version_id,
+                new_pack_id=int(graph["pack"]["id"]),
+                new_version_id=int(graph["version"]["id"]),
+                version_directory=final_dir,
+            )
     finally:
-        if staging_fd >= 0:
-            os.close(staging_fd)
-        if chain:
-            _close_publication_chain(chain)
-    return VisualIdentityPublicationResult(
-        actor_kind=candidate.actor_kind,
-        actor_id=candidate.actor_id,
-        old_pack_id=candidate.old_pack_id,
-        old_version_id=candidate.old_version_id,
-        new_pack_id=int(graph["pack"]["id"]),
-        new_version_id=int(graph["version"]["id"]),
-        version_directory=final_dir,
-    )
+        if not candidate._published:
+            _reset_candidate_publication(candidate)
 
 
 _PUBLICATION_CLEANUP_RE = re.compile(
@@ -2153,6 +2212,8 @@ _PUBLICATION_CLEANUP_RE = re.compile(
 )
 
 
+@visual_lifetime.publication_errors
+@visual_lifetime.db_guard
 def cleanup_visual_identity_publication_candidate(
     db: Any,
     cleanup_candidate_relpath: str,
@@ -2169,123 +2230,130 @@ def cleanup_visual_identity_publication_candidate(
     if match is None or not _publication_posix_guards_available():
         raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
     profile_root, assets_root = _visual_identity_publication_roots(user_data_dir)
-    connection = None
-    try:
-        connection = db.get_connection()
-        if connection.in_transaction:
-            raise VisualIdentityPublicationError("visual_identity_transaction_active")
-    except VisualIdentityPublicationError:
-        raise
-    except (
-        AttributeError,
-        CharactersRAGDBError,
-        sqlite3.Error,
-        RuntimeError,
-        TypeError,
-        ValueError,
-    ):
-        raise VisualIdentityPublicationError(
-            "visual_identity_database_failed"
-        ) from None
-    pack_token, version_token = match.groups()
-    versions_root = assets_root / "packs" / pack_token / "versions"
-    identities: dict[Path, tuple[int, int]] = {}
-    try:
-        for directory in (
-            profile_root,
-            assets_root,
-            assets_root / "packs",
-            versions_root.parent,
-            versions_root,
+    candidate_path = assets_root / cleanup_candidate_relpath
+    source_binding, selected_files, cleanup_record = visual_lifetime.cleanup_selection(db, cleanup_candidate_relpath, profile_root, candidate_path)
+    directories = tuple(dict.fromkeys((profile_root, assets_root, assets_root / "packs", candidate_path.parent.parent, candidate_path.parent, candidate_path)))
+    with visual_lifetime.files(source_binding, selected_files, directories, writing=selected_files + directories, repository=db if source_binding is not None else None) as native_scope:
+        if cleanup_record is not None:
+            native_scope.publication_cleanup = cleanup_candidate_relpath
+        connection = None
+        try:
+            connection = db.get_connection()
+            if connection.in_transaction:
+                raise VisualIdentityPublicationError("visual_identity_transaction_active")
+        except VisualIdentityPublicationError:
+            raise
+        except (
+            AttributeError,
+            CharactersRAGDBError,
+            sqlite3.Error,
+            RuntimeError,
+            TypeError,
+            ValueError,
         ):
-            privacy = secure_private_directory(
-                directory, create=False, application_owned=True
-            )
-            if not privacy.verified_private:
-                raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
-            identities[directory] = _path_identity(directory)
-    except VisualIdentityPublicationError:
-        raise
-    except (OSError, RuntimeError, TypeError, ValueError):
-        raise VisualIdentityPublicationError("visual_identity_cleanup_denied") from None
-    chain: list[tuple[int, str, int, Path]] = []
-    candidate_fd = -1
-    reservation_active = False
-    try:
-        chain = _open_publication_chain(versions_root)
-        versions_fd = chain[-1][2]
-        if not _publication_chain_matches(chain, identities):
-            raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
-        candidate_fd = os.open(
-            version_token,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-            dir_fd=versions_fd,
-        )
-        connection.execute("BEGIN IMMEDIATE")
-        reservation_active = True
-        referenced = connection.execute(
-            """
-            SELECT 1
-             FROM visual_identity_assets
-             WHERE owner_user_id = 0
-               AND (
-                    storage_relpath = ? OR storage_relpath LIKE ?
-                    OR preview_relpath = ? OR preview_relpath LIKE ?
-               )
-             LIMIT 1
-            """,
-            (
-                cleanup_candidate_relpath,
-                f"{cleanup_candidate_relpath}/%",
-                cleanup_candidate_relpath,
-                f"{cleanup_candidate_relpath}/%",
-            ),
-        ).fetchone()
-        if referenced is not None:
-            raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
-        if not _publication_chain_matches(chain, identities):
-            raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
-        if not _discard_pinned_directory(versions_fd, version_token, candidate_fd):
-            raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
-        _sync_publication_directory(versions_fd)
-        referenced = connection.execute(
-            """
-            SELECT 1
-             FROM visual_identity_assets
-             WHERE owner_user_id = 0
-               AND (
-                    storage_relpath = ? OR storage_relpath LIKE ?
-                    OR preview_relpath = ? OR preview_relpath LIKE ?
-               )
-             LIMIT 1
-            """,
-            (
-                cleanup_candidate_relpath,
-                f"{cleanup_candidate_relpath}/%",
-                cleanup_candidate_relpath,
-                f"{cleanup_candidate_relpath}/%",
-            ),
-        ).fetchone()
-        if referenced is not None:
-            raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
-        connection.commit()
+            raise VisualIdentityPublicationError(
+                "visual_identity_database_failed"
+            ) from None
+        pack_token, version_token = match.groups()
+        versions_root = assets_root / "packs" / pack_token / "versions"
+        identities: dict[Path, tuple[int, int]] = {}
+        try:
+            for directory in (
+                profile_root,
+                assets_root,
+                assets_root / "packs",
+                versions_root.parent,
+                versions_root,
+            ):
+                privacy = secure_private_directory(
+                    directory, create=False, application_owned=True
+                )
+                if not privacy.verified_private:
+                    raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
+                identities[directory] = _path_identity(directory)
+        except VisualIdentityPublicationError:
+            raise
+        except (OSError, RuntimeError, TypeError, ValueError):
+            raise VisualIdentityPublicationError("visual_identity_cleanup_denied") from None
+        chain: list[tuple[int, str, int, Path]] = []
+        candidate_fd = -1
         reservation_active = False
-        return True
-    except VisualIdentityPublicationError:
-        raise
-    except sqlite3.Error:
-        raise VisualIdentityPublicationError(
-            "visual_identity_database_failed"
-        ) from None
-    except OSError:
-        raise VisualIdentityPublicationError("visual_identity_cleanup_denied") from None
-    finally:
-        if reservation_active:
-            connection.rollback()
-        if candidate_fd >= 0:
-            os.close(candidate_fd)
-        if chain:
-            _close_publication_chain(chain)
+        try:
+            chain = _open_publication_chain(versions_root)
+            versions_fd = chain[-1][2]
+            if not _publication_chain_matches(chain, identities):
+                raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
+            candidate_fd = visual_lifetime.native_open(
+                version_token,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=versions_fd,
+            )
+            connection.execute("BEGIN IMMEDIATE")
+            reservation_active = True
+            referenced = connection.execute(
+                """
+                SELECT 1
+                 FROM visual_identity_assets
+                 WHERE owner_user_id = 0
+                   AND (
+                        storage_relpath = ? OR storage_relpath LIKE ?
+                        OR preview_relpath = ? OR preview_relpath LIKE ?
+                   )
+                 LIMIT 1
+                """,
+                (
+                    cleanup_candidate_relpath,
+                    f"{cleanup_candidate_relpath}/%",
+                    cleanup_candidate_relpath,
+                    f"{cleanup_candidate_relpath}/%",
+                ),
+            ).fetchone()
+            if referenced is not None:
+                raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
+            if not _publication_chain_matches(chain, identities):
+                raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
+            if not _discard_pinned_directory(versions_fd, version_token, candidate_fd):
+                raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
+            _sync_publication_directory(versions_fd)
+            referenced = connection.execute(
+                """
+                SELECT 1
+                 FROM visual_identity_assets
+                 WHERE owner_user_id = 0
+                   AND (
+                        storage_relpath = ? OR storage_relpath LIKE ?
+                        OR preview_relpath = ? OR preview_relpath LIKE ?
+                   )
+                 LIMIT 1
+                """,
+                (
+                    cleanup_candidate_relpath,
+                    f"{cleanup_candidate_relpath}/%",
+                    cleanup_candidate_relpath,
+                    f"{cleanup_candidate_relpath}/%",
+                ),
+            ).fetchone()
+            if referenced is not None:
+                raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
+            connection.commit()
+            reservation_active = False
+            native_scope.result = True
+            return True
+        except VisualIdentityPublicationError:
+            raise
+        except sqlite3.Error:
+            raise VisualIdentityPublicationError(
+                "visual_identity_database_failed"
+            ) from None
+        except OSError:
+            raise VisualIdentityPublicationError("visual_identity_cleanup_denied") from None
+        finally:
+            if reservation_active:
+                connection.rollback()
+            if candidate_fd >= 0:
+                visual_lifetime.native_close(candidate_fd)
+            if chain:
+                _close_publication_chain(chain)
 
 
 def _visual_identity_publication_roots(
@@ -2327,6 +2395,22 @@ def _publication_pack_token(
     ):
         raise VisualIdentityPublicationError("visual_identity_source_context_invalid")
     return value
+
+
+def _publication_candidate_filename(index, stored, replacement):
+    content_type = stored.get("content_type")
+    if replacement is not None:
+        image_format = _inspect_image_bytes(replacement[0], decoded_pixels_before=0)[0]
+        content_type = _IMAGE_CONTENT_TYPES_BY_FORMAT[image_format]
+    extension = {"image/gif": "gif", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[content_type]
+    return f"{index:03d}-{_sanitize_expression_token(str(stored['original_expression_key']))}.{extension}"
+
+
+def _visual_identity_source_path(stored, source_kind, profile):
+    parts = _safe_relative_parts(stored["storage_relpath"])
+    if source_kind == "builtin":
+        return resources.files("tldw_chatbook").joinpath("assets", *parts)
+    return profile / "visual_identities" / Path(*parts)
 
 
 def _materialize_visual_identity_candidate(
@@ -2381,16 +2465,7 @@ def _materialize_visual_identity_candidate(
         materialized_bytes += len(data)
         if materialized_bytes > MAX_EXPRESSION_TOTAL_BYTES:
             raise VisualIdentityPublicationError("visual_identity_budget_exceeded")
-        extension = {
-            "image/gif": "gif",
-            "image/jpeg": "jpg",
-            "image/png": "png",
-            "image/webp": "webp",
-        }[content_type]
-        filename = (
-            f"{index:03d}-{_sanitize_expression_token(str(stored['original_expression_key']))}"
-            f".{extension}"
-        )
+        filename = _publication_candidate_filename(index, stored, replacement)
         data_digest = hashlib.sha256(data).hexdigest()
         storage_relpath = f"{final_relpath}/{filename}"
         asset = {
@@ -2466,16 +2541,17 @@ def _write_private_publication_file(
     if _safe_relative_parts(filename) != (filename,):
         raise ValueError("visual_identity_candidate_invalid")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(filename, flags, 0o600, dir_fd=directory_fd)
+    descriptor = visual_lifetime.native_open(filename, flags, 0o600, dir_fd=directory_fd)
     try:
-        with os.fdopen(descriptor, "wb", closefd=True) as stream:
-            descriptor = -1
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
+        view = memoryview(data)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("visual_identity_write_incomplete")
+            view = view[written:]
+        os.fsync(descriptor)
     finally:
-        if descriptor >= 0:
-            os.close(descriptor)
+        visual_lifetime.native_close(descriptor)
 
 
 def _verify_materialized_candidate(
@@ -2512,12 +2588,12 @@ def _open_publication_chain(
     path: Path,
 ) -> list[tuple[int, str, int, Path]]:
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    parent_fd = os.open(os.sep, flags)
+    parent_fd = visual_lifetime.native_open(os.sep, flags)
     chain: list[tuple[int, str, int, Path]] = []
     current_path = Path(os.sep)
     try:
         for component in path.parts[1:]:
-            child_fd = os.open(component, flags, dir_fd=parent_fd)
+            child_fd = visual_lifetime.native_open(component, flags, dir_fd=parent_fd)
             current_path /= component
             chain.append((parent_fd, component, child_fd, current_path))
             parent_fd = child_fd
@@ -2538,7 +2614,7 @@ def _close_publication_chain(
         (fd for fd in descriptors if fd is not None), reverse=True
     ):
         try:
-            os.close(descriptor)
+            visual_lifetime.native_close(descriptor)
         except OSError:
             pass
 
@@ -2633,7 +2709,7 @@ def _write_private_publication_path(
     if _safe_relative_parts(filename) != (filename,):
         raise ValueError("visual_identity_candidate_invalid")
     path = directory / filename
-    with path.open("xb") as stream:
+    with visual_lifetime.stream(path, "xb") as stream:
         stream.write(data)
         stream.flush()
         os.fsync(stream.fileno())
@@ -2645,7 +2721,7 @@ def _read_private_publication_path(
     if _safe_relative_parts(filename) != (filename,):
         raise ValueError("visual_identity_candidate_invalid")
     path = directory / filename
-    descriptor = os.open(
+    descriptor = visual_lifetime.native_open(
         path,
         os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
     )
@@ -2656,7 +2732,7 @@ def _read_private_publication_path(
             max_bytes=max_bytes,
         )
     finally:
-        os.close(descriptor)
+        visual_lifetime.native_close(descriptor)
 
 
 def _sync_publication_directory(directory: int | Path) -> None:
@@ -2665,7 +2741,7 @@ def _sync_publication_directory(directory: int | Path) -> None:
         if descriptor < 0:
             if os.name == "nt":
                 return
-            descriptor = os.open(
+            descriptor = visual_lifetime.native_open(
                 directory,
                 os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
             )
@@ -2681,7 +2757,7 @@ def _sync_publication_directory(directory: int | Path) -> None:
             raise
     finally:
         if not isinstance(directory, int) and descriptor >= 0:
-            os.close(descriptor)
+            visual_lifetime.native_close(descriptor)
 
 
 def _read_private_publication_file(
@@ -2689,7 +2765,7 @@ def _read_private_publication_file(
 ) -> bytes:
     if _safe_relative_parts(filename) != (filename,):
         raise ValueError("visual_identity_candidate_invalid")
-    descriptor = os.open(
+    descriptor = visual_lifetime.native_open(
         filename,
         os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
         dir_fd=directory_fd,
@@ -2703,7 +2779,7 @@ def _read_private_publication_file(
             max_bytes=max_bytes,
         )
     finally:
-        os.close(descriptor)
+        visual_lifetime.native_close(descriptor)
 
 
 def _read_bounded_publication_descriptor(
@@ -2760,16 +2836,17 @@ def _discard_pinned_directory(parent_fd: int, entry_name: str, pinned_fd: int) -
             pinned_stat.st_ino,
         ):
             return False
+        visual_lifetime.validate_cleanup_contents(pinned_fd)
         for filename in os.listdir(pinned_fd):
             child_stat = os.stat(filename, dir_fd=pinned_fd, follow_symlinks=False)
             if stat.S_ISDIR(child_stat.st_mode):
                 return False
-            os.unlink(filename, dir_fd=pinned_fd)
+            visual_lifetime.unlink(filename, dir_fd=pinned_fd)
         if not _entry_matches_fd(parent_fd, entry_name, pinned_fd):
             return False
-        os.rmdir(entry_name, dir_fd=parent_fd)
+        visual_lifetime.rmdir(entry_name, dir_fd=parent_fd)
         return True
-    except OSError:
+    except (OSError, visual_lifetime.bootstrap.RecoveryRequired):
         return False
 
 
@@ -2795,6 +2872,7 @@ _SAMIRA_SEED_LOCKS: dict[str, threading.Lock] = {}
 _SAMIRA_SEED_LOCKS_GUARD = threading.Lock()
 
 
+@visual_lifetime.db_guard
 def ensure_builtin_samira(
     db: Any,
     package_root: str | Path | None = None,
@@ -2812,78 +2890,82 @@ def ensure_builtin_samira(
     if state["terminal"]:
         return
 
-    with _samira_seed_lock(db):
-        state = _samira_seed_preflight(db)
-        if state["terminal"]:
-            return
-
-        card = state["card"]
-        try:
-            card_json, portrait, parsed_card = _load_samira_card(package_root)
-        except Exception as exc:  # noqa: BLE001 - startup seed must not prevent boot
-            logger.warning("samira_card_seed_failed category={}", type(exc).__name__)
-            return
-
-        if card is None:
-            parsed_card["name"] = _available_samira_name(db)
-            parsed_card["image"] = portrait
-            character_id = db.add_character_card(parsed_card)
-            if character_id is None:
-                logger.warning("samira_card_seed_failed category=insert")
+    resource_root = Path(package_root) if package_root is not None else resources.files("tldw_chatbook")
+    selected = tuple(resource_root.joinpath(*_SAMIRA_RESOURCE_ROOT, name) for name in (*sorted(_SAMIRA_TOP_LEVEL_FILES), *(f"expressions/{label}.webp" for label in SAMIRA_REACTION_LABELS))) if isinstance(resource_root, os.PathLike) else ()
+    source = visual_lifetime.db_source(db) if package_root is None and selected else None
+    with visual_lifetime.files(source, selected, repository=db if source is not None else None):
+        with _samira_seed_lock(db):
+            state = _samira_seed_preflight(db)
+            if state["terminal"]:
                 return
-        else:
-            character_id = int(card["id"])
 
-        try:
-            manifest_data, manifest, loaded_assets = _load_samira_pack(
-                package_root,
-                card_bytes=len(card_json),
-                portrait_bytes=len(portrait),
-            )
-            from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+            card = state["card"]
+            try:
+                card_json, portrait, parsed_card = _load_samira_card(package_root)
+            except Exception as exc:  # noqa: BLE001 - startup seed must not prevent boot
+                logger.warning("samira_card_seed_failed category={}", type(exc).__name__)
+                return
 
-            VisualIdentityRepository(db).activate_pack(
-                pack={
-                    "title": manifest.title,
-                    "description": "Bundled Samira reaction pack.",
-                    "default_expression_key": manifest.default_expression_key,
-                    "source_kind": "builtin",
-                    "source_context": {
-                        "source_id": SAMIRA_PACK_ID,
-                        "pack_content_sha256": manifest.pack_content_sha256,
+            if card is None:
+                parsed_card["name"] = _available_samira_name(db)
+                parsed_card["image"] = portrait
+                character_id = db.add_character_card(parsed_card)
+                if character_id is None:
+                    logger.warning("samira_card_seed_failed category=insert")
+                    return
+            else:
+                character_id = int(card["id"])
+
+            try:
+                manifest_data, manifest, loaded_assets = _load_samira_pack(
+                    package_root,
+                    card_bytes=len(card_json),
+                    portrait_bytes=len(portrait),
+                )
+                from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+
+                VisualIdentityRepository(db).activate_pack(
+                    pack={
+                        "title": manifest.title,
+                        "description": "Bundled Samira reaction pack.",
+                        "default_expression_key": manifest.default_expression_key,
+                        "source_kind": "builtin",
+                        "source_context": {
+                            "source_id": SAMIRA_PACK_ID,
+                            "pack_content_sha256": manifest.pack_content_sha256,
+                        },
                     },
-                },
-                manifest=manifest_data,
-                assets=[
-                    {
-                        "expression_key": loaded.asset.expression_key,
-                        "original_expression_key": loaded.asset.original_label,
-                        "display_label": loaded.asset.display_label,
-                        "source_filename": PurePosixPath(
-                            loaded.asset.storage_relpath
-                        ).name,
-                        "storage_relpath": loaded.asset.storage_relpath,
-                        "content_type": loaded.asset.content_type,
-                        "bytes": loaded.asset.bytes,
-                        "sha256": loaded.asset.sha256,
-                        "width": loaded.asset.width,
-                        "height": loaded.asset.height,
-                        "source_context": _asset_generation_context(
-                            manifest_data, loaded.asset.original_label
-                        ),
-                        "is_animated": loaded.asset.is_animated,
-                        "frame_count": loaded.asset.frame_count,
-                        "duration_ms": loaded.asset.duration_ms,
-                    }
-                    for loaded in loaded_assets
-                ],
-                actor_kind="character",
-                actor_id=character_id,
-            )
-        except Exception as exc:  # noqa: BLE001 - card remains usable on pack failure
-            logger.warning(
-                "samira_pack_activation_failed category={}", type(exc).__name__
-            )
+                    manifest=manifest_data,
+                    assets=[
+                        {
+                            "expression_key": loaded.asset.expression_key,
+                            "original_expression_key": loaded.asset.original_label,
+                            "display_label": loaded.asset.display_label,
+                            "source_filename": PurePosixPath(
+                                loaded.asset.storage_relpath
+                            ).name,
+                            "storage_relpath": loaded.asset.storage_relpath,
+                            "content_type": loaded.asset.content_type,
+                            "bytes": loaded.asset.bytes,
+                            "sha256": loaded.asset.sha256,
+                            "width": loaded.asset.width,
+                            "height": loaded.asset.height,
+                            "source_context": _asset_generation_context(
+                                manifest_data, loaded.asset.original_label
+                            ),
+                            "is_animated": loaded.asset.is_animated,
+                            "frame_count": loaded.asset.frame_count,
+                            "duration_ms": loaded.asset.duration_ms,
+                        }
+                        for loaded in loaded_assets
+                    ],
+                    actor_kind="character",
+                    actor_id=character_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - card remains usable on pack failure
+                logger.warning(
+                    "samira_pack_activation_failed category={}", type(exc).__name__
+                )
 
 
 def _samira_seed_lock(db: Any) -> threading.Lock:
@@ -3105,6 +3187,7 @@ def _load_samira_pack(
     return manifest_data, manifest, tuple(loaded)
 
 
+@visual_lifetime.reader_guard
 def _read_samira_resource(
     package_root: str | Path | None,
     relative_path: str,
@@ -3119,8 +3202,12 @@ def _read_samira_resource(
             else resources.files("tldw_chatbook")
         )
         candidate = root.joinpath(*_SAMIRA_RESOURCE_ROOT, *parts)
-        with candidate.open("rb") as stream:
-            data = stream.read(max_bytes + 1)
+        selected = (candidate,) if isinstance(candidate, os.PathLike) else ()
+        active = visual_lifetime.current()
+        source = active.source if active is not None else None
+        with visual_lifetime.files(source, selected):
+            with visual_lifetime.resource_stream(candidate) as stream:
+                data = stream.read(max_bytes + 1)
     except (OSError, RuntimeError, TypeError, AttributeError):
         raise ValueError("samira_resource_unavailable") from None
     if not isinstance(data, bytes) or len(data) > max_bytes:

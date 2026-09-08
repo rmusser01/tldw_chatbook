@@ -457,9 +457,17 @@ def _runtime_operation(path=None):
     return raw._runtime_operation(path) if raw is not None else None
 
 
+def _active_visual_source():
+    for name in ("persona_visual_participants", "visual_identity_participants"):
+        visual = sys.modules.get("tldw_chatbook.Backup_Recovery." + name)
+        state = getattr(visual._local, "state", None) if visual is not None else None
+        if state is not None:
+            return visual, state
+    return None, None
+
+
 def _visual_native_scope():
-    visual = sys.modules.get("tldw_chatbook.Backup_Recovery.persona_visual_participants")
-    state = getattr(visual._local, "state", None) if visual is not None else None
+    visual, state = _active_visual_source()
     return (visual, state) if state is not None and state.helper is not None else (None, None)
 
 
@@ -512,8 +520,7 @@ def _admitted_file(function):
     @functools.wraps(function)
     def admitted(path, *args, **kwargs):
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-        visual = sys.modules.get("tldw_chatbook.Backup_Recovery.persona_visual_participants")
-        visual_state = getattr(visual._local, "state", None) if visual is not None else None
+        visual, visual_state = _active_visual_source()
         if visual_state is not None:
             if function.__name__ != "secure_private_directory":
                 raise RuntimeError("persona_visual_helper_not_supported")

@@ -766,6 +766,38 @@ def _persona_visual_ui_lifetime(function):
     return guarded
 
 
+def _visual_identity_ui_lifetime(function):
+    """Retain this concrete screen task through native result reconciliation."""
+    from contextlib import contextmanager
+    from functools import wraps
+    from ...Backup_Recovery import storage_admission as storage
+
+    @contextmanager
+    def pending(screen):
+        key = (threading.current_thread(), storage._task_identity())
+        previous = screen._visual_identity_pending.get(key)
+        attempt = previous if previous is not None else storage._Acquisition()
+        screen._visual_identity_pending[key] = attempt
+        try:
+            yield
+        finally:
+            if previous is None:
+                screen._visual_identity_pending.pop(key, None)
+                attempt.close()
+
+    if not asyncio.iscoroutinefunction(function):
+        @wraps(function)
+        def selected(screen, *args, **kwargs):
+            with pending(screen):
+                return function(screen, *args, **kwargs)
+        return selected
+    @wraps(function)
+    async def guarded(screen, *args, **kwargs):
+        with pending(screen):
+            return await function(screen, *args, **kwargs)
+    return guarded
+
+
 class PersonasScreen(BaseAppScreen):
     """Characters, personas, dictionaries, and behavior profiles."""
 
@@ -1043,6 +1075,8 @@ class PersonasScreen(BaseAppScreen):
         self._visual_identity_operation_task: asyncio.Task[Any] | None = None
         self._visual_identity_operation_event: threading.Event | None = None
         self._visual_identity_publication_inflight: bool = False
+        self._visual_identity_pending: dict = {}
+        self._visual_identity_retained_errors: list = []
         self._persona_visual_authoring: _PersonaVisualAuthoringState | None = None
         self._persona_visual_generation = 0
         self._persona_visual_pending = 0
@@ -7518,6 +7552,7 @@ class PersonasScreen(BaseAppScreen):
         self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_editor_name)
 
+    @_visual_identity_ui_lifetime
     async def _configure_character_visual_identity(
         self,
         snapshot: _CharacterVisualIdentityLoadSnapshot,
@@ -7593,19 +7628,20 @@ class PersonasScreen(BaseAppScreen):
             if not self._character_visual_identity_load_is_current(snapshot):
                 return
 
-    @staticmethod
+    @_visual_identity_ui_lifetime
     async def _read_character_visual_identity_graph(
-        snapshot: _CharacterVisualIdentityLoadSnapshot,
+        self, snapshot: _CharacterVisualIdentityLoadSnapshot,
     ) -> tuple[bool, dict[str, Any] | None]:
         """Read one graph with fixed-category, privacy-safe failure logging."""
 
         if snapshot.character_id is None or snapshot.db is None:
             return True, None
         try:
-            graph = await asyncio.to_thread(
+            graph = await self._visual_identity_thread_value(
                 VisualIdentityRepository(snapshot.db).get_active_actor_pack,
                 "character",
                 snapshot.character_id,
+                task_name="personas-reaction-graph",
             )
         except sqlite3.Error:
             logger.debug(
@@ -8414,6 +8450,7 @@ class PersonasScreen(BaseAppScreen):
             resolution.cache_identity,
         )
 
+    @_visual_identity_ui_lifetime
     async def _render_visual_identity_pack_preview(
         self,
         snapshot: _VisualIdentityPreviewSnapshot,
@@ -8432,13 +8469,14 @@ class PersonasScreen(BaseAppScreen):
             if not self._visual_identity_snapshot_is_current(snapshot):
                 return
             try:
-                resolution = await coordinator.run_sync(
+                resolution = await self._visual_identity_thread_value(
                     resolve_visual_identity,
                     snapshot.db,
                     actor_kind="character",
                     actor_id=snapshot.character_id,
                     requested_state="idle",
                     manual_expression_key=snapshot.asset.expression_key,
+                    task_name="personas-reaction-preview-resolve",
                 )
             except (TypeError, ValueError, OverflowError):
                 logger.opt(exception=True).debug(
@@ -8465,8 +8503,9 @@ class PersonasScreen(BaseAppScreen):
                 f"{snapshot.asset.asset_id}-{hash(resolution.cache_identity)}"
             )
             try:
-                ok = await coordinator.run_sync(
-                    cache.prepare, cache_key, bytes(resolution.image_bytes)
+                ok = await self._visual_identity_thread_value(
+                    cache.prepare, cache_key, bytes(resolution.image_bytes),
+                    task_name="personas-reaction-preview-decode",
                 )
             except Exception:
                 logger.opt(exception=True).debug(
@@ -8480,10 +8519,11 @@ class PersonasScreen(BaseAppScreen):
                 show_unavailable()
                 return
             try:
-                graph = await coordinator.run_sync(
+                graph = await self._visual_identity_thread_value(
                     VisualIdentityRepository(snapshot.db).get_active_actor_pack,
                     "character",
                     snapshot.character_id,
+                    task_name="personas-reaction-preview-graph",
                 )
             except (TypeError, ValueError, OverflowError):
                 show_unavailable()
@@ -8494,13 +8534,14 @@ class PersonasScreen(BaseAppScreen):
                 show_unavailable()
                 return
             try:
-                latest = await coordinator.run_sync(
+                latest = await self._visual_identity_thread_value(
                     resolve_visual_identity,
                     snapshot.db,
                     actor_kind="character",
                     actor_id=snapshot.character_id,
                     requested_state="idle",
                     manual_expression_key=snapshot.asset.expression_key,
+                    task_name="personas-reaction-preview-resolve",
                 )
             except (TypeError, ValueError, OverflowError):
                 show_unavailable()
@@ -8542,6 +8583,7 @@ class PersonasScreen(BaseAppScreen):
             if browser is not None:
                 browser.set_preview(renderable, asset_id=snapshot.asset.asset_id)
 
+    @_visual_identity_ui_lifetime
     def _visual_identity_author_snapshot(self) -> _VisualIdentityAuthorSnapshot | None:
         """Capture the active bound editor and immutable pack identity."""
 
@@ -8676,6 +8718,7 @@ class PersonasScreen(BaseAppScreen):
             except QueryError:
                 pass
 
+    @_visual_identity_ui_lifetime
     async def _visual_identity_candidate(
         self,
         snapshot: _VisualIdentityAuthorSnapshot,
@@ -8686,11 +8729,12 @@ class PersonasScreen(BaseAppScreen):
             return current
         self._discard_visual_identity_authoring()
         try:
-            candidate = await asyncio.to_thread(
+            candidate = await self._visual_identity_thread_value(
                 create_visual_identity_candidate,
                 snapshot.db,
                 actor_kind="character",
                 actor_id=snapshot.character_id,
+                task_name="personas-reaction-candidate",
             )
         except (ValueError, sqlite3.Error, RuntimeError):
             logger.debug("Visual Identity candidate unavailable (category=validation).")
@@ -8727,6 +8771,7 @@ class PersonasScreen(BaseAppScreen):
         self._visual_identity_authoring = state
         return state
 
+    @_visual_identity_ui_lifetime
     async def _stage_visual_identity_replacement(
         self,
         asset: VisualIdentityAssetMetadata,
@@ -8775,6 +8820,7 @@ class PersonasScreen(BaseAppScreen):
         finally:
             self._finish_visual_identity_operation(task, browser)
 
+    @_visual_identity_ui_lifetime
     async def _stage_visual_identity_clear(
         self, asset: VisualIdentityAssetMetadata
     ) -> bool:
@@ -8861,37 +8907,41 @@ class PersonasScreen(BaseAppScreen):
     ) -> None:
         """Make canonical rows omitted by a user version stageable again."""
 
-        known = {str(row["expression_key"]) for row in candidate.assets}
-        directions = {
-            reaction.expression_key: reaction.visual_direction
-            for reaction in canonical_visual_identity_reactions()
-        }
-        missing = tuple(
-            {
-                "id": asset.asset_id,
-                "expression_key": asset.expression_key,
-                "original_expression_key": asset.original_label,
-                "display_label": asset.display_label,
-                "bytes": 0,
-                "source_context_json": json.dumps(
-                    {"visual_direction": directions[asset.expression_key]}
-                ),
+        from ...Backup_Recovery import visual_identity_participants as life
+        with life.restoring_rows(candidate, assets):
+            known = {str(row["expression_key"]) for row in candidate.assets}
+            directions = {
+                reaction.expression_key: reaction.visual_direction
+                for reaction in canonical_visual_identity_reactions()
             }
-            for asset in assets
-            if asset.expression_key not in known
-        )
-        if missing:
-            candidate.assets += missing
+            missing = tuple(
+                {
+                    "id": asset.asset_id,
+                    "expression_key": asset.expression_key,
+                    "original_expression_key": asset.original_label,
+                    "display_label": asset.display_label,
+                    "bytes": 0,
+                    "source_context_json": json.dumps(
+                        {"visual_direction": directions[asset.expression_key]}
+                    ),
+                }
+                for asset in assets
+                if asset.expression_key not in known
+            )
+            if missing:
+                candidate.assets += missing
 
+    @_visual_identity_ui_lifetime
     async def _visual_identity_reference(
         self, snapshot: _VisualIdentityAuthorSnapshot
     ) -> ResolvedReferenceImage:
-        resolution = await asyncio.to_thread(
+        resolution = await self._visual_identity_thread_value(
             resolve_visual_identity,
             snapshot.db,
             actor_kind="character",
             actor_id=snapshot.character_id,
             requested_state="idle",
+            task_name="personas-reaction-reference",
         )
         if (
             not self._visual_identity_author_snapshot_is_current(snapshot)
@@ -8928,6 +8978,7 @@ class PersonasScreen(BaseAppScreen):
                 pass
             raise
 
+    @_visual_identity_ui_lifetime
     async def _generate_visual_identity_assets(
         self, assets: tuple[VisualIdentityAssetMetadata, ...]
     ) -> bool:
@@ -9086,6 +9137,7 @@ class PersonasScreen(BaseAppScreen):
         browser.set_generating(False)
         return True
 
+    @_visual_identity_ui_lifetime
     async def _generate_visual_identity_pack_all(self) -> bool:
         """Confirm and stage one bounded 31-call generation sweep."""
 
@@ -9137,6 +9189,86 @@ class PersonasScreen(BaseAppScreen):
             self._discard_visual_identity_authoring()
             self._visual_identity_operation_event = None
 
+    def visual_identity_maintenance_state(self) -> str:
+        """Inspect reaction work and dirty drafts without navigation cancellation."""
+        if self._visual_identity_pending or self._visual_identity_publication_inflight:
+            return "pending"
+        if self._visual_identity_retained_errors:
+            return "incomplete"
+        if self._visual_identity_authoring is not None:
+            return "needs-user-save/discard"
+        task = self._visual_identity_operation_task
+        if task is not None and not task.done():
+            return "pending"
+        from ...Backup_Recovery import visual_identity_participants as life
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        source = life.db_source(db)
+        return life.safe_point(source.profile) if source is not None else "unqualified"
+
+    @_visual_identity_ui_lifetime
+    async def _visual_identity_thread(self, function, /, *args, task_name, **kwargs):
+        """Only actual Shared Visual source jobs retire newly created DB borrowers."""
+        from ...Backup_Recovery import visual_identity_participants as life
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
+        from ...Character_Chat import visual_identity as source_module
+        actual = getattr(function, "__func__", function)
+        repository = getattr(function, "__self__", None)
+        db = repository.db if type(repository) is VisualIdentityRepository else (args[0] if args else None)
+        concrete_db = type(db) is CharactersRAGDB
+        source = life.db_source(db) if concrete_db else None
+        allowed = (source_module.create_visual_identity_candidate, source_module.publish_visual_identity_candidate,
+                   source_module.cleanup_visual_identity_publication_candidate, source_module.resolve_visual_identity,
+                   VisualIdentityRepository.get_active_actor_pack)
+        supported = any(actual is item for item in allowed) and life.installed_code(actual)
+        if source is not None and not supported:
+            raise RuntimeError("visual_identity_job_source_changed")
+        state = self._visual_identity_authoring
+        snapshot = state.snapshot if state is not None else None
+        snapshot_shape = life._shape(snapshot)
+        def work():
+            previous = getattr(db._local, "conn", None) if concrete_db else None
+            result = None
+            source_error = None
+            try:
+                if source is not None and life.db_source(db) is not source:
+                    raise RuntimeError("visual_identity_job_source_changed")
+                if snapshot is not None and (state.snapshot is not snapshot or life._shape(snapshot) != snapshot_shape):
+                    raise RuntimeError("visual_identity_job_source_changed")
+                result = function(*args, **kwargs)
+                return result
+            except BaseException as error:
+                source_error = error
+                raise
+            finally:
+                if supported and concrete_db and previous is None:
+                    from ...Backup_Recovery.participants import _repository_participant
+                    try:
+                        db.close_connection()
+                        if getattr(db._local, "conn", None) is not None or (not db.is_memory_db and threading.current_thread() in _repository_participant(db).retiring_threads):
+                            raise RuntimeError("visual_identity_job_native_not_retired")
+                    except BaseException as error:
+                        error.source_error = source_error
+                        error.result = getattr(source_error, "result", result)
+                        error.cleanup_candidate_relpath = getattr(source_error, "cleanup_candidate_relpath", None)
+                        error._visual_identity_retirement_error = True
+                        raise
+        outcome = await _drain_to_thread(work, task_name=task_name)
+        if outcome.error is not None and (getattr(outcome.error, "cleanup_candidate_relpath", None) is not None or getattr(outcome.error, "result", None) is not None or getattr(outcome.error, "_visual_identity_retirement_error", False)):
+            self._visual_identity_retained_errors.append(outcome.error)
+        if actual is source_module.cleanup_visual_identity_publication_candidate and outcome.error is None and outcome.value is True and len(args) > 1:
+            token = args[1]
+            self._visual_identity_retained_errors = [error for error in self._visual_identity_retained_errors if getattr(error, "cleanup_candidate_relpath", None) is not token]
+        return outcome
+
+    async def _visual_identity_thread_value(self, function, /, *args, task_name, **kwargs):
+        outcome = await self._visual_identity_thread(function, *args, task_name=task_name, **kwargs)
+        if outcome.cancellation is not None:
+            raise outcome.cancellation
+        if outcome.error is not None:
+            raise outcome.error
+        return outcome.value
+
+    @_visual_identity_ui_lifetime
     async def _save_visual_identity_pack(
         self, pack: VisualIdentityPackMetadata | None
     ) -> bool:
@@ -9163,7 +9295,7 @@ class PersonasScreen(BaseAppScreen):
                 browser.set_saving(True)
             self._visual_identity_publication_inflight = True
             user_root = get_user_data_dir()
-            outcome = await _drain_to_thread(
+            outcome = await self._visual_identity_thread(
                 publish_visual_identity_candidate,
                 state.snapshot.db,
                 state.candidate,
@@ -9172,11 +9304,18 @@ class PersonasScreen(BaseAppScreen):
             )
             cancellation = outcome.cancellation
             error = outcome.error
+            committed_result = getattr(error, "result", None)
+            if isinstance(committed_result, VisualIdentityPublicationResult):
+                # The durable activation succeeded; retain its native uncertainty
+                # while reconciling the actual committed identity.
+                outcome.value = committed_result
+                outcome.completed = True
+                error = None
             if isinstance(error, VisualIdentityPublicationError):
                 exc = error
                 token = exc.cleanup_candidate_relpath
                 if token is not None:
-                    cleanup = await _drain_to_thread(
+                    cleanup = await self._visual_identity_thread(
                         cleanup_visual_identity_publication_candidate,
                         state.snapshot.db,
                         token,

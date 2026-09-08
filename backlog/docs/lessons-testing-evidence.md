@@ -5853,3 +5853,18 @@ explicit loser with owned cleanup. Other visual source locks were preserved.
 When adding a lock around a public callback, test its supported source composition
 against actual competing callers. Searching installed callback sites alone cannot
 prove the public API preserves its previous lock ordering.
+
+## Anchor source-read fault injection to the actual descriptor (TASK-31993)
+
+**Incident.** Phase13 added native admission before Shared Visual asset reads.
+Two existing tests intercepted every `os.read`: their size counter and symlink
+swap then reacted to admission-control reads before reaching the image FD. Those
+failures described the fixture's changed trigger, not image bounds or confinement.
+Matching the intended image's captured device/inode before injecting the fault
+restored the original behavioral test without changing production safety checks.
+The final focused asset/publication checks retained the original failure categories.
+
+When a new owner introduces earlier native reads, prove the injected operation is
+the intended resource. Keep process-wide admission reads outside a resource-specific
+counter or mutation barrier; do not loosen native capability or confinement checks
+to make an accidentally triggered fixture pass.

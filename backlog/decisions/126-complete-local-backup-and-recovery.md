@@ -397,3 +397,68 @@ aggregate responder/startup composition still require their own Task10 work.
 Required-state clear continues to produce a reviewable, unpublishable dirty draft;
 clearing an optional state preserves existing valid publication behavior. No new
 visual feature, capture reader, archive capability or Complete claim is introduced.
+
+### Task10 phase13 — Shared Visual Identity source/native lifetimes (rulings74–75)
+
+`Backup_Recovery/visual_identity_participants.py` binds the actual loaded config,
+canonical profile, registered CharactersRAGDB, original candidate and fixed source
+and publication members. The existing storage pending/native and core operations
+carry publication through file rename, optimistic core activation and positive
+native retirement. This is a separate concrete source bridge; the Persona Visual
+bridge and generic callback lifetime do not grant this source permission. Existing
+candidate and Samira seed locks remain; no new global source mutex is introduced.
+
+Public publication, cleanup, runtime readers and the config builtin seed caller
+reserve before selectors, native allocation and candidate publication flags.
+Filesystem package sources are finite and read-only. Custom package roots and
+non-filesystem resources keep ordinary contracts without across-pause authority.
+Seeding preserves its two commits: a card remains usable after pack failure.
+Public injectable `atomic_replace` and repository guards retain ordinary behavior.
+Builtin/shared pack saves retain their fork and binding-version rules.
+
+Cleanup keeps its relpath API. Only the exact module-issued relpath object, original
+repository/source association and captured directory/member native identities may
+reconcile that publication's blocker. An equal rebuilt string may use ordinary
+fresh admission and existing reference/namespace checks; it does not inherit an
+installed scope or clear a source failure. Foreign native members remain intact.
+Only verified unreferenced cleanup followed by positive native retirement clears
+the matching failure. Partial allocation and close-before/close-after uncertainty
+retain strong native state and maintenance exclusion, including committed results.
+
+The actual canonical UI restoration method may append only missing canonical
+path-free rows under the original candidate lock. Issuance validates the entire old
+graph and exact appended metadata; copied, changed and unstageable candidates
+cannot refresh issuance. Restoration alone is an unsaved draft. Every retained
+placeholder needs staged replacement bytes before publication; clearing remains
+the existing explicit author action. A private copy-surviving refusal marker adds
+no authority: only the registry's original object/source relationship does.
+
+Concrete Personas reaction jobs retain pending state through queued/running
+cancellation, native callback completion, result/cache handling and retirement of
+new source-thread DB borrowers. Borrowed connections remain with their owner.
+Inspection reports pending/dirty/failure state without navigation discard. External
+`_generate_visual_identity_assets_admitted` provider work is still unqualified:
+its UI pending lifetime is evidence of outstanding work, not runtime retirement.
+App/headless aggregation, responder/startup release and remaining persistence
+cohorts require Task10 continuation and whole-task review. No Complete promotion.
+
+Rulings76–77 close actual public callback borrowing found during phase13 review.
+The publication's `atomic_replace` call and both repository `publication_guard`
+invocations suppress Shared Visual and core discovery only while evaluating the
+public callback. Exact loaded producer code/globals authenticate these narrow
+callsites; original pending/native/transaction/lease registries stay retained.
+Discovery is restored in `finally` before rename verification or original core
+activation. Ordinary callbacks can perform fresh admitted work before pause; they
+cannot borrow the original core operation for unrelated work after pause. The
+actual internal filesystem guard requires no privileged callback registry.
+
+Ruling78 permits only three original same-repository result-read edges to retain
+their validated core operation: `activate_pack`/`publish_version` to
+`get_active_actor_pack`, and `get_active_actor_pack` to `list_version_assets`.
+Both exact loaded producer/callee codes, globals, receiver, source and current
+operation participant must match. Public guards still suppress discovery,
+including their truth-value evaluation. Original result materialization therefore
+finishes without admitting an independent new source operation after pause.
+If source failure and borrower retirement both fail, the UI retains the original
+exception, exact cleanup token and truthful result on the retirement error; it
+does not turn an unrelated error into publication success or clear uncertainty.

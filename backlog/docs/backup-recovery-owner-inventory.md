@@ -249,23 +249,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Character_Chat/expression_set_io.py | resolve_local_expression_set | ZipFile | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/local_character_persona_service.py | LocalCharacterPersonaService._persist_personas | write_text | 1 | unsupported | concrete chat source lifetime; runtime/capture validation pending |
 | tldw_chatbook/Character_Chat/local_chat_dictionary_service.py | LocalChatDictionaryService._persist_history | write_text | 1 | unsupported | concrete chat source lifetime; runtime/capture validation pending |
-| tldw_chatbook/Character_Chat/visual_identity.py | _inspect_image_bytes | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _open_publication_chain | open | 2 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _read_builtin_asset | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _read_private_publication_file | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _read_private_publication_path | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _read_samira_resource | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _read_user_asset_fallback | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _read_user_asset_secure | open | 3 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _sync_publication_directory | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _write_private_publication_file | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _write_private_publication_file | write | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _write_private_publication_path | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | _write_private_publication_path | write | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | cleanup_visual_identity_publication_candidate | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | cleanup_visual_identity_publication_candidate | secure_private_directory | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | publish_visual_identity_candidate | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/visual_identity.py | publish_visual_identity_candidate | secure_private_directory | 2 | unsupported | files |
 | tldw_chatbook/Chat/attachment_core.py | process_attachment_bytes | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/chat_conversation_service.py | ChatConversationService._save_rag_context_store | write_text | 1 | unsupported | concrete chat source lifetime; runtime/capture validation pending |
 
@@ -1115,7 +1098,6 @@ The control owner now exclusively creates bounded version-1 before/after write i
 
 | Module | Qualified symbol | Call | Count | Classification | Cohort |
 | --- | --- | --- | --- | --- | --- |
-| tldw_chatbook/Character_Chat/visual_identity.py | _discard_pinned_directory | os.unlink | 1 | unsupported | files |
 | tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | extract_text_from_image | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/OCR_Backends.py | DocextOCRBackend.process_pdf | os.unlink | 1 | unsupported | miscellaneous |
@@ -1496,7 +1478,7 @@ release startup holds. A read-only/copy ID grants no ordinary-writer bypass.
 | tokenizers.custom | canonical ~/.config/tldw_cli/tokenizers, exact installed tokenizer owner root | `Utils.custom_tokenizers.CustomTokenizerManager.__init__`, `install_tokenizer`, `save_mappings`; participant pending. No environment model-cache inference. |
 | skills | data/skills; known tldw_chatbook_skills.json, skills/, trust/ | Runtime `default_local_skills_store_dir` now delegates the pure recovery selector. `LocalSkillsService._save_index`, `_write_bytes_atomic`, `_write_text_atomic`, create/import/remove/script lifecycle; `Skills_Interop.atomic_write` and trust-store `_atomic_write_bytes`/`_atomic_write_json` require full participant lifetimes. Trust manifests/grants/snapshots are historical bytes, never imported execution authority. |
 | persona.assets | data/persona_visual | `publish_persona_visual`, publication candidate cleanup, importer and authoring-workspace materialization/cleanup; concrete source/native lifetime implemented in phase12, aggregate app/headless qualification pending. Qualified core42 `persona_visual_assets` current/retained locators require exact source size/hash. |
-| persona.visual_identity | data/visual_identities | `Character_Chat.visual_identity.publish_visual_identity_candidate` and cleanup/materialization; actual manual pack assets plus preview locators. Participant pending. Unknown source kinds refuse. |
+| persona.visual_identity | data/visual_identities | `Character_Chat.visual_identity.publish_visual_identity_candidate` and cleanup/materialization; actual manual pack assets plus preview locators. Concrete source/native publication, readers, cleanup and UI callers implemented in phase13; aggregate app/headless qualification pending. Unknown source kinds refuse. |
 | persona.visual_identity_builtin | Only referenced built-in files and ancestors under installed package/assets | Exact owning pack `source_kind=builtin`, core42 schema, checked relative path/size/SHA256. No whole-package traversal. Captured bytes never authorize installation or overwriting package assets. |
 | chat.attachments | Same physical core DB, message_attachments.data and core image BLOBs | Exact core/attachment cohort with physical identity first. Delegates checked core capture/schema; no new raw writer. |
 | tts.profile_store; tts.references | Canonical configured TTS DB, exact installed schema4; clone bytes/transcript/recipe references retained in DB | `_Profiles.capture` uses literal recovery.files.tts and existing checked SQLite snapshot. Exact TTS physical cohort; reference count/hash verified. Runtime `TTSProfileRepository` coordinated worker drain belongs task10. |
@@ -2309,7 +2291,7 @@ errors retain materialized identities and error/cleanup state; only an actual
 matching positively cleaned candidate clears its own blocker. Maintenance
 inspection never invokes `_drain_persona_visual_authoring`'s user-discard route.
 
-Shared Visual Identity is the next interacting cohort: screen
+Phase12 handoff (resolved for bounded source/native jobs in phase13 below): screen
 `_save_visual_identity_pack` still calls generic `_drain_to_thread` for
 `publish_visual_identity_candidate` and `cleanup_visual_identity_publication_candidate`;
 its actual candidate/style/stage/reference/provider generation/cancel paths and
@@ -2345,6 +2327,20 @@ asset reads here do not authorize arbitrary renderer/generation callbacks.
 | tldw_chatbook/Persona_Visual/publication.py | cleanup_persona_visual_publication_candidate | secure_private_directory | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Persona_Visual/publication.py | publish_persona_visual | mkdir | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Persona_Visual/publication.py | publish_persona_visual | secure_private_directory | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+
+### Task10 phase13 exact changed-source census
+
+| Module | Symbol | Call | Count | Classification | Cohort |
+| --- | --- | --- | ---: | --- | --- |
+| tldw_chatbook/Backup_Recovery/visual_identity_participants.py | _open_native | open | 1 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Backup_Recovery/visual_identity_participants.py | mkdir | mkdir | 2 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Backup_Recovery/visual_identity_participants.py | resource_stream | open | 1 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Backup_Recovery/visual_identity_participants.py | unlink | os.unlink | 2 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Character_Chat/visual_identity.py | _inspect_image_bytes | open | 1 | memory | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Character_Chat/visual_identity.py | _write_private_publication_file | write | 1 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Character_Chat/visual_identity.py | _write_private_publication_path | write | 1 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Character_Chat/visual_identity.py | cleanup_visual_identity_publication_candidate | secure_private_directory | 1 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Character_Chat/visual_identity.py | publish_visual_identity_candidate | secure_private_directory | 2 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | mkdir | 1 | unsupported | miscellaneous |
@@ -2366,3 +2362,62 @@ asset reads here do not authorize arbitrary renderer/generation callbacks.
 | tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | mkdir | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | secure_private_directory | mkdir | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+
+
+### Task10 phase13 — reviewed Shared Visual Identity lifetimes and remaining callers
+
+The new concrete bridge `Backup_Recovery/visual_identity_participants.py` uses
+existing storage pending/native leases and registered core operations for actual
+`Character_Chat/visual_identity.py` candidate creation/publication/cleanup, selected
+manual/builtin reads and `ensure_builtin_samira`. Public instance operations in
+`DB/VisualIdentity_DB.py` retain their actual core borrower. Publication fixes old
+source members, new staging/final leaves and directories before effects; only
+positive native retirement permits completion. Installed sources bind exact loaded
+config/profile/core/candidate identities. Ordinary custom/portable resources do not
+inherit installed authority. Public fork, binding/version, atomic replacement and
+partial card-then-pack seed behavior are preserved. Native uncertainty is sticky.
+
+`Utils/private_paths.py` discovers either concrete visual source only for the
+existing `secure_private_directory` helper and fixed selected directories. Generic
+file/callback APIs remain ordinary boundaries. Its shared raw and Persona Visual
+checks pass. This source bridge does not introduce a global source mutex.
+
+`PersonasScreen._visual_identity_thread` admits actual allowlisted source jobs and
+retains new DB borrower retirement through repeated cancellation; preexisting
+borrowers are preserved. `_save_visual_identity_pack` retains issued error/cleanup
+references and reconciles committed results even when native close is uncertain.
+`visual_identity_maintenance_state` and source `safe_point` preserve pending or
+unsaved drafts, including canonical row restoration with no replacements yet.
+`_restore_candidate_reaction_rows` qualifies only the exact original candidate and
+canonical missing path-free rows under its lock, never arbitrary shape refresh.
+Copied relpath strings retain only ordinary fresh cleanup behavior and cannot
+clear an installed failure; exact original source/native cleanup is required.
+
+Rulings76–78 narrow both public callback boundaries: the actual atomic replacement
+invocation and both repository publication guards suppress only visual/core
+discovery while retaining all native/pending owners. Three exact original
+same-repository result-read edges can reuse their existing validated core scope;
+public callbacks cannot. Truth-value evaluation remains inside suppression.
+Source error plus borrower-close failure retains its original exception/token and
+truthful result in the screen, including cancelled workers. The analogous earlier
+Persona Visual callback seam is an explicit required Task10 follow-up, not changed
+or qualified by this phase.
+
+Concrete remaining Task10 routes (mandatory handoff, not owner exclusions):
+- `PersonasScreen._generate_visual_identity_assets_admitted` calls
+  `_run_visual_identity_generation_request` and its real image generation worker,
+  adapter/provider/native runtime. This phase uses synthetic generation sentinels;
+  UI pending/cancellation tracking does not qualify runtime termination or release.
+- Persona Visual generation runtime, local actor service callbacks, remaining
+  TTS repository/runtime and credential owners still need their concrete cohorts.
+- Actual app/injected/eager/lazy and headless maintenance aggregation must collect
+  both visual sources, dirty editors, pending jobs and retained failures; bind the
+  existing startup/admission/responder lifetimes without automatic draft discard.
+- Whole Task10 independent review and aggregate qualification remain required.
+  Task31993 stays In Progress with all ACs unchecked; no startup/Complete release.
+
+Exact diagnostics are compared against phase13 BASE b4537258. Only changed visual
+source/UI digest rows may be refreshed after identical diagnostic-call AST proof;
+inherited owner/config sink drift and the two TTS/recovery.py profile literals
+remain recorded debt, not green evidence. Full command/results and private native
+observer logs are in the phase13 dual report.

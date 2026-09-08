@@ -181,7 +181,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "609085bf8c63e649890e",
+      "diagnostic_digest": "7be8c9bb5c5c29305e1b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Character_Chat/visual_identity.py",
       "reason": "remaining Chatbook production diagnostic owner"
