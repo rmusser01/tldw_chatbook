@@ -1318,11 +1318,25 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         compact=True,
                         disabled=self.mutation_in_flight,
                     )
-                    # task-32074: the prompt's primary outbound action, in
-                    # the header beside the mode tabs -- where the Media
-                    # Reader puts its own "Use in Console". At the bottom of
-                    # the editor (row 49 of 52 live) it was below every field
-                    # and the whole history region.
+                # task-32074: the prompt's primary outbound action, in the
+                # header directly under the mode tabs -- the same place the
+                # Media Reader keeps its own "Use in Console" (its action row
+                # sits beside the Read/Analysis/Highlights/Info row, not in
+                # it). At the bottom of the editor (row 49 of 52 live) it was
+                # below every field and the whole history region.
+                #
+                # Fix round 1: its OWN row, not a fourth control inside
+                # ``#library-prompt-mode-controls``. That row is a bare
+                # Horizontal with no overflow rule, and the prompts work pane
+                # floors at 48 cells: measured, a fourth ~16-cell control
+                # starts at column 48 and lands entirely outside a 44-cell
+                # canvas. Same ruling as task-30043 on the media canvas, where
+                # a fourth action got its own row for exactly this reason.
+                header_actions = Horizontal(
+                    id="library-prompt-header-actions", classes="ds-toolbar"
+                )
+                header_actions.styles.height = "auto"
+                with header_actions:
                     use_console = Button(
                         "Use in Console",
                         id="library-prompt-insert-console",

@@ -301,9 +301,11 @@ The fixed action area shows only actions valid for the current lifecycle:
 | Version conflict | **Save as new**, **Reload** |
 | Mutation in progress | The relevant actions remain in place but are disabled with a readable reason |
 
-**Use in Console** sits in the editor **header**, on the same row as
-**Basic | Advanced | Info**, where the Media Reader keeps its own Use in
-Console — not at the bottom of the editor below every field.
+**Use in Console** sits in the editor **header**, on its own row directly
+under **Basic | Advanced | Info** — the same shape the Media Reader uses for
+its own Use in Console, and not at the bottom of the editor below every
+field. Its own row so the label paints in full even in the narrowest editor
+pane.
 
 **More actions** expands inline for a saved, clean item. It contains Export…,
 Copy Markdown, Duplicate, Collections, History, and Delete. Press **Escape** to

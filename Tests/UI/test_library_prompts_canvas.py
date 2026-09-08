@@ -3405,10 +3405,14 @@ async def test_library_prompt_clamped_next_focuses_filter_when_both_pages_disabl
             message="Clamped Prompt pager never restored focus to the filter.",
         )
 
-        previous = screen.query_one("#library-prompts-page-previous", Button)
-        clamped_next = screen.query_one("#library-prompts-page-next", Button)
-        assert previous.disabled is True
-        assert clamped_next.disabled is True
+        # task-32067: the clamped result fits one page, so the pager keeps its
+        # range and drops the two controls entirely (Media's rule since
+        # task-31237) instead of leaving a disabled pair. The focus contract
+        # this test exists for is unchanged -- and stricter: the invoking
+        # button is now gone, not merely disabled, and focus still lands on
+        # the filter.
+        assert not screen.query("#library-prompts-page-previous")
+        assert not screen.query("#library-prompts-page-next")
         assert screen.query_one("#library-prompts-filter", Input).has_focus
 
 
@@ -11379,6 +11383,21 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
         assert actions.max_scroll_y == 0
         assert list(content.query(VerticalScroll)) == []
 
+        # task-32074: "Use in Console" now rides the editor HEADER row, which
+        # is part of the scrolling content -- so it is checked at the top of
+        # the scroll, and the PINNED strip is checked at the bottom, where
+        # this test's contract lives. Both are keyboard-reachable throughout.
+        if not conflict:
+            content.scroll_home(animate=False)
+            await pilot.pause()
+            use_console = screen.query_one(
+                "#library-prompt-insert-console", Button
+            )
+            assert use_console.region.width > 0
+            assert use_console.region.height > 0
+            assert screen.region.contains_region(use_console.region)
+            assert use_console in host.screen.focus_chain
+
         content.scroll_end(animate=False)
         await pilot.pause()
         assert not actions.region.overlaps(author.region)
@@ -11388,10 +11407,7 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
                 "library-prompt-conflict-reload",
             )
             if conflict
-            else (
-                "library-prompt-insert-console",
-                "library-prompt-more-actions",
-            )
+            else ("library-prompt-more-actions",)
         )
         for action_id in action_ids:
             action = screen.query_one(f"#{action_id}", Button)
