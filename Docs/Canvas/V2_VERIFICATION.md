@@ -220,3 +220,63 @@ The existing broad non-UI core CI lane already collects Canvas browser tests;
 it now installs mandatory Chromium after Playwright dependencies and before
 pytest. Its contract test preserves collection and required-failure behavior;
 unrelated lanes/sharding remain unchanged. Hosted CI itself is not run locally.
+
+## TASK-31942 SQLite correction qualification — 2026-09-08
+
+**Task 7 is delivered with concerns; the correction gate remains unqualified and
+Canvas V2 remains disabled.**
+Task 7 adds installed-wheel isolation and a UI-loop/thread boundary regression,
+then exercises the exact storage and five actual-child selections. The tracked
+test/docs change contains no runtime API, admission, budget, or production-code
+change.
+
+The wheel was built with the existing offline toolchain, installed with
+`--no-index --no-deps` into a pytest-owned target, and its 15-file fixed-helper
+closure matched the wheel and checkout byte-for-byte. The installed absolute
+entry ran with `-I -S` from hostile cwd/`PYTHONPATH`: plain close, real prepare,
+and fixed TTS initialization all completed with clean stderr. A supplemental
+test-owned import/file audit found every product import in the installed copy,
+no app/config/provider/keyring/loguru/Textual import, no resolved absolute open
+under trap roots, and no poison sentinel access. Deleting an installed leaf
+produced source-free `helper_unavailable`; hostile roots could not rescue it.
+The focused packaging/UI-loop selection passed 8 tests in 12.54s.
+
+The exact 27-file affected command and exact five-node Canvas command both
+failed at collection because the shared virtual environment's
+`tldw_profile_core` editable `.pth` targets an absent old worktree. This is a
+stale environment install, not a new helper-wheel omission; the shared venv was
+not repaired. The 26-file continuation completed with 1,483 passed, 5 skipped,
+and 36 failed: three known strict-inventory deltas, eleven spawned cases blocked
+at `multiprocessing.Event` creation by host semaphore ENOSPC, and 22 app/perf
+subprocess nodes blocked by the absent package. No completed-continuation node
+was unrun. A local-source diagnostic passed the omitted interop file (26/26),
+but nested performance subprocesses deliberately replace `PYTHONPATH`, leaving
+the ADR-097 972-module census and related import/payload ceilings unqualified.
+No ceiling was changed.
+
+With the same five Canvas node IDs and an explicitly labeled local-source path,
+the required actual-child tests passed under approved owned-loopback/browser
+execution: 5 passed in 137.13s. The initial sandbox bind denial is environment
+evidence, not behavioral RED. Existing fixtures retained their child
+fault/lifecycle captures; no disconnect or crash was treated as successful
+refusal.
+
+Five-sample benchmarks used identical current/baseline workloads in separate
+owned roots and imported the pytest isolation bootstrap before every product
+import. Current versus immutable `9bc73ffb3` medians were: cold app import
+826.859/712.696ms, actual app UI-ready 8,157.564/8,111.325ms, and threaded TTS
+repository open 142.452/6.428ms. The baseline predates the fixed-helper API, so
+helper values are intentionally unavailable there. Current fixed prepare,
+retained-child readiness, and repeated proof-recheck medians were respectively
+43.392ms, 43.658ms, and 0.239ms. Test-owned 0.5ms sampling across operation and
+cleanup boundaries observed repository high water of +9 FDs/2 live helpers and
+fixed operations +3 FDs/1 live helper; these are sampled observations, not an
+exact kernel-instantaneous FD maximum.
+
+Local qualification used macOS arm64, CPython 3.12.11 and SQLite 3.49.1.
+Python 3.11, Windows, and Linux were unavailable and are not claimed as passed.
+An invalid first benchmark launch imported product configuration before owned
+isolation and produced no metric; its bounded audit is preserved separately,
+not promoted into qualification. The full command/result/failure accounting is
+in the ignored Task 7 report. Whole-correction review, Backlog completion, and
+the Task 8 candidate/admitted rerun remain separate controller decisions.
