@@ -9,6 +9,21 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Process-lived config bindings require coherent isolated imports (TASK-31993)
+
+**Incident.** Phase9 bound the actual installed config module to its selected profile.
+Three shared tests changed native support or profile selectors after a lazy import
+had already bound config; a later covering run passed228 but failed the theme/app
+case because actual RAG bootstrap consumed that old source. These were fixture
+lifetime violations, not reasons to demote a production binding. Selecting the
+profile and importing a fresh actual config module before the affected consumers
+made the12 shared correction cases and83 theme/private/runtime checks pass.
+
+Keep test-held config references and lazy app consumers consistent with the selected
+module. Apply fresh-module isolation only to affected fixtures; do not clear live
+participant registries or blanket-reload modules. If consumers already captured
+from-import references and cannot be kept coherent, use a fresh isolated process.
+
 ## SQLite trace callbacks can hide a new admission refusal (TASK-31993)
 
 **Incident.** Core transaction enrollment made two existing Prompts WAL-race tests

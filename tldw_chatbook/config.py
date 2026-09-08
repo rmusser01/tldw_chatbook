@@ -44,6 +44,8 @@ from loguru import logger
 #
 # Local Imports
 from tldw_chatbook.Backup_Recovery import profile_paths
+from tldw_chatbook.Backup_Recovery import config_participants as _config_participants
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -150,6 +152,7 @@ def _report_config_path_posture(
 _ENCRYPTION_PASSWORD = None  # Cached password for the session
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 _CONFIG_GENERATION = 0
+_CONFIG_PERSISTENCE_ERROR = None
 
 #: Permission mode used the first time an encryption-related rewrite of the
 #: config file creates it from scratch (no pre-existing file whose mode can
@@ -1329,6 +1332,7 @@ def _normalize_legacy_provider_api_key(
     return None
 
 
+@_config_participants.guarded
 def load_settings(force_reload: bool = False) -> Dict:
     """
     Loads all settings from TOML config files, environment variables, or defaults into a dictionary.
@@ -2771,13 +2775,20 @@ def load_settings(force_reload: bool = False) -> Dict:
     # Set the chat dictionaries folder path dynamically
     from .Utils.paths import get_user_data_dir
 
-    chat_dicts_folder = get_user_data_dir() / "chat_dicts"
+    chat_dicts_folder = (
+        get_user_data_dir() if bootstrap.succeeded
+        else profile_paths.user_data_dir(toml_config_data)
+    ) / "chat_dicts"
     config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
 
     # Create the chat dictionaries folder if it doesn't exist
     try:
-        chat_dicts_folder.mkdir(parents=True, exist_ok=True)
+        if bootstrap.succeeded:
+            with _config_participants.operation(sys.modules[__name__], route="config_chat_dicts", target=chat_dicts_folder):
+                chat_dicts_folder.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Ensured chat dictionaries folder exists: {chat_dicts_folder}")
+    except RecoveryRequired:
+        raise
     except Exception as e:
         logger.error(
             f"Could not create chat dictionaries folder {chat_dicts_folder}: {e}"
@@ -4724,6 +4735,7 @@ class _ConfigBootstrapResult(NamedTuple):
     succeeded: bool
 
 
+@_config_participants.guarded
 def _load_cli_config_bootstrap_unlocked(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
@@ -4795,6 +4807,8 @@ def _load_cli_config_bootstrap_unlocked(
             bootstrap_succeeded = True
         else:
             raise
+    except RecoveryRequired:
+        raise
     except tomllib.TOMLDecodeError as e:
         logger.opt(exception=True).error(
             f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load."
@@ -4916,51 +4930,63 @@ def _config_file_lock():
 def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
     """Hold one OS-backed lock across a whole-file config transaction."""
 
-    lock_path = config_path.with_name(f"{config_path.name}.lock")
-    application_directory = application_owned_config_directory(config_path)
-    try:
-        create_private_text(
+    with _config_participants.operation(sys.modules[__name__], target=config_path):
+        lock_path = config_path.with_name(f"{config_path.name}.lock")
+        application_directory = application_owned_config_directory(config_path)
+        try:
+            create_private_text(
+                lock_path,
+                "",
+                application_owned_directory=application_directory,
+            )
+        except FileExistsError:
+            pass
+        stream = open_private_text_append_stream(
             lock_path,
-            "",
             application_owned_directory=application_directory,
         )
-    except FileExistsError:
-        pass
-    stream = open_private_text_append_stream(
-        lock_path,
-        application_owned_directory=application_directory,
-    )
-    locked = False
-    try:
-        portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
-        locked = True
-        yield
-    finally:
-        if locked:
+        locked = False
+        try:
+            from tldw_chatbook.Backup_Recovery import raw_participants
+            operation = raw_participants._runtime_operation(config_path)
+            while True:
+                _config_participants.check_lock_wait(sys.modules[__name__], operation)
+                try:
+                    portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING)
+                    locked = True
+                    break
+                except portalocker.exceptions.AlreadyLocked:
+                    _threading.Event().wait(0.05)
+            _config_participants.check_lock_wait(sys.modules[__name__], operation)
+            yield
+        finally:
+            if locked:
+                try:
+                    portalocker.unlock(stream)
+                except Exception as error:
+                    logger.error(
+                        "Configuration write lock release failed (error_type={}).",
+                        type(error).__name__,
+                    )
             try:
-                portalocker.unlock(stream)
+                stream.close()
             except Exception as error:
                 logger.error(
-                    "Configuration write lock release failed (error_type={}).",
+                    "Configuration write lock close failed (error_type={}).",
                     type(error).__name__,
                 )
-        try:
-            stream.close()
-        except Exception as error:
-            logger.error(
-                "Configuration write lock close failed (error_type={}).",
-                type(error).__name__,
-            )
 
 
 @contextmanager
 def _config_write_lock(config_path: Path) -> Iterator[None]:
     """Serialize one config write transaction within and across processes."""
 
-    with _config_file_lock(), _config_interprocess_lock(config_path):
-        yield
+    with _config_participants.operation(sys.modules[__name__], target=config_path):
+        with _config_file_lock(), _config_interprocess_lock(config_path):
+            yield
 
 
+@_config_participants.guarded
 def _load_cli_config_bootstrap(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
@@ -4970,6 +4996,7 @@ def _load_cli_config_bootstrap(
         return _load_cli_config_bootstrap_unlocked(force_reload=force_reload)
 
 
+@_config_participants.guarded
 def _prepare_config_parent(config_path: Path) -> Path | None:
     """Secure the default config directory or verify a custom parent."""
 
@@ -4989,6 +5016,7 @@ def _prepare_config_parent(config_path: Path) -> Path | None:
     return application_directory
 
 
+@_config_participants.guarded
 def _read_raw_cli_config_unlocked(config_path: Path) -> Dict[str, Any]:
     """Read the on-disk config mapping while the config lock is held."""
 
@@ -5027,6 +5055,7 @@ class ConfigSerializationError(ValueError):
     """
 
 
+@_config_participants.guarded
 def _write_raw_cli_config_unlocked(
     config_path: Path,
     config_data: Mapping[str, Any],
@@ -5082,14 +5111,19 @@ def _write_raw_cli_config_unlocked(
     _invalidate_config_caches()
 
 
+@_config_participants.guarded
 def _publish_runtime_config_unlocked() -> Dict[str, Any]:
     """Reload caches and publish one complete in-process config generation."""
 
-    global settings, _CONFIG_GENERATION
+    global settings, _CONFIG_GENERATION, _CONFIG_PERSISTENCE_ERROR
 
-    loaded = _load_cli_config_bootstrap_unlocked(force_reload=True).config
+    bootstrap = _load_cli_config_bootstrap_unlocked(force_reload=True)
+    if not bootstrap.succeeded:
+        raise ValueError("Configuration runtime reload failed")
+    loaded = bootstrap.config
     settings = load_settings(force_reload=True)
     _CONFIG_GENERATION += 1
+    _CONFIG_PERSISTENCE_ERROR = None
     return loaded
 
 
@@ -5131,6 +5165,7 @@ def get_atomic_config_snapshot() -> AtomicConfigSnapshot:
         )
 
 
+@_config_participants.guarded
 def get_runtime_config_snapshot(
     *,
     force_reload: bool = False,
@@ -5209,6 +5244,7 @@ def _preserve_revision_owned_sections(
     return selected
 
 
+@_config_participants.guarded
 def _try_read_cli_config_serialized_unlocked(config_path: Path) -> str | None:
     try:
         with open_private_binary(config_path) as opened:
@@ -5218,6 +5254,7 @@ def _try_read_cli_config_serialized_unlocked(config_path: Path) -> str | None:
         return None
 
 
+@_config_participants.guarded
 def _read_cli_config_serialized_unlocked(config_path: Path) -> str:
     serialized = _try_read_cli_config_serialized_unlocked(config_path)
     if serialized is None:
@@ -5228,6 +5265,7 @@ def _read_cli_config_serialized_unlocked(config_path: Path) -> str:
     return serialized
 
 
+@_config_participants.guarded
 def read_cli_config_serialized() -> str:
     """Return the effective config's exact serialized on-disk representation."""
 
@@ -5245,16 +5283,27 @@ def _write_serialized_config_artifact_unlocked(
     *,
     config_path: Path,
 ) -> Path:
-    application_directory = _prepare_config_parent(config_path)
-    result = atomic_private_write_text(
-        path,
-        serialized,
-        application_owned_directory=application_directory,
-    )
-    _report_config_path_posture(result, target_kind="snapshot")
-    return result.lexical_path
+    if path in (config_path, _advanced_backup_path(config_path)):
+        route, target = "config", config_path
+    else:
+        prefix, suffix = "config_backup_", ".toml"
+        if path.parent != config_path.parent or not path.name.startswith(prefix) or not path.name.endswith(suffix):
+            raise ValueError("invalid_config_snapshot_target")
+        route, target = "config_snapshot", path.name[len(prefix):-len(suffix)]
+        if _config_snapshot_path(config_path, target) != path:
+            raise ValueError("invalid_config_snapshot_target")
+    with _config_participants.operation(sys.modules[__name__], route=route, target=target):
+        application_directory = _prepare_config_parent(config_path)
+        result = atomic_private_write_text(
+            path,
+            serialized,
+            application_owned_directory=application_directory,
+        )
+        _report_config_path_posture(result, target_kind="snapshot")
+        return result.lexical_path
 
 
+@_config_participants.guarded
 def read_cli_config_backup_serialized() -> str:
     """Return the exact serialized advanced-editor backup."""
 
@@ -5266,6 +5315,7 @@ def read_cli_config_backup_serialized() -> str:
             return opened.stream.read().decode("utf-8")
 
 
+@_config_participants.guarded
 def replace_cli_config_serialized(
     serialized: str,
     *,
@@ -5382,6 +5432,13 @@ def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
         return _publish_runtime_config_unlocked()
 
 
+def _config_snapshot_path(config_path: Path, timestamp: str) -> Path:
+    """Select one config-owned snapshot basename before any filesystem effect."""
+    if not isinstance(timestamp, str) or not timestamp or any(char in timestamp for char in ("/", "\\", "\x00")):
+        raise ValueError("invalid_config_snapshot_target")
+    return config_path.parent / f"config_backup_{timestamp}.toml"
+
+
 def export_cli_config_snapshot(
     config_data: Mapping[str, Any] | None = None,
     *,
@@ -5389,10 +5446,10 @@ def export_cli_config_snapshot(
 ) -> Path:
     """Create an owner-only snapshot beside the effective config file."""
 
-    config_path = get_cli_config_path()
     snapshot_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-    snapshot_path = config_path.parent / f"config_backup_{snapshot_timestamp}.toml"
-    with _config_file_lock():
+    with _config_participants.operation(sys.modules[__name__], route="config_snapshot", target=snapshot_timestamp), _config_file_lock():
+        config_path = get_cli_config_path()
+        snapshot_path = _config_snapshot_path(config_path, snapshot_timestamp)
         serialized = _try_read_cli_config_serialized_unlocked(config_path)
         if serialized is None:
             if config_data is None:
@@ -6461,27 +6518,22 @@ def get_user_folder_name() -> str:
     return profile_paths.user_folder_name(user_name)
 
 
+@_config_participants.guarded
 def get_user_data_dir() -> Path:
     """Return the secured lexical user-specific data directory."""
     user_folder = get_user_folder_name()
     configured_data_dir = get_cli_setting("paths", "data_dir", None)
     if configured_data_dir is None:
         configured_data_dir = get_cli_setting("Paths", "data_dir", None)
-    if configured_data_dir:
-        base_data_dir = lexical_path(configured_data_dir)
-        verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
-    else:
-        base_data_dir = secure_private_directory(
-            _default_base_data_dir(),
-            create=True,
-            application_owned=True,
-        ).lexical_path
+    base_data_dir = lexical_path(configured_data_dir) if configured_data_dir else _default_base_data_dir()
     user_dir = base_data_dir / user_folder
-    return secure_private_directory(
-        user_dir,
-        create=True,
-        application_owned=True,
-    ).lexical_path
+    with _config_participants.operation(sys.modules[__name__], route="config_data", target=user_dir):
+        if configured_data_dir:
+            verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
+        else:
+            secure_private_directory(base_data_dir, create=True, application_owned=True)
+        return secure_private_directory(user_dir, create=True, application_owned=True).lexical_path
+
 
 
 def _get_custom_database_path(
@@ -6707,6 +6759,7 @@ def get_cli_data_dir() -> Path:
     return get_user_data_dir()
 
 
+@_config_participants.guarded
 def get_model_cache_dir() -> Path:
     """Get the user-specific model cache directory for embeddings."""
     # Check if a custom cache dir is configured
@@ -6727,7 +6780,8 @@ def get_model_cache_dir() -> Path:
 
     # Create directory if it doesn't exist
     try:
-        cache_path.mkdir(parents=True, exist_ok=True)
+        with _config_participants.operation(sys.modules[__name__], route="config_models", target=cache_path):
+            cache_path.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         logger.opt(exception=True).error(
             f"Could not create model cache directory {cache_path}: {e}"

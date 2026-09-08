@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 23:53'
-updated_date: '2026-09-08 10:44'
+updated_date: '2026-09-08 15:58'
 labels:
   - backup-recovery
 dependencies:
@@ -468,3 +468,22 @@ Existing ADR-126 applies. Runtime/startup/responder/Complete composition stays u
 Verification: initial actual-route RED4; later runtime/temp/async cancellation, dirty-drain, same-second backup and native-close regressions verified RED/GREEN. Affected domain rerun51 passed after selector-before-constructor and exact matching-entry bound corrections; earlier75 other domain cases passed. Covering source/shared/native/domain/census run286 passed2 failed81.75s: both failures are profile path census debt reproduced unchanged on immutable phase BASE (2 failed21.78s), not passing guard coverage. Exact failures are `test_production_profile_owned_path_inventory_is_exact` and `test_cli_prints_the_real_source_census_and_enforces_it` in Tests/Architecture/test_profile_owned_path_inventory.py, from untouched TTS/recovery.py111/115 literals `~/.config/tldw_cli/chatterbox_voices` and `~/.config/tldw_cli/higgs_voices`. Carry these two entries into the pending Task10 TTS cohort; no phase8 TTS edits. Logs retained externally. Narrow late runtime/import/preflight and source census/shared checks recorded in full report; no unchanged broad repeat or full suite.
 
 Existing ordinary cross-process template concurrent-writer limitation remains: concrete post-read ready-handshake schedule fails on current source and immutable838b949ac7aa9c92988d79fe725025e8ffc21a79 with old CLI entry adapted. Per ruling62 no new write mutex or Admission contract; no xfail or passing snapshot-safety claim. Preserve scratch harness/logs for later source-specific concurrency policy work. Maintenance exclusion remains covered independently. Remaining work includes config helpers/portalocker source lifetime, non-template import DB/Notes/Git compound jobs, TTS and other remaining cohorts, app/headless pause/dirty/error handoffs and full independent Task10 review.
+
+### Phase9 implementation plan (before code)
+
+1. Bind the actual configuration source, current/lock/backup/snapshot members and fixed random temps before effects.
+2. Preserve the process RLock and cross-process portalocker, with pause-aware waits and explicit native stream/FD retirement.
+3. Cover bootstrap, read/merge/write, cache/generation, revisions, encryption and shutdown; retain truthful state on failure.
+4. Keep concrete independently admitted canonical derived-directory effects and existing startup order; no post-pause scope widening.
+5. Run behavioral RED/GREEN and targeted config/private/native/census checks; self-review, scoped commit and full report.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation; ADR004 restart boundary, ADR012 secret precedence and ADR033 commit models remain unchanged. Task10 stays In Progress with unchecked ACs.
+
+### Phase9 implementation notes
+
+Configuration persistence now binds the exact loaded config module and fixed current, lock, backup, snapshot and random temporary members. Existing process RLock and cross-process portalocker serialization remain; lock waits observe pause, and native streams/FDs require positive retirement. Direct private helper routes and cached reads are covered. Failed writes, reloads and native retirement preserve prior usable cache/settings/generation/password state and persistent error evidence. A pause after bytes commit reports `file_replaced=True`, `caches_reloaded=False` and refuses fresh derived directory effects. Separate concrete data/chat/model directory operations retain existing mkdir behavior and fix/recheck generation/path under the process lock. No DB/model service relocation or runtime/startup/responder qualification.
+
+Behavioral config/native/interprocess and affected shared checks cover normal, paused and uncertain outcomes. The covering run had 228 passed and one stale config-module fixture failure; the corrected actual theme/app fixture plus private-path/runtime-store subset passed83. The isolated source fixture imports a fresh actual config module before selecting app consumers; it never clears registries. The original serialization association RED is supplemental introspection; actual pause-during-serialization and two-process write-lock tests provide behavioral evidence. Final affected config/native/persistence rerun passed37; retained actual startup+pending composition passed1 after the same narrow fixture correction. Scoped Ruff/new-module format/diff checks passed. Exact commands are in the phase9 report.
+
+ADR126 applies with ADR004 restart, ADR012 credentials and ADR033 commit models unchanged. Task10 remains In Progress and all three ACs unchecked. Remaining cohorts and actual Settings/app/headless gates, dirty/error drain, startup release/reacquire, plus independent whole-task review remain required. Inherited phase2 combined-order app/RAG and phase8 TTS profile-census debt are unchanged.

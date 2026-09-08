@@ -2165,3 +2165,69 @@ Both `test_production_profile_owned_path_inventory_is_exact` and
 `test_cli_prints_the_real_source_census_and_enforces_it` fail on current code and
 immutable phase8 BASE. Reconcile these concrete entries in the pending Task10 TTS
 cohort; the passing backup producer census does not erase that separate debt.
+
+### Task10 phase9 — configuration source and concrete private resources
+
+The actual installed `tldw_chatbook.config` module now binds the `config` raw
+participant through `Backup_Recovery.config_participants`; a module name supplied
+by a caller is not authority. Its lexical effective selector is fixed for the
+installed module. Environment retargeting or loss of native qualification cannot
+demote an existing binding into an ordinary source. Pure `profile_paths` selectors
+remain independent of config import; `admit_startup()` still runs before config's
+runtime imports and module-bottom bootstrap.
+
+The whole source operation reserves admission before selectors/process-lock waits,
+uses the existing `_CONFIG_FILE_LOCK` RLock, and fixes current config, stable
+`.toml.lock`, `.toml.bak`, selected snapshot and each random atomic temporary as
+separate members before side effects. Snapshot selection belongs to
+`config._config_snapshot_path`. Cross-process serialization remains portalocker;
+nonblocking retries observe pause requests without holding a coordinator lock.
+Unlock exceptions are logged; only positively successful stream and FD closes
+retire native evidence. The lock entry is never deleted/recreated to release it.
+
+Covered routes: import/load/cache/forced bootstrap; `_prepare_config_parent`;
+raw and serialized readers; `.bak` reader; `_write_raw_cli_config_unlocked` and
+`_write_serialized_config_artifact_unlocked` (including direct helper calls);
+whole/raw replacement; exact set/delete and revisioned section writers;
+`get_atomic_config_snapshot`/`get_runtime_config_snapshot`; encrypted shutdown
+persistence; enable/disable/password-change. Serialization, encryption, atomic
+publication, reload and generation bookkeeping remain inside the operation.
+Same-source descendants reuse only already fixed members on the actual Thread and
+Task. The private helper dependency remains a leaf: active-operation discovery
+uses `sys.modules`, and accepts only config or the prior RuntimeSourceStateStore
+source. Every actual helper descriptor and config lock/read stream remains strongly
+tracked until positive native retirement; failure after close still retains evidence.
+The directory verifier accepts only the source parent or declared source directories.
+
+`load_settings`, `get_user_data_dir`, and `get_model_cache_dir` retain their actual
+mkdir behavior. Canonically selected data/profile, chat-dictionaries and model-cache
+directories use separate concrete admitted operations, with selected ancestors and
+source checks. They keep enclosing config work live, acquire new scope only with
+open gates, and cannot expand an admitted config operation after pause. Custom
+config parents are verified only; only the default application-owned config parent
+is created/hardened. Unsuccessful bootstrap returns its established uncached display
+defaults and parse failure signal without creating data directories from those
+unusable defaults. Existing storage Save remains restart-required (ADR004), and
+credential precedence/format and three Settings commit models remain ADR012/033.
+
+Failure restores prior cache/settings/password/first-profile marker references and
+runtime generation under the same process RLock, including final raw-pin close
+failure. This is memory restoration, not disk rollback: bytes can already have
+committed, and `ConfigMutationResult(file_replaced=True, caches_reloaded=False,
+failure_phase="cache_reload")` remains truthful. `_CONFIG_PERSISTENCE_ERROR` retains
+actual operation failure through cached reads and clears on successful publication;
+config participant drain also requires a usable cache and no recorded parse failure.
+An uncertain native close cannot be repaired by a later call, GC or registry reset.
+
+Later Task10 composition must retain this exact config module/participant, close its
+gate together with actual Settings staged/raw editors, retain their dirty drafts,
+observe config publication/error state, and drain source threads/native resources.
+Settings/app/headless callers must handle refusal and committed-but-unpublished
+results without reporting save success or automatically discarding drafts. Actual
+retained DB services and model runtime remain separately owned and are not moved,
+reconnected or qualified by directory setup. Full local drain must include pending
+post-IO bookkeeping before any future startup retirement; startup reacquisition
+must precede reopened gates. No app responder, runtime completeness, startup release,
+`config.history` capture adapter or Complete capability is enabled by this cohort.
+
+Phase9 generation clarification: derived operations fix and recheck `_CONFIG_GENERATION` as well as the canonical path. Existing process RLock excludes concurrent publication, and a real reentrant publication from a derived scope is already refused by fixed config-member checks before either config bytes or the model directory changes. The explicit generation check is supplemental defense, not evidence of a previously demonstrated race.

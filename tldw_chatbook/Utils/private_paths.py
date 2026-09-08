@@ -497,10 +497,21 @@ def _admitted_file(function):
         if operation is not None:
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
             state = raw._check(operation)
-            expected = (state.source.application_owned_directory
-                        if function.__name__ == "secure_private_directory" else state.selected)
-            if function.__name__ not in {"atomic_private_write_bytes", "secure_private_directory"} or expected is None or lexical_path(path) != lexical_path(expected) or (function.__name__ == "atomic_private_write_bytes" and state.temporary is None):
-                raise RuntimeError("raw_source_helper_not_supported")
+            config = sys.modules.get("tldw_chatbook.config")
+            if config is not None and state.source is config:
+                selected = lexical_path(path)
+                allowed = (
+                    function.__name__ == "secure_private_directory" and selected in state.directories
+                    or function.__name__ == "create_private_text" and selected in (state.selected, state.selected.with_name(state.selected.name + ".lock"))
+                    or function.__name__ == "atomic_private_write_bytes" and selected in state.temporaries
+                )
+                if not allowed:
+                    raise RuntimeError("raw_source_helper_not_supported")
+            else:
+                expected = (state.source.application_owned_directory
+                            if function.__name__ == "secure_private_directory" else state.selected)
+                if function.__name__ not in {"atomic_private_write_bytes", "secure_private_directory"} or expected is None or lexical_path(path) != lexical_path(expected) or (function.__name__ == "atomic_private_write_bytes" and state.temporary is None):
+                    raise RuntimeError("raw_source_helper_not_supported")
             return function(path, *args, **kwargs)
         with acquire_storage(lexical_path(path)):
             return function(path, *args, **kwargs)
@@ -535,12 +546,46 @@ class _AdmittedStream:
             pass
 
 
+class _ConfigStream:
+    """A config lock stream whose native lifetime has no GC retirement path."""
+
+    def __init__(self, stream, operation):
+        self._stream = stream
+        self._operation = operation
+        self._fd = stream.fileno()
+        self._retired = False
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+    def close(self):
+        if self._retired:
+            return
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        raw._check(self._operation)
+        _close_runtime_stream(self._operation, self._stream)
+        _native_close(self._fd)
+        self._retired = True
+
+
+def _operation_temporary(operation, selected):
+    raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+    state = raw._check(operation, selected, writing=True)
+    return state.temporaries.get(selected, state.temporary)
+
+
 def _admitted_stream(function):
     @functools.wraps(function)
     def admitted(path, *args, **kwargs):
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-        if _runtime_operation() is not None:
-            raise RuntimeError("raw_source_helper_not_supported")
+        operation = _runtime_operation()
+        if operation is not None:
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            state = raw._check(operation, lexical_path(path), writing=True)
+            config = sys.modules.get("tldw_chatbook.config")
+            if state.source is not config or lexical_path(path) != state.selected.with_name(state.selected.name + ".lock"):
+                raise RuntimeError("raw_source_helper_not_supported")
+            return _ConfigStream(function(path, *args, **kwargs), operation)
         lease = acquire_storage(lexical_path(path))
         try:
             return _AdmittedStream(function(path, *args, **kwargs), lease)
@@ -557,7 +602,12 @@ def _admitted_reader(function):
         operation = _runtime_operation(lexical_path(path))
         if operation is not None:
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-            if lexical_path(path) != raw._check(operation).selected:
+            state = raw._check(operation)
+            config = sys.modules.get("tldw_chatbook.config")
+            allowed = (state.selected,)
+            if config is not None and state.source is config:
+                allowed += (config._advanced_backup_path(state.selected),)
+            if lexical_path(path) not in allowed:
                 raise RuntimeError("raw_source_helper_not_supported")
             yield from function(path, *args, **kwargs)
             return
@@ -700,7 +750,7 @@ def atomic_private_write_bytes(
                         suffix=".tmp",
                     )
                 else:
-                    temporary = raw._check(operation).temporary
+                    temporary = _operation_temporary(operation, selected)
                     fd = _native_open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _PRIVATE_FILE_MODE)
                     info = os.fstat(fd)
                     raw._check(operation).created_files[temporary] = (info.st_dev, info.st_ino)
@@ -750,7 +800,7 @@ def atomic_private_write_bytes(
     )
     operation = _runtime_operation(selected)
     raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
-    temporary_leaf = (raw._check(operation).temporary.name if operation is not None
+    temporary_leaf = (_operation_temporary(operation, selected).name if operation is not None
                       else f".{leaf}.{secrets.token_hex(8)}.tmp")
     temporary_fd = -1
     temporary_exists = False
@@ -945,7 +995,18 @@ def open_private_text_append_stream(
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
             selected.parent.mkdir(parents=True, exist_ok=True)
-            return selected.open("a", encoding=encoding, errors=errors)
+            operation = _runtime_operation(selected)
+            if operation is None:
+                return selected.open("a", encoding=encoding, errors=errors)
+            fd = _native_open(selected, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _PRIVATE_FILE_MODE)
+            try:
+                stream = os.fdopen(fd, "a", encoding=encoding, errors=errors, closefd=False)
+            except BaseException:
+                _native_close(fd)
+                raise
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            raw._check(operation).files.append(stream)
+            return stream
         raise PrivatePathError(
             PrivatePathResult(
                 selected,
@@ -1007,13 +1068,17 @@ def open_private_text_append_stream(
                     reason="private_file_postcondition_failed",
                 )
             )
+        operation = _runtime_operation(selected)
         stream = os.fdopen(
             file_fd,
             "a",
             encoding=encoding,
             errors=errors,
-            closefd=True,
+            closefd=operation is None,
         )
+        if operation is not None:
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            raw._check(operation).files.append(stream)
         file_fd = -1
         return stream
     except PrivatePathError:
@@ -1370,6 +1435,13 @@ def verify_trusted_directory(
     """
 
     selected = lexical_path(path)
+    operation = _runtime_operation()
+    if operation is not None:
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        state = raw._check(operation)
+        if selected != state.selected.parent and selected not in state.directories:
+            raise RuntimeError("raw_source_helper_not_supported")
+
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
             if not selected.is_dir():

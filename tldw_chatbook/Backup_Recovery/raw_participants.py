@@ -18,6 +18,7 @@ import weakref
 from . import bootstrap, storage_admission as storage
 from .profile_paths import lexical_path
 from . import settings_file_participants as settings_files
+from . import config_participants as config_files
 from ..Utils.private_paths import _open_verified_parent, _posix_guards_available
 
 
@@ -65,6 +66,12 @@ class _RawParticipant:
                 storage._changed.wait(min(remaining, 0.05))
             state = _participant_state(self)
             source = state.source()
+            if state.owner == "config":
+                return (
+                    source._CONFIG_PERSISTENCE_ERROR is None
+                    and source.get_config_load_failure() is None
+                    and source._CONFIG_CACHE is not None
+                )
             if state.owner == "eval.definitions":
                 return (
                     source._config == source._persisted_config
@@ -91,6 +98,10 @@ def _participant_state(participant):
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     if _source_participants.get(source) is not participant:
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+    if state.owner == "config":
+        binding = config_files.binding(source)
+        if binding is None or binding[1] != state.selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     if state.owner in {
         "eval.definitions",
         "notes.templates",
@@ -176,7 +187,7 @@ def _raw_participant(source):
     """Only installed actual sources; this does not qualify capture inventory."""
     if not _pinned_io_available():
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
-    settings_binding = settings_files.binding(source)
+    settings_binding = config_files.binding(source) or settings_files.binding(source)
     if settings_binding is not None:
         owner, selected, installed = settings_binding
         if not installed:
@@ -248,6 +259,7 @@ class _State:
     paths: tuple[Path, ...]
     directories: tuple[Path, ...]
     writing: bool
+    route: str
     pid: int
     thread: object
     task: object
@@ -260,11 +272,14 @@ class _State:
     descriptors: set = field(default_factory=set)
     created_files: dict = field(default_factory=dict)
     observed_files: dict = field(default_factory=dict)
+    temporaries: dict = field(default_factory=dict)
     temporary: Path | None = None
     backup: Path | None = None
     backup_temporary: Path | None = None
     active: bool = False
     uncertain: bool = False
+    config_failed: bool = False
+    config_generation: int | None = None
 
 
 _states = {}
@@ -306,6 +321,10 @@ def _check(operation, path=None, *, writing=False):
                 raise bootstrap.RecoveryRequired("raw_native_scope_changed")
             if storage._pause is not None and hold is None:
                 raise bootstrap.RecoveryRequired("raw_native_scope_unqualified")
+    if state.route in {"config_data", "config_chat_dicts", "config_models"}:
+        config_files.selection(state.source, state.route, state.selected)
+        if state.source._CONFIG_GENERATION != state.config_generation:
+            raise bootstrap.RecoveryRequired("config_directory_generation_changed")
     # Disk checks never occur under the coordinator lock. Native descriptors pin
     # destinations even if an external nonparticipant renames after this check.
     # Existing parent aliases are valid only while they resolve to the same
@@ -346,6 +365,8 @@ def _retire(state):
 
 
 def _selection(source, route, template, user_template, selected_read):
+    if route in config_files.ROUTES:
+        return config_files.selection(source, route, selected_read)
     if route in settings_files.ROUTES:
         return settings_files.selection(source, route, selected_read)
     if route in {"prompt_history", "sidebar_state"}:
@@ -429,13 +450,16 @@ def _scope(
             "pet",
             "runtime_state",
             "runtime_read",
+            "config",
         }:
             selected = (
                 source.store_path
                 if route == "service"
                 else (
-                    settings_files.selection(source, route, selected_read)[0]
-                    if route in settings_files.ROUTES
+                    config_files.selection(source, route, selected_read)[0]
+                    if route == "config"
+                    else settings_files.selection(source, route, selected_read)[0]
+                    if route in settings_files.ROUTES | {"config"}
                     else _async_source_selection(source, route)[0]
                 )
             )
@@ -463,6 +487,12 @@ def _scope(
         selected, installed, directory_only = _selection(
             source, route, template, user_template, selected_read
         )
+        if (
+            route in config_files.ROUTES
+            and source in _source_participants
+            and not pinned
+        ):
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         installed = installed and pinned
         paths = () if directory_only else (selected,)
         if (
@@ -479,6 +509,11 @@ def _scope(
             and writing
         ):
             paths += (selected.with_suffix(selected.suffix + ".tmp"),)
+        temporaries = {}
+        if route in {"config", "config_snapshot"}:
+            paths, temporaries = config_files.members(
+                source, selected, route, selected_read
+            )
         temporary = None
         if route == "runtime_state" and writing:
             temporary = selected.parent / f".{selected.name}.{secrets.token_hex(8)}.tmp"
@@ -499,6 +534,22 @@ def _scope(
         directories = (
             tuple(reversed(missing)) if writing and route != "template_save" else ()
         )
+        if route in {"config", "config_snapshot"}:
+            owned = source.application_owned_config_directory(selected)
+            directories = (
+                (directories + ((parent,) if parent not in directories else ()))
+                if owned is not None
+                else ()
+            )
+        if route in {"config_data", "config_chat_dicts", "config_models"}:
+            directories += (selected,) if selected not in directories else ()
+            if route == "config_data":
+                base = selected.parent
+                if (
+                    base == lexical_path(source._default_base_data_dir())
+                    and base not in directories
+                ):
+                    directories += (base,)
         if route == "runtime_read":
             directories = ()
         if route == "runtime_state":
@@ -520,7 +571,7 @@ def _scope(
             participant = _raw_participant(source)
             binding = _participant_state(participant)
             if (
-                binding.owner not in {"chunking.templates", "ui.themes"}
+                binding.owner not in {"chunking.templates", "ui.themes", "config"}
                 and binding.selected != selected
             ):
                 raise bootstrap.RecoveryRequired("raw_source_selection_changed")
@@ -536,6 +587,8 @@ def _scope(
             in {"service", "prompt_history", "sidebar_state"} | settings_files.ROUTES
             else None
         )
+        if route in config_files.ROUTES:
+            source_lock = source._config_file_lock()
         with storage._changed:
             attempt.check()
             if participant is not None and _participant_state(participant).closed:
@@ -563,11 +616,18 @@ def _scope(
             paths,
             directories,
             writing,
+            route,
             os.getpid(),
             threading.current_thread(),
             storage._task_identity(),
             pinned=pinned,
             temporary=temporary,
+            temporaries=temporaries,
+            config_generation=(
+                source._CONFIG_GENERATION
+                if route in {"config_data", "config_chat_dicts", "config_models"}
+                else None
+            ),
         )
         with storage._changed:
             _states[operation] = state
@@ -914,14 +974,18 @@ def _unlink(operation, path):
 
 
 def _runtime_operation(path=None):
-    """Discover only the live source-issued RuntimeSourceStateStore operation."""
+    """Discover only the live runtime-state or exact config source operation."""
     operation = getattr(_local, "operation", None)
     if operation is None:
         return None
     state = _states.get(operation)
     module = sys.modules.get("tldw_chatbook.runtime_policy.source_state")
     cls = getattr(module, "RuntimeSourceStateStore", None)
-    if state is None or cls is None or not isinstance(state.source, cls):
+    if state is None:
+        return None
+    if config_files.binding(state.source) is None and (
+        cls is None or not isinstance(state.source, cls)
+    ):
         return None
     _check(operation, path, writing=True)
     return operation

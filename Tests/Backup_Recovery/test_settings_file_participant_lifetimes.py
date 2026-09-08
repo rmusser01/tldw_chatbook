@@ -347,7 +347,10 @@ def test_dynamic_membership_pause_race_has_no_mutation(
 async def test_theme_save_failure_and_pause_preserve_draft_and_tree(
     tmp_path, local_root, monkeypatch
 ):
-    from tldw_chatbook import config
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+    config = install_config_source(monkeypatch)
     from tldw_chatbook.Widgets import settings_theme_editor as themes
     from Tests.UI.test_settings_theme_editor import (
         _isolated_editor_app,

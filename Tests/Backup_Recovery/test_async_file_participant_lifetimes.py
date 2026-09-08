@@ -334,9 +334,12 @@ async def test_native_raw_scope_cannot_transfer_to_async_task(installed_history)
 
 @pytest.mark.asyncio
 async def test_startup_native_exclusion_and_pending_cover_event_loop_bookkeeping(
-    installed_history, local_root, launch
+    installed_history, local_root, launch, monkeypatch
 ):
     """Supported process startup holds natives until whole-process pending drain."""
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+
+    install_config_source(monkeypatch)
     storage.admit_startup()
     startup = storage._startups[(os.getpid(), str(local_root))]
     hold = storage._holds[startup._key]

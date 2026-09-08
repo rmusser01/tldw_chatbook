@@ -502,6 +502,8 @@ from tldw_chatbook.Feedback_Interop.local_feedback_service import LocalFeedbackS
 root, selected, failure = sys.argv[1:]
 bootstrap.default_bootstrap_root = lambda: Path(root)
 portable = failure.startswith('portable-')
+# Resolve real source imports before this fixture changes host native capabilities.
+raw._types()
 if portable:
     raw.os.supports_dir_fd = set()
     failure = failure.removeprefix('portable-')
@@ -607,8 +609,11 @@ def test_native_uncertainty_retains_resources_and_excludes_independent_maintenan
 
 
 def test_custom_template_destinations_are_ordinary_not_installed_coverage(
-    tmp_path, local_root
+    tmp_path, local_root, monkeypatch
 ):
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+
+    install_config_source(monkeypatch)
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
     user = tmp_path / "user-custom"
@@ -761,8 +766,11 @@ async def test_existing_sidecar_is_preserved_and_not_claimed_by_new_mutation(
 
 
 def test_hardlinked_selected_template_is_not_truncated_before_validation(
-    tmp_path, local_root
+    tmp_path, local_root, monkeypatch
 ):
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+
+    install_config_source(monkeypatch)
     other = tmp_path / "unrelated"
     other.write_text("preserve unrelated bytes")
     target = tmp_path / "template.json"
