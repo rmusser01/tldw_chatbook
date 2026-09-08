@@ -59,9 +59,65 @@ def census(source: str) -> Counter:
             self.scope = []
             self.imports = {}
 
+        def visit_Import(self, node):
+            for alias in node.names:
+                bound_name = alias.asname or alias.name.split(".")[0]
+                self.imports[bound_name] = alias.name if alias.asname else bound_name
+
         def visit_ImportFrom(self, node):
             for alias in node.names:
-                self.imports[alias.asname or alias.name] = alias.name
+                module = "." * node.level + (node.module or "")
+                self.imports[alias.asname or alias.name] = f"{module}.{alias.name}"
+
+        def call_identity(self, node):
+            if isinstance(node, ast.Name):
+                return self.imports.get(
+                    node.id, "builtins.open" if node.id == "open" else None
+                )
+            if isinstance(node, ast.Attribute):
+                if isinstance(node.value, ast.Call):
+                    factory = self.call_identity(node.value.func)
+                    if factory in {
+                        "pathlib.Path",
+                        "pathlib.PosixPath",
+                        "pathlib.WindowsPath",
+                    }:
+                        return f"{factory}().{node.attr}"
+                parent = self.call_identity(node.value)
+                if parent is not None:
+                    return f"{parent}.{node.attr}"
+            return None
+
+        def is_known_read_only_open(self, node, identity):
+            # Interpret positional modes only after establishing the signature.
+            # Unknown receivers may take a filename first; os.open takes flags.
+            if identity in {"builtins.open", "io.open", "_io.open"}:
+                mode_index = 1
+            elif identity in {
+                "pathlib.Path().open",
+                "pathlib.PosixPath().open",
+                "pathlib.WindowsPath().open",
+            }:
+                mode_index = 0
+            else:
+                return False
+            if any(isinstance(arg, ast.Starred) for arg in node.args) or any(
+                keyword.arg is None for keyword in node.keywords
+            ):
+                return False
+            mode = next(
+                (keyword.value for keyword in node.keywords if keyword.arg == "mode"),
+                node.args[mode_index]
+                if len(node.args) > mode_index
+                else ast.Constant("r"),
+            )
+            return isinstance(mode, ast.Constant) and mode.value in {
+                "r",
+                "rb",
+                "rt",
+                "br",
+                "tr",
+            }
 
         def visit_ClassDef(self, node):
             self.scope.append(node.name)
@@ -84,30 +140,11 @@ def census(source: str) -> Counter:
                 if isinstance(node.func, ast.Attribute)
                 else getattr(node.func, "id", "")
             )
-            name = self.imports.get(name, name)
-            if name == "open":
-                # Builtin/Path read-only opens are not producers. os.open flags
-                # and dynamic modes remain conservatively inventoried.
-                if (
-                    isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "os"
-                ):
-                    pass
-                else:
-                    positional = (
-                        node.args[1:] if isinstance(node.func, ast.Name) else node.args
-                    )
-                    mode = next(
-                        (kw.value for kw in node.keywords if kw.arg == "mode"),
-                        positional[0] if positional else ast.Constant("r"),
-                    )
-                    if (
-                        isinstance(mode, ast.Constant)
-                        and isinstance(mode.value, str)
-                        and not any(flag in mode.value for flag in "wax+")
-                    ):
-                        return self.generic_visit(node)
+            identity = self.call_identity(node.func)
+            canonical_name = identity.rsplit(".", 1)[-1] if identity else name
+            name = "open" if "open" in {name, canonical_name} else canonical_name
+            if name == "open" and self.is_known_read_only_open(node, identity):
+                return self.generic_visit(node)
             if name in PRODUCER_CALLS:
                 result[(".".join(self.scope) or "<module>", name)] += 1
             self.generic_visit(node)
@@ -172,3 +209,46 @@ def test_sqlite_registry_members_have_explicit_census_rows():
     names = {key.value for key in registry.keys}
     documented = set(re.findall(r"^\| sqlite:([^ |]+) \|", DOC.read_text(), re.M))
     assert names == documented
+
+
+def test_census_detects_module_qualified_and_aliased_writable_opens():
+    examples = (
+        'open("store.bin", "wb").close()',
+        'import io\nio.open("store.bin", "wb").close()',
+        'import io as streams\nstreams.open("store.bin", "wb").close()',
+        'import os as native\nnative.open("store.bin", flags)',
+        'from os import open as raw_open\nraw_open("store.bin", flags)',
+        'from io import open as stream_open\nstream_open("store.bin", "wb")',
+        'import builtins as native\nnative.open("store.bin", "wb")',
+        'from pathlib import Path as P\nP("store.bin").open("wb")',
+    )
+    for source in examples:
+        assert census(source)[("<module>", "open")] == 1, source
+
+
+def test_census_keeps_ambiguous_open_signatures_and_dynamic_arguments():
+    examples = (
+        'unknown.open("store.bin", "wb")',
+        'unknown.open("store.bin")',
+        'unknown.open("r")',
+        'from custom_store import open as custom_open\ncustom_open("r")',
+        "open(*arguments)",
+        'open("store.bin", **options)',
+        'import io\nio.open("store.bin", mode=selected_mode)',
+    )
+    for source in examples:
+        assert census(source)[("<module>", "open")] == 1, source
+
+
+def test_census_excludes_only_known_read_only_open_signatures():
+    examples = (
+        'open("store.bin")',
+        'open("store.bin", "rb")',
+        'import io\nio.open("store.bin", "rb")',
+        'import io as streams\nstreams.open("store.bin", mode="r")',
+        'from builtins import open as reader\nreader("store.bin", "rb")',
+        'from pathlib import Path as P\nP("store.bin").open("rb")',
+        'import pathlib as paths\npaths.Path("store.bin").open()',
+    )
+    for source in examples:
+        assert census(source)[("<module>", "open")] == 0, source

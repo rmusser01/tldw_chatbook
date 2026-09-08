@@ -57,7 +57,7 @@ Reason: direct implementation of ADR-126; preserve ADR-029/030/036/059/060 bound
 Implemented the ADR-126 inventory foundation with frozen owner/schema/context models,
 pure canonical config/database selectors, installed-owner registration, strict selected
 TOML discovery, physical alias/root/dependency classification, and a checked census of
-840 exact producer-symbol/call rows plus all 59 SQLite policy owners. Discovery does
+876 exact producer-symbol/call rows plus all 59 SQLite policy owners. Discovery does
 not bootstrap config, instantiate services, open SQLite, read keyrings, or create
 profiles. Custom database paths remain baseline app-owned content; unresolved owner
 cohorts and unknown durable files explicitly block completeness.
@@ -93,3 +93,19 @@ config.py, two focused test modules, the owner census documentation, and the exa
 canonical profile-path inventory entries required by resolver extraction.
 
 Status and ACs intentionally remain In Progress/unchecked pending controller review.
+
+### Review fix: producer open signatures
+
+Independent review found that module-qualified and aliased writable opens could
+evade the AST census because their filename was interpreted as a Path.open mode.
+The scanner now resolves import identities before selecting a known signature and
+retains ambiguous calls, dynamic modes and expanded arguments conservatively.
+Synthetic regression controls cover builtin/io/os aliases and Path forms. The
+reviewed census grows from 840 to 876 rows, with four existing call counts increased;
+new ambiguous candidates retain unsupported coverage. Runtime production code is
+unchanged. `python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q` produced
+behavioral RED (2 failed, 4 passed in 6.30s), then GREEN after the fix/census refresh
+(6 passed, 4 existing warnings in 5.77s). Scoped Ruff E9/F63/F7/F82 and format checks
+passed; git diff --check passed. The read-only Python 3.12.11 interpreter path above
+was used. Exact evidence is appended to the execution report; status and ACs remain
+In Progress/unchecked for independent re-review.
