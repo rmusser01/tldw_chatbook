@@ -213,7 +213,7 @@ were moved. Upstream identities and original dates/history remain intact:
 
 | Historical review ID | Current review ID | Subject |
 | --- | --- | --- |
-| TASK-31759 | TASK-32013 | Assistant-turn production stylesheet harness |
+| TASK-31759 (intermediate TASK-32013) | TASK-32040 | Assistant-turn production stylesheet harness |
 | TASK-31901 | TASK-32014 | Loguru capture sink lifetime |
 | TASK-31902 | TASK-32015 | Deferred Chunking Lab imports |
 
@@ -662,3 +662,33 @@ The inventory is refreshed only for those two owner rows after this review.
 
 Fresh pre-checkpoint verification of the two complete owner/generation files:
 **56 passed** in 6.29 seconds (`/private/tmp/pr2427-durability-checkpoint.log`).
+
+## 2026-09-08 Wave7 rebase checkpoint (not merge-ready)
+
+Replayed the branch onto dev `0fa35d00e8189b6c5404eaca2d6b401ec252ec71`
+at `cc0a5bd5370856b24936abe609393c29210fa4fe`. The prior head remains
+recoverable through `codex/pr2427-before-rebase-20260908`. Upstream's
+LibraryMediaState/LibraryMediaController supersede the older review-only
+Analysis/Reader extractions. Preserve the upstream scroll-settle fix, all real
+Screen patch seams, and the independent entry-focus cleanup. Retain the six
+unrelated controller assembly and the credential-metadata privacy repair.
+Independent production/body audits pass; no numeric limit was raised.
+
+Complete targeted evidence: assembly/wiring/import group 29 passed; provider
+grammar 32 passed; trace final-values/execution-context 53 passed. The larger
+Library group completed with **359 passed, 18 failed** in 388.83 seconds
+(`/private/tmp/pr2427-rebased-library.log`). Failures include two stale removed
+Screen-state references and unresolved painted focus/layout/action-label cases.
+The two complete size-ratchet files report **43 passed, 5 failed**, including
+Console, Library, CharacterRepair and MediaBrowse overages and Library pin slack.
+These are open gates, not waived baseline failures.
+
+The official diagnostic writer changed only owner_files 591 to 599; all
+statement rows/digests and sink topology already match. A new fetched dev head,
+`603812300f18562c1906ac837a8098a0a6cbff23`, requires another reconciliation,
+preserving its scoped Media fault history, resume-cache reset and Copy selection.
+
+Fresh census covered 985 refs and 324 registered worktrees. Only the review-owned
+Assistant stylesheet task collided again: intermediate TASK-32013 is now
+TASK-32040, preserving upstream Media debt TASK-32013 and all earlier provenance.
+The identity guard passes 3,595 task files. No final-head review or merge claimed.
