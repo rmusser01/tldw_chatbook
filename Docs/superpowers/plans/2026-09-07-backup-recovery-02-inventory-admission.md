@@ -227,7 +227,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-4"></a>
 ## Task 4: Implement stable maintenance admission and native storage qualification
 
-**Backlog:** [TASK-31987](../../../backlog/tasks/task-31987%20-%20Implement-stable-maintenance-admission-and-native-storage-qualification.md) — To Do.
+**Backlog:** [TASK-31987](../../../backlog/tasks/task-31987%20-%20Implement-stable-maintenance-admission-and-native-storage-qualification.md) — Done.
 
 **Dependencies:** TASK-31986.
 
@@ -252,7 +252,7 @@ def qualified_for(operation: str, root: Path) -> tuple[bool, str]: ...
 def publish_new(staged: Path, destination: Path) -> None: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_admission.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_admission.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -267,19 +267,19 @@ def test_publication_never_overwrites_existing_file(tmp_path):
     assert destination.read_bytes() == b"previous backup"
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_admission.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_admission.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Implement namespace registration, alias identity, and native cross-process admission under a verified control root outside managed targets. Keep lock objects stable across rename and reserve old/new namespaces during remapping. Do not change advisory InstanceLockStatus into a claim that legacy processes are fenced.
+- [x] **Step 3:** Implement namespace registration, alias identity, and native cross-process admission under a verified control root outside managed targets. Keep lock objects stable across rename and reserve old/new namespaces during remapping. Do not change advisory InstanceLockStatus into a claim that legacy processes are fenced.
 
-- [ ] **Step 4:** Acquire ordered registry/owner admission without holding locks needed by a draining participant. Closing admission prevents new mutations, then drains established participants to a safe boundary before exclusive capture. Add timeout/cancellation results without forced transaction rollback or draft loss.
+- [x] **Step 4:** Acquire ordered registry/owner admission without holding locks needed by a draining participant. Closing admission prevents new mutations, then drains established participants to a safe boundary before exclusive capture. Add timeout/cancellation results without forced transaction rollback or draft loss.
 
-- [ ] **Step 5:** Provide owner-private directory/file creation and durable atomic no-replace publication using qualified native primitives. Handle same-volume hard-link publication only for verified regular operation-owned files on a qualified filesystem; support crash evidence for the temporary dual-name state. Never emulate no-replace with exists then replace.
+- [x] **Step 5:** Provide owner-private directory/file creation and durable atomic no-replace publication using qualified native primitives. Handle same-volume hard-link publication only for verified regular operation-owned files on a qualified filesystem; support crash evidence for the temporary dual-name state. Never emulate no-replace with exists then replace.
 
-- [ ] **Step 6:** Use independent child processes and synchronization pipes/events for lock tests, including changing the target inode, shared aliases, remapping, connection retirement, process death, stale registry evidence, and contention. Test native directory fsync/flush and refusal on unqualified storage; record evidence per operation, not merely per OS.
+- [x] **Step 6:** Use independent child processes and synchronization pipes/events for lock tests, including changing the target inode, shared aliases, remapping, connection retirement, process death, stale registry evidence, and contention. Test native directory fsync/flush and refusal on unqualified storage; record evidence per operation, not merely per OS.
 
-- [ ] **Step 7:** qualified_for returns unavailable until the corresponding native test evidence exists. Distinguish archive-output support, isolated publication, and replacement support. Known incompatible clients refuse maintenance; PID scanning is supplementary only.
+- [x] **Step 7:** qualified_for returns unavailable until the corresponding native test evidence exists. Distinguish archive-output support, isolated publication, and replacement support. Known incompatible clients refuse maintenance; PID scanning is supplementary only.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -292,7 +292,7 @@ if not allowed:
 # FileExistsError from that primitive is final, never retried with replace().
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -300,11 +300,11 @@ python -m pytest Tests/Backup_Recovery/test_admission.py Tests/Backup_Recovery/t
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): implement stable maintenance admission and native storage qualification`. Recheck task-ID collisions
   before merge and preserve unrelated work.

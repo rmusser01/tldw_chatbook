@@ -1,10 +1,11 @@
 ---
 id: TASK-31987
 title: Implement stable maintenance admission and native storage qualification
-status: In Progress
+status: Done
 assignee:
   - codex
 created_date: '2026-09-07 23:49'
+updated_date: '2026-09-08 04:30'
 labels:
   - backup-recovery
 dependencies:
@@ -20,27 +21,14 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Participating processes cannot mutate admitted namespaces during maintenance, including aliases and inode replacement.
-- [ ] #2 Deadlock, timeout, cancellation, and crashed-holder cases preserve data and durable recovery evidence.
-- [ ] #3 Native publication cannot overwrite an existing artifact, and unsupported storage returns an explicit unavailable capability.
+- [x] #1 Participating processes cannot mutate admitted namespaces during maintenance, including aliases and inode replacement.
+- [x] #2 Deadlock, timeout, cancellation, and crashed-holder cases preserve data and durable recovery evidence.
+- [x] #3 Native publication cannot overwrite an existing artifact, and unsupported storage returns an explicit unavailable capability.
 <!-- AC:END -->
-
-## Design references
-
-- [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
-- [Implementation plan](../../Docs/superpowers/plans/2026-09-07-backup-recovery-02-inventory-admission.md#task-4)
-- [ADR-126](../decisions/126-complete-local-backup-and-recovery.md)
-
-ADR required: yes
-
-ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
-
-Reason: direct implementation of the approved recovery ownership, archive, and lifecycle contract; reuse ADR-126.
-
-Before implementation, move this task to In Progress and copy its linked task steps into an Implementation Plan section. Keep implementation notes and completion evidence for after the work is finished. Do not mark criteria complete from this planning document.
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
@@ -54,27 +42,34 @@ Reason: direct implementation of the approved native storage and admission contr
 5. Exercise independent child processes for aliases, inode replacement, remapping, retirement, death, stale evidence, contention and native publication failures.
 6. Run named focused/native tests, exact persistence census, affected legacy advisory-lock guard, scoped lint/format and diff checks.
 7. Self-review, record exact evidence and interfaces, and commit scoped changes. Leave In Progress and AC unchecked for controller review.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
-Implemented the ADR-126 cooperative maintenance/native publication foundation. Stable per-namespace OS locks survive target inode replacement; shared/hardlink/symlink/nested roots receive ordered common admission. Maintenance closes gates and drains established connections without holding registry authority, then revalidates/pins scope. Remapping durably reserves old/new aliases before draining and retains fail-closed evidence on interruption. Legacy InstanceLockStatus remains advisory.
+<!-- SECTION:NOTES:BEGIN -->
+Implemented ADR-126 stable admission and native publication primitives. Admission registers verified roots and aliases, uses stable lock inodes and ordered gates/leases, drains without holding registry authority, and preserves remap reservations across timeout, cancellation and process death. Known incompatible-client evidence has an OS lifetime; the legacy instance lock remains advisory. Admission coordinates one verified control root; startup must establish shared authority for aliases.
 
-Native Darwin renameatx_np(RENAME_EXCL) publishes owned regular files and empty/populated directories with pinned parents, no-follow tree validation, fsync/F_FULLFSYNC and parent flushes. Existing names are never replaced; no hardlink fallback exists. Installed versioned evidence matches only demonstrated Darwin25.5.0/arm64/Python3.12.11/APFS flags76583040. Overall isolated restore/replacement remain unavailable. The record ships in wheel/sdist and is explicitly required by distribution checks.
+Native publication uses pinned-parent Darwin renameatx_np(RENAME_EXCL), validates private regular-file/directory payloads and never falls back to overwrite. Files and directory metadata receive fsync plus F_FULLFSYNC barriers. Registry replacement first publishes a bounded versioned registry.pending.json with before/after states and a write identity, retains it until durable completion, and refuses admission under uncertain intent. Initial creation cannot synthesize a disappeared existing registry. Explicit recovery reconciliation remains a later journal responsibility.
 
-Source census includes exact open/write/native rename-callable and os.replace symbols. Owner documentation: [Native admission contract](../docs/backup-recovery-native-admission.md). ADR required: yes; reused [ADR-126](../decisions/126-complete-local-backup-and-recovery.md). Supplemental registration/remap/incompatible/per-call-cancellation APIs and narrowly scoped packaging changes follow controller rulings. No full sweep was run.
+Installed strict native qualification protocol 2 rejects old fsync-only protocol 1, missing/unsupported protocols, malformed/unknown fields and invalid operation lists. Actual qualification is Darwin 25.5.0 / arm64 / Python 3.12.11 / APFS; only tested publication/admission primitives are enabled. Other identities and overall isolated/replacement capabilities remain unavailable. Source/wheel inventories require native_qualification.json. The producer census now includes actual native rename, OS replace and intent-removal seams.
 
-Evidence used the read-only interpreter `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python` in the isolated clone. Behavioral RED: initial publication test DID NOT RAISE FileExistsError; nested-root child escaped maintenance; linked directory payload published; native producer census missed actual callable aliases. Each was corrected and verified GREEN. Final commands/results:
+Independent review identified missing post-publication full flush and permissive qualification metadata. Fix commit 276931e77 addresses both; scoped re-review reports all findings addressed and no new breakage. The fix also demonstrates independent-process refusal after final-remap barrier failure and safe intent-cleanup behavior.
 
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Backup_Recovery/test_admission.py Tests/Backup_Recovery/test_native_files.py -q`: 36 passed, 1 existing warning, 7.91s; no native skips.
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q`: 10 passed, 4 existing warnings, 9.90s.
-- `UV_CACHE_DIR=/tmp/task31985-uv-cache /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Utils/test_instance_lock.py -q`: 10 passed, 1 existing warning, 0.81s; matches the prior 10-test baseline.
-- `UV_CACHE_DIR=/tmp/task31985-uv-cache /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Packaging/test_installed_distribution.py::test_built_artifacts_match_distribution_contract -q`: 1 passed, 1 existing warning, 14.65s; build/source output stayed outside checkout.
-- Scoped Ruff E9/F63/F7/F82 over all changed Python passed; format check over the six focused/native/architecture files passed; `git diff --check` passed.
+Final covering command: python -m pytest Tests/Backup_Recovery/test_native_files.py Tests/Backup_Recovery/test_admission.py -q --tb=short (65 passed, 12.46s). Final python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q (11 passed, 11.60s). Before the fix, directly affected legacy lock tests passed 10 and the distribution-contract guard passed 1; their behavior/resource inclusion did not change in the fix. Scoped Ruff fatal checks, six-file formatting and git diff --check passed. Behavioral RED/GREEN reproduced existing-target overwrite failure, nested alias admission, linked payload, post-publication flush omission, malformed qualification, final-remap admission reopening and disappeared-registry synthesis.
 
-Self-review verified pinned-root qualification, descriptor/lock lifetimes, no registry hold during drain, strict private registry metadata and actual source/destination evidence. All scopes must use their shared authoritative control root (bootstrap association is task5); independent custom roots are not automatically federated. Pending remap reconciliation is reserved for the local journal/control owner (task18), and historical aliases intentionally remain conservative. Process-crash/OS-flush tests do not simulate physical power loss. Owner integration, startup fences and higher-level restore gates are later slices. Status remains In Progress with unchecked criteria for controller independent review.
+All evidence used the shared Python 3.12.11 interpreter read-only and private fixtures. Real processes tested aliases, inode replacement, SQLite retirement, contention, timeout/cancel, death and crash reservations; native tests covered file/empty/populated-directory publication, races and barriers. Process-exit/flush evidence does not claim physical power-cut testing. Existing dependency/AST warnings remain recorded for final review; no full suite or remote workflow ran.
 
-### Independent review fix round 1
+Files: Backup_Recovery/{admission,native_files,qualification}.py and native_qualification.json; native/admission/architecture tests; advisory-lock documentation; packaging inventories/checker/assertion; owner census; backlog/docs/backup-recovery-native-admission.md. Commits: bfe8b6b18 and 276931e77. ADR: backlog/decisions/126-complete-local-backup-and-recovery.md. No new ADR, unrelated changes, push or merge.
+<!-- SECTION:NOTES:END -->
 
-Addressed both Important findings: full native directory barriers now follow metadata publication, and the installed evidence is strictly validated against supported protocol 2 before capability admission. Actual APFS directory F_FULLFSYNC succeeds; file/directory publication ordering tests delegate to real syscalls. A bounded private version-1 `registry.pending.json` before/after intent is fully persisted before local registry replacement and remains until the new registry and parent metadata pass their full barriers. This prevents final-remap barrier failure from silently clearing the only pending evidence. Independent processes verify refusal for initial/intent/reservation/final mapping failures; cleanup tests permit only retained-intent refusal or a previously durably committed mapping. No physical power-loss claim or ad-hoc reconciliation API is added. Native intent-removal producers now have exact census rows. Status and acceptance checkboxes remain unchanged for controller re-review.
+## Design references
 
-Fix-round validation: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Backup_Recovery/test_native_files.py Tests/Backup_Recovery/test_admission.py -q --tb=short` — 65 passed, 1 baseline warning in 12.46s; `... -m pytest Tests/Architecture/test_backup_owner_inventory.py -q` — 11 passed, 4 baseline warnings in 11.60s. Scoped Ruff E9/F63/F7/F82, six-file format check and diff check passed. Explicit initial-only registry creation prevents the new intent writer from reconstructing an existing disappeared registry. The crash helper now captures the strengthened constructor refusal as well as the existing remap fence. No unrelated suites repeated.
+- [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
+- [Implementation plan](../../Docs/superpowers/plans/2026-09-07-backup-recovery-02-inventory-admission.md#task-4)
+- [ADR-126](../decisions/126-complete-local-backup-and-recovery.md)
+
+ADR required: yes
+
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+
+Reason: direct implementation of the approved recovery ownership, archive, and lifecycle contract; reuse ADR-126.
