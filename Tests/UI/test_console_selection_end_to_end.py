@@ -40,6 +40,7 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, Input
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_left_rail import make_console_pilot
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -497,7 +498,7 @@ class _StubRunStatusScreen(Screen):
         return self._run_status
 
 
-class _FeedbackTranscriptApp(App[None]):
+class _FeedbackTranscriptApp(ConsolidatedCSSApp):
     """Drag -> menu harness with app-level capture of feedback requests.
 
     The default screen is a plain ``Screen`` (no
@@ -1331,7 +1332,12 @@ async def test_feedback_reaches_the_real_database_unmocked(tmp_path):
             screen = pilot.app.screen
             screen._prompt_queue = _RecordingPromptQueue()
             _stub_comment_modal(screen, "needs a retry bound")
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             # The controller caches the store it was built with, so the
@@ -1478,7 +1484,12 @@ async def test_comment_annotation_reaches_the_real_database_unmocked(tmp_path):
             screen = pilot.app.screen
             screen._prompt_queue = _RecordingPromptQueue()
             _stub_comment_modal(screen, "tighten error paths")
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
