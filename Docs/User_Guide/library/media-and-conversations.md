@@ -792,8 +792,12 @@ Escape's return to the list live at 100x30).*
   workspace. When it is not, the reader header reads "○ Open in Console ·
   not in this workspace" (or "· in another workspace") with the action
   disabled, and a **"Link to workspace"** button beside it performs the
-  remedy — the refusal is never delivered only as a toast. The same gate
-  guards the other "Use in Console" actions.
+  remedy. The `c` accelerator refuses in exactly the same cases, so the key
+  never reaches a refusal the button already explains. A block that linking
+  cannot resolve reads "· blocked for this workspace" and offers no link.
+  The one case still answered only by a message is having no active
+  workspace at all — select one first. The same gate guards the other
+  "Use in Console" actions.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent
@@ -928,3 +932,9 @@ Read/Info and gained the `c` accelerator; a conversation outside the active
 workspace now states that on the disabled action and offers "Link to
 workspace" right beside it, instead of raising a toast naming a workspace
 with nothing on screen to link into.)*
+
+*Verified against fix/library-crit8-recovery-copy — 2026-09-08, fix round 1
+(task-32056: the blocked reason moved out of the button label into a wrapping
+line beneath it, so it no longer truncates in a narrow reader pane; `c` now
+consults the workspace gate the button consults; a block linking cannot
+resolve says so and withholds the link.)*

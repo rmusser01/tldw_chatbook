@@ -94,6 +94,13 @@ _LINKABLE_REASON_LABELS = {
 }
 
 
+#: (task-32056, fix round 1) Short label for a block that is real but whose
+#: reason code linking cannot resolve -- an item missing from the row model
+#: falls back to the aggregate handoff gate, which refuses. The control must
+#: still disable and say so rather than claiming eligibility.
+LIBRARY_GENERIC_WORKSPACE_BLOCK = "blocked for this workspace"
+
+
 def linkable_ineligibility_label(reason_code: str) -> str:
     """Return the short inline label for a link-resolvable block.
 

@@ -7,7 +7,7 @@ refused with a toast naming a workspace the user had no way to link into.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_conversation_reader_state import (
     ConversationMessageView,
@@ -79,15 +79,24 @@ async def test_workspace_refusal_is_inline_with_a_link_action(
         loaded_metadata={
             "title": "Alpha planning",
             "_workspace_block": "not in this workspace",
+            "_workspace_block_linkable": True,
         },
         id="library-conversation-reader",
     ) as pilot:
         open_console = pilot.app.query_one(
             "#library-conversation-open-console", Button
         )
+        blocked = pilot.app.query_one(
+            "#library-conversation-open-console-blocked", Static
+        )
         link = pilot.app.query_one("#library-conversation-link-workspace", Button)
 
-        assert str(open_console.label) == "○ Open in Console · not in this workspace"
+        # The reason wraps in a Static, not the Button label: a Button label
+        # is single-line and truncates (fix round 1).
+        assert str(blocked.renderable) == (
+            "○ Open in Console · not in this workspace"
+        )
+        assert blocked.display is True
         assert open_console.disabled is True
         assert link.display is True
         assert link.disabled is False
@@ -104,6 +113,7 @@ async def test_linking_clears_the_inline_refusal(widget_pilot) -> None:
         loaded_metadata={
             "title": "Alpha planning",
             "_workspace_block": "not in this workspace",
+            "_workspace_block_linkable": True,
         },
         id="library-conversation-reader",
     ) as pilot:
@@ -116,9 +126,13 @@ async def test_linking_clears_the_inline_refusal(widget_pilot) -> None:
         open_console = pilot.app.query_one(
             "#library-conversation-open-console", Button
         )
+        blocked = pilot.app.query_one(
+            "#library-conversation-open-console-blocked", Static
+        )
         link = pilot.app.query_one("#library-conversation-link-workspace", Button)
         assert str(open_console.label) == "Open in Console"
         assert open_console.disabled is False
+        assert blocked.display is False
         assert link.display is False
 
 
@@ -181,11 +195,30 @@ def test_conversation_open_console_has_a_keyboard_route() -> None:
     assert "library_conversation_open_console" in actions
     assert hasattr(LibraryScreen, "action_library_conversation_open_console")
 
-    screen = LibraryScreen(_build_test_app())
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    registry.set_active_workspace("workspace-a")
+    screen = LibraryScreen(app)
     screen.restore_state(
         {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
     )
     screen._conversations_state.reader_state = _loaded_reader_state()
+    screen._local_source_records["conversations"] = [
+        {"id": "chat-a", "title": "Alpha planning"}
+    ]
+
+    # Blocked: the key must refuse exactly where the button does, or it
+    # reaches the press and raises the toast (fix round 1).
+    assert screen.check_action("library_conversation_open_console", ()) is False
+
+    registry.link_membership(
+        "workspace-a",
+        item_type="conversation",
+        item_id="chat-a",
+        title="Alpha planning",
+    )
+    screen._invalidate_library_workspace_depth_state()
     assert screen.check_action("library_conversation_open_console", ()) is True
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
@@ -249,12 +282,19 @@ async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None
         open_console = screen.query_one(
             "#library-conversation-open-console", Button
         )
+        blocked = screen.query_one(
+            "#library-conversation-open-console-blocked", Static
+        )
         link = screen.query_one("#library-conversation-link-workspace", Button)
-        assert str(open_console.label) == (
+        assert str(blocked.renderable) == (
             "○ Open in Console · not in this workspace"
         )
         assert open_console.disabled is True
         assert link.display is True
+        # The accelerator must refuse exactly while the button does --
+        # otherwise "c" reaches the press and raises the toast this task
+        # exists to remove (fix round 1).
+        assert screen.check_action("library_conversation_open_console", ()) is False
 
         link.press()
         await pilot.pause()
@@ -268,6 +308,12 @@ async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None
         )
         assert str(open_console.label) == "Open in Console"
         assert open_console.disabled is False
+        assert (
+            screen.query_one(
+                "#library-conversation-open-console-blocked", Static
+            ).display
+            is False
+        )
         assert (
             screen.query_one(
                 "#library-conversation-link-workspace", Button

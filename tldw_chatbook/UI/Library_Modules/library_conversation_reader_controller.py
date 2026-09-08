@@ -380,7 +380,10 @@ class LibraryConversationReaderController:
             metadata["_list_summary"] = self._conversation_reader_list_summary()
         # (task-32056) Recomputed on every sync so the inline workspace
         # refusal clears the moment "Link to workspace" lands.
-        metadata["_workspace_block"] = self._library_conversation_workspace_block()
+        (
+            metadata["_workspace_block"],
+            metadata["_workspace_block_linkable"],
+        ) = self._library_conversation_workspace_block()
         reader.sync_state(
             self._library_conversation_reader_state,
             loaded_metadata=metadata,

@@ -208,6 +208,38 @@ def test_a_batch_of_instant_failures_produces_one_completion_toast(tmp_path) -> 
     assert toasts == ["Import finished — 6 failed"], toasts
 
 
+def test_completion_toast_orders_failed_before_skipped() -> None:
+    """Pin the combined string: failures lead, per the task's own copy spec.
+
+    (fix round 1) Hoisting the settle out of the registry listener also
+    reordered the parts from "skipped · failed" to "failed · skipped" and
+    nothing pinned either. Failures lead deliberately -- they are what the
+    user has to act on -- so the order is asserted here rather than left to
+    the next reader to rediscover.
+    """
+    screen = _settle_screen()
+    toasts: list[str] = []
+    screen.app_instance.notify = lambda message, **_kwargs: toasts.append(
+        str(message)
+    )
+    registry = screen.app_instance.library_ingest_jobs
+    listener = screen._ingest_controller._handle_library_ingest_registry_changed
+
+    failed = registry.submit(source_path="/tmp/note.txt")
+    listener()
+    registry.mark_failed(failed.job_id, error="bad codec", permanent=False)
+    listener()
+    for index in range(2):
+        skipped = registry.submit(source_path=f"/tmp/photo-{index}.heic")
+        listener()
+        registry.mark_skipped(skipped.job_id, reason="Unsupported file type: .heic")
+        listener()
+    for call in screen.call_after_refresh.call_args_list:
+        call.args[0]()
+
+    assert toasts == ["Import finished — 1 failed · 2 skipped"], toasts
+
+
 def test_a_settled_single_import_still_reports_once(tmp_path) -> None:
     """The deferral must not lose the ordinary one-file completion toast."""
     screen = _settle_screen()

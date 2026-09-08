@@ -73,17 +73,30 @@ class LibraryConversationReader(Vertical):
         """
         return str(self.loaded_metadata.get("_workspace_block") or "").strip()
 
+    def _workspace_link_offered(self) -> bool:
+        """Whether "Link to workspace" would actually resolve the block."""
+        return bool(self._workspace_block()) and bool(
+            self.loaded_metadata.get("_workspace_block_linkable")
+        )
+
     def _actions_enabled(self) -> bool:
         """Whether the Console hand-off may run right now."""
         return self.state.loaded_actions_eligible and not self._workspace_block()
 
-    def _open_console_label(self) -> str:
-        """Return the hand-off label, naming a block on the control itself."""
+    def _blocked_reason_line(self) -> str:
+        """Return the wrapping reason line shown under a blocked action.
+
+        (fix round 1) The reason used to live in the ``Button`` label,
+        which Textual renders on a single truncating line -- at 100x30 the
+        Conversations reader pane is ~43 cells and it clipped to "...not in
+        this worksp". A ``Static`` wraps, so the copy survives every width.
+        """
         blocked = self._workspace_block()
-        label = library_disabled_action_label(
-            "Open in Console", not self._actions_enabled()
+        if not blocked:
+            return ""
+        return (
+            f"{library_disabled_action_label('Open in Console', True)} · {blocked}"
         )
-        return f"{label} · {blocked}" if blocked else label
 
     def _open_console_tooltip(self) -> str | None:
         """Return the current reason the hand-off cannot run."""
@@ -123,7 +136,7 @@ class LibraryConversationReader(Vertical):
         # verification) -- the exact failure this task exists to close.
         with Vertical(classes="ds-toolbar library-conversation-reader-actions"):
             open_console = Button(
-                self._open_console_label(),
+                "Open in Console",
                 id="library-conversation-open-console",
                 classes="library-canvas-action",
                 compact=True,
@@ -131,13 +144,21 @@ class LibraryConversationReader(Vertical):
             open_console.disabled = not self._actions_enabled()
             open_console.tooltip = self._open_console_tooltip()
             yield open_console
+            blocked_reason = Static(
+                self._blocked_reason_line(),
+                id="library-conversation-open-console-blocked",
+                classes="library-conversation-reader-block-reason",
+                markup=False,
+            )
+            blocked_reason.display = bool(self._workspace_block())
+            yield blocked_reason
             link = Button(
                 "Link to workspace",
                 id="library-conversation-link-workspace",
                 classes="library-canvas-action",
                 compact=True,
             )
-            link.display = bool(self._workspace_block())
+            link.display = self._workspace_link_offered()
             yield link
             retry = Button(
                 "Try again",
@@ -337,6 +358,9 @@ class LibraryConversationReader(Vertical):
             )
             info_body = self.query_one("#library-conversation-reader-info-body", Static)
             open_console = self.query_one("#library-conversation-open-console", Button)
+            blocked_reason = self.query_one(
+                "#library-conversation-open-console-blocked", Static
+            )
             link = self.query_one("#library-conversation-link-workspace", Button)
             retry = self.query_one("#library-conversation-reader-retry", Button)
         except (NoMatches, QueryError):
@@ -356,9 +380,10 @@ class LibraryConversationReader(Vertical):
         info_body.display = state.mode == "info"
 
         open_console.disabled = not self._actions_enabled()
-        open_console.label = self._open_console_label()
         open_console.tooltip = self._open_console_tooltip()
-        link.display = bool(self._workspace_block())
+        blocked_reason.update(self._blocked_reason_line())
+        blocked_reason.display = bool(self._workspace_block())
+        link.display = self._workspace_link_offered()
         retry.display = bool(state.error or state.unavailable)
 
         self._message_sync_generation += 1

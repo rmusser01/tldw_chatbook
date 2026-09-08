@@ -384,7 +384,10 @@ from ...Workspaces import (
     build_library_workspace_depth_state,
     library_item_context_handoff,
 )
-from ...Workspaces.eligibility import linkable_ineligibility_label
+from ...Workspaces.eligibility import (
+    LIBRARY_GENERIC_WORKSPACE_BLOCK,
+    linkable_ineligibility_label,
+)
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
@@ -13500,31 +13503,57 @@ class LibraryScreen(BaseAppScreen):
 
 
 
-    def _library_conversation_workspace_block(self) -> str:
-        """Return the reader's inline workspace-refusal reason (task-32056).
+    def _library_conversation_workspace_block(self) -> tuple[str, bool]:
+        """Return the reader's inline workspace refusal (task-32056).
 
-        The reason comes from the SAME row model the hand-off itself gates
-        on (``library_item_context_handoff``), so the reader can never say
-        "eligible" while the press refuses -- which is how the refusal ended
-        up as a toast in the first place.
+        The DECISION is the very call the press makes --
+        ``library_item_context_handoff`` -- not a re-derivation from the
+        row model. Fix round 1: the earlier version walked ``source_rows``
+        itself and returned "eligible" whenever the row was absent, while
+        the press fell through to that helper's aggregate gate and refused
+        by toast. Only the short LABEL is looked up per row; a block whose
+        reason code has no short label still blocks, under a generic one.
 
         Returns:
-            A short phrase for the blocked control's own label ("not in this
-            workspace"), or an empty string when the conversation is
-            eligible, unloaded, or blocked by something linking cannot fix.
+            ``(reason, link_resolves_it)`` -- ``("", False)`` when the
+            conversation is eligible or nothing is loaded. ``reason`` is a
+            short phrase for the blocked control ("not in this workspace");
+            ``link_resolves_it`` is True only for the reason codes
+            "Link to workspace" actually fixes, so the remedy is never
+            offered where it would not work.
         """
         conversation_id = str(
             self._conversations_state.reader_state.loaded_id or ""
         ).strip()
         if not conversation_id:
-            return ""
+            return "", False
         state = self._library_workspace_depth_state()
+        eligible, _reason_copy = library_item_context_handoff(
+            state, item_type="conversation", item_id=conversation_id
+        )
+        if eligible:
+            return "", False
         for row in state.source_rows:
             if row.item_type == "conversation" and row.item_id == conversation_id:
-                if row.active_context_eligible:
-                    return ""
-                return linkable_ineligibility_label(row.reason_code)
-        return ""
+                label = linkable_ineligibility_label(row.reason_code)
+                if label:
+                    return label, True
+                break
+        return LIBRARY_GENERIC_WORKSPACE_BLOCK, False
+
+    def _library_conversation_handoff_ready(self) -> bool:
+        """Whether the Conversations Console hand-off may run right now.
+
+        The ONE predicate behind the header action's enabled state, the
+        ``c`` accelerator's ``check_action`` gate, and that key's footer
+        entry (fix round 1: ``c`` consulted only the load fence, so it
+        reached the press -- and its toast -- on a conversation whose own
+        button was disabled and said why).
+        """
+        return (
+            self._conversations_state.reader_state.loaded_actions_eligible
+            and not self._library_conversation_workspace_block()[0]
+        )
 
     def _link_selected_conversation_to_workspace(self) -> None:
         """Link the open conversation into the active workspace (task-32056).
@@ -14855,9 +14884,10 @@ class LibraryScreen(BaseAppScreen):
             # as a toast after a press. Computed here (and again in
             # ``_sync_library_conversation_reader``) so it re-reads after a
             # link or a workspace switch instead of going stale.
-            reader_metadata["_workspace_block"] = (
-                self._library_conversation_workspace_block()
-            )
+            (
+                reader_metadata["_workspace_block"],
+                reader_metadata["_workspace_block_linkable"],
+            ) = self._library_conversation_workspace_block()
             reader = LibraryConversationReader(
                 self._conversations_state.reader_state,
                 loaded_metadata=reader_metadata,
@@ -25404,7 +25434,7 @@ class LibraryScreen(BaseAppScreen):
             # key can never do what the button refuses.
             return (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-                and self._conversations_state.reader_state.loaded_actions_eligible
+                and self._library_conversation_handoff_ready()
             )
         if action == "library_emergency_return":
             return self._library_emergency_return_eligibility().enabled

@@ -656,6 +656,16 @@ $ds-library-source-browser-width: 31;
     margin: 0;
 }
 
+/* task-32056 fix round 1: the blocked reason wraps instead of riding in a
+   Button label, which Textual truncates to one line -- at 100 columns the
+   reader pane is ~43 cells and clipped it mid-word. */
+.library-conversation-reader-block-reason {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    padding: 0 1;
+}
+
 .library-conversation-reader-modes > Button,
 .library-conversation-reader-actions > Button {
     width: auto;
