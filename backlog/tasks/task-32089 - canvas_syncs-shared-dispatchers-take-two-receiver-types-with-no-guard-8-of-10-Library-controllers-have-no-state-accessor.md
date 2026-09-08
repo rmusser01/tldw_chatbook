@@ -1,5 +1,5 @@
 ---
-id: TASK-32047
+id: TASK-32089
 title: >-
   canvas_sync's shared dispatchers take two receiver types with no guard - 8 of
   10 Library controllers have no state accessor
@@ -45,7 +45,7 @@ Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
 the younger task renumbers with a provenance note, regardless of Done
 status**), THIS task renumbers: dev's holder has `created_date`
 `2026-09-08 14:36` and this one `2026-09-08 15:04`, so dev's is older by 28
-minutes and keeps 32041. Renumbered to **TASK-32047** at the reconciliation
+minutes and keeps 32041. Renumbered to **TASK-32089** at the reconciliation
 merge, chosen by re-sweeping `git rev-list --objects --all` (every blob path
 reachable from all 655 local + remote refs — so renamed, deleted and
 merge-commit-only task files are counted, which a per-ref `ls-tree` of the

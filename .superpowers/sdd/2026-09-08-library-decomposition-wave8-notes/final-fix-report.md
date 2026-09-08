@@ -466,3 +466,6 @@ mutation table in §4.1. On `origin/dev` the single-leg media guard is **red**
   location-dependent swing on byte-identical source is unexplained. It is
   now labelled as unexplained rather than mislabelled, which is the most
   this close can honestly claim.
+
+## Round-2 erratum (coordinator): the collision struck TWICE
+Dev's next 30 commits minted BOTH task-32040 and task-32047, colliding with both of this wave's filings. Renumbered (ours, unmerged side): 32040 -> **TASK-32088** (cutover guard), 32047 -> **TASK-32089** (dispatcher guard). Two rule refinements recorded in lessons-backlog-hygiene: landed-keeps-id trumps older-keeps-id; renumber as the last commit before push, never mid-fix-wave. Dev's identically-numbered tasks (Console trace capture; PII log redacting) are untouched, as are lessons-testing-evidence:12295 and decisions/029 which cite DEV's tasks.

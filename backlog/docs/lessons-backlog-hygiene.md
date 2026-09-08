@@ -911,3 +911,13 @@ update-branches in 70 minutes — dev moved every 20-40 minutes that evening, ag
   `python tldw_chatbook/css/check_bundle_sync.py` before Derived gets there.
 - When one session holds a code PR and a docs PR, merge the **code PR first** — landing
   the docs PR moves dev and puts the code PR straight back on the treadmill.
+
+- **2026-09-08, same wave, SECOND strike.** The replacement id 32047 (chosen from a
+  655-ref all-refs sweep hours earlier) was itself taken by dev within the next 30
+  commits, along with 32040 — both of the wave's filings collided in one endgame.
+  Two refinements now standing: (a) **landed-keeps-id trumps older-keeps-id** — a
+  task already on origin/dev never renumbers; the unmerged side moves regardless of
+  timestamps, because renumbering landed ids breaks external references; (b) at
+  dev's current minting rate, an id chosen before a multi-hour reconciliation is
+  STALE BY CONSTRUCTION — re-sweep and renumber, if needed, as the LAST commit
+  before push, not during the fix wave.

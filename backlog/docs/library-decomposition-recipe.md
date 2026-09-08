@@ -7135,7 +7135,7 @@ the end than at the start, which is why absolute medians here sit below
    media defect this close fixed had been live for two days behind an
    `except Exception`, and the census that found it was a question nobody had
    asked of `canvas_sync.py`: *which objects reach this leg?* §3 carries the
-   resolution table, and TASK-32047 carries the standing guard (filed as
+   resolution table, and TASK-32089 carries the standing guard (filed as 32041, then 32047 —
    TASK-32041; renumbered at the reconciliation merge — `dev` had minted its
    own 32041 in the interim).
 4. **A `file:line` is a number and nothing in the battery reads one.** Four
