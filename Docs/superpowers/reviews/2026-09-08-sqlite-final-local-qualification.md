@@ -261,3 +261,14 @@ whitespace pass; existing whole-file formatting debt and Requests warning remain
 See [deadline correction evidence](2026-09-08-canvas-startup-deadline-fix.md).
 Historical timing causality is not claimed, prior failures are preserved, and
 the remaining host/platform/optional/static gates and V2-disabled status stand.
+
+## Subsequent static attribution
+
+The [paired static comparison](2026-09-08-sqlite-static-attribution.md) now
+attributes the saved nonzero results without rewriting code: 1360 of 1373
+diagnostics match unchanged baseline spans; thirteen changed/moved spans are
+documented separately. All 307 formatter edit groups in the twelve recorded
+dirty files match baseline edit content and adjacent lines. Explicit py311/py312
+controls distinguish six language-floor-sensitive recommendations. This does
+not make the static gate green or clear modified import blocks by assumption.
+No pytest, browser, benchmark, host-control rerun or admission change occurred.
