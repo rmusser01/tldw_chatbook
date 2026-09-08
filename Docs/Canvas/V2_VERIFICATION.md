@@ -246,6 +246,10 @@ catalog, Chat, Agents, and TTS namespaces without importing real credential or
 provider code. Deleting an installed leaf produced source-free
 `helper_unavailable`; hostile roots could not rescue it. The final audit-fix
 packaging selection passed 19 tests with the existing dependency warning.
+Independent task review identified the incomplete module trace; fix-only
+re-review of `4af790d46..73692f21c` confirmed that finding addressed with no new
+Critical/Important breakage. This is task-scoped review, not the still-pending
+whole-correction review or a release qualification waiver.
 
 The exact 27-file affected command and exact five-node Canvas command both
 failed at collection because the shared virtual environment's

@@ -680,7 +680,7 @@ whole TASK-31942 remains In Progress, all final ACs unchecked, V2 disabled.
 
 **Interfaces:** No new runtime API. Consume the actual launcher, fixed operations and repository lifecycle from Tasks 1–6. Preserve V2 disabled policy while running candidate fixtures.
 
-- [ ] Add an installed-wheel test before treating checkout execution as packaging evidence. Build with existing offline packaging fixtures/toolchain into `tmp_path`, install the built artifact with no dependency resolution into an isolated temporary target, and launch the installed absolute entry with `-I -S` from an unrelated hostile cwd. Verify the entry and complete leaf closure are from that wheel, not the checkout/PYTHONPATH/user site. No shared-venv install or network fetch.
+- [x] Add an installed-wheel test before treating checkout execution as packaging evidence. Build with existing offline packaging fixtures/toolchain into `tmp_path`, install the built artifact with no dependency resolution into an isolated temporary target, and launch the installed absolute entry with `-I -S` from an unrelated hostile cwd. Verify the entry and complete leaf closure are from that wheel, not the checkout/PYTHONPATH/user site. No shared-venv install or network fetch.
 
 ```python
 completed = subprocess.run(
@@ -694,7 +694,7 @@ assert completed.stderr == b""
 ```
 
 The test defines `installed_entry` by inspecting the built wheel's installed files, and creates `hostile_cwd` under `tmp_path`. Exercise a real prepare and fixed TTS initialization too; successful close alone does not prove the full import closure is packaged. Instrument imports in the test-owned child harness, not through a new production diagnostics operation.
-- [ ] Run installed-wheel RED/GREEN tests and verify no imports of app/config/providers/keyring/loguru/Textual startup or user files. Confirm the approved Python3.12 minimum, native policy availability and actual macOS POSIX behavior; report unavailable OS/interpreter coverage explicitly, never as passing Windows/Linux qualification.
+- [x] Run installed-wheel RED/GREEN tests and verify no imports of app/config/providers/keyring/loguru/Textual startup or user files. Confirm the approved Python3.12 minimum, native policy availability and actual macOS POSIX behavior; report unavailable OS/interpreter coverage explicitly, never as passing Windows/Linux qualification.
 - [ ] Run the complete affected storage selection:
 
 ```bash
@@ -745,6 +745,38 @@ Preserve the existing source-free child fault/lifecycle captures. Do not reinter
 - [ ] Add concise implementation notes and exact evidence to TASK-31942 only after implementation/review. Check each AC and mark Done via Backlog CLI only if all gates pass; otherwise keep In Progress and document the precise failing gate. Record relevant hard-won lessons with their incident. Commit qualification/docs as `test(db): qualify lock-safe SQLite helper integration`.
 - [ ] Hand back to Task 8 of `Docs/superpowers/plans/2026-09-06-chatbook-canvas-v2-mermaid-implementation.md`. Rerun its full required candidate/admitted qualification and independent reviews under that plan. Do not enable V2 as part of this correction commit or claim the previously admitted 1,346-pass/4-fail run was green.
 
+**Task 7 partial checkpoint — 2026-09-08:** Test/documentation implementation
+`4af790d46` and import-audit fix `73692f21c` passed task-scoped independent
+review and fix-only re-review. The Important audit blind spot is corrected:
+complete loaded-module names are checked against stdlib and the exact helper
+closure, separately from product-file origins. Twelve test-owned module stubs
+prove rejection without importing real credentials/providers. Final packaging
+selection: 19 passed, one existing warning, 21.96s. File-access evidence is
+bounded to resolved absolute names and hostile-root sentinels, not a complete
+kernel-level audit. The UI-loop worker test passed in the earlier focused run;
+its assertion-failure teardown Minor remains deferred to whole-correction review.
+
+The exact 27-file command and exact five Canvas nodes did not collect: the
+shared environment's editable `tldw_profile_core` points at an absent worktree.
+The 26-file continuation returned 1,483 passed, five skipped and 36 failed
+(three known unrelated inventory deltas, eleven pre-body SemLock ENOSPC cases,
+22 missing-package subprocess cases). Explicit local-source diagnostics passed
+26 interop tests and the five actual Canvas workflows; nine nested performance
+guards still lacked the package. These diagnostics do not qualify the exact
+commands or ADR-097 ceilings. No shared environment or host repair was performed.
+
+Separately isolated five-sample benchmarks against immutable `9bc73ffb3` measured
+actual UI-ready medians of 8,157.564ms current / 8,111.325ms baseline, repository
+open 142.452ms / 6.428ms, and current proof rechecks 0.239ms. Resource observations
+are 0.5ms-sampled high water, not exact kernel peaks; performance gates remain
+unqualified. The invalid first benchmark's pre-import isolation incident and
+bounded historical audit are preserved in the report and lessons. Local evidence
+is macOS arm64 / Python 3.12.11 / SQLite 3.49.1 only. Whole-correction review,
+remaining qualification, final ACs and Canvas V2 admission remain pending. Keep
+TASK-31942 In Progress; do not change budgets or treat dependency/host/unrelated
+repairs as implicitly authorized. See `Docs/Canvas/V2_VERIFICATION.md` and the
+preserved Task 7 report/review/re-review for exact accounting.
+
 ## Spec coverage and handoff
 
 | Approved contract | Implementation/review unit |
@@ -762,4 +794,4 @@ Preserve the existing source-free child fault/lifecycle captures. Do not reinter
 | Exclusive descriptor finalizers and complete consumer inventory | 6 |
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 continues the user's selected subagent-driven workflow for final qualification. Runtime admission, live ownership and the macOS actual-app shutdown gates have passing scoped evidence; the full correction remains unqualified. Preserve the known semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for host cleanup/unrelated repairs.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership and the macOS actual-app shutdown gates have passing scoped evidence; the full correction remains unqualified. Preserve stale editable-install, semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for shared-environment/host cleanup/unrelated repairs.

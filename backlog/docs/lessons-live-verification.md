@@ -1252,6 +1252,20 @@ provenance probe was not in the run as unproven. The same shape applies
 to any machine with several checkouts sharing one venv — which, on this
 repo, is every machine.
 
+**Recurrence — TASK-31942, 2026-09-08.** The shared environment's
+`tldw_profile_core` editable `.pth` and `direct_url.json` still pointed at the
+removed `task-26042-workspace-files-read-only` checkout. The main Canvas
+qualification selection and five actual-child nodes failed collection; a
+26-file continuation passed 1,483 cases but included 22 subprocess performance
+failures from the missing package. Pointing the parent at the current local
+package source passed 26 interop tests and 22 performance checks, but nine
+subprocess guards rebuilt `PYTHONPATH` and remained blocked. Parent import
+success therefore did not qualify the children. The stale target was diagnosed
+by reading installation metadata and checking that exact path, without importing
+the app or modifying the shared environment. Preserve these setup failures and
+label source-path diagnostics; do not silently rewrite nested gates or install
+into a shared environment as part of read-only qualification.
+
 ## A DB append is invisible to a live Console *and* to the next mount — the STORE is what the transcript and the payload are built from (task-15860, Task 0 probe P1)
 
 **What happened.** Two of the three designs for headless wake rested on
