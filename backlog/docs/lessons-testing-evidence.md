@@ -12473,6 +12473,26 @@ the entire response survived encoding. Keep inference, codec, device and content
 evidence distinct; these checks used real ONNX inference and codecs, while
 PyTorch coverage replaced only inference and voice loading.
 
+### TASK-32076: A zero player exit does not prove full playback
+
+The TTS backend parity audit produced a valid 5.717-second Opus clip that
+FFmpeg decoded and Whisper transcribed completely. macOS `afplay` returned
+exit code 0 after approximately 2.0 seconds, while `afinfo` could not open the
+file. Switching Opus playback to the existing FFplay path took 6.13 seconds
+and retained the complete transcript. For playback evidence, check decoded
+frames/content **and** player elapsed time/completion; a nonempty file and a
+successful process exit can both conceal an unsupported format. Also retain
+the exact process in completion callbacks: a late previous monitor must not
+finish the next clip.
+
+PR #2520's Qodo review then exposed a second gap: the player correctly reported
+ERROR, but Speech Lab kept polling and spoken feedback reported success at its
+timeout. Mounted playback and public utterance tests reproduced eight failures
+that direct player tests missed. A manager-level Higgs close test also missed
+that its host detaches the manager at shutdown; a real host/manager test proved
+cleanup must remain owned past that deadline. Verify terminal outcomes and
+resource release through the caller that actually owns the operation.
+
 ## Successful tool discovery changes the rendered system row (TASK-32048, 2026-09-08)
 
 The reported third-request `unsupported_surface_change` was reproduced only
@@ -12507,24 +12527,3 @@ had no persisted conversation when the transform ran, so the applier returned
 unchanged text. Persist first, assert transformed wire content, and verify the
 origin's `active_request` row and exact source pin before claiming transform
 coverage. Both corrected controls passed with the discard fix.
-
-
-### TASK-32076: A zero player exit does not prove full playback
-
-The TTS backend parity audit produced a valid 5.717-second Opus clip that
-FFmpeg decoded and Whisper transcribed completely. macOS `afplay` returned
-exit code 0 after approximately 2.0 seconds, while `afinfo` could not open the
-file. Switching Opus playback to the existing FFplay path took 6.13 seconds
-and retained the complete transcript. For playback evidence, check decoded
-frames/content **and** player elapsed time/completion; a nonempty file and a
-successful process exit can both conceal an unsupported format. Also retain
-the exact process in completion callbacks: a late previous monitor must not
-finish the next clip.
-
-PR #2520's Qodo review then exposed a second gap: the player correctly reported
-ERROR, but Speech Lab kept polling and spoken feedback reported success at its
-timeout. Mounted playback and public utterance tests reproduced eight failures
-that direct player tests missed. A manager-level Higgs close test also missed
-that its host detaches the manager at shutdown; a real host/manager test proved
-cleanup must remain owned past that deadline. Verify terminal outcomes and
-resource release through the caller that actually owns the operation.

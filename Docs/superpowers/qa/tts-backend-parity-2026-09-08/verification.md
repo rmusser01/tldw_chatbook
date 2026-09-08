@@ -88,9 +88,10 @@ repeat run after the Qodo fixes; all six complete transcripts passed again.
 - Red-to-green evidence includes real container truncation, codec enum/muxer
   failures, cancellation ownership, typed limits, empty results, missing native
   selection IDs, raw PCM fallback, and macOS Opus/process completion.
-- Targeted new Python files pass full Ruff; all changed files pass syntax and
-  undefined-name checks and formatting. Legacy lint debt was compared with HEAD;
-  no new diagnostics were introduced.
+- New Python files pass full Ruff. Changed Python files pass syntax and
+  undefined-name checks; changed production files and new test modules pass
+  formatting. Existing test-formatting and lint debt were compared with the
+  baseline; no new diagnostics were introduced.
 - Diagnostic statement review removed obsolete Chatterbox/Higgs messages and
   added only fixed Opus guidance plus a numeric player exit code. No new logging
   destination or user-content interpolation was added. The diagnostic inventory
@@ -115,7 +116,7 @@ regressions pass after this fix.
 The fetched dev base also exceeded its CSS budget before this PR's changes:
 804,241 bytes versus 804,000. The CSS files in the original PR matched dev.
 Shortening an existing explanatory comment removes 497 bytes from the boot
-bundle, yielding 803,744 bytes. Both the source and generated bundle have
+CSS total, yielding 803,744 bytes. Both the source and generated bundle have
 identical non-comment CSS to HEAD. No rule or budget constant changed; ADR-097
 permits shedding this existing boot cost. The CSS budget regression passes.
 
@@ -158,3 +159,27 @@ ordering test that relied on five event-loop yields while its fake player could
 already finish. Explicit admission/finish events make that assertion
 deterministic; the entire utterance module and new failure module then passed
 38 tests. This fixture repair does not alter production behavior.
+
+The utterance module now awaits fixture cleanup before interpreter teardown;
+its final 38-test run exits without secure-delete shutdown messages. The old
+event-test file has unchanged inherited formatting debt, and no new lint
+diagnostics were introduced.
+
+
+## Integration gates
+
+The reviewed source revision `e208c06b53` passed PR Fast Lane, derived artifacts,
+UI latency, CSS reproducibility, backlog IDs and Linux/macOS/Windows import
+evidence. All eight Qodo threads have fix/evidence replies and are resolved;
+Qodo reports zero unresolved bugs or rule violations. TASK-32076 is Done.
+The task-record revision rebased onto `28d73ffece` preserved the tested runtime
+and test trees and passed every hosted check as `46156a9565`. Dev then advanced
+with PR #2522, causing a conflict only between appended lesson entries. Both
+entries are preserved on the subsequent rebase onto `e222813571`.
+
+TTS runtime, Speech UI, TTS event-handler and TTS test trees are unchanged.
+The upstream logging/app changes passed an additional **387 targeted tests**,
+including error reporting, spoken feedback, mounted playback, logging and
+startup. All six preflight checks pass. The upstream CSS comment reduction
+lowers the boot-parsed CSS total to **803,443 / 804,000 bytes**; non-comment CSS
+is unchanged. PR checks must remain green before merge.
