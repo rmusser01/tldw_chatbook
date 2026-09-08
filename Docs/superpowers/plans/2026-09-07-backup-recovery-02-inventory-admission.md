@@ -107,7 +107,7 @@ changes in another checkout are not part of this work.
 <a id="task-3"></a>
 ## Task 3: Declare recovery inventory and side-effect-free profile discovery
 
-**Backlog:** [TASK-31986](../../../backlog/tasks/task-31986%20-%20Declare-recovery-inventory-and-side-effect-free-profile-discovery.md) — To Do.
+**Backlog:** [TASK-31986](../../../backlog/tasks/task-31986%20-%20Declare-recovery-inventory-and-side-effect-free-profile-discovery.md) — Done.
 
 **Dependencies:** Approved design only.
 
@@ -162,7 +162,7 @@ def register(adapter: OwnerAdapter) -> None: ...
 def registered() -> tuple[OwnerAdapter, ...]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_inventory.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_inventory.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -175,19 +175,19 @@ def test_unknown_durable_entry_blocks_completeness(tmp_path):
     assert "unsupported_owner" in result.issues
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_inventory.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_inventory.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Create a census from SQLITE_OWNER_REGISTRY, backlog/docs/sqlite-private-owner-inventory.md, configured storage resolvers, private file writers, and existing durable root contents. Record every producer, path resolver, class, dependencies, capture/validation/relocation/activation adapter, cohort, and targeted evidence; classify memory, cookies/external input, process artifacts, and server data explicitly. A raw connection census alone is insufficient.
+- [x] **Step 3:** Create a census from SQLITE_OWNER_REGISTRY, backlog/docs/sqlite-private-owner-inventory.md, configured storage resolvers, private file writers, and existing durable root contents. Record every producer, path resolver, class, dependencies, capture/validation/relocation/activation adapter, cohort, and targeted evidence; classify memory, cookies/external input, process artifacts, and server data explicitly. A raw connection census alone is insufficient.
 
-- [ ] **Step 4:** Extract pure path resolution from config.py without changing priority rules. discover reads explicitly selected TOML configs and canonical defaults without load_settings, directory creation, fallback profile creation, optional-engine imports, keyring reads, or database constructors. Return a parse failure for damaged source configs; archive inspection does not call discover.
+- [x] **Step 4:** Extract pure path resolution from config.py without changing priority rules. discover reads explicitly selected TOML configs and canonical defaults without load_settings, directory creation, fallback profile creation, optional-engine imports, keyring reads, or database constructors. Return a parse failure for damaged source configs; archive inspection does not call discover.
 
-- [ ] **Step 5:** Define frozen SchemaPolicy(owner, versions, schema_sql, migration_steps) and OwnerAdapter protocol here. discover(config: Mapping[str, object]) -> tuple[StorageItem, ...]; capture(item: StorageItem, destination: Path, cancel: Event) -> None; validate(candidate: Path) -> tuple[str, ...]; relocate(candidate: Path, mapping: Mapping[str, Path]) -> None; schema_policy() -> SchemaPolicy | None. Policies contain installed SQL only and exact supported schema metadata, never imported executable code.
+- [x] **Step 5:** Define frozen SchemaPolicy(owner, versions, schema_sql, migration_steps) and OwnerAdapter protocol here. discover(config: Mapping[str, object]) -> tuple[StorageItem, ...]; capture(item: StorageItem, destination: Path, cancel: Event) -> None; validate(candidate: Path) -> tuple[str, ...]; relocate(candidate: Path, mapping: Mapping[str, Path]) -> None; schema_policy() -> SchemaPolicy | None. Policies contain installed SQL only and exact supported schema metadata, never imported executable code.
 
-- [ ] **Step 6:** owner_registry.register(adapter: OwnerAdapter) -> None and registered() -> tuple[OwnerAdapter, ...] reject duplicate logical ownership unless verified physical identity maps it to an explicit shared group. Path aliases and nested owner roots cannot silently duplicate capture. Unknown durable entries block complete; unavailable required payloads do too, except validated intentional-deletion records.
+- [x] **Step 6:** owner_registry.register(adapter: OwnerAdapter) -> None and registered() -> tuple[OwnerAdapter, ...] reject duplicate logical ownership unless verified physical identity maps it to an explicit shared group. Path aliases and nested owner roots cannot silently duplicate capture. Unknown durable entries block complete; unavailable required payloads do too, except validated intentional-deletion records.
 
-- [ ] **Step 7:** Add a source census guard for new persistence producers and a documented explicit exclusion review. Fixtures cover inactive features, multiple profile configs, custom DB paths, aliasing, unknown files, required absence, external folders, and malformed config. Do not mark the implementation coverage complete until every census row has a supported adapter or approved exclusion.
+- [x] **Step 7:** Add a source census guard for new persistence producers and a documented explicit exclusion review. Fixtures cover inactive features, multiple profile configs, custom DB paths, aliasing, unknown files, required absence, external folders, and malformed config. Do not mark the implementation coverage complete until every census row has a supported adapter or approved exclusion.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -200,7 +200,7 @@ if any(item.owner == "unknown" for item in items):
     issues.append("unsupported_owner")
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -208,11 +208,11 @@ python -m pytest Tests/Backup_Recovery/test_inventory.py Tests/Architecture/test
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): declare recovery inventory and side-effect-free profile discovery`. Recheck task-ID collisions
   before merge and preserve unrelated work.
