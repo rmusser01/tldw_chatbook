@@ -21,8 +21,11 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.bulk_reader_corpus import BulkReaderCase, BulkReaderCorpus
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CORPUS = REPOSITORY_ROOT / "Docs/Examples/agents/bulk-reader/corpus.json"
@@ -30,6 +33,8 @@ SUPPORTED_LIVE_PROVIDERS = ("Moonshot", "ZAI")
 PROVIDER_REQUEST_TIMEOUT_SECONDS = 60.0
 PROVIDER_REQUEST_RETRIES = 0
 MAX_PROVIDER_CALLS_PER_ARM = 8
+# One primary plus the single child admitted by the runtime budget.
+MAX_RUN_RECORDS_PER_ARM = 2
 MAX_WALL_SECONDS_PER_ARM = 120.0
 MAX_TOOL_CALL_SECONDS = 30.0
 MAX_TOTAL_TOKENS_PER_ARM = 100_000
@@ -40,6 +45,7 @@ REPORT_LIMITS = {
     "provider_request_timeout_seconds": PROVIDER_REQUEST_TIMEOUT_SECONDS,
     "provider_request_retries": PROVIDER_REQUEST_RETRIES,
     "max_provider_calls_per_arm": MAX_PROVIDER_CALLS_PER_ARM,
+    "max_run_records_per_arm": MAX_RUN_RECORDS_PER_ARM,
     "max_wall_seconds_per_arm": MAX_WALL_SECONDS_PER_ARM,
     "max_tool_call_seconds": MAX_TOOL_CALL_SECONDS,
     "max_total_tokens_per_arm": MAX_TOTAL_TOKENS_PER_ARM,
@@ -49,7 +55,11 @@ REPORT_LIMITS = {
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the inert CLI parser without importing application modules."""
+    """Build the inert CLI parser without importing application modules.
+
+    Returns:
+        The parser for provider, model, output, and billable-consent arguments.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -70,21 +80,55 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_live_request(args: argparse.Namespace) -> Path:
-    """Refuse unapproved calls and existing outputs before app imports."""
+    """Validate live inputs, refusing unapproved calls before app imports.
+
+    Args:
+        args: Parsed CLI arguments. Validated provider/model values replace the
+            corresponding fields before execution.
+
+    Returns:
+        The validated absolute path for a new report in an existing directory.
+
+    Raises:
+        ValueError: If consent is missing or an input is invalid or unsupported.
+        FileExistsError: If the report path already exists.
+        OSError: If the output directory cannot be inspected.
+    """
 
     if not args.confirm_billable:
         raise ValueError(
             "Refusing provider calls without --confirm-billable; the comparison "
             "may make charged requests."
         )
+    args.provider, args.main_model, args.worker_model = _validate_model_selection(
+        args.provider, args.main_model, args.worker_model
+    )
     if args.provider not in SUPPORTED_LIVE_PROVIDERS:
         raise ValueError(
             "Live bulk-reader evaluation supports only Moonshot and ZAI because "
             "their existing Console routes expose bounded timeout/retry policy."
         )
-    if not str(args.main_model).strip() or not str(args.worker_model).strip():
-        raise ValueError("Both --main-model and --worker-model must be non-empty.")
-    output = args.output.expanduser().resolve()
+    return _validate_output_path(args.output)
+
+
+def _validate_model_selection(
+    provider: str, main_model: str, worker_model: str
+) -> tuple[str, str, str]:
+    from tldw_chatbook.Utils.input_validation import validate_navigation_context_text
+
+    return (
+        validate_navigation_context_text(provider, name="provider", max_length=128),
+        validate_navigation_context_text(main_model, name="main model", max_length=256),
+        validate_navigation_context_text(
+            worker_model, name="worker model", max_length=256
+        ),
+    )
+
+
+def _validate_output_path(value: Path) -> Path:
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    output = validate_path_simple(value, probe_existing=False).resolve()
     if output.exists():
         raise FileExistsError(f"Output already exists: {output}")
     if not output.parent.is_dir():
@@ -92,78 +136,58 @@ def validate_live_request(args: argparse.Namespace) -> Path:
     return output
 
 
-def _load_corpus(path: Path) -> tuple[dict[str, Any], str]:
+def _load_corpus(path: Path) -> tuple[BulkReaderCorpus, str]:
+    from tldw_chatbook.Agents.bulk_reader_corpus import BulkReaderCorpus
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    path = validate_path_simple(path, require_exists=True)
     raw = path.read_bytes()
     try:
         corpus = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("Bulk-reader corpus must be valid UTF-8 JSON.") from exc
-    if not isinstance(corpus, dict):
-        raise TypeError("Bulk-reader corpus must be a JSON object.")
-    if not isinstance(corpus.get("id"), str) or not corpus["id"].strip():
-        raise ValueError("Bulk-reader corpus requires a non-empty id.")
-    if type(corpus.get("schema_version")) is not int:
-        raise ValueError("Bulk-reader corpus requires an integer schema_version.")
-    if not isinstance(corpus.get("rubric"), dict):
-        raise TypeError("Bulk-reader corpus requires a manual grading rubric.")
-    cases = corpus.get("cases")
-    if not isinstance(cases, list) or not cases:
-        raise ValueError("Bulk-reader corpus requires at least one case.")
-    seen: set[str] = set()
-    for case in cases:
-        if not isinstance(case, dict):
-            raise TypeError("Every bulk-reader case must be an object.")
-        case_id = case.get("id")
-        if not isinstance(case_id, str) or not case_id.strip() or case_id in seen:
-            raise ValueError("Bulk-reader case ids must be non-empty and unique.")
-        seen.add(case_id)
-        if not isinstance(case.get("question"), str) or not case["question"].strip():
-            raise ValueError(f"Case {case_id} requires a question.")
-        if not isinstance(case.get("expected_facts"), list):
-            raise TypeError(f"Case {case_id} requires expected_facts.")
-        if not isinstance(case.get("sources"), dict) or not case["sources"]:
-            raise ValueError(f"Case {case_id} requires sources.")
-        for source_path, content in case["sources"].items():
-            if not isinstance(content, str):
-                raise TypeError(f"Case {case_id} sources require string content.")
-            _confined_relative_path(source_path)
-    return corpus, hashlib.sha256(raw).hexdigest()
+    return BulkReaderCorpus.model_validate(corpus), hashlib.sha256(raw).hexdigest()
 
 
-def _confined_relative_path(value: Any) -> PurePosixPath:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("Corpus sources require a relative confined path.")
-    candidate = PurePosixPath(value)
-    if (
-        candidate.is_absolute()
-        or ".." in candidate.parts
-        or "." in candidate.parts
-        or value != candidate.as_posix()
-    ):
-        raise ValueError(f"Corpus source is not a relative confined path: {value!r}")
-    return candidate
+def materialize_case(case: BulkReaderCase, workspace_root: Path) -> list[dict]:
+    """Write one validated case beneath a fresh, confined workspace.
 
+    Args:
+        case: Validated synthetic case with canonical relative source paths.
+        workspace_root: Evaluator-owned scratch directory to populate.
 
-def materialize_case(case: Mapping[str, Any], workspace_root: Path) -> list[dict]:
-    """Write one validated case beneath a fresh, confined workspace."""
+    Returns:
+        Source path, SHA-256, byte count, and line count for each written file.
 
-    workspace_root = workspace_root.resolve()
+    Raises:
+        ValueError: If a path is unsafe, a symlink, or outside the workspace.
+        OSError: If the workspace or sources cannot be created.
+    """
+
+    from tldw_chatbook.Utils.path_validation import validate_path, validate_path_simple
+
+    workspace_root = validate_path_simple(
+        workspace_root, probe_existing=False
+    ).resolve()
     workspace_root.mkdir(parents=True, exist_ok=True)
     materialized: list[dict] = []
-    for source_path, content in case["sources"].items():
-        relative = _confined_relative_path(source_path)
+    for source_path, content in case.sources.items():
+        relative = PurePosixPath(source_path)
         target = workspace_root.joinpath(*relative.parts)
         current = workspace_root
         for part in relative.parts[:-1]:
             current = current / part
             if current.is_symlink():
                 raise ValueError(f"Corpus path traverses a symlink: {relative}")
+            current = validate_path(
+                current, workspace_root, allow_hidden=True, redact_paths=True
+            )
             current.mkdir(exist_ok=True)
         if target.is_symlink():
             raise ValueError(f"Corpus path targets a symlink: {relative}")
-        resolved_parent = target.parent.resolve()
-        if workspace_root not in (resolved_parent, *resolved_parent.parents):
-            raise ValueError(f"Corpus source escaped its workspace: {relative}")
+        target = validate_path(
+            target, workspace_root, allow_hidden=True, redact_paths=True
+        )
         target.write_text(content, encoding="utf-8")
         materialized.append(
             {
@@ -277,8 +301,16 @@ def _provider_metadata(response: Any) -> Any:
         return None
 
 
-class _TerminalMetadataIterator(Iterator[Any]):
-    def __init__(self, response: Iterator[Any], recorder: Any):
+class TerminalMetadataIterator(Iterator[Any]):
+    """Forward a provider stream and record its terminal metadata once."""
+
+    def __init__(self, response: Iterator[Any], recorder: Any) -> None:
+        """Initialize stream observation.
+
+        Args:
+            response: Provider-owned iterator, closed when this wrapper closes.
+            recorder: Receiver for terminal metadata or an unknown outcome.
+        """
         self._response = response
         self.recorder = recorder
         self.finished = False
@@ -300,6 +332,8 @@ class _TerminalMetadataIterator(Iterator[Any]):
         self.recorder.record(metadata)
 
     def close(self) -> None:
+        """Close the underlying stream and record unknown metadata if unfinished."""
+
         close = getattr(self._response, "close", None)
         if callable(close):
             close()
@@ -309,7 +343,7 @@ class _TerminalMetadataIterator(Iterator[Any]):
         return getattr(self._response, name)
 
 
-class _ProviderMetadataRecorder:
+class ProviderMetadataRecorder:
     """Capture typed terminal metadata without changing provider responses."""
 
     def __init__(self) -> None:
@@ -317,40 +351,82 @@ class _ProviderMetadataRecorder:
         self._lock = threading.Lock()
 
     def record(self, metadata: Any) -> None:
+        """Append one provider outcome under the recorder lock.
+
+        Args:
+            metadata: Typed terminal metadata, or None when unavailable.
+        """
+
         with self._lock:
             self._records.append(metadata)
 
     def count(self) -> int:
+        """Return the number of observed provider outcomes.
+
+        Returns:
+            A snapshot count suitable for a later latest_since lookup.
+        """
+
         with self._lock:
             return len(self._records)
 
     def latest_since(self, index: int) -> Any:
+        """Read the latest outcome recorded after an earlier count.
+
+        Args:
+            index: Count captured before the provider call.
+
+        Returns:
+            The latest metadata, or None if absent or no new call completed.
+        """
+
         with self._lock:
             return self._records[-1] if len(self._records) > index else None
 
     def wrap_chat_api_call(self, call: Callable[..., Any]) -> Callable[..., Any]:
+        """Observe a provider call while preserving its response protocol.
+
+        Args:
+            call: Synchronous provider entry point accepting keyword arguments.
+
+        Returns:
+            A wrapper preserving mappings and proxying streamed responses.
+        """
+
         def recording_call(**kwargs: Any) -> Any:
             response = call(**kwargs)
             if isinstance(response, Mapping):
                 self.record(_provider_metadata(response))
                 return response
             if isinstance(response, Iterator):
-                return _TerminalMetadataIterator(response, self)
+                return TerminalMetadataIterator(response, self)
             self.record(None)
             return response
 
         return recording_call
 
 
-class _RecordingChatCall:
+class RecordingChatCall:
+    """Enforce the evaluator call cap and retain per-call usage and outcomes."""
+
     def __init__(
         self,
         adapter: Any,
         resolution: Any,
         signals: Any,
         pricing: Any,
-        provider_metadata: _ProviderMetadataRecorder,
-    ):
+        provider_metadata: ProviderMetadataRecorder,
+    ) -> None:
+        """Bind the runtime adapter and accounting sources.
+
+        Args:
+            adapter: Console adapter whose chat_call dispatches model requests.
+            resolution: Default provider/model resolution for the primary agent.
+            signals: Per-call Console usage signals.
+            pricing: Catalog of rates keyed by the actual provider and model.
+            provider_metadata: Recorder of terminal finish reasons and usage.
+        """
+
         self.adapter = adapter
         self.resolution = resolution
         self.signals = signals
@@ -452,11 +528,11 @@ class _RecordingChatCall:
         return response
 
 
-def _arm_prompt(case: Mapping[str, Any]) -> str:
-    paths = list(case["sources"])
+def _arm_prompt(case: BulkReaderCase) -> str:
+    paths = list(case.sources)
     return (
-        f"Case: {case['id']}\n"
-        f"Question: {case['question']}\n"
+        f"Case: {case.id}\n"
+        f"Question: {case.question}\n"
         "Requested workspace-relative paths:\n"
         + "\n".join(f"- {path}" for path in paths)
         + "\nRead the files with the available tools. Do not assume their contents."
@@ -469,7 +545,7 @@ def _tool_reads(
     kinds = {row["id"]: str(row.get("agent_kind") or "") for row in rows}
     return [
         {
-            "run_kind": kinds[read["run_id"]],
+            "run_kind": kinds.get(read["run_id"], "unknown"),
             "tool": read["tool"],
             "path": read["path"],
         }
@@ -485,7 +561,7 @@ def _arm_cost(calls: Sequence[Mapping[str, Any]]) -> tuple[str, float | None]:
 
 def _run_arm(
     *,
-    case: Mapping[str, Any],
+    case: BulkReaderCase,
     arm: str,
     gateway: Any,
     resolution: Any,
@@ -493,7 +569,7 @@ def _run_arm(
     worker_model: str,
     loop: asyncio.AbstractEventLoop,
     pricing_catalog: Any,
-    provider_metadata: _ProviderMetadataRecorder,
+    provider_metadata: ProviderMetadataRecorder,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget
     from tldw_chatbook.Agents.agent_presets import BULK_READER_PRESET
@@ -581,7 +657,7 @@ def _run_arm(
                 native_tools=False,
                 provider_stream_signals=signals,
             )
-            recorded = _RecordingChatCall(
+            recorded = RecordingChatCall(
                 adapter,
                 resolution,
                 signals,
@@ -613,7 +689,7 @@ def _run_arm(
                 registry=registry,
                 chat_call=recorded,
             )
-            conversation_id = f"bulk-reader-{case['id']}-{arm}-{uuid4().hex}"
+            conversation_id = f"bulk-reader-{case.id}-{arm}-{uuid4().hex}"
             run_id, outcome = service.run_turn(
                 conversation_id=conversation_id,
                 messages=[{"role": "user", "content": _arm_prompt(case)}],
@@ -626,11 +702,18 @@ def _run_arm(
                 ),
                 api_endpoint=str(resolution.execution_key or resolution.provider),
             )
-            rows = db.list_runs(conversation_id)
+            # Both helpers reuse this thread's held connection. Keep the
+            # primary and hydrated history in one snapshot without changing
+            # the shared DB's read/write policy for other callers.
+            with db.transaction():
+                primary = db.get_run(run_id)
+                rows = db.list_runs(conversation_id, limit=MAX_RUN_RECORDS_PER_ARM + 1)
         finally:
             db.close()
 
-    primary = next(row for row in rows if row["id"] == run_id)
+    if primary is None:
+        raise RuntimeError("Evaluator primary run is missing from scratch history.")
+    history_complete = len(rows) <= MAX_RUN_RECORDS_PER_ARM
     children = [row for row in rows if row.get("parent_run_id") == run_id]
     named_children = [
         row for row in children if row.get("agent_definition") == preset.name
@@ -652,6 +735,8 @@ def _run_arm(
         else run_id in successful_content_read_runs
     )
     status_reasons: list[str] = []
+    if not history_complete:
+        status_reasons.append("run_history_limit_exceeded")
     if outcome.status == "error":
         status_reasons.append("runtime_error")
     if child_failed:
@@ -679,6 +764,7 @@ def _run_arm(
         or truncated
         or provider_output_limited
         or not content_read
+        or not history_complete
     ):
         status = "incomplete"
     else:
@@ -723,7 +809,7 @@ def _run_arm(
 
 def _run_comparison_sync(
     *,
-    corpus: Mapping[str, Any],
+    corpus: BulkReaderCorpus,
     corpus_sha256: str,
     provider: str,
     main_model: str,
@@ -732,11 +818,11 @@ def _run_comparison_sync(
     resolution: Any,
     pricing_catalog: Any,
     loop: asyncio.AbstractEventLoop,
-    provider_metadata: _ProviderMetadataRecorder,
+    provider_metadata: ProviderMetadataRecorder,
 ) -> dict[str, Any]:
     cases: list[dict[str, Any]] = []
     with _scoped_agent_environment():
-        for case in corpus["cases"]:
+        for case in corpus.cases:
             direct, direct_sources = _run_arm(
                 case=case,
                 arm="direct",
@@ -763,10 +849,10 @@ def _run_comparison_sync(
                 raise RuntimeError("Materialized corpus differed between arms.")
             cases.append(
                 {
-                    "id": case["id"],
-                    "category": case.get("category", ""),
-                    "question": case["question"],
-                    "expected_facts": case["expected_facts"],
+                    "id": case.id,
+                    "category": case.category,
+                    "question": case.question,
+                    "expected_facts": case.expected_facts,
                     "sources": direct_sources,
                     "direct": direct,
                     "delegated": delegated,
@@ -784,8 +870,8 @@ def _run_comparison_sync(
         "status": "complete" if complete else "incomplete",
         "execution_order": ["direct", "delegated"],
         "corpus": {
-            "id": corpus["id"],
-            "schema_version": corpus["schema_version"],
+            "id": corpus.id,
+            "schema_version": corpus.schema_version,
             "sha256": corpus_sha256,
         },
         "provider": {
@@ -801,7 +887,7 @@ def _run_comparison_sync(
         },
         "models": {"main": main_model, "worker": worker_model},
         "limits": REPORT_LIMITS,
-        "quality_review": {"status": "pending", "rubric": corpus["rubric"]},
+        "quality_review": {"status": "pending", "rubric": corpus.rubric},
         "cases": cases,
     }
 
@@ -816,13 +902,37 @@ async def evaluate_comparison(
     gateway: Any,
     resolution: Any,
     pricing_catalog: Any,
-    provider_metadata: _ProviderMetadataRecorder,
+    provider_metadata: ProviderMetadataRecorder,
 ) -> dict[str, Any]:
-    """Run both arms through one loop and exclusively create a JSON report."""
+    """Run both arms through one loop and exclusively create a JSON report.
 
-    output_path = output_path.resolve()
-    if output_path.exists():
-        raise FileExistsError(f"Output already exists: {output_path}")
+    Args:
+        corpus_path: UTF-8 JSON synthetic corpus matching schema version 1.
+        output_path: New report path whose parent directory already exists.
+        provider: Provider label to retain in report provenance.
+        main_model: Model used by the primary agent in both arms.
+        worker_model: Same-provider model assigned to the named reader.
+        gateway: Configured Console gateway, or a deterministic test boundary.
+        resolution: Ready provider resolution with transport limits already set.
+        pricing_catalog: Model-specific rates; absent rates remain unknown.
+        provider_metadata: Per-call recorder wrapping the gateway's provider seam.
+
+    Returns:
+        The saved report with source provenance, per-arm outcomes, provider
+        calls, usage, costs, limits, and a pending manual quality review.
+
+    Raises:
+        ValueError: If the corpus, model selection, or paths are invalid.
+        FileExistsError: If output already exists, including a creation race.
+        OSError: If a corpus, scratch workspace, or report operation fails.
+        RuntimeError: If evaluator setup or runtime bookkeeping fails. Ordinary
+            provider failures are retained as unsuccessful arm outcomes.
+    """
+
+    provider, main_model, worker_model = _validate_model_selection(
+        provider, main_model, worker_model
+    )
+    output_path = _validate_output_path(output_path)
     corpus, corpus_sha256 = _load_corpus(corpus_path)
     loop = asyncio.get_running_loop()
     report = await asyncio.to_thread(
@@ -845,7 +955,19 @@ async def evaluate_comparison(
 
 
 async def run_live(args: argparse.Namespace) -> int:
-    """Resolve the configured provider, run the comparison, and close it."""
+    """Resolve the configured provider, run the comparison, and close it.
+
+    Args:
+        args: Parsed provider/model/output options and explicit billable consent.
+
+    Returns:
+        Zero after saving the comparison, including incomplete arm outcomes.
+
+    Raises:
+        ValueError: If consent, input validation, or corpus validation fails.
+        OSError: If a filesystem operation fails or the report already exists.
+        RuntimeError: If provider readiness or evaluator setup fails.
+    """
 
     output = validate_live_request(args)
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
@@ -860,7 +982,7 @@ async def run_live(args: argparse.Namespace) -> int:
     pricing_config = config.get("pricing") or config.get(
         "COMPREHENSIVE_CONFIG_RAW", {}
     ).get("pricing", {})
-    provider_metadata = _ProviderMetadataRecorder()
+    provider_metadata = ProviderMetadataRecorder()
     gateway = ConsoleProviderGateway(
         config_provider=lambda: config,
         chat_api_call_fn=provider_metadata.wrap_chat_api_call(chat_api_call),
@@ -903,6 +1025,18 @@ async def run_live(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the CLI with explicit consent for potentially charged requests.
+
+    Args:
+        argv: Command-line arguments, or None to use the process arguments.
+
+    Returns:
+        Zero after a report is saved; execution outcomes remain in the report.
+
+    Raises:
+        SystemExit: Zero for help or two for invalid arguments/runtime setup.
+    """
+
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

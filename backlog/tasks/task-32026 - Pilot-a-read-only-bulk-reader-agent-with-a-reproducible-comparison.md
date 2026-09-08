@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 04:45'
-updated_date: '2026-09-08 07:12'
+updated_date: '2026-09-08 15:21'
 labels: []
 dependencies: []
 ---
@@ -29,6 +29,13 @@ Evaluate whether a cheaper named reader can reduce the total cost of answering r
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Add an editable read-only bulk-reader preset and verify real named-agent model/tool behavior. 2. Add a scratch-corpus direct/delegated comparison with per-call accounting and manual quality review. 3. Run targeted checks and the chosen live model comparison. ADR required: no. ADR path: N/A. Reason: reuse existing named-agent/provider contracts. Plan: Docs/superpowers/plans/2026-09-07-bulk-reader-pilot.md; spec: Docs/superpowers/specs/2026-09-07-bulk-reader-pilot-design.md. Live continuation: reproduce the normalized-config pricing loss with a real load_settings profile, add a regression through the live entry point, repair only pricing lookup, retain the original live report and separately calculate corrected estimates from recorded provider usage. The first live trace also exposed synthetic fallback text for ZAI reasoning/control deltas. Reproduce through the real ZAI stream and Console normalizer, normalize provider-local empty visible content without changing native tool deltas or terminal metadata, verify targeted regressions, then repeat the comparison with the corrected runtime.
+PR #2510 review continuation: rebase onto latest dev; apply shared input/path
+validation, strict corpus models, bounded transactional history reads, complete
+public docstrings, and PascalCase helper names. Preserve inert CLI refusal and
+historical live artifacts. Add boundary regressions before behavioral fixes,
+run targeted checks and derived-artifact guards, answer Qodo, and merge after
+required PR checks pass. ADR required: no. ADR path: N/A. Reason: reuse existing
+validation and database contracts; no schema or runtime boundary changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -57,4 +64,23 @@ PR integration against dev (5aeac5ab221958ae612dd84ff47e047b23cd3f5d) applies on
 Adapted the evaluator and tests to the current WorkspaceToolExecutor and in-memory ConsoleChatStore contracts. Synthetic read paths are observed at invocation instead of recovering omitted arguments from run-step metadata. Recording test models have an explicit context capacity; runtime retries are disabled, and the extra budget-summary attempt is recorded as refused without dispatch beyond eight calls. Historical live artifacts are unchanged; this integration made no billable calls.
 
 PR verification: 101 targeted preset, evaluator, Settings, ZAI, Console normalization, redirect and project-trace checks passed. The native-tool loopback file produced 7 passes and 4 failures; the same four failures reproduced on a separate clean checkout of the exact dev base: test_console_runs_two_native_calls_with_private_continuation[moonshot/zai] and test_hosted_tool_error_continues_structurally[moonshot/zai]. These are baseline failures, not introduced regressions. New-file Ruff checks and formatting for all ten touched Python files pass; existing Console/ZAI lint counts are unchanged. No full suite was run. ADR required: no; current runtime interfaces are reused. Added the isolated-helper import-provenance lesson discovered during integration.
+
+PR #2510 Qodo remediation: rebased the ten feature commits without content
+conflicts onto dev 1c022378cb66edafc159cc7dcf802b884804aac4. Addressed all seven
+rule findings in the evaluator: reused shared model/provider and filesystem
+validators; added strict Pydantic corpus/case models; bounded run-history reads
+inside the existing held transaction; made overflow explicitly incomplete;
+documented public callable contracts; and applied PascalCase helper names.
+The corpus models live in Agents/bulk_reader_corpus.py and load only after
+consent; CLI help and missing-consent refusal remain application-import free.
+
+Eight boundary regressions first failed against the previous implementation.
+The repaired evaluator file passes 28 tests, and the wider targeted run passes
+109 checks. All derived-artifact preflight guards, new-file Ruff checks, and
+formatting for eleven touched Python files pass. The six historical live JSON
+artifacts are byte-identical to the original PR head; no additional model calls
+were made. The pre-existing native-tool failures remain documented; the latest
+dev changes only added Backlog tasks. ADR required: no; existing validation and
+database contracts are reused. No full suite was run. Independent scoped review
+found no blockers and separately passed all 28 evaluator tests.
 <!-- SECTION:NOTES:END -->

@@ -188,3 +188,28 @@ Integration also records synthetic read paths at invocation because current
 run-step metadata omits arguments, gives recording-only test models a known
 context capacity for schema disclosure, disables runtime retries, and verifies
 the call cap blocks the runtime's extra budget-summary attempt before dispatch.
+
+### PR #2510 Qodo review and rebase (2026-09-08)
+
+ADR required: no
+ADR path: N/A
+Reason: apply existing validation, transaction, and naming conventions within the
+opt-in evaluator; no provider, storage, permission, or routing contract changes.
+
+- [x] Rebase onto current dev and preserve the historical live artifacts.
+- [x] Use shared input and path validators before evaluator side effects while
+  retaining import-free CLI help and refusal without billable consent.
+- [x] Replace raw corpus dictionaries with strict Pydantic corpus/case models,
+  including validated source paths, expected facts, and rubric values.
+- [x] Read run history through the held transaction connection with a capped
+  query and explicit incomplete evidence when the expected run bound is exceeded.
+- [x] Document public callable contracts and apply PascalCase helper names.
+- [x] Verify malformed inputs, confinement, history bounds, and the existing
+  targeted runtime checks.
+- [x] Independently review the patch and implement all seven Qodo remediations.
+
+The PR discussion records the per-finding responses; merge remains gated by
+the updated Qodo review and required GitHub checks. Offline verification:
+109 targeted checks passed, including 28 evaluator checks; all derived-artifact
+preflight checks and touched-file lint/format checks passed. The independent
+three-file review found no blockers and separately passed the evaluator tests.

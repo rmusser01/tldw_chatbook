@@ -54,6 +54,11 @@ Use `--provider ZAI` for the other supported route. `--help`, unsupported
 providers, a missing `--confirm-billable`, and an existing output path stop
 before application configuration is loaded or a network call begins.
 
+The evaluator uses the shared input and path validators. Model identifiers must
+be nonblank, printable single-line values (at most 256 characters), and report
+paths must pass the shared path checks. Corpus schema version 1 is validated
+with strict typed models before any source is materialized or model is called.
+
 Each case runs the direct arm first and the delegated arm second. Both start
 with the same question and relative path list; neither receives source bodies
 in its prompt. Each arm gets a new temporary workspace and SQLite run database.
@@ -88,6 +93,10 @@ inspection.
 Read traces record actual local-tool invocations against the synthetic corpus.
 Calls refused before invocation do not count as file reads; the evaluator does
 not recover arguments from privacy-filtered run-step metadata.
+History is read in one transaction with a database-level bound for the primary
+and its one admitted child, plus an overflow record. Unexpected extra records
+produce `run_history_limit_exceeded` and prevent a complete result; read traces
+whose run identity was outside the bounded history are labeled `unknown`.
 
 Costs are calculated one provider call at a time with the existing pricing
 catalog, so worker calls remain in their own model bucket. Missing or partial

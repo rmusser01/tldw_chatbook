@@ -73,7 +73,7 @@ def _corpus(path: Path, *, source_path: str = "notes/policy.txt") -> Path:
     return path
 
 
-class _RecordingGateway:
+class RecordingGateway:
     """Deterministic provider boundary; the runtime, tools and DB stay real."""
 
     def __init__(
@@ -202,7 +202,7 @@ class _RecordingGateway:
             signals.close_usage_call()
 
 
-class _MetadataCapturingGateway:
+class MetadataCapturingGateway:
     """Test-only bridge from deterministic sentinels to the evaluator recorder."""
 
     def __init__(self, gateway, recorder):
@@ -271,8 +271,8 @@ def _resolution():
 
 def _run_evaluation(tmp_path: Path, gateway, *, pricing_catalog=None):
     evaluator = _load_evaluator()
-    metadata = evaluator._ProviderMetadataRecorder()
-    recording_gateway = _MetadataCapturingGateway(gateway, metadata)
+    metadata = evaluator.ProviderMetadataRecorder()
+    recording_gateway = MetadataCapturingGateway(gateway, metadata)
     tmp_path.mkdir(parents=True, exist_ok=True)
     corpus = _corpus(tmp_path / "corpus.json")
     output = tmp_path / "report.json"
@@ -296,7 +296,7 @@ def _run_evaluation(tmp_path: Path, gateway, *, pricing_catalog=None):
 def test_real_runtime_comparison_records_delegation_reads_models_and_worker_cost(
     tmp_path,
 ):
-    gateway = _RecordingGateway()
+    gateway = RecordingGateway()
     evaluator, report = _run_evaluation(tmp_path, gateway)
 
     assert report["status"] == "complete", {
@@ -380,7 +380,7 @@ def test_real_runtime_comparison_records_delegation_reads_models_and_worker_cost
 def test_missing_or_unknown_per_call_accounting_keeps_total_cost_unknown(tmp_path):
     _evaluator, report = _run_evaluation(
         tmp_path,
-        _RecordingGateway(),
+        RecordingGateway(),
         pricing_catalog=_pricing_catalog(worker_cache_rate=None),
     )
 
@@ -398,7 +398,7 @@ def test_missing_or_unknown_per_call_accounting_keeps_total_cost_unknown(tmp_pat
 def test_incomplete_raw_usage_is_partial_and_never_priced(tmp_path, omitted):
     _evaluator, report = _run_evaluation(
         tmp_path,
-        _RecordingGateway(omit_usage_field=omitted),
+        RecordingGateway(omit_usage_field=omitted),
     )
 
     calls = report["cases"][0]["direct"]["calls"]
@@ -411,7 +411,7 @@ def test_incomplete_raw_usage_is_partial_and_never_priced(tmp_path, omitted):
 def test_failed_and_nondelegating_arms_are_not_labeled_successful(tmp_path):
     _evaluator, report = _run_evaluation(
         tmp_path,
-        _RecordingGateway(ignore_delegation=True, fail_direct=True),
+        RecordingGateway(ignore_delegation=True, fail_direct=True),
     )
 
     case = report["cases"][0]
@@ -429,7 +429,7 @@ def test_failed_and_nondelegating_arms_are_not_labeled_successful(tmp_path):
 def test_ad_hoc_child_does_not_count_as_named_bulk_reader_delegation(tmp_path):
     _evaluator, report = _run_evaluation(
         tmp_path,
-        _RecordingGateway(ad_hoc_delegation=True),
+        RecordingGateway(ad_hoc_delegation=True),
     )
 
     delegated = report["cases"][0]["delegated"]
@@ -443,7 +443,7 @@ def test_ad_hoc_child_does_not_count_as_named_bulk_reader_delegation(tmp_path):
 def test_direct_answer_without_content_read_is_incomplete(tmp_path):
     _evaluator, report = _run_evaluation(
         tmp_path,
-        _RecordingGateway(direct_skips_read=True),
+        RecordingGateway(direct_skips_read=True),
     )
 
     direct = report["cases"][0]["direct"]
@@ -456,7 +456,7 @@ def test_direct_answer_without_content_read_is_incomplete(tmp_path):
 def test_parent_reread_does_not_hide_named_worker_without_content_read(tmp_path):
     _evaluator, report = _run_evaluation(
         tmp_path,
-        _RecordingGateway(
+        RecordingGateway(
             worker_skips_read=True,
             parent_rereads_after_worker=True,
         ),
@@ -475,7 +475,7 @@ def test_parent_reread_does_not_hide_named_worker_without_content_read(tmp_path)
 def test_short_provider_length_finish_marks_arms_incomplete_with_known_cost(tmp_path):
     _evaluator, report = _run_evaluation(
         tmp_path,
-        _RecordingGateway(length_on_final=True),
+        RecordingGateway(length_on_final=True),
     )
 
     for arm_name in ("direct", "delegated"):
@@ -550,7 +550,7 @@ def test_real_console_gateway_fence_path_exposes_length_to_call_recorder():
         return DeterministicStream()
 
     async def exercise():
-        metadata = evaluator._ProviderMetadataRecorder()
+        metadata = evaluator.ProviderMetadataRecorder()
         gateway = ConsoleProviderGateway(
             chat_api_call_fn=metadata.wrap_chat_api_call(deterministic_provider),
             environ={},
@@ -586,7 +586,7 @@ def test_real_console_gateway_fence_path_exposes_length_to_call_recorder():
             native_tools=False,
             provider_stream_signals=signals,
         )
-        recorded = evaluator._RecordingChatCall(
+        recorded = evaluator.RecordingChatCall(
             adapter,
             resolution,
             signals,
@@ -618,7 +618,7 @@ def test_real_console_gateway_fence_path_exposes_length_to_call_recorder():
 
 
 def test_model_turn_and_recorded_output_caps_make_arms_incomplete(tmp_path):
-    looping_gateway = _RecordingGateway(loop_direct=True)
+    looping_gateway = RecordingGateway(loop_direct=True)
     evaluator, looped = _run_evaluation(
         tmp_path / "looped",
         looping_gateway,
@@ -640,7 +640,7 @@ def test_model_turn_and_recorded_output_caps_make_arms_incomplete(tmp_path):
 
     evaluator, oversized = _run_evaluation(
         tmp_path / "oversized",
-        _RecordingGateway(oversized_final=True),
+        RecordingGateway(oversized_final=True),
     )
     direct = oversized["cases"][0]["direct"]
     assert len(direct["answer"]) == evaluator.MAX_RECORDED_OUTPUT_CHARS
@@ -657,7 +657,7 @@ def test_process_agent_overrides_are_restored(tmp_path, monkeypatch):
     for name, value in names.items():
         monkeypatch.setenv(name, value)
 
-    _run_evaluation(tmp_path, _RecordingGateway())
+    _run_evaluation(tmp_path, RecordingGateway())
 
     assert {name: __import__("os").environ[name] for name in names} == names
 
@@ -666,8 +666,8 @@ def test_checked_in_corpus_is_pinned_and_loadable():
     evaluator = _load_evaluator()
     corpus, digest = evaluator._load_corpus(evaluator.DEFAULT_CORPUS)
 
-    assert corpus["id"] == "bulk-reader-pilot-v1"
-    assert len(corpus["cases"]) == 4
+    assert corpus.id == "bulk-reader-pilot-v1"
+    assert len(corpus.cases) == 4
     assert len(digest) == 64
 
 
@@ -675,7 +675,7 @@ def test_checked_in_corpus_is_pinned_and_loadable():
 def test_corpus_refuses_paths_outside_materialized_workspace(tmp_path, unsafe_path):
     evaluator = _load_evaluator()
     corpus = _corpus(tmp_path / "corpus.json", source_path=unsafe_path)
-    gateway = _RecordingGateway()
+    gateway = RecordingGateway()
 
     with pytest.raises(ValueError, match="relative confined path"):
         asyncio.run(
@@ -688,7 +688,7 @@ def test_corpus_refuses_paths_outside_materialized_workspace(tmp_path, unsafe_pa
                 gateway=gateway,
                 resolution=_resolution(),
                 pricing_catalog=_pricing_catalog(),
-                provider_metadata=evaluator._ProviderMetadataRecorder(),
+                provider_metadata=evaluator.ProviderMetadataRecorder(),
             )
         )
     assert gateway.calls == []
@@ -701,7 +701,8 @@ def test_materializer_refuses_symlink_ancestors(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     (root / "notes").symlink_to(outside, target_is_directory=True)
-    case = json.loads(_corpus(tmp_path / "corpus.json").read_text())["cases"][0]
+    corpus, _ = evaluator._load_corpus(_corpus(tmp_path / "corpus.json"))
+    case = corpus.cases[0]
 
     with pytest.raises(ValueError, match="symlink"):
         evaluator.materialize_case(case, root)
@@ -712,7 +713,7 @@ def test_existing_output_refuses_before_provider_calls(tmp_path):
     evaluator = _load_evaluator()
     output = tmp_path / "report.json"
     output.write_text("keep", encoding="utf-8")
-    gateway = _RecordingGateway()
+    gateway = RecordingGateway()
 
     with pytest.raises(FileExistsError, match="already exists"):
         asyncio.run(
@@ -725,11 +726,131 @@ def test_existing_output_refuses_before_provider_calls(tmp_path):
                 gateway=gateway,
                 resolution=_resolution(),
                 pricing_catalog=_pricing_catalog(),
-                provider_metadata=evaluator._ProviderMetadataRecorder(),
+                provider_metadata=evaluator.ProviderMetadataRecorder(),
             )
         )
     assert output.read_text(encoding="utf-8") == "keep"
     assert gateway.calls == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("main_model", "main\ntest"), ("worker_model", "worker\x00test")],
+)
+def test_live_request_rejects_control_characters_in_models(tmp_path, field, value):
+    evaluator = _load_evaluator()
+    args = evaluator.build_parser().parse_args(
+        [
+            "--provider",
+            "ZAI",
+            "--main-model",
+            "main-test",
+            "--worker-model",
+            "worker-test",
+            "--output",
+            str(tmp_path / "report.json"),
+            "--confirm-billable",
+        ]
+    )
+    setattr(args, field, value)
+
+    with pytest.raises(ValueError):
+        evaluator.validate_live_request(args)
+    assert not args.output.exists()
+
+
+def test_output_path_uses_shared_safeguards_before_provider_calls(tmp_path):
+    evaluator = _load_evaluator()
+    gateway = RecordingGateway()
+    output = tmp_path / "report;unexpected.json"
+
+    with pytest.raises(ValueError, match="dangerous pattern"):
+        asyncio.run(
+            evaluator.evaluate_comparison(
+                corpus_path=_corpus(tmp_path / "corpus.json"),
+                output_path=output,
+                provider="OpenAI",
+                main_model="main-test",
+                worker_model="worker-test",
+                gateway=gateway,
+                resolution=_resolution(),
+                pricing_catalog=_pricing_catalog(),
+                provider_metadata=evaluator.ProviderMetadataRecorder(),
+            )
+        )
+    assert gateway.calls == []
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("bad_field", ["expected_facts", "rubric", "schema_version"])
+def test_corpus_rejects_malformed_grading_contract_before_calls(tmp_path, bad_field):
+    evaluator = _load_evaluator()
+    path = _corpus(tmp_path / "corpus.json")
+    payload = json.loads(path.read_text())
+    if bad_field == "expected_facts":
+        payload["cases"][0]["expected_facts"] = [17]
+    elif bad_field == "rubric":
+        payload["rubric"] = {"factual_coverage": 17}
+    else:
+        payload["schema_version"] = 2
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError):
+        evaluator._load_corpus(path)
+
+
+def test_run_history_query_is_bounded_in_the_held_transaction(tmp_path, monkeypatch):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    original = AgentRunsDB.list_runs
+    statements = []
+
+    def observe_read(db, *args, **kwargs):
+        with db.connection() as conn:
+            conn.set_trace_callback(
+                lambda sql: statements.append((sql, conn.in_transaction))
+            )
+            try:
+                return original(db, *args, **kwargs)
+            finally:
+                conn.set_trace_callback(None)
+
+    monkeypatch.setattr(AgentRunsDB, "list_runs", observe_read)
+    _, report = _run_evaluation(tmp_path, RecordingGateway())
+    history_reads = [
+        (sql, in_transaction)
+        for sql, in_transaction in statements
+        if sql.startswith("SELECT * FROM agent_runs WHERE conversation_id =")
+    ]
+
+    assert report["status"] == "complete"
+    assert history_reads
+    assert all(in_transaction for _, in_transaction in history_reads)
+    assert all(sql.endswith("LIMIT 3") for sql, _ in history_reads)
+
+
+def test_unexpected_run_history_cannot_report_complete_evidence(tmp_path, monkeypatch):
+    from tldw_chatbook.Agents.agent_service import AgentService
+
+    original = AgentService.run_turn
+
+    def add_unexpected_history(service, **kwargs):
+        run_id, outcome = original(service, **kwargs)
+        for _ in range(3):
+            extra_id = service.db.create_run(
+                conversation_id=kwargs["conversation_id"], agent_kind="primary"
+            )
+            service.db.set_status(extra_id, "done")
+        return run_id, outcome
+
+    monkeypatch.setattr(AgentService, "run_turn", add_unexpected_history)
+    _, report = _run_evaluation(tmp_path, RecordingGateway())
+
+    assert report["status"] == "incomplete"
+    for arm in ("direct", "delegated"):
+        result = report["cases"][0][arm]
+        assert result["status"] != "completed"
+        assert "run_history_limit_exceeded" in result["status_reasons"]
 
 
 @pytest.mark.parametrize("config_shape", ["normalized", "raw"])
