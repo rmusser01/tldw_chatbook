@@ -81,6 +81,16 @@ captured test-owned one. Keep teardown local, revalidate exact ownership at the
 stop operation, and add a deterministic transfer/replacement-during-dispatch
 control before accepting the fixture. No production reset API expansion.
 
+29. User approved 2026-09-08 after checkpoint 98a9aeeb85: repair the two Watchlists compact Select focus cues using theme-aware foreground/background on the actual painted SelectCurrent, keeping geometry, values, keyboard behavior, the 2.0:1 focus floor, and all CSS caps unchanged. Reproduce both original failures, cover dark/light/high-contrast themes, preserve the full overlay test file, regenerate through the existing builder, and obtain independent review. No new ADR: scoped accessibility repair under DESIGN.md and ADR-097.
+30. The same approval authorizes a UI-local Media Browse state separation with a canonical ADR before implementation. Keep service reads, worker dispatch, active-generation admission and view callbacks in LibraryMediaBrowseController; move pure requested/applied-page/facet state and transitions into one UI/Library_Modules state owner. Preserve fault-context episodes, retry/clamp/cancellation/mutation behavior and all assignable state semantics; retarget exact consumers without a generic proxy/mixin. Keep controller <=371 lines and all existing caps unchanged. Root records the precise member map and ADR after the read-only inventory, then qualifies complete affected files and Library shell before final PR review and normal merge.
+31. Address the three verified Qodo findings on 98a9aeeb85: use the existing transaction cursor for the two migration/retention tests' raw read snapshots, retaining historical/current schema and exact proof assertions; remove the duplicate UI-job editable install while keeping the documented installed-project requirement. Strengthen the CI test to require exactly one install before pytest, reproduce its failure, then run all three complete files. No new ADR: test-only transaction consistency and elimination of redundant existing CI work; no database behavior or dependency choice changes.
+
+Step 30 ADR required: yes. ADR path:
+`backlog/decisions/128-library-media-browse-presentation-state.md`.
+Reason: explicit UI-local state composition, preserving ADR-067 service/page
+contracts. Exact member map and qualification steps are recorded in
+`Docs/superpowers/plans/2026-09-08-pr2427-media-browse-state.md` before code changes.
+
 Step 19 exact Prompts inventory: `_library_prompt_editor_active`,
 `_sync_library_prompt_selection`, `_sync_library_prompt_memberships`,
 `_stop_library_prompts_search_debounce`, `_capture_library_prompts_filter_cursor`,
