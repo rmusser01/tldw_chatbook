@@ -12293,3 +12293,26 @@ fakes. Two rules: a "run the real thing end to end" evidence step belongs in eve
 a native/ML dependency (the bake-off was that step here, by accident of purpose); and a reader
 for a file format you control (the meeting writes 16 kHz mono PCM16) should be stdlib, not a
 media library whose backend can change under a minor version.
+
+## Verify a named agent's model at the provider boundary (TASK-32026, 2026-09-07)
+
+**Incident.** The bulk-reader pilot needed a cheaper worker model. Existing
+AgentService tests showed that a named definition's model reached `chat_call`,
+but a recording gateway behind the real Console `_StreamingModelAdapter`
+observed `primary-model` when the child requested `cheap-worker`. The adapter
+accepted the override and then dispatched its constructor's parent resolution;
+usage normalization also labeled the call with that parent model. Testing only
+the service callback had left the actual provider behavior unverified.
+
+**Resolution.** Derive an immutable resolution per adapter call, changing only
+the model, and use it for request preparation, dispatch, and usage. The
+regression test runs parent and child calls concurrently and verifies their
+gateway model identities, unchanged shared resolution, matching usage labels,
+and isolation of the parent's continuation state. A separate real local-tool
+test verifies that the reader's allowlist still refuses a write.
+
+**Rule.** When a feature selects a model, endpoint, or credential scope, verify
+the selection at the final dispatch boundary as well as at the runtime callback.
+If parent and child share an adapter, include concurrent calls and continuation
+ownership in that check. Configuration persistence alone cannot demonstrate
+that a cheaper worker was used or that its usage was priced correctly.
