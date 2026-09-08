@@ -203,7 +203,7 @@ if not events:
 - `_PinnedSQLiteSource` retains `selected`, `identity: FileIdentity`, `enforce_private_mode` and `lease: HelperLease`, not main/sidecar FDs. Alias comparisons accept validated identity projections internally while public stat-result input remains valid.
 - Backup/copy/restore entry points acquire the two-slot envelope once and pass it plus the absolute deadline through pinning, every recheck and sequential connection preparation. Borrowed SQLite connections remain caller-owned.
 
-- [ ] Create a real cross-process writer oracle in the new test module using the diagnostic's separately exec'd stdlib SQLite contender. Its result is exactly `0` or `sqlite3.SQLITE_BUSY`; unexpected errors, timeout or startup failure fail the test. Add the actual private-seam regression:
+- [x] Create a real cross-process writer oracle in the new test module using the diagnostic's separately exec'd stdlib SQLite contender. Its result is exactly `0` or `sqlite3.SQLITE_BUSY`; unexpected errors, timeout or startup failure fail the test. Add the actual private-seam regression:
 
 ```python
 def test_private_connect_preserves_existing_wal_writer(tmp_path):
@@ -224,8 +224,8 @@ def test_private_connect_preserves_existing_wal_writer(tmp_path):
 
 Copy `_other_process_can_begin_write` from the preserved diagnostic with a fixed five-second child timeout and strict error-code assertion. Keep paths test-owned. Add rollback-journal writer/read-lock variants and a WAL snapshot/checkpoint oracle: WAL readers do not forbid all writers, so test snapshot stability/checkpoint exclusion rather than asserting an incorrect WAL-reader writer lock.
 
-- [ ] Run `../../.venv/bin/python -m pytest -q Tests/DB/test_private_sqlite_lock_preservation.py` and record the actual lock-exclusion RED before routing the seam.
-- [ ] Delegate main plus fixed sidecars to one helper batch before parent SQLite open. Retain local owner/target admission and the last expected-identity check; memory bypass and Windows policy remain unchanged. Never call the raw live-inode leaf locally after helper success. Ensure custom factory return values and borrowed raw SQLite handles do not acquire new ownership obligations.
+- [x] Run `../../.venv/bin/python -m pytest -q Tests/DB/test_private_sqlite_lock_preservation.py` and record the actual lock-exclusion RED before routing the seam.
+- [x] Delegate main plus fixed sidecars to one helper batch before parent SQLite open. Retain local owner/target admission and the last expected-identity check; memory bypass and Windows policy remain unchanged. Never call the raw live-inode leaf locally after helper success. Ensure custom factory return values and borrowed raw SQLite handles do not acquire new ownership obligations.
 
 ```python
 # Ordering inside the existing registered seam, after policy admission:
@@ -237,14 +237,24 @@ return connection
 
 `prepare_in_helper(request: PrepareRequest, *, reservation: HelperReservation, deadline: OperationDeadline) -> PrepareResult` is a Task 3 parent adapter over `HelperLease.start(request, operation='prepare', reservation=reservation, deadline=deadline)` with owned close. `verify_expected_named_identity(selected: Path, expected_identity: os.stat_result | FileIdentity | None) -> None` is the extracted existing stat-only expected-identity comparison; do not introduce raw file opens or claim to eliminate the preexisting pathname-open race.
 
-- [ ] Replace source-pin FD ownership with `pin_source`/`recheck_source` calls. Inject helper failure before backup, during the existing progress guard, and on final recheck; assert callbacks, rollback/indeterminate errors and close ownership remain exact. Hold a separate live connection's transaction across successful and failing pin release.
-- [ ] Preserve the diagnostic raw-SHM-close negative control in an isolated child experiment with the opposite expected outcome; never run the destructive negative control against a database later used for product assertions. Only remove the old untracked diagnostic after every case and historical log is accounted for; preserve its bare-launch timing as historical evidence, not a performance claim.
-- [ ] Run the four targeted DB files and `Tests/Utils/test_private_paths.py`; include `test_restore_fails_promptly_and_unchanged_for_active_transactions` with its unchanged one-second assertion. Resolve test seams invalidated by exec boundaries using direct leaf tests plus actual integration tests, not parent-only monkeypatch success.
-- [ ] Commit the explicit DB files with message `fix(db): preserve SQLite locks across private opens and backup pins`; review actual cross-process lock evidence and borrowed-handle ownership.
+- [x] Replace source-pin FD ownership with `pin_source`/`recheck_source` calls. Inject helper failure before backup, during the existing progress guard, and on final recheck; assert callbacks, rollback/indeterminate errors and close ownership remain exact. Hold a separate live connection's transaction across successful and failing pin release.
+- [x] Preserve the diagnostic raw-SHM-close negative control in an isolated child experiment with the opposite expected outcome; never run the destructive negative control against a database later used for product assertions. Only remove the old untracked diagnostic after every case and historical log is accounted for; preserve its bare-launch timing as historical evidence, not a performance claim.
+- [x] Run the four targeted DB files and `Tests/Utils/test_private_paths.py`; include `test_restore_fails_promptly_and_unchanged_for_active_transactions` with its unchanged one-second assertion. Resolve test seams invalidated by exec boundaries using direct leaf tests plus actual integration tests, not parent-only monkeypatch success.
+- [x] Commit the explicit DB files with message `fix(db): preserve SQLite locks across private opens and backup pins`; review actual cross-process lock evidence and borrowed-handle ownership.
+
+Task 3 checkpoint: `0e5363446` passed independent spec and quality gates. Root
+lock/protocol/process selection: 167 passed; remaining listed DB/private-path
+selection: 372 passed, two Windows-only skips, three strict inventory failures.
+The unchanged legacy Collections raw opener, maintenance owner-ID mismatch and
+tracked `super().backup` census remain separate qualification gaps, not waivers.
+Original diagnostic source and promotion map are preserved in the evidence directory.
+No full qualification or Canvas admission is established. The quality reviewer
+approved the scoped production work with the parser-spy integration correction
+assigned to the already-planned Task 4 extraction below.
 
 ### Task 4: Extract and run the fixed metadata-only TTS proof
 
-**Files:** Create `TTS/profile_validation.py`, `TTS/profile_sqlite_proof.py`, `DB/sql_identifier_core.py`, `Tests/TTS/test_profile_sqlite_proof.py`; modify `TTS/profile_schema.py`, `DB/sql_validation.py`, helper/entry/protocol modules and `Tests/TTS/test_profile_schema.py`.
+**Files:** Create `TTS/profile_validation.py`, `TTS/profile_sqlite_proof.py`, `DB/sql_identifier_core.py`, `Tests/TTS/test_profile_sqlite_proof.py`; modify `TTS/profile_schema.py`, `DB/sql_validation.py`, helper/entry/protocol/process modules, `Tests/DB/test_private_sqlite_protocol.py`, `Tests/DB/test_private_sqlite_process.py`, `Tests/DB/test_sql_validation.py` and `Tests/TTS/test_profile_schema.py`. Process changes are limited to fixed TTS operation membership and its existing planned 30-second initializer/normal five-second control budgets; no live repository lifecycle work yet.
 
 **Interfaces:**
 
@@ -254,6 +264,12 @@ return connection
 - `TTSRestoreAuthority` is a frozen, source-free record with `parent: FileIdentity`, `main: FileIdentity`, `wal: FileIdentity`, `shm: FileIdentity`. Repository generation is attached/checked by the parent adapter, not supplied as permission by generated/caller content.
 
 - [ ] Write shared-validator parity tests on real v4, unsupported-version, malformed-schema and invalid-domain databases. Exercise large references without selecting audio or text payloads. Add an exact TTS proof test using a closed current store built with existing `profile_schema.open_profile_store` under pytest isolation:
+
+  Preserve the oversized-options pre-parser test by scoping its spy to the
+  extracted domain parser, not the shared stdlib `json.loads` module. At the
+  Task 3 checkpoint its candidate case correctly rejects corrupt data but the
+  global spy also sees four valid helper response frames. Do not weaken the
+  assertion that the actual oversized options value never reaches JSON parsing.
 
 ```python
 def test_fixed_tts_proof_accepts_current_store_without_returning_rows(tmp_path):
