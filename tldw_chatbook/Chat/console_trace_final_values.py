@@ -189,7 +189,37 @@ class VerifiedSurfaceReplacementRange:
 
 @dataclass(frozen=True, slots=True)
 class CompletedToolTurnWitness:
-    """Durable source, response or discard evidence for a bounded turn range."""
+    """Durable source, response or discard evidence for a bounded turn range.
+
+    Args:
+        origin_call_id: First call of the prior run whose surface is replaced.
+        terminal_call_id: Latest call providing the prior run's terminal or
+            response-bearing evidence.
+        assistant_revision_id: Exact saved assistant revision, or None for a
+            source-only or explicitly discarded turn with no saved answer.
+        user_revision_id: Exact saved revision of the current user turn.
+        source_revision_id: Prior user revision pinned by the origin call for
+            restoring a transformed source, or None when restoration is absent.
+        project_context_count: Number of current project-context descriptors.
+            None preserves the tool/source-only transition; zero explicitly
+            renews a project turn with no current project context.
+        discarded_assistant_message_id: Exact discarded assistant message owned
+            by the original prior user, or None when no discard proof is used.
+            Supplies ownership evidence only, never response text.
+        discarded_followups: Oldest-to-newest tuple of (saved user revision ID,
+            discarded assistant message ID) pairs for intervening failed sends.
+            Empty when there are no intervening users. The original prior user
+            also occupies the MAX_SURFACE_REPLACEMENT_SPAN lookup window, so
+            fewer than that many pairs are allowed.
+
+    Raises:
+        ValueError: If an ID is not a canonical UUIDv4 string; no assistant,
+            source or discard evidence is supplied; assistant and discard
+            evidence are both supplied; followups are not a tuple of two-item
+            tuples, reach the lookup bound or lack an original discard owner;
+            or project_context_count is neither None nor an integer (excluding
+            bool) from zero through MAX_SURFACE_REPLACEMENT_SPAN.
+    """
 
     origin_call_id: str
     terminal_call_id: str

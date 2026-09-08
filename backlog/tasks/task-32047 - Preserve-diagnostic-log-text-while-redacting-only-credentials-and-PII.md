@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 16:58'
-updated_date: '2026-09-08 19:29'
+updated_date: '2026-09-08 19:57'
 labels:
   - logging
   - console
@@ -39,6 +39,7 @@ Reason: The owner explicitly replaces the metadata-only application logging poli
 3. Use one descriptive, redacted log representation across the view, copy actions and rotating file sink. Narrow credential matching and add PII masking without discarding unrelated diagnostic fields.
 4. Preserve the existing trace credential projection while changing logging behavior, and update user-facing log guidance.
 5. Run focused sanitizer, collector, file-handler and trace-projection regressions; review the diagnostic inventory delta and record evidence.
+6. Address PR #2522 review: reproduce the explicit `User:` label leak and same-line diagnostic loss after protocol headers. Mask the user alias and retain fields outside the header while protecting nested Cookie/Digest values. Verify real collector/file paths and document the formatter contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -55,4 +56,8 @@ Validation: 166 targeted collector, clipboard, file-sink, sanitizer and Textual 
 Final scripts/preflight.sh verification passed all six derived-artifact checks, including the reviewed production diagnostic inventory; no inventory regeneration was needed.
 
 Follow-up verification after updating to dev 7a7493e529: 177 targeted sanitizer, private-file, clipboard, collector and Textual Logs tests passed. Updated the Logs empty-state assertion to describe the approved credentials/PII-only policy. The combined trace fixes pass 407 targeted trace tests; preflight passes and no new Ruff findings were introduced.
+
+PR #2522 review: the actual character-loading `User: Alice Example` syntax now masks the configured name in the sanitizer, live collector/Copy all buffer and private file. Plain colon labels inside URL userinfo are left for the subsequent URL redaction pass, preserving host/path context without consuming adjacent structured password fields. URL credentials retain valid apostrophes and punctuation in usernames. Cookie, Set-Cookie and Digest authorization values stop before separate same-line diagnostic fields while quoted values and comma/semicolon parameters remain private. Numeric clock fragments in cookie Expires dates cannot create false field boundaries. Regressions failed before these fixes; conservative handling of ambiguous header parameters is retained. Expanded the formatter's Google-style input/output/error contract without changing its executable AST. Existing ADR-029 applies; no new policy or trace projection.
+
+Review validation: 222 targeted logging/UI and frozen trace credential-filter tests passed; 27 final-value contract tests passed separately. Independent probes verified quoted/escaped protocol values and unchanged trace-v1 projection. All six preflight checks pass; Ruff comparison reports 112 existing findings on both sides, none introduced. Changed ranges formatted and git diff --check clean. Full suite not run.
 <!-- SECTION:NOTES:END -->

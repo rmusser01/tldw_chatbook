@@ -438,6 +438,15 @@ def test_installed_sink_preserves_diagnostic_text_and_masks_private_values(
     assert "elise@example.test" not in written
 
 
+def test_file_sink_masks_character_user_label(private_sink: Path) -> None:
+    logging.getLogger("tldw_chatbook.Character_Chat.Character_Chat_Lib").info(
+        "Loading character and image for ID: 42, User: Alice Example"
+    )
+    written = private_sink.read_text(encoding="utf-8")
+    assert "Alice Example" not in written
+    assert "Loading character and image for ID: 42, User: ***REDACTED***" in written
+
+
 def test_installed_sink_uses_the_redacting_formatter(private_sink: Path) -> None:
     """AC-2: redaction is a property of the handler, not of any call site."""
 

@@ -297,7 +297,22 @@ class RedactingFileFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        """Return formatted diagnostics with recognized credentials/PII masked."""
+        """Return formatted diagnostics with recognized credentials/PII masked.
+
+        Args:
+            record: Log record whose message, exception and stack information
+                are formatted before redaction.
+
+        Returns:
+            Formatted sink text with recognized credentials and PII masked,
+            subject to the sanitizer's token-aligned length limit.
+
+        Raises:
+            KeyError: If message interpolation references a missing argument key.
+            TypeError: If message arguments or record values cannot be formatted.
+            ValueError: If a format specifier is invalid or a required formatter
+                field is absent from the record.
+        """
 
         return redact_log_line(super().format(record))
 

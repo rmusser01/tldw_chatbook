@@ -334,13 +334,31 @@ def test_standalone_bearer_credential_preserves_scheme_only() -> None:
     assert sanitize_string("Bearer PRIVATE_BEARER") == "Bearer ***REDACTED***"
 
 
-def test_url_userinfo_removes_both_username_and_password() -> None:
+@pytest.mark.parametrize(
+    "username", ["user", "o'connor", "alice+user", "alice;user", "alice'user"]
+)
+def test_url_userinfo_removes_both_username_and_password(username: str) -> None:
     """Redact URL credentials as one neutral marker."""
-    result = sanitize_string("https://user:PRIVATE_PASSWORD@example.test/private")
+    result = sanitize_string(
+        f"https://{username}:PRIVATE_PASSWORD@example.test/private"
+    )
 
     assert result == "https://***REDACTED***@example.test/private"
-    assert "user" not in result
+    assert username not in result
     assert "PRIVATE_PASSWORD" not in result
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"url":"http://localhost","password":"head@PRIVATE_TAIL"}',
+        "{'url':'http://localhost','password':'head@PRIVATE_TAIL'}",
+        'url=http://localhost,password="head@PRIVATE_TAIL" status=failed',
+        "url=http://localhost,password=head@PRIVATE_TAIL status=failed",
+    ],
+)
+def test_url_redaction_does_not_cross_into_separate_credential_fields(raw):
+    assert sanitize_string(raw) == raw.replace("head@PRIVATE_TAIL", "***REDACTED***")
 
 
 @pytest.mark.parametrize(
@@ -748,6 +766,50 @@ def test_nested_authentication_fields_remain_inside_the_credential(header):
     redacted = sanitize_string(header + "\nphase=provider_entry status=failed")
     assert "PRIVATE_" not in redacted
     assert redacted.endswith("\nphase=provider_entry status=failed")
+
+
+@pytest.mark.parametrize("label", ["User", "user", "USER"])
+def test_character_user_label_masks_name_and_keeps_diagnostics(label):
+    raw = (
+        f"Loading character and image for ID: 42, {label}: Alice Example "
+        "provider=llamacpp model=qwen3.7-27b"
+    )
+    assert sanitize_string(raw) == raw.replace("Alice Example", "***REDACTED***")
+    assert sanitize_dict({label: "Alice Example", "model_name": "qwen3.7-27b"}) == {
+        label: "***REDACTED***",
+        "model_name": "qwen3.7-27b",
+    }
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Cookie: theme=light; session_id=PRIVATE_SESSION; csrf=PRIVATE_CSRF",
+        "Set-Cookie: session_id=PRIVATE_SESSION; Path=/; HttpOnly; SameSite=Lax",
+        "Set-Cookie: session_id=PRIVATE_SESSION; Expires=Wed, 09 Jun 2027 10:18:14 GMT; csrf=PRIVATE_CSRF",
+        'Authorization: Digest username="Alice", nonce="PRIVATE_NONCE", response="PRIVATE_RESPONSE"',
+        'Proxy-Authorization: Digest username="Alice", nonce="PRIVATE_NONCE", response="PRIVATE_RESPONSE"',
+    ],
+)
+@pytest.mark.parametrize("separator", [" ", " | "])
+def test_protocol_headers_preserve_separate_same_line_diagnostics(header, separator):
+    suffix = separator + "phase=provider_entry status=failed"
+    redacted = sanitize_string(header + suffix)
+    assert redacted == header.split(":", 1)[0] + ": ***REDACTED***" + suffix
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Cookie: phase=PRIVATE_PHASE; status=PRIVATE_STATUS",
+        'Cookie: session="PRIVATE_START | phase=PRIVATE_PHASE status=PRIVATE_STATUS"',
+        "Set-Cookie: phase=PRIVATE_PHASE; status=PRIVATE_STATUS",
+        'Authorization: Digest username="Alice", phase="PRIVATE_PHASE", response="PRIVATE_RESPONSE"',
+        'Proxy-Authorization: Digest username="Alice \\" | phase=PRIVATE_PHASE", response="PRIVATE_RESPONSE"',
+    ],
+)
+def test_protocol_parameter_names_and_quoted_diagnostics_remain_private(header):
+    assert sanitize_string(header) == header.split(":", 1)[0] + ": ***REDACTED***"
 
 
 @pytest.mark.parametrize(

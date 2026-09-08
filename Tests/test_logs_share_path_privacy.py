@@ -120,6 +120,20 @@ def test_home_directory_username_never_reaches_the_in_app_collector() -> None:
         assert "~/.cache/tldw" in rendered
 
 
+def test_character_user_label_is_masked_in_view_and_copy_all_buffer() -> None:
+    with _Collector() as stub:
+        loguru_logger.debug(
+            "Loading character and image for ID: 42, User: Alice Example"
+        )
+
+        for rendered in (_records_text(stub), _buffer_text(stub)):
+            assert "Alice Example" not in rendered
+            assert (
+                "Loading character and image for ID: 42, User: ***REDACTED***"
+                in rendered
+            )
+
+
 # ---------------------------------------------------------------------------
 # The share path: "Copy all" bulk-exports what the user has never read.
 # ---------------------------------------------------------------------------

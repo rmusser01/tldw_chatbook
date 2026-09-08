@@ -2822,7 +2822,29 @@ class ConsoleTraceService:
         current_turn_id: str,
         preceding_descriptors: tuple[TraceProvenance, ...],
     ) -> tuple[str | None, tuple[tuple[str, str], ...]]:
-        """Find bounded, exact discarded owners through unsent follow-up users."""
+        """Find bounded, exact discarded owners through unsent follow-up users.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used for ledger and
+                message ownership reads.
+            conversation_id: Conversation that must own every linked message.
+            previous_turn_id: Original traced user message to reach.
+            current_turn_id: Current saved user message ending the chain.
+            preceding_descriptors: Provider-order descriptors before the current
+                user. Only the last MAX_SURFACE_REPLACEMENT_SPAN are inspected;
+                that window must include the original traced user.
+
+        Returns:
+            The original user's discarded assistant message ID and an
+            oldest-to-newest tuple of intervening (saved user revision ID,
+            discarded assistant message ID) pairs. The tuple is empty for a
+            direct link. Returns (None, ()) if exact ownership cannot be proven
+            within the window, including missing revisions or broken links;
+            no partial chain is returned.
+
+        Raises:
+            sqlite3.Error: If a revision or message ownership query fails.
+        """
         followups = []
         next_turn_id = current_turn_id
         for descriptor in reversed(
@@ -2861,7 +2883,24 @@ class ConsoleTraceService:
         previous_turn_id: str,
         current_turn_id: str,
     ) -> str | None:
-        """Find the exact durable discarded owner between two saved user turns."""
+        """Find the exact durable discarded owner between two saved user turns.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used for message
+                ownership and dispatch checkpoint reads.
+            conversation_id: Conversation that must own all three messages.
+            previous_turn_id: Saved user message parenting the discarded owner.
+            current_turn_id: Saved user message parented by the discarded owner.
+
+        Returns:
+            The intervening discarded assistant message ID when all three
+            messages are undeleted, the prior user has no other assistant child
+            (including deleted siblings), and no dispatch checkpoint remains
+            for that user. None means this exact ownership proof is unavailable.
+
+        Raises:
+            sqlite3.Error: If the ownership or checkpoint query fails.
+        """
         row = cursor.execute(
             """SELECT discarded.id FROM messages current
                  JOIN messages discarded ON discarded.id = current.parent_message_id

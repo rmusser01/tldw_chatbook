@@ -220,6 +220,7 @@ def _is_sensitive_diagnostic_key(key: object) -> bool:
             "phone",
             "phone_number",
             "ssn",
+            "user",
             "username",
             "postal_address",
             "street_address",
@@ -252,19 +253,69 @@ def _is_sensitive_diagnostic_key(key: object) -> bool:
     )
 
 
+def _protocol_value_end(text: str, start: int, end: int) -> int:
+    """Stop at a separate log field, never inside a header parameter or quote."""
+    index = start + 7 if text[start : start + 7].casefold() == "digest " else start
+    parameter_start = index
+    while index < end:
+        character = text[index]
+        if character in "\"'":
+            quoted_end, closed = _find_quoted_end(text, index + 1, character)
+            if not closed:
+                return end
+            index = quoted_end + 1
+            continue
+        if character in ",;":
+            parameter_start = index + 1
+        if character in " \t":
+            boundary = index
+            while index < end and text[index] in " \t":
+                index += 1
+            if text[index : index + 1] == "|":
+                index += 1
+                while index < end and text[index] in " \t":
+                    index += 1
+            # Cookie parameters follow semicolons; Digest parameters follow
+            # commas. A new assignment separated only by whitespace (or a log
+            # pipe) after a complete parameter belongs to the surrounding log.
+            if (
+                index < end
+                and not text[index].isdigit()
+                # An Expires timestamp such as 10:18:14 is header content.
+                and _ASSIGNMENT_PREFIX.match(text, index, end)
+                and text[parameter_start:boundary].strip()
+            ):
+                return boundary
+            continue
+        index += 1
+    return end
+
+
 def _redact_assignments(text: str, *, diagnostic: bool = False) -> str:
     """Classify label prefixes first, collect replacement spans, and always advance."""
     spans: list[tuple[int, int]] = []
     cursor = 0
     cached_line_end = -1
+    authorities = iter(_DIAGNOSTIC_URL_USERINFO.finditer(text) if diagnostic else ())
+    authority = next(authorities, None)
     while match := _ASSIGNMENT_PREFIX.search(text, cursor):
+        while authority is not None and authority.end() <= match.start():
+            authority = next(authorities, None)
         key = match.group("quoted_key") or match.group("plain_key")
         sensitive = (
             _is_sensitive_diagnostic_key(key)
             if diagnostic
             else _is_sensitive_log_key(key)
         )
-        if not sensitive:
+        # A colon inside URI userinfo is not a User: label, even in a username
+        # such as alice+user. Quoted keys and key=value fields remain labels,
+        # so an adjacent JSON/password field cannot be consumed as userinfo.
+        if not sensitive or (
+            authority is not None
+            and authority.start() < match.start() < authority.end()
+            and match.group("plain_key") is not None
+            and match.group().rstrip().endswith(":")
+        ):
             cursor = match.end()
             continue
 
@@ -294,7 +345,9 @@ def _redact_assignments(text: str, *, diagnostic: bool = False) -> str:
             or normalized in {"authorization", "proxy_authorization"}
             and text[value_start : value_start + 7].casefold() == "digest "
         )
-        if diagnostic and not protocol_value:
+        if protocol_value:
+            value_end = _protocol_value_end(text, value_start, line_end)
+        elif diagnostic:
             for following in _ASSIGNMENT_PREFIX.finditer(text, value_start, line_end):
                 if (
                     following.start() > value_start
