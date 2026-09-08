@@ -18,11 +18,14 @@ from loguru import logger as loguru_logger
 from tldw_chatbook.Audio import diarizer_local
 from tldw_chatbook.Audio.diarizer_local import (
     COARSE_CRASHED,
+    COARSE_MODELS_UNAVAILABLE,
     COARSE_UNAVAILABLE,
     DIARIZE_BUDGET_CEILING_S,
     DIARIZE_BUDGET_FLOOR_S,
+    LocalDiarizer,
     SpeechBrainDiarizer,
     diarize_budget_s,
+    model_id_for,
 )
 
 
@@ -891,7 +894,7 @@ def _drive_worker(script, live):
     ]
     handed: list[bytes] = []
 
-    def fake_embed(pcm: bytes):
+    def fake_embed(pcm: bytes, sr: int = 16000):
         handed.append(pcm)
         return vectors[min(len(handed), len(vectors)) - 1]
 
@@ -918,7 +921,7 @@ def test_self_flag_requires_threshold_and_min_seconds():
     lines = [ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 2.0})]
     for seq in range(3):
         lines += [ctl({"cmd": "assign", "sr": 16000, "seq": seq, "n": len(pcm)}), pcm]
-    out = _serve_lines(lines, embed=lambda pcm: [0.99, 0.01, 0.0])
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.99, 0.01, 0.0])
     assert [o["self"] for o in out] == [False, True, True]   # 1 s < 2 s, then 2 s, 3 s
 
     # Review round 1, Important 5: the threshold arm above was never
@@ -928,7 +931,7 @@ def test_self_flag_requires_threshold_and_min_seconds():
     far_lines = [ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 2.0}),
                  ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": len(pcm)}), pcm,
                  ctl({"cmd": "assign", "sr": 16000, "seq": 1, "n": len(pcm)}), pcm]
-    far_out = _serve_lines(far_lines, embed=lambda pcm: [0.0, 1.0, 0.0])
+    far_out = _serve_lines(far_lines, embed=lambda pcm, sr: [0.0, 1.0, 0.0])
     assert far_out[-1]["self"] is False   # 2 s >= min_seconds, but outside the threshold
 
 
@@ -946,7 +949,7 @@ def test_a_wrong_dimension_voiceprint_turns_matching_off_not_assignment(capsys):
     lines = [ctl({"cmd": "enroll", "vector": [1.0, 0.0], "threshold": 0.2, "min_seconds": 0.0})]
     for seq in range(3):
         lines += [ctl({"cmd": "assign", "sr": 16000, "seq": seq, "n": len(pcm)}), pcm]
-    out = _serve_lines(lines, embed=lambda pcm: [0.99, 0.01, 0.0, 0.0])  # 4-d vs a 2-d print
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.99, 0.01, 0.0, 0.0])  # 4-d vs a 2-d print
 
     assert [o["id"] for o in out] == ["S1", "S1", "S1"]   # ids keep flowing
     assert [o["self"] for o in out] == [False, False, False]
@@ -972,7 +975,7 @@ def test_diarize_self_matches_nearest_batch_centroid_and_export_centroid_prefers
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 5.0}),
         ctl({"cmd": "export_centroid", "id": "S1"}),
     ]
-    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.0, 0.0, 0.0], batch=fake_batch)
 
     assert out[0]["self"] == "S1"                                   # nearest within threshold
     assert out[1]["centroid"] == pytest.approx([1.0, 0.0, 0.0])      # the BATCH centroid ...
@@ -998,7 +1001,7 @@ def test_a_wrong_dimension_voiceprint_never_matches_on_the_stop_pass(capsys):
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
     ]
-    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0, 0.0], batch=fake_batch)
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.0, 0.0, 0.0, 0.0], batch=fake_batch)
     assert [o["self"] for o in out] == [None, None]
     assert [o["segments"] for o in out] == [segs, segs]          # diarization itself unaffected
     errors = [line for line in capsys.readouterr().err.splitlines() if line.startswith("ERROR")]
@@ -1016,7 +1019,7 @@ def test_diarize_self_is_null_when_no_batch_centroid_is_within_threshold():
         ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 0.0}),
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
     ]
-    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.0, 0.0, 0.0], batch=fake_batch)
     assert out[0]["self"] is None
 
 
@@ -1028,7 +1031,7 @@ def test_a_malformed_enroll_does_not_kill_the_worker():
     def ctl(d): return (json.dumps(d) + "\n").encode()
     lines = [ctl({"cmd": "enroll", "vector": "not-a-list", "threshold": 0.2}),
              ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": 4}), b"aaaa"]
-    out = _serve_lines(lines, embed=lambda pcm: [1.0, 0.0, 0.0])
+    out = _serve_lines(lines, embed=lambda pcm, sr: [1.0, 0.0, 0.0])
     assert out[-1]["id"] == "S1"   # the loop survived the bad enroll and kept serving
 
 
@@ -1038,7 +1041,7 @@ def test_enroll_from_pcm_returns_unit_centroid_and_export_centroid_roundtrip():
     out = _serve_lines([ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm)}), pcm,
                         ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": len(pcm)}), pcm,
                         ctl({"cmd": "export_centroid", "id": "S1"})],
-                       embed=lambda pcm: [3.0, 4.0, 0.0])
+                       embed=lambda pcm, sr: [3.0, 4.0, 0.0])
     assert out[0]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[0]["seconds"] == pytest.approx(3.0)
     assert out[2]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[2]["seconds"] == pytest.approx(3.0)
 
@@ -1059,13 +1062,13 @@ def test_worker_echoes_op_id_on_both_centroid_ops_including_the_error_fallback()
             ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm), "op_id": 7}), pcm,
             ctl({"cmd": "export_centroid", "id": "S1", "op_id": 8}),
         ],
-        embed=lambda pcm: [1.0, 0.0, 0.0],
+        embed=lambda pcm, sr: [1.0, 0.0, 0.0],
     )
     assert out[0]["op_id"] == 7
     assert out[1]["op_id"] == 8
 
     # Framed-error fallback: a malformed export_centroid still echoes op_id.
-    def _raising_embed(pcm):
+    def _raising_embed(pcm, sr):
         raise RuntimeError("boom")
 
     err_out = _serve_lines(
@@ -1082,7 +1085,7 @@ def test_enroll_from_pcm_reports_null_centroid_for_a_zero_magnitude_embedding():
     pcm = b"\x00\x00" * 16000
     def ctl(d): return (json.dumps(d) + "\n").encode()
     out = _serve_lines([ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm)}), pcm],
-                       embed=lambda pcm: [0.0, 0.0, 0.0])
+                       embed=lambda pcm, sr: [0.0, 0.0, 0.0])
     assert out[0] == {"centroid": None, "op_id": None}  # op_id echoed even when absent from the control line
 
 
@@ -1139,7 +1142,7 @@ def test_malformed_pcm_framing_is_refused_without_reading_the_payload(capsys):
     def ctl(d): return (json.dumps(d) + "\n").encode()
     embedded: list[bytes] = []
 
-    def embed(pcm):
+    def embed(pcm, sr):
         embedded.append(pcm)
         return [1.0, 0.0, 0.0]
 
@@ -1182,7 +1185,459 @@ def test_stop_pass_self_needs_min_seconds_as_well_as_the_threshold():
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 1.0}),
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 5.0}),
     ]
-    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.0, 0.0, 0.0], batch=fake_batch)
 
     assert out[0]["self"] is None      # 1 s of audio, well inside the threshold
     assert out[1]["self"] == "S1"      # 5 s -- matched
+
+
+# --- Task 4 (31827): engine flag, warm-up fetch, model id, status ----------
+
+def test_local_diarizer_onnx_downloads_then_spawns_and_reports_status():
+    calls = []
+    gate = threading.Event()
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        progress("downloading 1 / 35 MB"); calls.append(embedder); gate.wait(2.0); return (Path("s"), Path("e"))
+
+    proc = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+    spawned = []
+    d = LocalDiarizer(engine="onnx", spawn=lambda cmd, **k: (spawned.append(cmd), proc)[1], ensure_models=ensure)
+    assert d.warmup_status.startswith("downloading")      # constructor returned immediately
+    assert spawned == []                                    # not spawned until the fetch finishes
+    gate.set()
+    assert d.wait_ready(2.0) is True and d.warmup_status == "ready"
+    assert "--engine" in spawned[0] and spawned[0][spawned[0].index("--engine") + 1] == "onnx"
+
+
+def test_local_diarizer_onnx_download_failure_marks_coarse_without_spawning():
+    from tldw_chatbook.Audio.diarizer_engine_onnx import ModelsUnavailable
+
+    def ensure(*a, **k): raise ModelsUnavailable("download failed")
+
+    spawned = []
+    d = LocalDiarizer(engine="onnx", spawn=lambda cmd, **k: spawned.append(cmd), ensure_models=ensure)
+    assert d.wait_ready(2.0) is False and spawned == []
+    assert d.coarse_reason == COARSE_MODELS_UNAVAILABLE and d.warmup_status == "unavailable"
+    assert d.assign(_PCM, 16000, 0) is None
+
+
+def test_speechbrain_engine_path_is_unchanged():
+    proc = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.assign(_PCM, 16000, 0) == "S1"
+
+
+def test_model_id_for_each_engine():
+    assert model_id_for("speechbrain") == "speechbrain/spkrec-ecapa-voxceleb@unpinned"
+    assert model_id_for("onnx").startswith("sherpa-onnx/nemo_en_titanet_small.onnx@")
+    assert model_id_for("onnx", "wespeaker_resnet34").startswith("sherpa-onnx/wespeaker_en_voxceleb_resnet34.onnx@")
+
+
+def test_model_id_for_rejects_an_unknown_engine():
+    with pytest.raises(ValueError):
+        model_id_for("bogus")
+
+
+def test_onnx_engine_env_vars_reach_the_spawn():
+    """Ruling 2: the worker learns the embedder key and the models dir
+    override the app used to fetch the files, via env vars on the spawn."""
+    captured = {}
+
+    def _spawn(cmd, **k):
+        captured["env"] = k.get("env")
+        return FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        return (Path("s"), Path("e"))
+
+    override = Path("/tmp/onnx-models-override")
+    d = LocalDiarizer(
+        engine="onnx",
+        embedder="wespeaker_resnet34",
+        models_dir_override=override,
+        spawn=_spawn,
+        ensure_models=ensure,
+    )
+    assert d.wait_ready(2.0) is True
+    assert captured["env"]["TLDW_DIARIZER_EMBEDDER"] == "wespeaker_resnet34"
+    assert captured["env"]["TLDW_DIARIZER_MODELS_DIR"] == str(override)
+
+
+def test_speechbrain_env_has_no_onnx_vars_when_unconfigured():
+    captured = {}
+
+    def _spawn(cmd, **k):
+        captured["env"] = k.get("env")
+        return FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+
+    d = _ready(SpeechBrainDiarizer(spawn=_spawn))
+    assert "TLDW_DIARIZER_EMBEDDER" not in captured["env"]
+    assert "TLDW_DIARIZER_MODELS_DIR" not in captured["env"]
+
+
+def test_speechbrain_env_has_no_onnx_vars_at_the_real_call_site():
+    """Final review Minor 5: the owner passes `settings.onnx_embedder` (and
+    the models dir) on EVERY build, engine regardless -- so the test above,
+    which configures neither, was never a guarantee about production. The env
+    write is gated on the engine now, not on the values being set."""
+    captured = {}
+
+    def _spawn(cmd, **k):
+        captured["env"] = k.get("env")
+        return FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+
+    d = _ready(SpeechBrainDiarizer(
+        spawn=_spawn, embedder="titanet_small", models_dir_override=Path("/tmp/onnx-models"),
+    ))
+    assert "TLDW_DIARIZER_EMBEDDER" not in captured["env"]
+    assert "TLDW_DIARIZER_MODELS_DIR" not in captured["env"]
+
+
+def test_speechbrain_warmup_status_transitions_to_ready():
+    gate = threading.Event()
+    proc = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+    proc.stderr = _GatedStderr(gate)
+    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc)
+    assert d.warmup_status == "warming up"
+    gate.set()
+    assert d.wait_ready(2.0) is True
+    assert d.warmup_status == "ready"
+
+
+def test_onnx_restart_after_crash_does_not_refetch_models():
+    """Ruling 7: the restart re-uses `_start()` directly -- the models are
+    already on disk, so `ensure_models` must not run a second time."""
+    calls = []
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        calls.append(embedder)
+        return (Path("s"), Path("e"))
+
+    procs = iter([FakeProc([]), FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])])
+    made: list[FakeProc] = []
+
+    def _spawn(cmd, **k):
+        p = next(procs)
+        made.append(p)
+        return p
+
+    d = LocalDiarizer(engine="onnx", spawn=_spawn, ensure_models=ensure)
+    assert d.wait_ready(2.0) is True
+    made[0]._alive = False
+    assert d.assign(_PCM, 16000, 0) is None   # detects the dead worker, restarts
+    assert len(made) == 2                     # exactly one restart, no re-fetch gate
+    assert d.wait_ready(2.0) is True
+    assert len(calls) == 1
+
+
+# --- Fix round 1 (review, 31827 task 4): C1 / I2 / I3 / I4 -----------------
+
+def test_restart_after_a_failed_enroll_send_still_reaches_ready():
+    """C1 regression (reviewer probe): the FIRST worker's enroll write fails
+    (broken pipe) from INSIDE its own watcher -- `_send_enroll` -> `_fail()`
+    -> `_start()` all run before that watcher's own `ready.set()` -- so the
+    dying watcher must not open the REPLACEMENT's gate. Both workers' READY
+    are gated so worker 1's `ready.set()` is forced to land BEFORE worker 2
+    is even allowed to check its own gate -- the review's own "in production
+    the old one always wins" ordering, made deterministic here instead of
+    left to scheduling luck. The replacement's own READY still has to land:
+    `wait_ready` True, `_ready_ok` True, and the voiceprint re-sent to the
+    NEW process."""
+    made: list[FakeProc] = []
+    gate0 = threading.Event()
+    gate1 = threading.Event()
+
+    class _RaisingOnce(_Pipe):
+        def __init__(self) -> None:
+            super().__init__()
+            self._raised = False
+
+        def write(self, data: bytes) -> int:
+            if not self._raised and b'"cmd": "enroll"' in data:
+                self._raised = True
+                raise OSError("broken pipe")
+            return super().write(data)
+
+    def _spawn(*a, **k):
+        p = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        if not made:
+            p.stdin = _RaisingOnce()
+            p.stderr = _GatedStderr(gate0)
+        else:
+            p.stderr = _GatedStderr(gate1)
+        made.append(p)
+        return p
+
+    d = SpeechBrainDiarizer(spawn=_spawn, voiceprint=[1.0, 0.0])
+    gate0.set()  # worker 1 reports READY -> enroll fails -> restart spawns worker 2
+
+    deadline = time.monotonic() + 2.0
+    while len(made) < 2:
+        assert time.monotonic() < deadline, "restart never spawned a replacement"
+        time.sleep(0.005)
+    # Worker 1's watcher thread has, at most, its own `ready.set()` left to
+    # run (no further blocking calls follow spawning worker 2) -- give it a
+    # moment to actually do so before worker 2 is allowed to check its gate,
+    # so the ordering this regression exists for is forced, not left to luck.
+    time.sleep(0.05)
+    gate1.set()  # only now does the REPLACEMENT get to report its own READY
+
+    # Poll for the terminal FACT directly (same reasoning as
+    # `test_failed_enroll_send_goes_through_the_existing_failure_path`):
+    # `self._ready`'s object identity changes mid-flight on another thread,
+    # so gating THIS assertion on it would just re-introduce the race under
+    # test.
+    deadline = time.monotonic() + 2.0
+    while not any(b'"cmd": "enroll"' in c for c in made[-1].stdin.chunks):
+        assert time.monotonic() < deadline, "replacement worker never re-enrolled"
+        time.sleep(0.005)
+
+    assert d._ready_ok is True                 # the REPLACEMENT reported READY
+    assert d.wait_ready(2.0) is True            # ... and `wait_ready` agrees
+
+
+def test_restart_warmup_status_goes_through_warming_up_again():
+    """I3 regression: a restart's second warm-up must not read a stale
+    "ready" left over from the dead worker for the whole second warm-up."""
+    gate = threading.Event()
+    procs = iter([FakeProc([]), FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])])
+    made: list[FakeProc] = []
+
+    def _spawn(*a, **k):
+        p = next(procs)
+        if made:  # the restart -- gate its READY so "warming up" is observable
+            p.stderr = _GatedStderr(gate)
+        made.append(p)
+        return p
+
+    d = _ready(SpeechBrainDiarizer(spawn=_spawn))
+    assert d.warmup_status == "ready"
+    made[0]._alive = False
+    assert d.assign(_PCM, 16000, 0) is None    # detects, restarts (synchronous: `_fail`/`_start` run here)
+    assert d.warmup_status == "warming up"     # not a stale "ready"
+    gate.set()
+    assert d.wait_ready(2.0) is True
+    assert d.warmup_status == "ready"
+
+
+def test_onnx_spawn_failure_after_a_successful_fetch_releases_wait_ready_promptly():
+    """I2 regression: a spawn failure after a successful model fetch must
+    still set `_ready` -- otherwise `wait_ready` burns its whole timeout for
+    a failure that is already known (reviewer measured 1.005 s vs. prompt)."""
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        return (Path("s"), Path("e"))
+
+    def _spawn(cmd, **k):
+        raise OSError("boom")
+
+    d = LocalDiarizer(engine="onnx", spawn=_spawn, ensure_models=ensure)
+    t0 = time.monotonic()
+    assert d.wait_ready(2.0) is False
+    assert time.monotonic() - t0 < 1.0          # released promptly, not after the full budget
+    assert d.coarse_reason == COARSE_UNAVAILABLE
+    assert d.warmup_status == "unavailable"
+
+
+def test_onnx_start_raising_after_a_successful_fetch_still_releases_wait_ready():
+    """I2/m6 regression: an exception ESCAPING `_start()` itself (not just a
+    False return) must also be caught inside `_warmup` and release
+    `wait_ready` -- nothing may escape this daemon thread."""
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        return (Path("s"), Path("e"))
+
+    class _PollRaises(FakeProc):
+        def poll(self):
+            raise RuntimeError("boom")
+
+    d = LocalDiarizer(engine="onnx", spawn=lambda cmd, **k: _PollRaises([]), ensure_models=ensure)
+    assert d.wait_ready(2.0) is False
+    assert d.coarse_reason == COARSE_UNAVAILABLE
+    assert d.warmup_status == "unavailable"
+
+
+def test_close_during_the_model_fetch_never_spawns_a_worker():
+    """Final review I1: `close()` during the ONNX warm-up used to record
+    nothing the warm-up thread could see -- it set `_degraded` and swapped a
+    `self._proc` that was still None -- so `_warmup` finished its (up to
+    600 s) fetch and spawned a worker nobody owned: a live subprocess with an
+    ONNX model resident plus two daemon threads, for the life of the app."""
+    gate = threading.Event()
+    spawned: list[list[str]] = []
+
+    def _spawn(cmd, **k):
+        spawned.append(cmd)
+        return FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        assert gate.wait(5.0), "the test never released the fetch"
+        return (Path("s"), Path("e"))
+
+    d = LocalDiarizer(engine="onnx", spawn=_spawn, ensure_models=ensure)
+    assert d.warmup_status.startswith("downloading")   # the fetch is in flight
+    d.close()
+    gate.set()                                          # ... and finishes after close()
+
+    assert d.wait_ready(2.0) is False                   # the warm-up thread gave up
+    assert spawned == []                                # nothing was ever started
+    assert d._proc is None
+    assert d.warmup_status == "unavailable"
+
+
+def test_close_racing_the_spawn_terminates_the_worker_it_just_started():
+    """Final review I1, the narrow window: `close()` lands between
+    `_warmup`'s fetch and the spawn returning, so it swaps a `self._proc`
+    that is still None. The freshly spawned child must be killed here or it
+    outlives the backend that owns it."""
+    made: list[FakeProc] = []
+    holder: dict = {}
+    constructed = threading.Event()
+
+    def _spawn(cmd, **k):
+        proc = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        made.append(proc)
+        assert constructed.wait(5.0)
+        holder["d"].close()          # close() lands while the spawn returns
+        return proc
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        return (Path("s"), Path("e"))
+
+    d = holder["d"] = LocalDiarizer(engine="onnx", spawn=_spawn, ensure_models=ensure)
+    constructed.set()
+
+    assert d.wait_ready(2.0) is False
+    assert len(made) == 1
+    assert made[0].terminated or made[0].killed         # the child was reclaimed
+    assert d._proc is None                              # ... and nothing holds it
+    assert d.warmup_status == "unavailable"
+
+
+def test_constructor_never_raises_for_an_unknown_engine():
+    """I4/m5 regression: `[meetings] diarizer_backend` is user-editable
+    config -- an invalid value must degrade, never raise out of the
+    constructor, and must never spawn anything with a bogus `--engine`."""
+    spawned = []
+    d = LocalDiarizer(engine="bogus", spawn=lambda cmd, **k: spawned.append(cmd))
+    assert spawned == []
+    assert d._degraded is True
+    assert d.coarse_reason == COARSE_MODELS_UNAVAILABLE
+    assert d.warmup_status == "unavailable"
+    assert d.wait_ready(2.0) is False
+    assert d.assign(_PCM, 16000, 0) is None
+
+
+def test_constructor_never_raises_for_an_unknown_embedder():
+    """I4 regression: `[meetings] onnx_embedder` is user-editable config --
+    an invalid value must degrade, never raise `KeyError` out of the
+    constructor."""
+    spawned = []
+    d = LocalDiarizer(engine="onnx", embedder="not-a-key", spawn=lambda cmd, **k: spawned.append(cmd))
+    assert spawned == []
+    assert d._degraded is True
+    assert d.coarse_reason == COARSE_MODELS_UNAVAILABLE
+    assert d.warmup_status == "unavailable"
+    assert d.wait_ready(2.0) is False
+
+
+def test_model_id_for_speechbrain_matches_the_worker_constant():
+    """m3 regression: one canonical copy of the SpeechBrain model id."""
+    from tldw_chatbook.Audio import diarizer_worker
+
+    assert model_id_for("speechbrain") == diarizer_worker.MODEL_ID
+
+
+def test_speechbrain_diarizer_rejects_a_duplicate_engine_kwarg():
+    """m4 regression: an explicit `engine=` collides loudly (TypeError), not
+    a silent `.pop()` that would hide the caller bug."""
+    with pytest.raises(TypeError):
+        SpeechBrainDiarizer(engine="onnx", spawn=lambda *a, **k: FakeProc([]))
+
+
+# --- Fix round 2 (re-review 1, 31827 task 4): New Important 1 / Minor 1 ----
+
+def test_wait_ready_follows_the_replacement_gate_across_a_restart():
+    """New Important 1 (pre-existing, not introduced by this task): a caller
+    already BLOCKED in `wait_ready` when a crash-restart swaps `self._ready`
+    for a fresh Event must not be released early on the DEAD gate with
+    `_ready_ok` still False -- it has to keep waiting, within the same
+    budget, for the REPLACEMENT's own READY."""
+    made: list[FakeProc] = []
+    gate0 = threading.Event()
+    gate1 = threading.Event()
+
+    class _RaisingOnce(_Pipe):
+        def write(self, data: bytes) -> int:
+            if b'"cmd": "enroll"' in data and not made[0].stdin.chunks:
+                raise OSError("broken pipe")
+            return super().write(data)
+
+    def _spawn(*a, **k):
+        p = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        if not made:
+            p.stdin = _RaisingOnce()
+            p.stderr = _GatedStderr(gate0)
+        else:
+            p.stderr = _GatedStderr(gate1)
+        made.append(p)
+        return p
+
+    d = SpeechBrainDiarizer(spawn=_spawn, voiceprint=[1.0, 0.0])
+
+    results: list[bool] = []
+    caller = threading.Thread(target=lambda: results.append(d.wait_ready(5.0)))
+    caller.start()
+    # Worker 1 is still gated closed -- nothing else can touch `self._ready`
+    # yet, so this gives the caller thread an overwhelming head start to
+    # reach its blocking wait and snapshot the ORIGINAL Event before
+    # anything changes it (not a race: only the caller thread runs at all
+    # during this window).
+    time.sleep(0.1)
+
+    gate0.set()  # worker 1 reports READY -> enroll fails -> restart spawns worker 2
+    deadline = time.monotonic() + 2.0
+    while len(made) < 2:
+        assert time.monotonic() < deadline, "restart never spawned a replacement"
+        time.sleep(0.005)
+    time.sleep(0.05)  # let worker 1's watcher finish its OWN `ready.set()` on the dead gate
+
+    gate1.set()  # only now does the REPLACEMENT get to report its own READY
+    caller.join(2.0)
+
+    assert results == [True]
+    assert d._ready_ok is True
+
+
+def test_a_dying_watcher_does_not_write_ready_for_the_replacement():
+    """I3 regression, source 1 (re-review 1, Minor 1 -- supplied test): the
+    process-identity guard in `_watch_stderr` is unpinned by the existing
+    suite. `_send_enroll` -> `_fail()` -> `_start()` runs inside worker 1's
+    own watcher; that watcher's `self._proc` is then stale and must not
+    report "ready" for a replacement still warming up."""
+    made: list[FakeProc] = []
+    gate1 = threading.Event()
+
+    class _RaisingOnce(_Pipe):
+        def write(self, data: bytes) -> int:
+            if b'"cmd": "enroll"' in data and not made[0].stdin.chunks:
+                raise OSError("broken pipe")
+            return super().write(data)
+
+    def _spawn(*a, **k):
+        p = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        if not made:
+            p.stdin = _RaisingOnce()
+        else:
+            p.stderr = _GatedStderr(gate1)  # the replacement stays in warm-up
+        made.append(p)
+        return p
+
+    d = SpeechBrainDiarizer(spawn=_spawn, voiceprint=[1.0, 0.0])
+    deadline = time.monotonic() + 2.0
+    while len(made) < 2:
+        assert time.monotonic() < deadline, "restart never spawned a replacement"
+        time.sleep(0.005)
+    time.sleep(0.1)  # let the dying watcher run out
+    assert d._ready_ok is False
+    assert d.warmup_status == "warming up", f"stale status: {d.warmup_status!r}"
+    gate1.set()

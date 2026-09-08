@@ -1,4 +1,4 @@
-"""Opt-in: two real TTS voices through the real SpeechBrain worker (spec §7).
+"""Opt-in: two real TTS voices through the real diarizer worker (spec §7).
 
 Run: TLDW_RUN_VOICEPRINT_TEST=1 pytest Tests/Audio/test_voiceprint_real.py -p no:cacheprovider
 
@@ -9,9 +9,14 @@ built-ins, invoked as argument lists via `subprocess.run`, never a shell
 string -- enrolls a voiceprint from one voice via `enroll_from_pcm` (the
 same op explicit enrollment uses, spec §3.4), then drives a real meeting
 session (`Tests/Audio/conftest.py::meeting_session_with_fake_capture` +
-a real `SpeechBrainDiarizer(voiceprint=...)`) over both voices and asserts
+a real `LocalDiarizer(engine, voiceprint=...)`) over both voices and asserts
 only the enrolled voice's cluster is matched as the user. All audio lives
 under `tmp_path`; nothing is written anywhere else.
+
+Both engines run (task 8: 31827): `speechbrain` needs torch, `onnx` needs
+sherpa-onnx, and each skips itself when its packages are missing. The ONNX
+run reads its models from `$TLDW_DIARIZER_MODELS_DIR` when set and otherwise
+downloads them into `tmp_path` -- never the user's data dir.
 """
 from __future__ import annotations
 
@@ -23,6 +28,8 @@ import wave
 from pathlib import Path
 
 import pytest
+
+from Tests.Audio.conftest import real_engine_available, real_engine_kwargs
 
 pytestmark = [pytest.mark.real_audio_device, pytest.mark.integration]
 
@@ -80,11 +87,14 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     or shutil.which("afconvert") is None,
     reason="opt-in: TLDW_RUN_VOICEPRINT_TEST=1 on macOS with the diarization extra and the `say`/`afconvert` tools",
 )
-def test_enrolled_voice_matches_itself_and_not_another(tmp_path, meeting_session_with_fake_capture):
-    pytest.importorskip("torch")
-    pytest.importorskip("speechbrain")
+@pytest.mark.parametrize("engine", ["speechbrain", "onnx"])
+def test_enrolled_voice_matches_itself_and_not_another(engine, tmp_path, meeting_session_with_fake_capture):
+    if not real_engine_available(engine):
+        pytest.skip(f"opt-in: {engine} packages not installed")
 
-    from tldw_chatbook.Audio.diarizer_local import READY_TIMEOUT_S, SpeechBrainDiarizer
+    from tldw_chatbook.Audio.diarizer_local import READY_TIMEOUT_S, LocalDiarizer
+
+    engine_kwargs = real_engine_kwargs(engine, tmp_path)
 
     pcm_a = _read_pcm16(_say_wav("Samantha", tmp_path / "voice_a.wav"))
     pcm_b = _read_pcm16(_say_wav("Daniel", tmp_path / "voice_b.wav"))
@@ -100,7 +110,7 @@ def test_enrolled_voice_matches_itself_and_not_another(tmp_path, meeting_session
     # enrollment uses (spec §3.4). A separate process from the meeting's own
     # diarizer, matching how the app never reuses a live meeting's worker for
     # enrollment either.
-    enroller = SpeechBrainDiarizer(max_speakers=8)
+    enroller = LocalDiarizer(engine, max_speakers=8, **engine_kwargs)
     try:
         assert enroller.wait_ready(READY_TIMEOUT_S), "enrollment worker never reached READY"
         enrolled = enroller.enroll_from_pcm(pcm_a, SAMPLE_RATE)
@@ -110,8 +120,9 @@ def test_enrolled_voice_matches_itself_and_not_another(tmp_path, meeting_session
     voiceprint, enrolled_seconds = enrolled
     assert enrolled_seconds > 0
 
-    diarizer = SpeechBrainDiarizer(
-        max_speakers=8, voiceprint=voiceprint, match_threshold=0.2, match_min_seconds=4.0,
+    diarizer = LocalDiarizer(
+        engine, max_speakers=8, voiceprint=voiceprint, match_threshold=0.2, match_min_seconds=4.0,
+        **engine_kwargs,
     )
     try:
         assert diarizer.wait_ready(READY_TIMEOUT_S), "meeting worker never reached READY"

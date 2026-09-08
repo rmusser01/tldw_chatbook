@@ -723,3 +723,83 @@ def test_stop_captures_a_reason_the_stop_pass_itself_discovered(tmp_path, meetin
     session.start()
     result = session.stop()
     assert result.speaker_labels_reason == "backend unavailable"
+
+
+# ---- task 31827: Stop overlay picks the largest overlap, not the first
+# ---- batch segment whose span merely contains the midpoint. -----------
+
+class _StubMeetingSegment:
+    """A minimal stand-in carrying only what `_speaker_for_segment` reads."""
+
+    def __init__(self, t_audio_start: float, t_audio_end: float) -> None:
+        self.t_audio_start = t_audio_start
+        self.t_audio_end = t_audio_end
+
+
+def test_speaker_for_segment_picks_the_largest_overlap():
+    from tldw_chatbook.Audio.meeting_session import _speaker_for_segment
+
+    # transcript 1.0-3.0; S2 1.9-4.0 overlaps 1.1s, S1 0.0-2.2 overlaps 1.2s;
+    # midpoint 2.0 sits inside BOTH. S2 is listed FIRST, so the old
+    # first-midpoint-hit rule returns S2 -- the largest overlap must win
+    # regardless of list order (review: the earlier ordering let the old
+    # rule pass this test too).
+    seg = _StubMeetingSegment(1.0, 3.0)
+    batch = [SpeakerSegment(1.9, 4.0, "S2"), SpeakerSegment(0.0, 2.2, "S1")]
+    assert _speaker_for_segment(seg, batch) == "S1"
+
+
+def test_speaker_for_segment_picks_the_largest_overlap_mirror_case():
+    from tldw_chatbook.Audio.meeting_session import _speaker_for_segment
+
+    # Same transcript span; overlaps flipped (S1 1.05s, S2 1.5s) -> S2 wins.
+    seg = _StubMeetingSegment(1.0, 3.0)
+    batch = [SpeakerSegment(0.0, 2.05, "S1"), SpeakerSegment(1.5, 4.0, "S2")]
+    assert _speaker_for_segment(seg, batch) == "S2"
+
+
+def test_speaker_for_segment_falls_back_to_midpoint_on_an_exact_tie():
+    from tldw_chatbook.Audio.meeting_session import _speaker_for_segment
+
+    # transcript 1.0-3.0 (midpoint 2.0); A 0.0-1.5 and B 1.5-2.0 both overlap
+    # 0.5s -> exact tie. A is first in list order but does NOT contain the
+    # midpoint; B does -- proving the fallback searches for containment, not
+    # just list order.
+    seg = _StubMeetingSegment(1.0, 3.0)
+    batch = [SpeakerSegment(0.0, 1.5, "A"), SpeakerSegment(1.5, 2.0, "B")]
+    assert _speaker_for_segment(seg, batch) == "B"
+
+
+def test_speaker_for_segment_returns_none_when_nothing_overlaps_or_contains_midpoint():
+    from tldw_chatbook.Audio.meeting_session import _speaker_for_segment
+
+    seg = _StubMeetingSegment(10.0, 12.0)
+    batch = [SpeakerSegment(0.0, 1.0, "S1")]
+    assert _speaker_for_segment(seg, batch) is None
+
+
+def test_stop_overlay_picks_the_largest_overlap_not_the_first_midpoint_hit(
+    tmp_path, meeting_session_with_fake_capture
+):
+    """Wiring: the Stop overlay loop itself must use the largest-overlap
+    rule, not just the helper in isolation. Midpoint 2.0 sits inside BOTH
+    batch segments here, so the old "first segment containing the midpoint"
+    rule would have returned S1 (listed first); the largest-overlap rule
+    must return S2 (overlap 1.5s vs S1's 1.05s)."""
+
+    class Batch(FakeDiarizer):
+        def diarize(self, *a):
+            return [SpeakerSegment(0.0, 2.05, "S1"), SpeakerSegment(1.5, 4.0, "S2")]
+
+    (tmp_path / "others.wav").write_bytes(b"")
+    session = meeting_session_with_fake_capture(diarizer=Batch([]), mode="call")
+    session.start()
+    _advance(session, 1.0)
+    session._on_final_for_test("first", label="others")   # 0.0-1.0, not asserted on
+    _advance(session, 3.0)
+    session._on_final_for_test("second", label="others")  # 1.0-3.0
+    session.stop()
+
+    seg = session.segments[-1]
+    assert seg.t_audio_start == 1.0 and seg.t_audio_end == 3.0
+    assert seg.speaker_id == "S2"

@@ -278,6 +278,15 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "Speaker diarization",
         OWNER_LIBRARY_MEDIA,
     ),
+    "diarization_onnx": _feature(
+        "diarization_onnx",
+        "Speaker diarization (ONNX)",
+        AREA_MEDIA,
+        ("sherpa_onnx", "numpy"),
+        "Meetings",
+        "Live speaker labels without torch",
+        OWNER_LIBRARY_MEDIA,
+    ),
     "ebook": _feature(
         "ebook",
         "E-book processing",

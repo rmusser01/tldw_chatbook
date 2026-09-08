@@ -134,8 +134,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 12,
-      "diagnostic_digest": "0960d88a0f5ed949e1e5",
+      "call_count": 15,
+      "diagnostic_digest": "8f76afe025ea73e6fe34",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Audio/diarizer_local.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -169,8 +169,8 @@
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
     },
     {
-      "call_count": 14,
-      "diagnostic_digest": "4ad456db18230072c00d",
+      "call_count": 16,
+      "diagnostic_digest": "a6e82020b889871d0290",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/meeting_owner.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
@@ -11480,8 +11480,8 @@
     "owner_files": 591,
     "path_privacy_candidate_calls": 710,
     "persistent_sink_files": 12,
-    "task_31551_calls": 53,
+    "task_31551_calls": 55,
     "task_492_calls": 1348,
-    "task_494_calls": 7678
+    "task_494_calls": 7681
   }
 }

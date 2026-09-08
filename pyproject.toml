@@ -80,6 +80,15 @@ dependencies = [
     "html5lib>=1.1,<2",
     "tinycss2>=1.4,<2",
     "aiohttp>=3.9,<4",
+    # Base-install live speaker labels for Meetings (31827): the ONNX diarizer
+    # engine runs in the worker subprocess, so the 2 GB torch stack stays an
+    # extra. numpy is its array seam (and the meeting mixer's).
+    # Upper bound: the engine names seven sherpa-onnx classes, so a 2.x
+    # rename would break live labels on every base install (degrading to
+    # coarse, not fatal -- but silently). numpy stays unbounded, like every
+    # other base dep here.
+    "sherpa-onnx>=1.13,<2",
+    "numpy",
 ]
 
 # --- Optional Dependencies ---
