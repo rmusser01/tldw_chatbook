@@ -22,6 +22,7 @@ TTS_OPERATIONS = frozenset(
 TTS_REASONS = frozenset(
     {"exact_not_current", "schema_corrupt", "corrupt_data", "operation_failed"}
 )
+TTS_CONTROL_OPERATIONS = TTS_OPERATIONS - {"tts_exact_current"}
 OPERATIONS = (
     frozenset({"prepare", "pin_source", "recheck_source", "close"}) | TTS_OPERATIONS
 )
@@ -89,6 +90,15 @@ class ProtocolError(ValueError):
 
     def __init__(self) -> None:
         super().__init__("private_sqlite_protocol_error")
+
+
+def is_tts_authority_refusal(response: dict[str, object]) -> bool:
+    """Classify a validated control reply; each owner must also hold live proof."""
+    return (
+        response["operation"] in TTS_CONTROL_OPERATIONS
+        and response["status"] == "tts_error"
+        and response["reason"] == "operation_failed"
+    )
 
 
 @dataclass(frozen=True, repr=False)

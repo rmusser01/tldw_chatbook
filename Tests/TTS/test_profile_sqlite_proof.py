@@ -1,9 +1,13 @@
 """Real closed-store proof, immutable validation, and original-cohort ownership."""
 
 import importlib
+import json
 import os
 import sqlite3
+import subprocess
+import sys
 import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -74,6 +78,10 @@ def test_fixed_child_proves_closed_store_and_preserves_validation_errors(
                     "status": "tts_error",
                     "reason": expected,
                 }
+                assert lease._failed
+                with pytest.raises(process.HelperUnavailableError):
+                    lease.request("tts_recheck", deadline=deadline)
+                assert lease._child.wait(timeout=2) == 0
         finally:
             lease.close()
 
@@ -433,3 +441,211 @@ def test_actual_child_pins_and_exports_without_parent_original_file_opens(
             assert live.execute("PRAGMA user_version").fetchone()[0] == 4
         finally:
             live.close()
+
+
+@contextmanager
+def substituted_proof_namespace(path, target):
+    """Temporarily replace a closed owned fixture, then restore its exact inode."""
+    selected = (
+        path.parent
+        if target == "parent"
+        else path.with_name(path.name + ("" if target == "main" else "-" + target))
+    )
+    retained = selected.with_name("retained-" + selected.name)
+    selected.rename(retained)
+    try:
+        if target == "parent":
+            selected.mkdir(mode=0o700)
+            path.touch(mode=0o600)
+        else:
+            selected.touch(mode=0o600)
+        yield
+    finally:
+        if target == "parent":
+            path.unlink()
+            selected.rmdir()
+        else:
+            selected.unlink()
+        retained.rename(selected)
+
+
+@pytest.mark.parametrize("target", ["main", "wal", "shm", "parent"])
+def test_actual_lease_retains_original_proof_across_authority_refusal(
+    tmp_path, monkeypatch, target
+):
+    store = tmp_path / "store"
+    store.mkdir(mode=0o700)
+    path = closed_store(store)
+    for suffix in ("-wal", "-shm"):
+        path.with_name(path.name + suffix).touch(mode=0o600)
+    process = module("DB.private_sqlite_process")
+    protocol = module("DB.private_sqlite_protocol")
+    admission = process.HelperAdmission()
+    pin_observations = tmp_path / "pin-observations.jsonl"
+    real_popen = subprocess.Popen
+
+    def launch(args, **kwargs):
+        # Observe the real proof's original descriptor identities on each
+        # recheck return (including refusals), without changing its operations.
+        script = f"""
+import json,os,runpy,sys
+def observe(frame,event,arg):
+    if event == 'return' and frame.f_code.co_name == 'recheck' and frame.f_globals.get('__name__') == 'tldw_chatbook.TTS.profile_sqlite_proof':
+        proof = frame.f_locals['self']
+        descriptors = dict(parent=proof.parent_fd,main=proof.file_fd,**proof.sidecars)
+        observation = {{name:os.fstat(fd).st_ino for name,fd in descriptors.items()}}
+        observation['pid'] = os.getpid()
+        observation['sql_closed'] = proof.evidence is None
+        with open({str(pin_observations)!r},'a') as output:
+            output.write(json.dumps(observation)+'\\n')
+sys.setprofile(observe)
+sys.argv = [{args[-1]!r}]
+runpy.run_path(sys.argv[0],run_name='__main__')
+"""
+        return real_popen([args[0], "-I", "-S", "-c", script], **kwargs)
+
+    monkeypatch.setattr(process.subprocess, "Popen", launch)
+    deadline = process.OperationDeadline(time.monotonic() + 30)
+    lease = None
+    try:
+        with admission.reserve(transient=1, retained=1, deadline=deadline) as owner:
+            lease = process.HelperLease.start(
+                protocol.PrepareRequest(str(path), False, False, False),
+                operation="tts_exact_current",
+                reservation=owner,
+                deadline=deadline,
+            )
+            original = lease.initial_response["identity"]
+            child = lease._child
+            pid = child.pid
+            owner.handoff_retained(lease)
+        with admission.reserve(transient=4, retained=3, deadline=deadline):
+            with substituted_proof_namespace(path, target):
+                refused = lease.request("tts_recheck", deadline=deadline)
+                assert refused == {
+                    "version": 1,
+                    "operation": "tts_recheck",
+                    "status": "tts_error",
+                    "reason": "operation_failed",
+                }
+                assert not lease._failed
+                assert lease.cleanup_state == "still_owned"
+                assert child.poll() is None and lease._child.pid == pid
+                with pytest.raises(process.HelperTimeoutError):
+                    admission.reserve(
+                        transient=0,
+                        retained=1,
+                        deadline=process.OperationDeadline(time.monotonic()),
+                    )
+                for operation in (
+                    "tts_recheck",
+                    "tts_pin_sidecars",
+                    "tts_export_restore_authority",
+                ):
+                    assert lease.request(operation, deadline=deadline) == {
+                        **refused,
+                        "operation": operation,
+                    }
+                observed = [
+                    json.loads(line)
+                    for line in pin_observations.read_text().splitlines()
+                ]
+                assert len(observed) >= 5
+                assert all(
+                    item
+                    == {
+                        **{
+                            key: original[key]["ino"]
+                            for key in ("parent", "main", "wal", "shm")
+                        },
+                        "pid": pid,
+                        "sql_closed": True,
+                    }
+                    for item in observed
+                )
+            restored = lease.request("tts_recheck", deadline=deadline)
+            assert restored["status"] == "ok"
+            for key in ("parent", "main", "wal", "shm"):
+                assert restored["identity"][key]["ino"] == original[key]["ino"]
+                assert restored["identity"][key]["dev"] == original[key]["dev"]
+            authority = protocol.TTSRestoreAuthority.from_payload(
+                lease.request("tts_export_restore_authority", deadline=deadline)[
+                    "identity"
+                ]
+            )
+            assert authority.main.ino == original["main"]["ino"]
+            assert authority.wal.ino == original["wal"]["ino"]
+            assert authority.shm.ino == original["shm"]["ino"]
+            assert child.poll() is None and lease._child.pid == pid
+        lease.close()
+        assert lease.cleanup_state == "reaped" and child.poll() == 0
+        with admission.reserve(transient=4, retained=4, deadline=deadline):
+            pass
+    finally:
+        if lease is not None:
+            lease.close()
+
+
+def test_actual_lease_can_close_healthy_child_while_namespace_is_refused(tmp_path):
+    path = closed_store(tmp_path)
+    process = module("DB.private_sqlite_process")
+    protocol = module("DB.private_sqlite_protocol")
+    deadline = process.OperationDeadline(time.monotonic() + 30)
+    with process.HelperAdmission().reserve(
+        transient=1, retained=1, deadline=deadline
+    ) as owner:
+        lease = process.HelperLease.start(
+            protocol.PrepareRequest(str(path), False, False, False),
+            operation="tts_exact_current",
+            reservation=owner,
+            deadline=deadline,
+        )
+        assert lease.initial_response["status"] == "ok"
+        with substituted_proof_namespace(path, "main"):
+            assert (
+                lease.request("tts_recheck", deadline=deadline)["status"] == "tts_error"
+            )
+            assert not lease._failed
+            lease.close()
+            assert lease._child.returncode == 0
+            assert lease.cleanup_state == "reaped"
+
+
+def test_failed_initializer_exits_without_accepting_queued_control_frame(tmp_path):
+    path = closed_store(tmp_path)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("CREATE TABLE unexpected (value)")
+        connection.commit()
+    finally:
+        connection.close()
+    protocol = module("DB.private_sqlite_protocol")
+    process = module("DB.private_sqlite_process")
+    request = {
+        "version": 1,
+        "operation": "tts_exact_current",
+        "path": str(path),
+        "writable": False,
+        "create_if_missing": False,
+        "preserve_source_mode": False,
+    }
+    control = {"version": 1, "operation": "tts_recheck"}
+    entry = os.path.join(
+        os.path.dirname(process.__file__), "private_sqlite_helper_entry.py"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", entry],
+        input=protocol.encode_frame(request) + protocol.encode_frame(control),
+        capture_output=True,
+        timeout=3,
+        check=False,
+        env={**os.environ, "_TLDW_PRIVATE_SQLITE_PARENT_PID": str(os.getpid())},
+    )
+    assert result.returncode == 0 and result.stderr == b""
+    # Decoding exactly one frame also refuses any attempted control reply.
+    assert protocol.decode_frame(result.stdout) == {
+        "version": 1,
+        "operation": "tts_exact_current",
+        "status": "tts_error",
+        "reason": "schema_corrupt",
+    }
