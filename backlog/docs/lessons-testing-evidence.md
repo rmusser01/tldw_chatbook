@@ -2975,6 +2975,25 @@ tree runs with none of the suite's safety and is functionally the same as a bare
 it measured into a real, permanently-checked-in test, as this incident did
 (`test_the_bare_word_will_appears_nowhere_in_the_corpus`).
 
+**Recurrence — TASK-31942, 2026-09-08.** An isolated-SQLite benchmark driver
+imported `TTS.profile_repository` before setting its scratch environment. That
+transitive import read the developer configuration and ensured an existing
+chat-dictionaries directory; the driver then opened its own temporary store and
+failed on a sandbox-denied process census before explicit repository close.
+No measurements were accepted. Metadata-only inspection found the config's
+mtime/ctime and the existing directory's metadata predated the run, with no
+observed changes there; this was not a comprehensive historical access audit.
+The initial helper PID was not captured, so a later empty process search was
+not described as captured-child cleanup evidence.
+
+The correction bootstraps `Tests.conftest` before **every** product import in
+both the driver and its app subprocesses, asserts owned effective config/home/
+data roots plus null-keyring/offline controls, and encloses measurements in
+owner-preserving `try/finally` cleanup. Setting only `HOME` or `TLDW_TEST_MODE`
+after import is too late; even an early HOME-only change leaves an ambient
+`TLDW_CONFIG_PATH` authoritative. A metrics failure must not abandon resources,
+and a setup failure must not be reported as behavioral RED.
+
 ---
 
 ## A hand-rolled normalizer used as a safety guard must be proven canonical, not just plausible
