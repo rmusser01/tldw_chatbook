@@ -1195,3 +1195,188 @@ def test_planned_output_cannot_claim_an_absent_installed_owner_path(tmp_path):
     with pytest.raises(ValueError, match="output_overlaps_baseline"):
         _planned_output_exclusion(context, declared, tmp_path / "data")
     assert not reserved.exists()
+
+
+@pytest.mark.asyncio
+async def test_remaining_installed_preferences_history_and_chatbooks_are_baseline(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Chat.prompt_history import PromptHistory
+    from tldw_chatbook.Chatbooks.local_chatbook_service import LocalChatbookService
+    from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
+    from Tests.Backup_Recovery.test_core_owners import application_authority
+    from threading import Event
+
+    data = tmp_path / "data" / "Ada"
+    data.mkdir(parents=True)
+    selector = tmp_path / "profile" / "custom.toml"
+    selector.parent.mkdir()
+    selector.write_text("")
+    history = data / "prompt_history.jsonl"
+    await PromptHistory(history).append("private retained prompt")
+    state = selector.parent / "ui_state.toml"
+    state.write_text('[sidebar]\nsearch_query="retained"\n')
+    emojis = selector.parent / "recent_emojis.json"
+    emojis.write_text('{"recent":["hello"]}')
+    theme = selector.parent / "themes" / "retained.toml"
+    theme.parent.mkdir()
+    theme.write_text('[theme]\nname="retained"')
+    archives = data / "chatbooks"
+    archives.mkdir()
+    archive = archives / "retained.zip"
+    archive.write_bytes(b"opaque retained content export")
+    prompts = tmp_path / "custom-db" / "prompts.db"
+    prompts.parent.mkdir()
+    registry = prompts.with_name("tldw_chatbook_chatbooks.json")
+    service = LocalChatbookService(
+        {"Prompts": str(prompts), "ChaChaNotes": str(tmp_path / "other.db")}
+    )
+    await service.create_chatbook(name="retained", file_path=archive)
+    config = {
+        "paths": {"data_dir": str(data.parent)},
+        "general": {"users_name": "Ada"},
+        "database": {"prompts_db_path": str(prompts)},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(selector, "p"),
+    }
+    adapters = {adapter.owner_id: adapter for adapter in recovery_adapters()}
+    expected = {
+        "chat.prompt_history": history,
+        "ui.state": state,
+        "ui.emoji_recents": emojis,
+        "ui.themes": theme,
+        "chatbooks.registry": registry,
+        "chatbooks.archives": archive,
+    }
+    assert expected.keys() <= adapters.keys()
+    for owner, path in expected.items():
+        entries = adapters[owner].discover(config)
+        assert next(item for item in entries if item.path == path).status == "included"
+        assert any(item.logical_id.endswith(":participant_pending") for item in entries)
+    # The default archive directory owns every retained ordinary export, even
+    # a backup-looking extension; registry external destinations remain inert.
+    backup_named = archives / "ordinary-content.tldw-backup.zip"
+    backup_named.write_bytes(b"retained ordinary content")
+    assert (
+        next(
+            i
+            for i in adapters["chatbooks.archives"].discover(config)
+            if i.path == backup_named
+        ).status
+        == "included"
+    )
+    await service.create_chatbook(
+        name="external", file_path=tmp_path / "outside" / "missing.zip"
+    )
+    assert (
+        len([i for i in adapters["chatbooks.registry"].discover(config) if i.path]) == 1
+    )
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700)
+    for owner, path in expected.items():
+        control = tmp_path / ("authority-" + owner)
+        control.mkdir()
+        authority = application_authority(control, path, monkeypatch)
+        with authority.maintenance(("core", "bootstrap.unbound"), 1) as session:
+            with session.capture_scope((path,), stage):
+                adapter = adapters[owner]
+                item = next(i for i in adapter.discover(config) if i.path == path)
+                adapter.capture(item, stage / owner, Event())
+                assert (stage / owner).read_bytes() == path.read_bytes()
+    registry_item = next(
+        i for i in adapters["chatbooks.registry"].discover(config) if i.path == registry
+    )
+    assert registry_item.dependencies == (
+        "profile:p:config",
+        "profile:p:db.prompts.primary",
+    )
+
+
+def test_chatbook_scratch_has_exact_producers_cleanup_and_unknown_sibling_refusal(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Chatbooks import chatbook_creator, chatbook_importer
+    from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
+
+    data = tmp_path / "data" / "Ada"
+    data.mkdir(parents=True)
+    selector = tmp_path / "config.toml"
+    selector.write_text("")
+    monkeypatch.setattr(chatbook_creator, "get_user_data_dir", lambda: data)
+    monkeypatch.setattr(chatbook_importer, "get_user_data_dir", lambda: data)
+    creator = chatbook_creator.ChatbookCreator({})
+    importer = chatbook_importer.ChatbookImporter({})
+    assert creator.temp_dir == data / "temp" / "chatbooks"
+    assert importer.temp_dir == data / "temp" / "imports"
+    output = tmp_path / "content.zip"
+    success, _, _ = creator.create_chatbook("empty", "", {}, output)
+    assert success
+    assert not tuple(creator.temp_dir.iterdir())
+    manifest, error = importer.preview_chatbook(output)
+    assert manifest is not None and error is None
+    assert not tuple(importer.temp_dir.iterdir())
+    broken = tmp_path / "broken.zip"
+    broken.write_bytes(b"invalid archive")
+    assert importer.preview_chatbook(broken)[0] is None
+    assert not tuple(importer.temp_dir.iterdir())
+    config = {
+        "paths": {"data_dir": str(data.parent)},
+        "general": {"users_name": "Ada"},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(selector, "p"),
+    }
+    adapter = next(
+        a for a in recovery_adapters() if a.owner_id == "runtime.chatbook_scratch"
+    )
+    # Stale per-run inputs are disposable; unrelated bytes at this common parent
+    # have no source-purpose proof and must not inherit either exclusion.
+    for root in (creator.temp_dir, importer.temp_dir):
+        (root / "stale-run").mkdir()
+        (root / "stale-run" / "manifest.json").write_text("{}")
+    unrelated = data / "temp" / "retained-project"
+    unrelated.mkdir()
+    (unrelated / "notes.txt").write_text("durable user bytes")
+    entries = adapter.discover(config)
+    assert entries[0].path == data / "temp"
+    assert entries[0].status == "included_directory"
+    assert entries[0].metadata is not None
+    for item in entries[1:]:
+        expected = (
+            "unsupported"
+            if item.path.is_relative_to(unrelated)
+            else "intentionally_excluded"
+        )
+        assert item.status == expected
+    assert (unrelated / "notes.txt").read_text() == "durable user bytes"
+    # The installed scratch selector is a directory, not an arbitrary file with
+    # the same name. Preserve refusal for a wrong-kind replacement.
+    import shutil
+
+    shutil.rmtree(importer.temp_dir)
+    importer.temp_dir.write_bytes(b"not an installed scratch directory")
+    assert (
+        next(i for i in adapter.discover(config) if i.path == importer.temp_dir).status
+        == "unsupported"
+    )
+
+
+def test_instance_lock_is_exact_process_exclusion_and_preserves_link_refusal(tmp_path):
+    from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
+
+    data = tmp_path / "Ada"
+    data.mkdir()
+    selector = tmp_path / "config.toml"
+    selector.write_text("")
+    config = {
+        "paths": {"data_dir": str(tmp_path)},
+        "general": {"users_name": "Ada"},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(selector, "p"),
+    }
+    adapter = next(
+        a for a in recovery_adapters() if a.owner_id == "runtime.instance_lock"
+    )
+    lock = data / ".instance.lock"
+    lock.write_text("pid=123\nsince=456\n")
+    assert adapter.discover(config)[0].status == "intentionally_excluded"
+    lock.unlink()
+    lock.symlink_to(selector)
+    assert adapter.discover(config)[0].status == "unsupported"
+    assert selector.read_text() == ""

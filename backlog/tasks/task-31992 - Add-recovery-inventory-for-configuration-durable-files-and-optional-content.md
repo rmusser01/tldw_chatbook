@@ -78,3 +78,19 @@ approved ownership/private-path/sync ADRs. Design references preserved. Five-dig
 Backlog direct-file fallback used per lessons-backlog-hygiene; no CLI rewrite or
 malformed task-task file. Status stays In Progress and ACs unchecked for controller
 review. No unrelated work, full suite, network/download, push or merge.
+
+
+Scoped follow-up after provisional05844a86f maps six installed durable defaults:
+chat.prompt_history, ui.state, ui.emoji_recents, ui.themes, chatbooks.registry and
+chatbooks.archives. Baseline includes retained default content exports; registry
+selection follows the installed Prompts DB sibling even outside the default data
+root. Arbitrary registry file_path remains inert. Exact process instance lock and
+Creator chatbooks/Importer imports scratch have source-backed exclusions, while
+data/temp topology is retained and unknown siblings or wrong-kind paths refuse.
+Each new ordinary writer stays participant_pending for task10; no writer bypass.
+Focused/aggregate/source-census follow-up97 passed; six checked byte-for-byte file
+captures and real producer cleanup fixtures included. Scoped three-file fatal lint,
+two-file format check and git diff --check passed. The report records actual RED,
+intermediate private helper/fixture authority corrections and final evidence.
+Initial commit is preserved; reviewer covers recorded BASE through follow-up HEAD.
+ADR-126 and existing design references unchanged; In Progress and ACs unchecked.

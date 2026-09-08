@@ -158,7 +158,7 @@ class _Definition(_RawDeclaration):
     tree: bool = False
     participant_pending: bool = False
 
-    def discover(self, config):
+    def _definition_path(self, config):
         context = discovery_context(config)
         base = {
             "data": user_data_dir(config),
@@ -166,7 +166,11 @@ class _Definition(_RawDeclaration):
             "package": Path(__file__).parents[1],
             "default_config": default_config_path().parent,
         }[self.location]
-        path = base / self.leaf
+        return base / self.leaf
+
+    def discover(self, config):
+        context = discovery_context(config)
+        path = self._definition_path(config)
         entries = self._tree(config, path) if self.tree else (self._item(config, path),)
         if self.participant_pending and any(
             item.status in {"included", "included_directory"} for item in entries
@@ -212,6 +216,60 @@ class _Definition(_RawDeclaration):
                 for item in entries
             )
         return entries
+
+
+class _ChatbookRegistry(_Definition):
+    def _definition_path(self, config):
+        from .profile_paths import database_path
+
+        # TldwCli._build_chatbook_db_paths always supplies Prompts; the installed
+        # service selects its sibling first, ahead of ChaChaNotes and Media.
+        return database_path(config, "prompts_db_path").with_name(
+            "tldw_chatbook_chatbooks.json"
+        )
+
+    def discover(self, config):
+        context = discovery_context(config)
+        return tuple(
+            replace(
+                item,
+                dependencies=item.dependencies
+                + (storage_logical_id(context, "db.prompts.primary"),),
+            )
+            for item in super().discover(config)
+        )
+
+
+class _InstanceLock(_Definition):
+    def discover(self, config):
+        item = self._item(config, user_data_dir(config) / ".instance.lock")
+        # Only the installed PID/portalocker file; a directory or linked alias
+        # at that name is not evidence of this process-owned format.
+        return (
+            replace(item, status="intentionally_excluded")
+            if item.status in {"included", "unused"}
+            else item,
+        )
+
+
+class _ChatbookScratch(_Definition):
+    def discover(self, config):
+        root = user_data_dir(config) / "temp"
+        result = []
+        for item in self._tree(config, root):
+            relative = item.path.relative_to(root) if item.path else Path()
+            if relative.parts:
+                # Creator and Importer each remove their per-run work directory
+                # in finally. Neither root holds a recovery journal or catalog.
+                if relative.parts[0] in {"chatbooks", "imports"}:
+                    if len(relative.parts) == 1 and item.status == "included":
+                        item = replace(item, status="unsupported")
+                    elif item.status in {"included", "included_directory"}:
+                        item = replace(item, status="intentionally_excluded")
+                else:
+                    item = replace(item, status="unsupported")
+            result.append(item)
+        return tuple(result)
 
 
 class _Generated(_RawDeclaration):
@@ -397,6 +455,34 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
         _Generated("generation.assets"),
         _Diagnostics("diagnostics.logs"),
         _CatalogCache("cache.model_catalog"),
+        _InstanceLock("runtime.instance_lock"),
+        _ChatbookScratch("runtime.chatbook_scratch"),
+        _Definition(
+            "chat.prompt_history", leaf="prompt_history.jsonl", participant_pending=True
+        ),
+        _Definition(
+            "ui.state",
+            leaf="ui_state.toml",
+            location="config",
+            participant_pending=True,
+        ),
+        _Definition(
+            "ui.emoji_recents",
+            leaf="recent_emojis.json",
+            location="config",
+            participant_pending=True,
+        ),
+        _Definition(
+            "ui.themes",
+            leaf="themes",
+            location="config",
+            tree=True,
+            participant_pending=True,
+        ),
+        _ChatbookRegistry("chatbooks.registry", participant_pending=True),
+        _Definition(
+            "chatbooks.archives", leaf="chatbooks", tree=True, participant_pending=True
+        ),
         _Definition(
             "tokenizers.custom",
             leaf="tokenizers",
