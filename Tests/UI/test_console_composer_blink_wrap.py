@@ -6,6 +6,7 @@ import asyncio
 from contextlib import closing
 
 import pytest
+from rich.cells import cell_len
 from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -72,10 +73,12 @@ def test_blink_preserves_style_after_expanding_pasted_tabs():
         assert painted.plain[8:9] == "b"
 
 
-@pytest.mark.parametrize("tabbed", [False, True])
+@pytest.mark.parametrize(
+    "prefix", ["", "\t", "界\t", "🧪\t", "e\u0301\t", "👩\u200d💻\t", "e\u0301❤️\t"]
+)
 @pytest.mark.parametrize("size", [(80, 24), (97, 30)])
 async def test_failed_enter_restores_draft_without_blink_text_movement(
-    monkeypatch, tmp_path, size, tabbed
+    monkeypatch, tmp_path, size, prefix
 ):
     app = _build_test_app()
     with closing(CharactersRAGDB(tmp_path / "chat.sqlite", "blink-wrap")) as database:
@@ -103,17 +106,18 @@ async def test_failed_enter_restores_draft_without_blink_text_movement(
                 )
                 composer = console._console_composer_or_none()
                 width = composer._draft_render_width()
-                draft = (
-                    "\t" + "x" * (width - 14) + " world"
-                    if tabbed
-                    else "x" * (width - 6) + " world"
-                )
+                prefix_width = cell_len(prefix.expandtabs(8))
+                draft = prefix + "x" * (width - prefix_width - 6) + " world"
                 composer.load_draft(draft)
                 composer.focus()
                 await pilot.pause()
                 await pilot.press("enter")
                 await asyncio.wait_for(host.workers.wait_for_complete(), timeout=10)
-                await pilot.pause(0.3)
+                # Worker completion precedes the poller's final UI reconcile.
+                # Wait for that lifecycle edge, not a fixed number of milliseconds.
+                async with asyncio.timeout(5):
+                    while console._console_transcript_sync_timer is not None:
+                        await pilot.pause(0.05)
                 composer._cursor_blink_timer.pause()
                 assert composer.draft_text() == draft
                 assert controller.run_state.is_send_allowed
@@ -135,8 +139,17 @@ async def test_failed_enter_restores_draft_without_blink_text_movement(
                         <= visible.size.height
                     )
                     assert "world" in visible.renderable.plain
-                    if tabbed:
-                        assert composer._display_index_at(3, 0) == 0
+                    if "❤️" in prefix:
+                        assert composer._display_index_at(1, 0) == 2
+                        assert composer._display_index_at(2, 0) == 2
+                    if prefix:
+                        assert (
+                            composer._display_index_at(prefix_width - 1, 0)
+                            == len(prefix) - 1
+                        )
+                        assert composer._display_index_at(prefix_width, 0) == len(
+                            prefix
+                        )
                     for row, text in enumerate(visible.renderable.plain.splitlines()):
                         if "world" in text:
                             assert (
@@ -145,6 +158,10 @@ async def test_failed_enter_restores_draft_without_blink_text_movement(
                             )
                 _assert_only_caret_changed(*phases)
                 assert composer.draft_text() == draft
+                if "❤️" in prefix:
+                    await pilot.click("#console-command-visible-text", offset=(2, 0))
+                    await pilot.press("!")
+                    assert composer.draft_text() == draft[:2] + "!" + draft[2:]
         finally:
             if console is not None:
                 await console._console_runtime().dispose()

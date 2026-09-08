@@ -12172,3 +12172,10 @@ stable caret glyph and hide its mapped character afterward. Pasted-tab cases
 caught an offset mistake in the initial fix: tab expansion must be reflected
 in caret/style offsets and reversed for click mapping. Keep these cases plus
 literal caret-like text, Unicode and history suggestions in the regression.
+
+PR #2498 review added a second coordinate check: terminal cells are not Python
+character offsets. Eight mounted CJK/emoji/combining-text cases caught clicks
+landing after the final expanded tab space. A follow-up `❤️` case caught a
+prefix-width cutoff inside its variation-selector sequence. Hit testing now
+uses whole grapheme boundaries measured with the wrapper's cell-width policy;
+clicking either emoji cell and then typing must preserve the emoji.

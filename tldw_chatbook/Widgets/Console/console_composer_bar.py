@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from rich.cells import cell_len
+from rich.cells import cell_len, split_graphemes
 from rich.markup import escape
 from rich.text import Text
 from textual import on
@@ -87,6 +87,7 @@ _PLACEHOLDER_CANDIDATE_PATTERN = re.compile(r"\[\[TLDW_PROTECTED:[^\]]*\]\]")
 #: chunk (terminal cells instead of characters), not in where it is willing
 #: to break.
 _DRAFT_WORD_SPLIT_RE = re.compile(r"([\t\n\x0b\x0c\r ]+)")
+_DRAFT_TAB_WIDTH = 8
 
 #: Modifier prefixes that make a key a CHORD rather than text input, even
 #: when it carries a printable ``character``. Textual's terminal parser
@@ -2588,7 +2589,9 @@ class ConsoleComposerBar(Horizontal):
         # caller in this module) regardless of `replace_whitespace`, which
         # only controls whether *other* whitespace becomes plain spaces.
         chunks = [
-            chunk for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(8)) if chunk
+            chunk
+            for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(_DRAFT_TAB_WIDTH))
+            if chunk
         ]
         chunks.reverse()
         lines: list[str] = []
@@ -2893,17 +2896,19 @@ class ConsoleComposerBar(Horizontal):
                 # Wrapping expands tabs. Put caret/style offsets in that same
                 # coordinate space before selecting or masking a visible row.
                 if caret_position is not None:
-                    caret_position = len(render_text[:caret_position].expandtabs(8))
+                    caret_position = len(
+                        render_text[:caret_position].expandtabs(_DRAFT_TAB_WIDTH)
+                    )
                 if style_ranges:
                     style_ranges = [
                         (
-                            len(render_text[:start].expandtabs(8)),
-                            len(render_text[:end].expandtabs(8)),
+                            len(render_text[:start].expandtabs(_DRAFT_TAB_WIDTH)),
+                            len(render_text[:end].expandtabs(_DRAFT_TAB_WIDTH)),
                             style,
                         )
                         for start, end, style in style_ranges
                     ]
-                render_text = render_text.expandtabs(8)
+                render_text = render_text.expandtabs(_DRAFT_TAB_WIDTH)
             line_slices = cls._visible_draft_line_slices(
                 render_text,
                 width,
@@ -5397,10 +5402,10 @@ class ConsoleComposerBar(Horizontal):
         else:
             render_text = display_text
         visible_slices = self._visible_draft_line_slices(
-            render_text.expandtabs(8),
+            render_text.expandtabs(_DRAFT_TAB_WIDTH),
             self._draft_render_width(),
             cursor_index=(
-                len(render_text[:caret_position].expandtabs(8))
+                len(render_text[:caret_position].expandtabs(_DRAFT_TAB_WIDTH))
                 if caret_position is not None
                 else None
             ),
@@ -5408,16 +5413,26 @@ class ConsoleComposerBar(Horizontal):
         if click_y >= len(visible_slices):
             return None
         clicked_slice = visible_slices[click_y]
-        if click_x >= len(clicked_slice.text):
+        if click_x >= cell_len(clicked_slice.text):
+            return None
+        # The terminal reports cells; slice and tab-source offsets count
+        # characters. Keep clicks on either cell of an emoji at its start,
+        # using whole grapheme boundaries with the wrapper's cell measurement.
+        for click_index, end, _ in split_graphemes(clicked_slice.text)[0]:
+            if cell_len(clicked_slice.text[:end]) > click_x:
+                break
+        else:
             return None
         if clicked_slice.synthetic_prefix_columns:
-            if click_x < clicked_slice.synthetic_prefix_columns:
+            if click_index < clicked_slice.synthetic_prefix_columns:
                 return None
             source_index = (
-                clicked_slice.start + click_x - clicked_slice.synthetic_prefix_columns
+                clicked_slice.start
+                + click_index
+                - clicked_slice.synthetic_prefix_columns
             )
         else:
-            source_index = clicked_slice.start + click_x
+            source_index = clicked_slice.start + click_index
         if "\t" in render_text:
             # Map expanded display positions back to the original source.
             # A click inside a tab's spaces belongs to that tab character.
@@ -5425,7 +5440,9 @@ class ConsoleComposerBar(Horizontal):
                 bisect_right(
                     range(len(render_text) + 1),
                     source_index,
-                    key=lambda index: len(render_text[:index].expandtabs(8)),
+                    key=lambda index: len(
+                        render_text[:index].expandtabs(_DRAFT_TAB_WIDTH)
+                    ),
                 )
                 - 1
             )
