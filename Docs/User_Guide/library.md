@@ -67,7 +67,9 @@ Library; deleting that content later does not hide tools again.
 Compact presentation never blocks navigation. Deep links and command-palette
 routes, including **Tab Navigation: Library — Skills**, can open a tool that is
 not shown in the Get started rail. Existing profiles without this preference
-open the full Library.
+open the full Library. A profile created by this app records its Library
+lifecycle when the profile is created, so Get started still appears if you
+complete first-run setup, quit, and come back before ever opening Library.
 
 ## Returning to a populated Library
 
@@ -697,3 +699,8 @@ queue. Details on the
 below 120 columns the landing canvas no longer paints beside the rail — the
 rail takes the full width and owns navigation, matching the compact contract
 this page already described.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32059:
+Get started is no longer skipped for a profile that completed setup and
+relaunched before its first Library visit — the lifecycle is recorded at
+profile creation instead of being inferred from a missing key.)*

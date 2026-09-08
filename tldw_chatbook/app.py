@@ -142,6 +142,7 @@ from .config import (
     get_notes_sync_watcher_intervals,
     get_research_db_path,
     get_scheduled_tasks_db_path,
+    save_setting_to_cli_config,
     get_subscriptions_db_path,
     get_tts_profiles_db_path,
     get_user_data_dir,
@@ -7405,6 +7406,41 @@ class TldwCli(
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[1]),
     ]
 
+    def _stamp_new_profile_library_lifecycle(self) -> None:
+        """Persist the Library lifecycle at profile CREATION (task-32059).
+
+        ``coerce_library_lifecycle`` reads an absent
+        ``[library.rail_state] lifecycle`` as ``expanded`` for any profile the
+        current run did not create -- so a user who completed first-run setup,
+        quit, and relaunched before ever opening Library never saw the
+        documented compact "Get started" rail. Writing ``unknown`` here (the
+        same value the screen would have derived on a first visit in THIS run)
+        makes the second launch read the fact instead of inferring it from a
+        missing key. A profile that already carries a lifecycle is untouched.
+        """
+        library_config = self.app_config.get("library")
+        if not isinstance(library_config, dict):
+            library_config = {}
+            self.app_config["library"] = library_config
+        rail_state = library_config.get("rail_state")
+        if not isinstance(rail_state, dict):
+            rail_state = {}
+            library_config["rail_state"] = rail_state
+        if "lifecycle" in rail_state:
+            return
+        # "unknown" is LibraryLifecycle.UNKNOWN.value, spelled out rather than
+        # imported: pulling the Library package in here would put its modules
+        # on every boot for one string (see the module-census ratchet).
+        rail_state["lifecycle"] = "unknown"
+        try:
+            save_setting_to_cli_config("library.rail_state", "lifecycle", "unknown")
+        except Exception:
+            # A profile whose config cannot be written still gets the correct
+            # in-memory lifecycle for this run; boot must not fail over it.
+            logger.warning(
+                "Could not stamp the Library lifecycle for a new profile."
+            )
+
     def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
         """Add the consolidated widget-defaults stylesheet as one CSS source.
 
@@ -7663,6 +7699,8 @@ class TldwCli(
         )
         self.console_default_recovery_inflight: set[tuple[int, str]] = set()
         self.library_new_profile_admission = first_profile_created_this_session()
+        if self.library_new_profile_admission:
+            self._stamp_new_profile_library_lifecycle()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
         # Persona Buddy controller is built lazily on first access

@@ -3,9 +3,10 @@ id: TASK-32059
 title: >-
   Library Get started is skipped for any profile whose config file already
   existed at launch
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-08 18:24'
+updated_date: '2026-09-08 18:58'
 labels:
   - library
   - onboarding
@@ -27,3 +28,12 @@ coerce_library_lifecycle returns EXPANDED when the stored lifecycle is absent an
 - [ ] #2 The lifecycle is persisted at profile creation rather than defaulting from the absence of a key
 - [ ] #3 A test covers the quit-after-setup-then-relaunch sequence
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Failing test: create a profile in run 1 (config created, Library never opened), relaunch, assert the lifecycle is still UNKNOWN (Get started).
+2. Stamp [library.rail_state] lifecycle = "unknown" from TldwCli.__init__ when first_profile_created_this_session() is true.
+3. Keep the shared test factory's returning-profile fiction complete (the sandbox creates a profile per test).
+4. Docs stamp.
+<!-- SECTION:PLAN:END -->

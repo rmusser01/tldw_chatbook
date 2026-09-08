@@ -26,7 +26,7 @@ from typing import Any, Mapping
 from unittest.mock import MagicMock, patch
 
 from tldw_chatbook.app import TldwCli
-from tldw_chatbook.config import load_settings
+from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 from tldw_chatbook.runtime_policy import RuntimeSourceState
 
 # Every user-data dir handed to a TldwCli built here; drained (rmtree'd) by the
@@ -328,6 +328,21 @@ def _build_test_app(
             patch("tldw_chatbook.app.load_settings", return_value=fake_app_config),
             patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting),
             patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None),
+            # task-32059: `__init__` stamps `[library.rail_state] lifecycle
+            # = "unknown"` for a profile this run created, and the sandbox
+            # creates one per test. A factory app that goes on to CLEAR
+            # `library_new_profile_admission` (below) is pretending to be a
+            # returning profile, so the creation-time stamp must not reach
+            # its config file either -- the screen's own CLI fallback would
+            # read it back and skip the Expanded default.
+            patch(
+                "tldw_chatbook.app.save_setting_to_cli_config",
+                side_effect=(
+                    save_setting_to_cli_config
+                    if preserve_profile_admission
+                    else (lambda *args, **kwargs: True)
+                ),
+            ),
             patch(
                 "tldw_chatbook.app.ServerNotesWorkspaceService.from_config",
                 return_value=MagicMock(),
@@ -417,4 +432,12 @@ def _build_test_app(
         # and the Library rail answers it with the compact starter rail.
         if not preserve_profile_admission:
             app.library_new_profile_admission = False
+            # ...and drop the same stamp from the in-memory snapshot: the
+            # patch above keeps it off disk, this keeps it out of the dict
+            # `LibraryScreen` reads first.
+            library_config = app.app_config.get("library")
+            if isinstance(library_config, dict):
+                rail_state = library_config.get("rail_state")
+                if isinstance(rail_state, dict):
+                    rail_state.pop("lifecycle", None)
         return app
