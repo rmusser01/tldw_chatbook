@@ -1,5 +1,5 @@
 ---
-id: TASK-32015
+id: TASK-32109
 title: Defer Chunking Lab action imports beyond screen preimport
 status: Done
 assignee:
@@ -52,3 +52,8 @@ are retained. See backlog/docs/pr-2427-rebase-reconciliation.md for the mapping.
 On 2026-09-07 the review record moved again, from TASK-31902 to TASK-32015,
 to preserve upstream transcript-suite triage ownership on dev 3090013cfe.
 The earlier mapping above remains historical provenance.
+
+On 2026-09-08 the user explicitly approved moving this review-only record from
+TASK-32015 to TASK-32109, preserving upstream Meetings MOSS retranscription
+TASK-32015. The fresh all-ref/worktree census found maximum TASK-32107. Original
+dates, completed implementation notes, and historical evidence remain unchanged.

@@ -1,5 +1,5 @@
 ---
-id: TASK-32040
+id: TASK-32110
 title: Console Assistant-turn harness omits the split production stylesheet
 status: Done
 assignee:
@@ -60,3 +60,8 @@ On 2026-09-08, review-owned TASK-32013 became TASK-32040 after a fresh
 census of 985 refs and 324 registered worktrees found maximum TASK-32039.
 Upstream TASK-32013 (Library Media controller exclusion debt) keeps its ID.
 The earlier renumbering above remains historical provenance.
+
+On 2026-09-08 the user explicitly approved moving this review-only record from
+TASK-32040 to TASK-32110, preserving upstream Console private trace-history
+TASK-32040. The fresh all-ref/worktree census found maximum TASK-32107. Original
+dates, completed implementation notes, and historical evidence remain unchanged.

@@ -1,5 +1,5 @@
 ---
-id: TASK-32014
+id: TASK-32108
 title: Preserve Loguru capture sinks across app mount
 status: Done
 assignee:
@@ -56,3 +56,8 @@ are retained. See backlog/docs/pr-2427-rebase-reconciliation.md for the mapping.
 On 2026-09-07 the review record moved again, from TASK-31901 to TASK-32014,
 to preserve upstream Console note-follow-up ownership on dev 3090013cfe.
 The earlier mapping above remains historical provenance.
+
+On 2026-09-08 the user explicitly approved moving this review-only record from
+TASK-32014 to TASK-32108, preserving upstream Meetings ServerDiarizer TASK-32014.
+The fresh all-ref/worktree census found maximum TASK-32107. Original dates,
+completed implementation notes, and historical evidence remain unchanged.
