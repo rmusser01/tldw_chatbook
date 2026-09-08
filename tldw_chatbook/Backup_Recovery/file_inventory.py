@@ -81,13 +81,21 @@ def inventory_tree(
     return _inventory_tree(root, owner=owner, external=external)
 
 
+def _inventory_root(root: Path, *, owner: str, external: bool) -> StorageItem:
+    """Inspect one pinned root's kind/metadata without visiting its children."""
+    return _inventory_tree(root, owner=owner, external=external, root_only=True)[0]
+
+
 def _inventory_tree(
     root: Path,
     *,
     owner: str,
     external: bool,
     selected_paths: frozenset[str] | None = None,
+    root_only: bool = False,
 ) -> tuple[StorageItem, ...]:
+    if type(root_only) is not bool or (root_only and selected_paths is not None):
+        raise ValueError("invalid_root_inspection")
     if selected_paths is not None:
         if type(selected_paths) is not frozenset or len(selected_paths) > MAX_ENTRIES:
             raise ValueError("invalid_selected_paths")
@@ -216,6 +224,8 @@ def _inventory_tree(
                 metadata=metadata,
             )
         )
+        if root_only:
+            return
         fd = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
         try:
             held = os.fstat(fd)

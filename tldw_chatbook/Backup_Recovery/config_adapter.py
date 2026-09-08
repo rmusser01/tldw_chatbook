@@ -272,6 +272,32 @@ class _ChatbookScratch(_Definition):
         return tuple(result)
 
 
+def _excluded_root(config, owner, path, *, kind, local_id=""):
+    """Apply installed exclusion policy only after checked exact-kind evidence."""
+    from .file_inventory import _inventory_root
+
+    context = discovery_context(config)
+    item = _inventory_root(path, owner=owner, external=False)
+    logical_id = storage_logical_id(context, owner, local_id)
+    status = item.status
+    if status == "unused":
+        status = "intentionally_excluded"
+    elif status in {"included", "included_directory"}:
+        status = (
+            "intentionally_excluded"
+            if item.metadata is not None and item.metadata.kind == kind
+            else "unsupported"
+        )
+    return replace(
+        item,
+        logical_id=logical_id,
+        status=status,
+        metadata=replace(item.metadata, root_id=logical_id, parent_id=None)
+        if item.metadata
+        else None,
+    )
+
+
 class _Generated(_RawDeclaration):
     def discover(self, config):
         context = discovery_context(config)
@@ -285,7 +311,10 @@ class _Generated(_RawDeclaration):
                 and relative.parts[0] == "temp"
                 and not context.selections.temporary_media
             ):
-                item = replace(item, status="intentionally_excluded")
+                if len(relative.parts) == 1 and item.status == "included":
+                    item = replace(item, status="unsupported")
+                elif item.status in {"included", "included_directory"}:
+                    item = replace(item, status="intentionally_excluded")
             elif relative.parts and relative.parts[0] not in {"temp", "saved"}:
                 item = replace(item, status="unsupported")
             result.append(item)
@@ -307,12 +336,12 @@ class _Generated(_RawDeclaration):
             )
         else:
             result.append(
-                StorageItem(
+                _excluded_root(
+                    config,
                     self.owner_id,
-                    storage_logical_id(context, self.owner_id, "temporary_videos"),
                     video_root,
-                    "intentionally_excluded",
-                    (),
+                    kind="directory",
+                    local_id="temporary_videos",
                 )
             )
         if any(item.status in {"included", "included_directory"} for item in result):
@@ -356,9 +385,9 @@ class _Diagnostics(_RawDeclaration):
                             and suffix.isdigit()
                         ):
                             paths.add(root / entry.name)
-        except FileNotFoundError:
-            pass
-        if not context.selections.diagnostics:
+        except (OSError, ValueError, RuntimeError):
+            # Failure to inspect the rotation namespace is not proof that its
+            # installed artifacts are absent, even when diagnostics are off.
             return tuple(
                 StorageItem(
                     self.owner_id,
@@ -368,8 +397,19 @@ class _Diagnostics(_RawDeclaration):
                         hashlib.sha256(str(path).encode()).hexdigest(),
                     ),
                     path,
-                    "intentionally_excluded",
+                    "unavailable",
                     (),
+                )
+                for path in sorted(paths)
+            )
+        if not context.selections.diagnostics:
+            return tuple(
+                _excluded_root(
+                    config,
+                    self.owner_id,
+                    path,
+                    kind="file",
+                    local_id=hashlib.sha256(str(path).encode()).hexdigest(),
                 )
                 for path in sorted(paths)
             )
@@ -381,14 +421,12 @@ class _Diagnostics(_RawDeclaration):
 
 class _CatalogCache(_Definition):
     def discover(self, config):
-        context = discovery_context(config)
         return (
-            StorageItem(
+            _excluded_root(
+                config,
                 self.owner_id,
-                storage_logical_id(context, self.owner_id),
                 user_data_dir(config) / "model_catalog_cache.json",
-                "intentionally_excluded",
-                (),
+                kind="file",
             ),
         )
 

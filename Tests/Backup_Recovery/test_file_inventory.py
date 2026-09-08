@@ -682,11 +682,29 @@ def test_actual_persona_publication_dependencies_and_missing_retained_assets(
     root = next(item for item in entries if item.path == data / "persona_visual")
     assert root.logical_id == "profile:p:persona.assets"
     assert found.logical_id in root.dependencies
+    assert "profile:p:db.chachanotes.primary" in root.dependencies
     core = next(
         a for a in core_adapters() if a.owner_id == "db.chachanotes.primary"
     ).discover(config)[0]
     assert "profile:p:persona.assets" in core.dependencies
     assert "profile:p:persona.visual_identity" not in core.dependencies
+    if damage is None:
+        available = {
+            entry.logical_id: entry.path for entry in entries if entry.path is not None
+        }
+        available[core.logical_id] = database
+        available["profile:p:config"] = selector
+        candidates = {key: available[key] for key in root.dependencies}
+        assert adapter.validate_dependencies(root, root.path, candidates) == ()
+        undeclared = replace(
+            root,
+            dependencies=tuple(
+                key for key in root.dependencies if key != core.logical_id
+            ),
+        )
+        assert adapter.validate_dependencies(undeclared, root.path, candidates) == (
+            "dependency_unavailable",
+        )
     wrong_profile = replace(root, logical_id="profile:other:persona.assets")
     assert adapter.validate_dependencies(
         wrong_profile, asset, {"profile:p:db.chachanotes.primary": database}
@@ -988,7 +1006,9 @@ def test_chat_attachment_adapter_uses_exact_core_blob_cohort(tmp_path, monkeypat
 
 
 @pytest.mark.parametrize("preview", ["preview.png", "missing.png", "../escape.png"])
-def test_visual_identity_owned_preview_and_exact_staged_references(tmp_path, preview):
+def test_visual_identity_owned_preview_and_exact_staged_references(
+    tmp_path, preview, monkeypatch
+):
     import hashlib
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
@@ -1043,12 +1063,32 @@ def test_visual_identity_owned_preview_and_exact_staged_references(tmp_path, pre
     )
     entries = adapter.discover(config)
     item = next(item for item in entries if item.path == root)
-    candidates = {
-        entry.logical_id: entry.path for entry in entries if entry.path is not None
-    }
-    candidates["profile:p:db.chachanotes.primary"] = source
     if preview == "preview.png":
+        core_key = "profile:p:db.chachanotes.primary"
+        assert core_key in item.dependencies
+        available = {
+            entry.logical_id: entry.path for entry in entries if entry.path is not None
+        }
+        available[core_key] = source
+        available["profile:p:config"] = selector
+        candidates = {key: available[key] for key in item.dependencies}
         assert adapter.validate_dependencies(item, root, candidates) == ()
+        peer_reads = []
+        original_references = type(adapter)._references
+
+        def observe_references(self, peer):
+            peer_reads.append(peer)
+            return original_references(self, peer)
+
+        monkeypatch.setattr(type(adapter), "_references", observe_references)
+        undeclared = replace(
+            item,
+            dependencies=tuple(key for key in item.dependencies if key != core_key),
+        )
+        assert adapter.validate_dependencies(undeclared, root, candidates) == (
+            "dependency_unavailable",
+        )
+        assert peer_reads == []
         key = next(
             entry.logical_id for entry in entries if entry.path == root / preview
         )
@@ -1157,6 +1197,27 @@ def test_actual_builtin_asset_reference_uses_only_installed_package_bytes(tmp_pa
     assert (
         "profile:p:persona.visual_identity"
         not in core_adapters()[0].discover(config)[0].dependencies
+    )
+    adapter = adapters["persona.visual_identity_builtin"]
+    root = next(
+        item
+        for item in entries
+        if item.logical_id == "profile:p:persona.visual_identity_builtin"
+    )
+    core_key = "profile:p:db.chachanotes.primary"
+    assert core_key in root.dependencies
+    available = {
+        entry.logical_id: entry.path for entry in entries if entry.path is not None
+    }
+    available[core_key] = source
+    available["profile:p:config"] = selector
+    candidates = {key: available[key] for key in root.dependencies}
+    assert adapter.validate_dependencies(root, root.path, candidates) == ()
+    undeclared = replace(
+        root, dependencies=tuple(key for key in root.dependencies if key != core_key)
+    )
+    assert adapter.validate_dependencies(undeclared, root.path, candidates) == (
+        "dependency_unavailable",
     )
     owned = adapters["persona.visual_identity"].discover(config)
     assert not any(item.status == "missing_required" for item in owned)
@@ -1380,3 +1441,197 @@ def test_instance_lock_is_exact_process_exclusion_and_preserves_link_refusal(tmp
     lock.symlink_to(selector)
     assert adapter.discover(config)[0].status == "unsupported"
     assert selector.read_text() == ""
+
+
+@pytest.mark.parametrize(
+    "owner,relative,kind",
+    [
+        ("generation.assets", "generated_images/temp", "directory"),
+        ("generation.assets", "generated_videos", "directory"),
+        ("cache.model_catalog", "model_catalog_cache.json", "file"),
+        ("diagnostics.logs", "custom.log", "file"),
+    ],
+)
+@pytest.mark.parametrize("damage", ["valid", "wrong_kind", "link", "metadata"])
+def test_optional_exclusions_preserve_wrong_kind_link_and_metadata(
+    tmp_path, owner, relative, kind, damage
+):
+    from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
+
+    data = tmp_path / "data" / "Ada"
+    target = data / relative
+    target.parent.mkdir(parents=True)
+    selector = tmp_path / "profile.toml"
+    selector.write_text("")
+    config = {
+        "paths": {"data_dir": str(data.parent)},
+        "general": {"users_name": "Ada"},
+        "logging": {"log_filename": "custom.log"},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(selector, "p"),
+    }
+    if damage == "link":
+        target.symlink_to(selector)
+    elif (kind == "directory") != (damage == "wrong_kind"):
+        target.mkdir()
+    else:
+        target.write_bytes(b"local bytes")
+    if damage == "metadata":
+        # Actual ordinary owned inode with unsupported privilege bits, which
+        # the shared pinned metadata observer must detect even when excluded.
+        target.chmod(target.stat().st_mode | 0o1000)
+    adapter = next(a for a in recovery_adapters() if a.owner_id == owner)
+    item = next(i for i in adapter.discover(config) if i.path == target)
+    assert item.status == (
+        "intentionally_excluded" if damage == "valid" else "unsupported"
+    )
+
+
+@pytest.mark.parametrize("damage", ["link", "fifo", "hardlink", "xattr"])
+def test_optional_exclusions_preserve_unsafe_generated_temp_children(tmp_path, damage):
+    from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
+
+    data = tmp_path / "data" / "Ada"
+    target = data / "generated_images" / "temp" / "unsafe"
+    target.parent.mkdir(parents=True)
+    selector = tmp_path / "profile.toml"
+    selector.write_text("")
+    if damage == "link":
+        target.symlink_to(selector)
+    elif damage == "fifo":
+        os.mkfifo(target)
+    elif damage == "hardlink":
+        os.link(selector, target)
+    else:
+        target.write_bytes(b"bytes")
+        assert sys.platform == "darwin", "Actual host metadata qualification"
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.setxattr.argtypes = [
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_uint32,
+            ctypes.c_int,
+        ]
+        assert (
+            libc.setxattr(os.fsencode(target), b"org.chatbook.review", b"x", 1, 0, 0)
+            == 0
+        )
+    config = {
+        "paths": {"data_dir": str(data.parent)},
+        "general": {"users_name": "Ada"},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(selector, "p"),
+    }
+    adapter = next(a for a in recovery_adapters() if a.owner_id == "generation.assets")
+    item = next(i for i in adapter.discover(config) if i.path == target)
+    assert item.status == "unsupported"
+
+
+def test_optional_exclusions_root_checks_do_not_traverse_unrelated_children(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
+
+    data = tmp_path / "data" / "Ada"
+    roots = {
+        data / "generated_videos",
+        data / "model_catalog_cache.json",
+        data / "custom.log",
+    }
+    for root in roots:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "unrelated").mkdir()
+        os.mkfifo(root / "unrelated" / "pipe")
+    identities = {(p.stat().st_dev, p.stat().st_ino) for p in roots}
+    real_scandir = os.scandir
+
+    def observe_scandir(path):
+        info = os.fstat(path) if isinstance(path, int) else os.stat(path)
+        assert (info.st_dev, info.st_ino) not in identities, (
+            "excluded/wrong-kind root was traversed"
+        )
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", observe_scandir)
+    selector = tmp_path / "config.toml"
+    selector.write_text("")
+    config = {
+        "paths": {"data_dir": str(data.parent)},
+        "general": {"users_name": "Ada"},
+        "logging": {"log_filename": "custom.log"},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(selector, "p"),
+    }
+    entries = tuple(
+        i
+        for a in recovery_adapters()
+        if a.owner_id
+        in {"generation.assets", "cache.model_catalog", "diagnostics.logs"}
+        for i in a.discover(config)
+    )
+    assert (
+        next(i for i in entries if i.path == data / "generated_videos").status
+        == "intentionally_excluded"
+    )
+    assert all(
+        next(i for i in entries if i.path == path).status == "unsupported"
+        for path in roots
+        if path.name != "generated_videos"
+    )
+    assert not any(i.path and i.path.name == "unrelated" for i in entries)
+
+
+@pytest.mark.parametrize(
+    "owner,relative",
+    [
+        ("generation.assets", "generated_videos"),
+        ("cache.model_catalog", "model_catalog_cache.json"),
+        ("diagnostics.logs", "custom.log"),
+    ],
+)
+def test_optional_exclusions_preserve_unavailable_unobserved_parent(
+    tmp_path, owner, relative
+):
+    from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
+
+    data = tmp_path / "absent-parent" / "Ada"
+    selector = tmp_path / "profile.toml"
+    selector.write_text("")
+    config = {
+        "paths": {"data_dir": str(data.parent)},
+        "general": {"users_name": "Ada"},
+        "logging": {"log_filename": "custom.log"},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(selector, "p"),
+    }
+    adapter = next(a for a in recovery_adapters() if a.owner_id == owner)
+    item = next(i for i in adapter.discover(config) if i.path == data / relative)
+    assert item.status == "unavailable"
+    assert not data.exists()
+
+
+def test_checked_root_observation_preserves_empty_selection_contract(tmp_path):
+    from tldw_chatbook.Backup_Recovery.file_inventory import (
+        _inventory_root,
+        _inventory_tree,
+    )
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "untouched").mkdir()
+    item = _inventory_root(root, owner="test.files", external=False)
+    assert item.status == "included_directory"
+    assert item.metadata.kind == "directory"
+    assert item.metadata.relative_path == ""
+    assert (
+        _inventory_tree(
+            root, owner="test.files", external=False, selected_paths=frozenset()
+        )
+        == ()
+    )
+    with pytest.raises(ValueError, match="invalid_root_inspection"):
+        _inventory_tree(
+            root,
+            owner="test.files",
+            external=False,
+            root_only=True,
+            selected_paths=frozenset(),
+        )

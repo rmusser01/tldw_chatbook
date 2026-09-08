@@ -114,6 +114,18 @@ class _Assets(_Definition):
         entries = []
         try:
             entries = list(self._base_entries(config))
+            if entries:
+                entries[0] = replace(
+                    entries[0],
+                    dependencies=tuple(
+                        dict.fromkeys(
+                            (
+                                *entries[0].dependencies,
+                                storage_logical_id(context, "db.chachanotes.primary"),
+                            )
+                        )
+                    ),
+                )
             by_path = {item.path: index for index, item in enumerate(entries)}
             references = self._references(database_path(config, "chachanotes_db_path"))
             required = []
@@ -163,7 +175,11 @@ class _Assets(_Definition):
         return tuple(entries)
 
     def validate_dependencies(self, item, candidate, candidates):
-        """Validate only exact staged payload IDs explicitly declared by this item."""
+        """Validate the semantic directory root's declared core and payload edges.
+
+        Capture/restore consumers must validate included_directory items too;
+        creating topology instead of copying a file does not bypass this check.
+        """
         from tldw_chatbook.Backup_Recovery.models import DiscoveryContext
         from tldw_chatbook.Backup_Recovery.storage_admission import (
             _digest_recovery_file,
@@ -178,7 +194,7 @@ class _Assets(_Definition):
         ):
             return ("invalid_dependency_context",)
         core_key = f"profile:{parts[1]}:db.chachanotes.primary"
-        if core_key not in candidates:
+        if core_key not in item.dependencies or core_key not in candidates:
             return ("dependency_unavailable",)
         context = DiscoveryContext(Path("/unused-config"), parts[1])
         try:

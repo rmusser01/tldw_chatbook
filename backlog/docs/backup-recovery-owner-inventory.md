@@ -1716,3 +1716,35 @@ inside the installed data/chatbooks owner or an explicitly selected external roo
 This distinction preserves the registry bytes without arbitrary external traversal.
 Actual existing unknown formats remain path-specific unsupported declarations,
 not an indefinite generic omission of any identified installed durable default.
+
+
+### Task9 review fix1: exclusion evidence and semantic directory dependencies
+
+`file_inventory._inventory_root(root, *, owner, external)` is a private metadata
+inspection of exactly one pinned inode. It reuses `_inventory_tree(root_only=True)`
+with the same no-follow identity/kind/metadata checks and closes its metadata
+handle before returning. It never visits child entries. `root_only` and
+`selected_paths` are mutually exclusive; public/full-tree behavior and the builtin
+empty-selected-set contract remain unchanged. This helper grants no capture,
+exclusion or external-path authority.
+
+Only installed config owner policy applies exclusions: `_excluded_root` requires
+an observed regular file for catalog-cache/log artifacts and an observed directory
+for unselected generated_videos. Positive leaf absence under a checked parent can
+remain excluded; an unobserved parent is unavailable. Wrong-kind, linked, special,
+unsupported-metadata or unavailable results remain refusals. Directory-shaped
+cache/log paths are refused without walking their unrelated children. Failed
+log-rotation namespace inspection produces unavailable owner evidence. In the
+already enumerated generated-images tree, the unselected temp directory and its
+checked children can be excluded, but every unsupported/unavailable entry remains
+unchanged, and a regular file replacing the temp directory is unsupported.
+
+Each persona semantic root (`persona.assets`, `persona.visual_identity`,
+`persona.visual_identity_builtin`) declares its exact profile-qualified
+`db.chachanotes.primary` peer before referenced payload edges. Staged validation
+requires that edge in the root's dependencies before consulting its candidate;
+an overbroad candidate map cannot supply undeclared authority. Tasks15/17 must
+invoke `validate_dependencies` on semantic **included_directory** items as well as
+file payloads. Creating directory topology instead of calling raw-file capture
+must not bypass the graph check. These are declared semantic dependency cycles
+with the core owner, to be resolved as complete groups, not recursive execution.

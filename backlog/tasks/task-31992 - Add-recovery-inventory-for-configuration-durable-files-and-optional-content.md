@@ -94,3 +94,15 @@ two-file format check and git diff --check passed. The report records actual RED
 intermediate private helper/fixture authority corrections and final evidence.
 Initial commit is preserved; reviewer covers recorded BASE through follow-up HEAD.
 ADR-126 and existing design references unchanged; In Progress and ACs unchecked.
+
+
+Independent review fix round1 addresses only I1/I2: checked root-only optional
+exclusions retain unsafe/unavailable evidence, and all three persona semantic
+roots declare and enforce the exact profile core edge before peer reads. Existing
+full-tree/builtin empty selection and public APIs remain unchanged. Tasks15/17
+must validate semantic included_directory dependencies even though directory
+creation bypasses raw-file copy. Behavioral RED22 failures reproduced the review;
+final affected file/core/aggregate/census checks184 passed. Four-file scoped fatal
+lint/format and git diff --check passed. Baseline diagnostics/warnings remain
+recorded debt; no environment or unrelated inventory change. ADR-126 reused;
+In Progress and ACs remain unchecked for scoped re-review.
