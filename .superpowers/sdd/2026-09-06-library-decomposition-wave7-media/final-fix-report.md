@@ -662,3 +662,323 @@ carries the same reds where future waves actually read them.
    this merge's AST measurement disagree, and the difference is
    instrument-vs-instrument (as with wave-7's own 1,214/1,204 census pair).
    Both are recorded; only 29 is reproducible from the trees.
+
+---
+
+# Round 2 — the 75-commit `fix/media-riders` race
+
+**Status: COMPLETE.** `origin/dev` advanced 75 more commits while PR #2501
+was open — the `fix/media-riders` series, actively editing the same media
+cluster round 1 had just reconciled — and the PR went CONFLICTING. Same
+procedure, smaller scale.
+
+| | |
+|---|---|
+| Merge commit | `16c45b545` (parents `3a317a391`, `37bf45fb6`) |
+| Round-1 dev parent | `0bb00beaf` |
+| dev commits merged | **75** |
+| Working tree | clean except `progress.md`; verified absent from the commit |
+
+Drift, measured rather than carried: **2** mover bodies edited (not 11),
+**2** new dev screen methods, and — new this round — **1** dev method
+*deleted* (`_library_media_int_backing_id`, promoted to a module-level
+function).
+
+---
+
+## R2.1 Conflicts — 7 hunks / 3 files
+
+The coordinator counted 4 screen hunks; `--conflict=diff3` splits the
+`_library_media_layout_signature` region into two, so the record is 5.
+
+| # | Enclosing | base/ours/theirs | Resolution |
+|---|---|---|---|
+| 1 | `_library_media_layout_signature` | 2/2/12 | **COMBINED** — dev's new canonical-width body, three receivers swapped |
+| 2 | `_library_media_layout_signature` | 2/2/2 | **COMBINED** — dev's `canonical.reader_width` + our `_media_state.reader_preferences` |
+| 3 | `_select_library_media_reader_row` | 57/2/62 | OURS (delegator); dev's +5 ported |
+| 4 | `_review_cursor_for_display` | 2/2/2 | **COMBINED** — dev's `library_media_int_backing_id(...)` wrapper + our receiver |
+| 5 | `handle_library_media_review_selected` | 25/1/27 | OURS (delegator); dev's +2 ported |
+
+`test_library_media_render_fixes.py` (1 hunk): dev replaced a literal
+assertion string with `_NO_PROVIDER_REASON`; we had retargeted the line
+below. Kept both, dev's assertion value byte-for-byte.
+
+`test_library_media_return_settlement.py` (1 hunk): dev switched to its new
+`canonical_reader_width`; we had retargeted both receivers. Kept both.
+
+**Three of the seven hunks were genuinely two-sided** — up from one in round
+1. Taking either side whole would have silently lost the other's work, and
+the ratio is worth noting: as dev keeps editing the cluster this branch
+moved, the share of conflicts that cannot be resolved by picking a side goes
+up, not down.
+
+### Inverse-transform verification
+
+Rather than eyeballing the combined hunks, each was checked by applying the
+*declared* substitution to dev's own version and comparing:
+
+```
+IDENTICAL  _library_media_layout_signature             (dev + declared subs == ours)
+IDENTICAL  _restore_library_media_reader_width_on_open (dev + declared subs == ours)
+IDENTICAL  _review_cursor_for_display                  (dev + declared subs == ours)
+```
+
+And for the test files, against dev's file plus the whole-family receiver
+swap:
+
+```
+IDENTICAL  Tests/UI/test_library_media_return_settlement.py
+IDENTICAL  Tests/UI/test_library_media_side_by_side.py
+DIFFERS    Tests/UI/test_library_media_render_fixes.py     (2 lines)
+DIFFERS    Tests/UI/test_library_media_reader_shell.py     (1 line)
+```
+
+All three residual differences were read: two are PROSE retargets from
+wave-7 task 3's stale-doc sweep, one is a `next_screen.` receiver the
+`screen.`-anchored swap does not cover. None is a round-2 change. This is the
+round-1 reviewer's own technique (undo the declared transform, compare to the
+parent) applied by the implementer rather than waiting for review.
+
+---
+
+## R2.2 The two ports
+
+Same precondition, checked first: both controller bodies were still
+byte-identical to dev's pre-edit version, so the ports are wholesale
+replacements — exact by construction.
+
+```
+=== ROUND-2 PORT IDENTITY ===
+  text=IDENTICAL ast=IDENTICAL  _select_library_media_reader_row
+  text=IDENTICAL ast=IDENTICAL  handle_library_media_review_selected
+```
+
+Running total across both reconciliations: **13 ports, 13 byte-identical, 0
+substitutions.**
+
+### Two names, two different kinds — and only one is a binding
+
+`_restore_library_media_reader_width_on_open` is dev's new screen method,
+bound as the **ninth** group-(e) late-binding callable. Arity 91 → 92, and
+the construction site verified equal to the signature with no missing or
+extra name.
+
+`library_media_int_backing_id` is **not a binding at all.** Dev promoted it
+out of a `LibraryScreen` method into a module-level function in
+`Library/library_media_state.py`, so the ported body reads it as a **bare
+module global**, which resolves against the *controller module's*
+`__globals__` — recipe §3's module-globals-coupling shape. No `self.<attr>`
+census can see it. Unbound, it is a `NameError` on every "Review selected"
+press. Imported into the controller with a comment recording why.
+
+An AST resolver over the whole controller — class members, `__init__`
+assignments, the 82 generated shims, *and* module globals — reports zero
+unbound names of either kind after both fixes.
+
+---
+
+## R2.3 Census over the merged tree
+
+All five spellings, 82 names re-derived from `LibraryMediaState`.
+
+**Spellings 1–4:** 439 hits at first pass. **Sixteen live references** dev's
+75 commits added were retargeted — 6 in the screen, 11 in tests (one file
+overlapping both counts is counted once per site).
+
+The six screen-side ones all sit in dev's new task-31979 width-restore work:
+
+| Line | Shape |
+|---|---|
+| 7480 | read — `reader_preferences` |
+| 7481 | read — `reader_layout` |
+| 7482 | read — `view` |
+| 7484 | read — `reader_layout` |
+| **7487** | **WRITE — `reader_layout = layout`** |
+| 7543 | read — `view` |
+
+**Line 7543 is the one worth the entry.** It sits inside
+`_sync_library_media_reader_layout_from_shell`, a body this wave had
+*already* retargeted — the surrounding lines read `self._media_state.view`,
+`self._media_state.reader_preferences`, `self._media_state.reader_layout`.
+Dev added one new `reader_has_item=self._library_media_view == ...` kwarg in
+the middle of them, and git merged it in **without a conflict**. A reviewer
+reading the conflict hunks would never see it. That is the whole case for
+running the census over the merged TREE rather than over the diff.
+
+**Test-side:** 11 receiver retargets across three files, plus two
+`test_review_set_walker.py` fakes driving `handle_library_media_review_
+selected` — a MOVED name. This is the second instance of the shape round 1
+met with `handle_library_media_reader_more`, and it was resolved the same
+way: a minimal `_ReviewSelectedControllerFake` reproducing the one production
+hop (two generated shims, one group-(e) property, one framework service), so
+the real controller body still runs. Both fakes are green.
+
+**Spelling 5:** 3 candidates, identical to round 1 — the `canvas_sync.py`
+site (dotted media branch read live, survived dev's edits), the shim
+mapping's own definition, and the CCP false positive.
+
+**Final state:** 420 hits; the only code-classified references outside the
+controller are the two test fakes' deliberate shim properties.
+
+---
+
+## R2.4 Pruned delegators — zero new callers
+
+Censused in **both** spellings, per round 1's own gap note:
+
+```
+22 PRUNED NAMES, ALL SPELLINGS
+  library_media_controller.py                  63   (owner)
+  test_library_media_wiring.py                 44   (the pin)
+  test_library_media_viewer_speaker_rename.py   7   round 1's retarget, via _media_controller
+  test_local_media_reading_service.py           2   prose
+  library_media_state.py                        1   prose
+
+BOUND screen.<mover>(...) calls in Tests/: 95 — and NOT ONE is a pruned name
+```
+
+Structural cross-check, independent of the ratchet: **all 118 non-pruned
+mover delegators present on `LibraryScreen`, every one forwarding to
+`_media_controller`, and no pruned name reappeared.**
+
+---
+
+## R2.5 Pins
+
+| Row | Before | After |
+|---|---|---|
+| `library_screen.py` — `LibraryScreen` | `(35626, 1289)` | **`(35743, 1290)`** |
+| `library_media_controller.py` | `4612` | **`4630`** |
+| `library_media_browse_controller.py` | `371` | **unchanged** (dev now 686) |
+| `library_unavailable_navigation.py` | `817` | unchanged |
+
+The method SET check is exact in **both** directions, and this round it
+finally exercises the second direction for real: `merged − branch` is dev's
+two new names, `branch − merged` is the one name **dev itself deleted**. Net
++1. A count-only check would have read `+2 −1 = +1` identically for a lost
+delegator paired with a gained one.
+
+Line delta **+117** against dev's own **+121**: `121 − 7` (the two ported
+mover edits, which the screen does not take) `+ 3` (the construction-site
+kwarg) `= 117`. Controller **+18** = 7 ported + 6 binding + 5
+import-and-comment. Both exact.
+
+`library_media_browse_controller` refused for the **fifth** time: 410 at wave
+6, 649 at round 1, **686** twelve hours later at round 2, against a pin of
+371. Dev is still adding to it.
+
+---
+
+## R2.6 Battery
+
+| Suite | Result |
+|---|---|
+| 8 wiring suites + media characterization | **62 passed, 0 failed** |
+| both size ratchets | 42 passed, 4 failed (same four dev-owned rows as round 1) |
+| ADR-055 interlock + canvas-sync dotted-path guard | **2 passed, 0 failed** |
+| `./scripts/preflight.sh` | **all seven checks passed** |
+| dev's 9 changed media test files | 652 passed, 21 failed |
+
+Baseline: an isolated `origin/dev` worktree at `37bf45fb6` with its own venv,
+parity **proven before any count was read** — Python 3.14.2 both sides,
+`uv pip list` identical at 106 packages, each tree verified to resolve its
+own `tldw_chatbook` from its own root.
+
+```
+branch    21 failed / 652 passed
+baseline  21 failed / 652 passed
+-> 20 SHARED, 1 branch-unique, 1 baseline-unique
+```
+
+**The equal counts prove nothing** — recipe §7's own environment note — so
+the comparison is on failing NAME sets. The single branch-unique name,
+`test_media_trash_back_and_escape_restore_distinct_media_return[escape]`, is
+already on TASK-31249 as load-sensitive, so it got §7's **third disposition
+level** rather than a verdict: an INTERLEAVED round-robin across the two
+trees, alternating run by run rather than a sequential batch.
+
+| | fail rate, interleaved |
+|---|---|
+| merged branch | **1 / 5** |
+| `origin/dev` baseline | **2 / 5** |
+
+Nondeterministic on both trees and worse on dev's. **Zero real branch-unique
+failures.** The baseline-unique name
+(`test_trash_back_exact_scroll_precedes_captured_control_focus`) is the same
+one round 1's pairing surfaced, in the same return-settlement family.
+
+---
+
+## R2.7 The backlog id collision
+
+`preflight` caught it: **dev minted TASK-31976 inside these 75 commits**,
+colliding with round 1's filing of the media exclusion debt.
+
+This is not a near-miss of the hygiene rule — it is the rule's own documented
+failure mode reproducing exactly. Both sessions swept for a maximum before
+filing; both observed the same pre-merge maximum from different worktrees, so
+both leapfrogged into the same block. `lessons-backlog-hygiene.md` records
+this from 2026-08-21 (TASK-19573/TASK-19601) and says plainly why leapfrogging
+further does not help: the race is not "did you leapfrog far enough", it is
+"did anyone else observe the same maximum before you merged."
+
+Applying the tie-break rule that replaced leapfrogging — **the older
+`created_date` keeps the id regardless of status**:
+
+| | created | outcome |
+|---|---|---|
+| dev's "Recover Console sends after trace boundary construction failure" | 2026-09-07 **20:53** | **keeps TASK-31976** |
+| ours, the media exclusion debt | 2026-09-07 **22:06** | **renumbered to TASK-32013** |
+
+New id taken after a fresh sweep across every remote ref and every local
+backlog directory (observed maximum 32012). A `## Renumbering provenance`
+section was added, and both inbound references moved with it (TASK-31249's
+cross-pointer, and `test_review_set_walker.py`'s fixture comment).
+
+**Two references were deliberately NOT rewritten:** the round-1 merge
+(`3c11f902a`) and follow-up (`2c4c4d709`) commit messages name TASK-31976 and
+are published history on PR #2501. Rewriting them would falsify a record
+rather than fix a pointer; the provenance section is the bridge. Preflight is
+green at 3421 task files.
+
+---
+
+## R2.8 A third census gap
+
+`Tests/Architecture/test_library_media_wiring.py`'s
+`_MEDIA_CONTROLLER_BOUND_NAMES` coverage check is **one-directional**. It
+asserts the 92 listed names each resolve to a `property` on the controller,
+and that the list has no duplicates. It never asserts the converse — that
+every name a moved body references is *in* the list.
+
+Measured consequence: this branch has added **nine** group-(e) bindings
+across two reconciliations, and that check passed unchanged before and after
+every one of them, because the new names simply were not in its tuple. What
+actually caught both rounds' missing bindings was an ad-hoc AST resolver run
+by hand. And the module-global shape (§R2.2) it cannot see at all.
+
+Recorded on TASK-32013 with the fix shape, **not fixed here** — the same
+reasoning that declined to revert a mover or restore a delegator inside a
+merge commit.
+
+---
+
+## R2.9 Concerns
+
+1. **The mitigations do not transfer between rounds, and the rate is
+   rising.** Round 1 absorbed two dev-side instances in 306 commits; round 2
+   absorbed two more in 75 — plus a module-globals coupling and an id
+   collision that round 1 did not see at all. Three of seven conflicts were
+   two-sided here versus one of eighteen in round 1. The next reconciliation
+   should budget for the class, not for the count.
+2. **`library_media_browse_controller` is at 686 against a 371 pin**, refused
+   for the fifth time. It gained 37 lines in the twelve hours between the two
+   reconciliations. The refusal is still right and it is still nobody's.
+3. **The one-directional wiring check (§R2.8) is the most likely place the
+   next merge ships a real defect.** Both reconciliations found real missing
+   bindings that the full battery reported green on.
+4. **`test_media_trash_back_and_escape_restore_distinct_media_return[escape]`
+   and `test_trash_back_exact_scroll_precedes_captured_control_focus`** are
+   both nondeterministic on both trees, in the same return-settlement family,
+   and have now each surfaced as "unique" in one of the two rounds' pairings.
+   Anyone reading a single run of either will be misled.
