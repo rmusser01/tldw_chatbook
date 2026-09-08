@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 from hypothesis import given, settings, strategies as st
+from rich.cells import cell_len
 
 from tldw_chatbook.Library.library_media_state import (
     MediaBrowseScope,
@@ -14,6 +15,7 @@ from tldw_chatbook.Library.library_media_state import (
     build_media_browse_result,
     build_library_media_browse_state,
     build_library_media_state,
+    library_media_int_backing_id,
     validate_media_browse_items,
 )
 from Tests.UI.library_media_rows import summary_row, summary_rows
@@ -837,3 +839,207 @@ def test_analyze_receipt_fields_default_zero_and_pass_through():
     assert floored.analyze_receipt_done == 0
     assert floored.analyze_receipt_failed == 0
     assert floored.analyze_choice_count == 0
+
+
+# ---------------------------------------------------------------------------
+# task-31955: the keyword match-reason suffix is cut by CELLS, not code points
+# ---------------------------------------------------------------------------
+
+
+def _keyword_reason_secondary(keyword: str) -> str:
+    """The whole secondary line of a row the browse filter matched by keyword."""
+    scope = MediaBrowseScope(query="q")
+    result = build_media_browse_result(
+        scope,
+        {
+            "items": [summary_row(id=1, media_type="article")],
+            "total": 1,
+            "limit": scope.page_size,
+            "offset": 0,
+            "match_reasons": {"local:media:1": keyword},
+        },
+    )
+    state = build_library_media_browse_state(result, type_options=("All",), now=NOW)
+    return state.rows[0].secondary
+
+
+def _keyword_reason_term(keyword: str) -> str:
+    """The term one row paints after ``· keyword: `` when ``keyword`` matched."""
+    secondary = _keyword_reason_secondary(keyword)
+    assert " · keyword: " in secondary, secondary
+    return secondary.split(" · keyword: ", 1)[1]
+
+
+def test_keyword_reason_cut_is_cell_aware_for_wide_characters() -> None:
+    """Ten CJK characters occupy TWENTY cells, so ten of them never fit.
+
+    The cap bounds how much of the line the reason may take; counting code
+    points let a CJK keyword take twice the budget it was given.
+    """
+    term = _keyword_reason_term("会議記録一覧表示設定値二")
+
+    assert term == "会議記録一…", term
+    assert cell_len(term.removesuffix("…")) == 10, term
+
+
+def test_keyword_reason_never_splits_an_emoji_cluster() -> None:
+    """A ZWJ family emoji is ONE grapheme; the cut lands between clusters."""
+    zwj = "\u200d"
+    family = zwj.join("\U0001f468\U0001f469\U0001f467\U0001f466")
+    term = _keyword_reason_term(family * 6)
+
+    assert term == family * 5 + "\u2026", term
+    assert term.removesuffix("\u2026")[-1] != zwj, term
+
+
+def test_keyword_reason_cut_drops_a_dangling_interior_space() -> None:
+    """A cut landing on a space must not paint ``abcdefghi …``."""
+    assert _keyword_reason_term("abcdefghi jkl") == "abcdefghi…"
+
+
+def test_narrow_keyword_reason_cut_is_unchanged() -> None:
+    """The single-cell case keeps the exact ten-character line it always had."""
+    assert _keyword_reason_term("notesandmorestuff") == "notesandmo…"
+    assert _keyword_reason_term("notes") == "notes"
+
+
+@pytest.mark.parametrize(
+    "keyword",
+    [
+        pytest.param("\u200d", id="zero-width-joiner"),
+        pytest.param("\u0301", id="combining-mark"),
+        pytest.param("\u200d" + " " * 12, id="zero-width-then-spaces-past-the-cap"),
+        pytest.param("   \u200d  ", id="spaces-around-a-zero-width-term"),
+    ],
+)
+def test_keyword_reason_with_nothing_to_paint_is_dropped(keyword: str) -> None:
+    """A cut head with no visible cells gets NO suffix, not a dangling label.
+
+    ``chop_cells`` has no line to return for a zero-width term (and an
+    IndexError there would take down the whole page projection, not just
+    one row's suffix), and a head of nothing but spaces cuts to "". Both
+    painted ``article · now · keyword: `` -- a label introducing nothing --
+    and past the cap, ``keyword: …``.
+
+    A reason that is ONLY whitespace never gets this far: the result's own
+    validator rejects it (pinned below), so these are the shapes that do.
+    """
+    assert "keyword" not in _keyword_reason_secondary(keyword)
+
+
+def test_a_blank_match_reason_is_rejected_before_any_row_is_built() -> None:
+    """The boundary, not the row, is where a whitespace-only reason dies."""
+    with pytest.raises(ValueError, match="match_reasons"):
+        _keyword_reason_secondary("    ")
+
+
+# ---------------------------------------------------------------------------
+# task-31962: ONE spelling of the display-id -> int backing-id coercion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param("local:media:12", 12, id="prefixed-display-id"),
+        pytest.param("12", 12, id="bare-int-text"),
+        pytest.param(12, 12, id="bare-int"),
+        pytest.param("media-12", None, id="legacy-row-id"),
+        pytest.param("local:media:abc", None, id="unparseable-tail"),
+        pytest.param("", None, id="empty"),
+        pytest.param(None, None, id="missing"),
+        pytest.param("local:media:0", None, id="non-positive"),
+        pytest.param("local:media:-4", None, id="negative"),
+    ],
+)
+def test_int_backing_id_covers_every_shape_the_three_spellings_handled(
+    value: object, expected: int | None
+) -> None:
+    assert library_media_int_backing_id(value) == expected
+
+
+def test_flag_pair_keyword_is_cut_on_a_cell_boundary_not_a_cluster_one() -> None:
+    """Known ceiling: rich's splitter is not full UAX #29 (task-31955 review).
+
+    ``chop_cells`` keeps ZWJ sequences whole (pinned above), but a
+    regional-indicator PAIR -- the two code points a flag is made of -- can
+    be halved when the cut lands at an odd offset, leaving a lone indicator
+    letter on each side. This pin DOCUMENTS that ceiling rather than
+    asserting cluster safety the library does not provide: what is
+    guaranteed is the CELL budget, which is what the cap exists to bound.
+    """
+    flag = "\U0001F1EF\U0001F1F5"  # JP, two regional indicators = 2 cells
+    term = _keyword_reason_term("a" + flag * 6)
+    head = term.removesuffix("…")
+
+    assert cell_len(head) == 10, term
+    # The ceiling, stated: the head ends on HALF a flag.
+    assert head.endswith("\U0001F1EF"), term
+
+
+# ---------------------------------------------------------------------------
+# task-31957: the preview pane reports the analysis state the row reports
+# ---------------------------------------------------------------------------
+
+
+def _browse_state_with_analysis(*values: bool) -> LibraryMediaCanvasState:
+    """One page whose Nth item carries analysis per ``values[N]``."""
+    scope = MediaBrowseScope()
+    items = [
+        summary_row(id=index, media_type="article", has_analysis=analysed)
+        for index, analysed in enumerate(values, start=1)
+    ]
+    result = build_media_browse_result(
+        scope,
+        {
+            "items": items,
+            "total": len(items),
+            "limit": scope.page_size,
+            "offset": 0,
+        },
+    )
+    return build_library_media_browse_state(result, type_options=("All",), now=NOW)
+
+
+@pytest.mark.parametrize(
+    ("analysed", "expected"),
+    [(True, "Analysed: yes"), (False, "Analysed: no")],
+)
+def test_preview_pane_reports_the_rows_analysis_state(
+    analysed: bool, expected: str
+) -> None:
+    """task-31957: the two surfaces describe the same item the same way.
+
+    The row's own line carries the word only when there IS an analysis (a
+    36-cell budget cannot spend cells saying "no"); the pane has a labelled
+    line per fact, so it answers in both directions with the row's word.
+    """
+    state = _browse_state_with_analysis(analysed)
+
+    assert expected in state.preview_lines, state.preview_lines
+    assert ("· analysed" in state.rows[0].secondary) is analysed
+
+
+def test_preview_pane_follows_the_selection_not_the_first_row() -> None:
+    """The pane describes the SELECTED item, so the answer must move with it."""
+    state = _browse_state_with_analysis(True, False)
+    other = build_library_media_browse_state(
+        build_media_browse_result(
+            MediaBrowseScope(),
+            {
+                "items": [
+                    summary_row(id=1, media_type="article", has_analysis=True),
+                    summary_row(id=2, media_type="article", has_analysis=False),
+                ],
+                "total": 2,
+                "limit": 20,
+                "offset": 0,
+            },
+        ),
+        type_options=("All",),
+        selected_id="local:media:2",
+        now=NOW,
+    )
+
+    assert "Analysed: yes" in state.preview_lines, state.preview_lines
+    assert "Analysed: no" in other.preview_lines, other.preview_lines

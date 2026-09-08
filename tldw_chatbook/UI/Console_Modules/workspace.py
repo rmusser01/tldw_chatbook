@@ -4259,10 +4259,22 @@ class ConsoleWorkspaceController:
         store = controller.store
         prior_active_session_id = store.active_session_id
         try:
+            from .conversation_token_preparation import prepare_conversation_tokens
+
+            await prepare_conversation_tokens(self._screen, store, session_id)
             if prior_active_session_id != session_id:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
             self._set_active_workspace_for_console_session(session_id)
+            session = next(item for item in store.sessions() if item.id == session_id)
+            try:
+                await self._refresh_console_effective_scope_and_sync(session)
+            except Exception:  # noqa: BLE001 - optional display must not block activation
+                logger.opt(exception=True).warning(
+                    "Failed to refresh retrieval scope display on saved "
+                    "conversation activation: {}",
+                    session_id,
+                )
             self._sync_console_chat_core_state()
             sync_result = self._sync_native_console_chat_ui_fn()
             if inspect.isawaitable(sync_result):
@@ -4695,11 +4707,38 @@ class ConsoleWorkspaceController:
         target: LocalCharacterConversationTarget
         | CharacterConversationActivationRequest,
         cancellation: asyncio.Event | None = None,
+        *,
+        complete_presentation: Callable[[ConsoleConversationActivationResult], bool]
+        | None = None,
     ) -> ConsoleConversationActivationResult:
-        """Open one exact typed target through the canonical Console coordinator."""
+        """Open one exact typed target through the canonical Console coordinator.
+
+        Args:
+            target: Captured local target and optional query revision.
+            cancellation: Precommit cancellation event.
+            complete_presentation: Optional synchronous request-owned switcher
+                completion; ordinary callers retain strict exposed visibility.
+
+        Returns:
+            The canonical exact-open or rolled-back failure result.
+        """
 
         return await self._character_conversation_activation.activate(
-            target, cancellation
+            target, cancellation, complete_presentation=complete_presentation
+        )
+
+    async def wait_until_character_conversation_commit_started(
+        self,
+        request: LocalCharacterConversationTarget
+        | CharacterConversationActivationRequest,
+        *,
+        complete_presentation: Callable[[ConsoleConversationActivationResult], bool]
+        | None = None,
+    ) -> None:
+        """Wait for the canonical coordinator's non-cancellable boundary."""
+
+        await self._character_conversation_activation.wait_until_commit_started(
+            request, complete_presentation=complete_presentation
         )
 
     async def _revalidate_character_conversation_target(
@@ -5048,7 +5087,18 @@ class ConsoleWorkspaceController:
         request: LocalCharacterConversationTarget
         | CharacterConversationActivationRequest,
     ) -> bool:
-        """Require exact store, mounted screen, transcript, and composer focus."""
+        """Require an exposed Console plus its exact prepared target."""
+        return (
+            self._screen.app.screen is self._screen
+            and self._character_conversation_target_ready(request)
+        )
+
+    def _character_conversation_target_ready(
+        self,
+        request: LocalCharacterConversationTarget
+        | CharacterConversationActivationRequest,
+    ) -> bool:
+        """Check exact store, mounted transcript, and composer without revealing."""
         from ...Chat.console_conversation_activation import (
             CharacterConversationActivationRequest,
         )
@@ -5070,7 +5120,6 @@ class ConsoleWorkspaceController:
             or str(active.persisted_conversation_id or "")
             != target.conversation_id
             or not self._screen.is_mounted
-            or self._screen.app.screen is not self._screen
         ):
             return False
         try:
@@ -5168,8 +5217,16 @@ class ConsoleWorkspaceController:
         *,
         target_scope_type: str | None = None,
         target_workspace_id: str | None = None,
+        reuse_existing: bool = False,
     ) -> bool | None:
         """Load a persisted saved conversation into a native Console session.
+
+        Args:
+            conversation_id: Exact persisted conversation identity.
+            target_scope_type: Optional fallback scope for cold hydration.
+            target_workspace_id: Optional fallback workspace for cold hydration.
+            reuse_existing: Prefer an open runtime after validating the saved
+                record. History opts in; explicit fresh-session callers do not.
 
         Returns:
             True on success; None on a transient failure this method already
@@ -5226,6 +5283,21 @@ class ConsoleWorkspaceController:
             )
             return False
 
+        if reuse_existing:
+            matches = [
+                session
+                for session in store.sessions()
+                if str(session.persisted_conversation_id or "") == target
+            ]
+            if matches:
+                session = next(
+                    (item for item in matches if item.id == store.active_session_id),
+                    matches[0],
+                )
+                return await self.open_console_workspace_conversation(
+                    f"native:{session.id}"
+                )
+
         conversation = tree.get("conversation")
         if not isinstance(conversation, dict):
             conversation = {}
@@ -5259,6 +5331,9 @@ class ConsoleWorkspaceController:
             # Warm the effective conversation/workspace scope before the final
             # activation commit so any failure leaves the prior session active.
             await self._resolve_console_effective_scope_state(session)
+            from .conversation_token_preparation import prepare_conversation_tokens
+
+            await prepare_conversation_tokens(self._screen, store, session.id)
             store.switch_session(session.id)
             self._set_active_workspace_for_console_session(session.id)
             self._sync_console_retrieval_scope_row()

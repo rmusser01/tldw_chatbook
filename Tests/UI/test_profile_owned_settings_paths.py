@@ -14,6 +14,30 @@ import tldw_chatbook.UI.Screens.settings_screen as settings_screen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId, SettingsScreen
 
 
+@pytest.mark.parametrize("fallback_exists", [False, True])
+def test_storage_display_uses_selected_default_without_creating_paths(
+    tmp_path, monkeypatch, fallback_exists
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    fallback = home / ".tldw_cli-data"
+    if fallback_exists:
+        fallback.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(home))
+    window = MagicMock(spec=SettingsScreen)
+    window._read_cli_config_value_without_writes.side_effect = (
+        lambda section, key, default=None: default
+    )
+    window._configured_user_folder_name.return_value = "alice"
+
+    actual = SettingsScreen._configured_user_data_dir_path(window)
+
+    expected = fallback if fallback_exists else home / ".local/share/tldw_cli"
+    assert actual == expected / "alice"
+    assert not actual.exists()
+    assert not (home / ".local").exists()
+
+
 @pytest.mark.parametrize("profile_name", ["alpha", "beta"])
 def test_config_children_follow_effective_profile(
     monkeypatch: pytest.MonkeyPatch,

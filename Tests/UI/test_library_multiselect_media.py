@@ -423,7 +423,18 @@ async def test_media_fresh_zero_distills_to_one_recovery_action(
         assert not pilot.app.query("#library-media-select-toggle")
         assert not pilot.app.query("#library-media-export")
         assert not pilot.app.query("#library-media-detail-empty")
-        assert len(pilot.app.query(".library-canvas-action")) == 1
+        # task-31635 (critique #5 item 7): the title row's Sets opener rides
+        # this page too -- it is navigation, not a result, and it is the only
+        # route back to a saved review set from an empty list. The RECOVERY
+        # budget is still exactly one: everything in the page's own body.
+        body_actions = [
+            action
+            for action in pilot.app.query(".library-canvas-action")
+            if action.id != "library-media-review-sets"
+        ]
+        assert len(body_actions) == 1, body_actions
+        sets = pilot.app.query_one("#library-media-review-sets", Button)
+        assert sets.display is True and not sets.disabled
 
 
 @pytest.mark.asyncio
@@ -3224,3 +3235,121 @@ async def test_select_mode_marker_replaces_the_review_state_slot_in_place():
         canvas.apply_compact_presentation(True)
         await pilot.pause()
         assert slots() == ["✓", "·", " "]
+
+
+# ---------------------------------------------------------------------------
+# task-31955 AC#3: the analysed marker AND the keyword reason survive the
+# in-place density and select-mode rebuilds. Both live in the row's stashed
+# `secondary`, and both in-place patchers re-derive the label from it -- the
+# parity this pins is that neither patcher drops half the line.
+# ---------------------------------------------------------------------------
+
+_MARKED_SECONDARY = "article \u00b7 2m \u00b7 analysed \u00b7 keyword: notes"
+
+
+def _marked_secondary_state(*, select_mode: bool) -> LibraryMediaCanvasState:
+    rows = (
+        LibraryMediaRow(
+            media_id="1",
+            title="Opening remarks",
+            media_type="article",
+            secondary=_MARKED_SECONDARY,
+            selected=True,
+        ),
+    )
+    return LibraryMediaCanvasState(
+        rows=rows,
+        type_options=("All", "article"),
+        active_type="All",
+        status_copy="",
+        empty_copy="",
+        selected_id="1",
+        preview_lines=(),
+        count=len(rows),
+        select_mode=select_mode,
+    )
+
+
+class _MarkedSecondaryCanvasApp(ConsolidatedCSSApp):
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_marked_secondary_state(select_mode=False),
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_row_reason_markers_survive_the_in_place_density_and_select_toggles():
+    """No recompose: both patchers rebuild the label from the same stash."""
+    app = _MarkedSecondaryCanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one("#library-media-canvas", LibraryMediaCanvas)
+
+        def label() -> str:
+            return str(canvas.query_one(".library-media-row", Button).label)
+
+        def assert_marked(where: str) -> None:
+            painted = label()
+            assert "\u00b7 analysed" in painted, (where, painted)
+            assert "\u00b7 keyword: notes" in painted, (where, painted)
+
+        assert_marked("composed")
+        for compact in (True, False):
+            canvas.apply_compact_presentation(compact)
+            await pilot.pause()
+            assert_marked(f"density={compact}")
+        for select_mode in (True, False):
+            canvas.apply_reader_state(_marked_secondary_state(select_mode=select_mode))
+            await pilot.pause()
+            assert_marked(f"select_mode={select_mode}")
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 item 4): a bulk action's label must not move when
+# its enabled state flips. The "○ " disabled marker is part of the label, so
+# crossing 0 -> 1 selected shifted every bulk action two cells left, right
+# under the cursor that had just crossed it.
+# ---------------------------------------------------------------------------
+
+
+def _label_column(host, button, word: str) -> int:
+    """Absolute column where ``word`` is painted inside ``button``."""
+    painted = _painted(host, button.region)
+    assert word in painted, (word, painted)
+    return button.region.x + painted.index(word)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_bulk_action_labels_hold_their_column_across_the_first_selection(size):
+    """The Delete column is painted identically before and after selecting."""
+    host = _row_click_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _enter_media_select_mode(screen, pilot)
+
+        delete = screen.query_one("#library-media-delete-selected", Button)
+        export = screen.query_one("#library-media-export-selected", Button)
+        assert delete.disabled and export.disabled
+        before = (
+            _label_column(host, delete, "Delete"),
+            _label_column(host, export, "Export"),
+        )
+
+        await pilot.press("space")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-media-delete-selected", Button
+            ).disabled,
+            message="Space never selected the focused row.",
+        )
+        await pilot.pause()
+
+        delete = screen.query_one("#library-media-delete-selected", Button)
+        export = screen.query_one("#library-media-export-selected", Button)
+        after = (
+            _label_column(host, delete, "Delete"),
+            _label_column(host, export, "Export"),
+        )
+        assert after == before, (before, after)

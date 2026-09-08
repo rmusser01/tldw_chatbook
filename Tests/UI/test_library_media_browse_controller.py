@@ -9,10 +9,12 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.DB.Client_Media_DB_v2 import ConflictError, DatabaseError
 from tldw_chatbook.Library.library_media_state import MediaBrowseScope
 from tldw_chatbook.UI.Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
     _redact_paths,
+    _retry_failure_reason,
 )
 from Tests.UI.library_media_rows import summary_row
 
@@ -102,6 +104,12 @@ async def test_controller_sends_exact_summary_coordinates_and_full_scope() -> No
             "limit": 20,
             "offset": 20,
             "library_summary": True,
+            # Qodo on #2475 (item 20): the reason probe is opt-in, and this
+            # page fetch is the one caller that renders the reasons -- so it
+            # is the one caller that asks. The review-set enumeration loop
+            # pages the same scope without this key (pinned in
+            # Tests/UI/test_review_set_walker.py).
+            "match_reasons": True,
             "sort_by": "title_asc",
             "media_types": ["video"],
         }
@@ -465,7 +473,8 @@ async def test_mutation_refresh_clamps_once_after_page_two_becomes_empty() -> No
         (asyncio.TimeoutError(), "timed out"),
         (OSError("database is locked"), "database is locked"),
         (sqlite3.OperationalError("database is locked"), "database is locked"),
-        (RuntimeError("boom"), "RuntimeError"),
+        # task-31944: the fallback reason, not the class name.
+        (RuntimeError("boom"), "an unexpected error"),
     ),
 )
 @pytest.mark.asyncio
@@ -570,7 +579,8 @@ async def test_shrink_and_first_load_failure_copies_are_untouched() -> None:
     (
         (TimeoutError(), "timed out", "warning"),
         (sqlite3.OperationalError("database is locked"), "database is locked", "error"),
-        (RuntimeError("boom"), "RuntimeError", "error"),
+        # task-31944: the fallback reason, not the class name.
+        (RuntimeError("boom"), "an unexpected error", "error"),
     ),
 )
 async def test_page_failure_publishes_a_recovery_state_with_the_reason(
@@ -650,7 +660,7 @@ async def test_facet_failure_publishes_its_own_recovery_state_and_clears_on_succ
 
     state = controller.failure
     assert state is not None
-    assert state.message == "Couldn't load media types · RuntimeError"
+    assert state.message == "Couldn't load media types · an unexpected error"
     assert state.severity == "error"
     assert state.retry_id == "library-media-retry"
     assert controller.facet_error_copy == "Couldn't load media types. Retry."
@@ -927,3 +937,74 @@ async def test_retry_retries_both_fences_when_both_have_failed() -> None:
     assert controller.type_options == ("video",)
     assert controller.applied_result is not None
     assert controller.failure is None
+
+
+# --- task-31944: the exception -> reason map --------------------------------
+
+
+@pytest.mark.parametrize(
+    ("exc", "reason"),
+    (
+        # ``asyncio.TimeoutError`` IS ``TimeoutError`` on 3.11+, and both
+        # are ``OSError`` subclasses -- the ordering pin.
+        (TimeoutError(), "timed out"),
+        (asyncio.TimeoutError(), "timed out"),
+        # An OS/SQLite message is the reader's own words and survives.
+        (OSError("database is locked"), "database is locked"),
+        (sqlite3.OperationalError("database is locked"), "database is locked"),
+        (ConnectionResetError("connection reset by peer"), "connection reset by peer"),
+        # ...and the message-less forms of the same classes read as their
+        # kind of failure, never as "ConnectionRefusedError".
+        (ConnectionError(), "the connection failed"),
+        (ConnectionRefusedError(), "the connection failed"),
+        (sqlite3.DatabaseError(), "the database could not be read"),
+        (sqlite3.IntegrityError(), "the database could not be read"),
+        # A database error outside the OS/SQLite message branch still names
+        # the database rather than its class.
+        (sqlite3.DatabaseError("file is not a database"), "the database could not be read"),
+        # Reviewer gap: Client_Media_DB_v2 wraps every sqlite3 failure in
+        # its OWN DatabaseError before it ever reaches this mapper -- that
+        # app-level class must read the same as a direct sqlite3.Error.
+        (DatabaseError("Media search failed."), "the database could not be read"),
+        # ...but an optimistic-lock ConflictError (a DatabaseError subclass)
+        # is not "could not be read" -- it stays on the fallback.
+        (ConflictError("Conflict detected: Record modified concurrently."), "an unexpected error"),
+        # AC#2: anything unmapped keeps a reason a reader can act on.
+        (RuntimeError("boom"), "an unexpected error"),
+        (ValueError(), "an unexpected error"),
+    ),
+)
+def test_retry_failure_reason_maps_the_classes_that_occur(
+    exc: BaseException, reason: str
+) -> None:
+    """task-31944 AC#1/#2/#3: "Couldn't retry · RuntimeError" told the reader
+    nothing they could act on. The classes that actually occur here (timeout,
+    connection, database) map to a human reason, and everything else gets a
+    usable fallback instead of its class name.
+    """
+    assert _retry_failure_reason(exc) == reason
+
+
+def test_retry_failure_reason_never_leaks_an_unmapped_exception_text() -> None:
+    """task-31944 AC#2 keeps PR G's privacy rule: the fallback must not
+    become a way for arbitrary exception text (which can carry a private
+    path) to reach the screen -- only OS/SQLite messages, path-redacted, do.
+    """
+    leaky = RuntimeError("/Users/someone/Private/media.db exploded")
+
+    reason = _retry_failure_reason(leaky)
+
+    assert reason == "an unexpected error"
+    assert "Private" not in reason
+    assert "media.db" not in reason
+
+
+def test_retry_failure_reason_never_leaks_a_database_error_message() -> None:
+    """Reviewer gap: ``DatabaseError``'s own message (e.g. "Media search
+    failed.") must never reach the screen -- only the mapped literal, same
+    privacy rule as every other mapped class.
+    """
+    reason = _retry_failure_reason(DatabaseError("Media search failed."))
+
+    assert reason == "the database could not be read"
+    assert "Media search failed" not in reason

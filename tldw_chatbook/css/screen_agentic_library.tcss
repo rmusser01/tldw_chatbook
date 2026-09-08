@@ -173,15 +173,12 @@ $ds-library-source-browser-width: 31;
     min-width: 0;
 }
 
-/* The three width declarations are a fallback only: every mounted grip sets
-   its width as an INLINE style from its destination profile's `grip_width`
-   (task-31633 AC#2), and an inline style outranks this rule -- so for Media,
-   whose grips are one cell, these three lines are dead. Keep them in step
-   with `PANE_GRIP_WIDTH` (the shared default every other reader uses). */
+/* No width here (task-31952 AC#1). Every mounted grip sets its width as an
+   INLINE style from the resolved layout's `grip_width` -- the same number the
+   resolver held back for it -- and an inline style outranks this rule, so the
+   `width/min-width/max-width: 5` fallback that used to sit here was dead for
+   every destination and a second, stale answer for the four on one cell. */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {
-    width: 5;
-    min-width: 5;
-    max-width: 5;
     height: 100%;
     min-height: 0;
     margin: 0;
@@ -200,7 +197,8 @@ $ds-library-source-browser-width: 31;
 }
 
 /* task-31276: no focus outline here. The grip is as TALL AS THE SHELL (5
-   columns wide then, one for Media since task-31633 AC#2), so an outline can
+   columns wide then, one on the four readers that opted in since task-31633
+   AC#2 and task-31951), so an outline can
    only ever paint its top and bottom rows -- and the top row sits on the
    Reader's identity line, where such a rule reads as a rendering artifact at
    the pane join, not as focus (live: `┐─────Local Media item`, 14 captures -- and it persists,
@@ -896,6 +894,21 @@ $ds-library-source-browser-width: 31;
     text-style: bold underline;
 }
 
+/* task-31983 (critique #6 P1, AC#4): the conversations canvas had NO
+   dedicated `:focus` rule, so a focused row fell back to the generic
+   `*:focus{outline:solid}` and (like the media list) read the same as the
+   `-selected` background. Same focus-only left-edge cue as
+   `.library-media-row:focus` -- border replaces the 1-col left padding so
+   the label holds; `outline: none` suppresses the generic fallback. */
+.library-conversation-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* task-4025: the Trash view's rows share the media list's row contract
    verbatim (one comma-joined rule, not a forked copy) -- the trash rows
    keep their OWN class only so `_focus_library_list_entry`'s
@@ -929,14 +942,24 @@ $ds-library-source-browser-width: 31;
 /* task-2856 AC1/AC4: entering the Media list now parks real DOM focus on
    the first row and Up/Down move it between rows -- previously this class
    had no dedicated ``:focus`` rule at all and fell back to the generic
-   ``*:focus{outline:solid}`` (core/_reset.tcss). Same readable contract
-   ``.library-media-row-selected`` above already uses; `outline: none`
-   suppresses the generic fallback so this is the only cue (never
-   `outline: heavy`, which eats a compact row's label -- round-3 lesson). */
+   ``*:focus{outline:solid}`` (core/_reset.tcss). `outline: none` suppresses
+   the generic fallback (never `outline: heavy`, which eats a compact row's
+   label -- round-3 lesson).
+   task-31983 (critique #6 P1): `-selected` above uses this SAME background,
+   so focus and selection were indistinguishable -- the row the keyboard was
+   ON looked exactly like the open row and arrow-nav read as a dead key. The
+   `border-left: thick $ds-action-focus` bar is the focus-only, non-colour
+   cue `-selected` does NOT carry, so the two stay distinct even when a row
+   is both focused AND selected (arrow onto the open row). The left edge
+   replaces the 1-column left padding (`padding: 0 1` -> `0 1 0 0`), so the
+   label neither shifts nor is clipped and the row never jumps focus<->blur --
+   the house focus convention ($ds-control-edge comment, _variables.tcss). */
 .library-media-row:focus, .library-media-trash-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -958,11 +981,14 @@ $ds-library-source-browser-width: 31;
 
 /* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
    above -- entering the Notes list now parks DOM focus on the first row and
-   Up/Down move it between rows. */
+   Up/Down move it between rows. task-31983: same focus-only border-left cue
+   (padding compensates so the label holds), distinct from any selection. */
 .library-notes-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -992,10 +1018,14 @@ $ds-library-source-browser-width: 31;
     color: $ds-text-primary;
 }
 
+/* task-31983: same focus-only border-left cue; this row is height 1, so the
+   padding swap (0 1 -> 0 1 0 0) keeps the single label cell intact. */
 .library-notes-folder-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -1077,11 +1107,14 @@ $ds-library-source-browser-width: 31;
 
 /* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
    above -- entering the Prompts list now parks DOM focus on the first row
-   and Up/Down move it between rows. */
+   and Up/Down move it between rows. task-31983: same focus-only border-left
+   cue (padding compensates so the label holds), distinct from selection. */
 .library-prompt-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -2110,6 +2143,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-31981: the always-visible reason line under a blocked Generate
+   (Reader Analysis pane) or Analyze (select mode) -- mirrors the Export
+   gate's inline "No destination chosen" line so a keyboard-first user
+   reads WHY the action is off, not just a hover tooltip. */
+.library-media-action-reason {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
 .library-export-field {
     width: 100%;
     height: 3;
@@ -2435,6 +2479,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #library-media-viewer-content-text,
 #library-media-viewer-content-markdown {
     max-width: 92;
+}
+
+/* task-31635 (critique #5 item 14): Textual's ``MarkdownH1`` DEFAULT_CSS is
+   ``content-align: center middle``, so a document's own title floated to the
+   middle of the 92-cell reading measure while every other line -- H2s
+   included -- began at its left edge; the heading read as a detached banner
+   rather than as the first line of the text it introduces. Scoped to the
+   Library Reader's Markdown body, so every other Markdown surface in the app
+   keeps Textual's default. */
+#library-media-viewer-content-markdown MarkdownH1 {
+    content-align: left middle;
 }
 
 /* task-31272 (critique #4, B cap_57): F6's first Reader stop IS this box

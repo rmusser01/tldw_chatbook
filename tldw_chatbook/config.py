@@ -5227,6 +5227,20 @@ max_speakers = 8
 # of always pre-naming them as you. Off by default -- turning it on means a
 # mic segment may render as a diarized speaker instead of your own name.
 diarize_mic_channel = false
+# Tag your own speech with your display name using an enrolled voiceprint
+# ("Enroll my voice" on the Meetings screen). No effect until you enroll one,
+# and never used in a plain call, where the mic channel is already you.
+voice_match = true
+# Cosine-distance ceiling for calling a cluster you. Lower = stricter. A
+# starting value: raise it if you are never matched, lower it if someone else
+# is matched as you.
+voice_match_threshold = 0.2
+# Seconds of your speech a cluster must accumulate before it can be matched
+# at all, so one short window can never claim to be you.
+voice_match_min_seconds = 4
+# After a meeting that matched you cleanly, offer to learn from it and
+# improve the stored voiceprint (at most one offer per meeting).
+voice_learn_offer = true
 
 [transcription]
 # Default transcription provider
@@ -8595,6 +8609,7 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
 
 # --- CLI Database and Log File Path Getters ---
 BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli"  # Renamed for clarity
+_DEFAULT_DATA_FALLBACK_DIRECTORY = ".tldw_cli-data"
 # NOTE: BASE_DATA_DIR_CLI is a module-level constant frozen at IMPORT time
 # (kept for backward compatibility -- some callers reference it directly).
 # get_user_data_dir()'s fallback below does NOT use it; it resolves the
@@ -8617,6 +8632,79 @@ def _default_base_data_dir() -> Path:
     home = os.environ.get("HOME")
     base = Path(home).expanduser() if home else Path.home()
     return base / ".local" / "share" / "tldw_cli"
+
+
+def _data_root_entry_exists(path: Path) -> bool:
+    """Count links as existing data; never interpret access errors as absence."""
+    path = validate_path_simple(path, require_exists=False, probe_existing=False)
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _selected_default_base_data_dir() -> Path:
+    """Read the durable default-root selection without creating directories."""
+    conventional = _default_base_data_dir()
+    fallback = conventional.parents[2] / _DEFAULT_DATA_FALLBACK_DIRECTORY
+    if not _data_root_entry_exists(fallback):
+        return conventional
+    if _data_root_entry_exists(conventional):
+        raise PrivatePathError(
+            PrivatePathResult(
+                conventional,
+                PrivatePathStatus.OPERATION_FAILED,
+                reason="ambiguous_default_data_roots",
+            )
+        )
+    return fallback
+
+
+@contextmanager
+def _default_data_root_lock() -> Iterator[None]:
+    """Serialize root selection and profile creation across starts (ADR-127)."""
+    lock_path = validate_path_simple(
+        _default_base_data_dir().parents[2] / ".tldw_cli-data-root.lock",
+        require_exists=False,
+        probe_existing=False,
+    )
+    try:
+        create_private_text(lock_path, "")
+    except FileExistsError:
+        pass
+    # Keep this inode stable across releases and across config-file choices.
+    with open_private_text_append_stream(lock_path) as stream:
+        portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
+        try:
+            yield
+        finally:
+            portalocker.unlock(stream)
+
+
+def _secure_default_data_dir() -> Path:
+    """Recover a fresh root while the caller holds _default_data_root_lock."""
+    selected = _selected_default_base_data_dir()
+    try:
+        return secure_private_directory(
+            selected, create=True, application_owned=True
+        ).lexical_path
+    except PrivatePathError as exc:
+        conventional = _default_base_data_dir()
+        if (
+            selected != conventional
+            or exc.result.status is not PrivatePathStatus.UNSAFE_PARENT
+            or exc.result.reason != "shared_writable_parent"
+            or _data_root_entry_exists(conventional)
+        ):
+            raise
+        # Only a missing conventional root can select a new location. Existing
+        # data, explicit overrides and unrelated failures must never be hidden.
+        # The unchanged guard also refuses a shared/foreign/symlinked HOME.
+        fallback = conventional.parents[2] / _DEFAULT_DATA_FALLBACK_DIRECTORY
+        return secure_private_directory(
+            fallback, create=True, application_owned=True
+        ).lexical_path
 
 
 def get_api_key(api_name: str) -> Optional[str]:
@@ -8716,21 +8804,19 @@ def get_user_data_dir() -> Path:
     configured_data_dir = get_cli_setting("paths", "data_dir", None)
     if configured_data_dir is None:
         configured_data_dir = get_cli_setting("Paths", "data_dir", None)
-    if configured_data_dir:
-        base_data_dir = lexical_path(configured_data_dir)
-        verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
-    else:
-        base_data_dir = secure_private_directory(
-            _default_base_data_dir(),
+    with ExitStack() as stack:
+        if configured_data_dir:
+            base_data_dir = lexical_path(configured_data_dir)
+            verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
+        else:
+            stack.enter_context(_default_data_root_lock())
+            base_data_dir = _secure_default_data_dir()
+        user_dir = base_data_dir / user_folder
+        return secure_private_directory(
+            user_dir,
             create=True,
             application_owned=True,
         ).lexical_path
-    user_dir = base_data_dir / user_folder
-    return secure_private_directory(
-        user_dir,
-        create=True,
-        application_owned=True,
-    ).lexical_path
 
 
 def _get_custom_database_path(

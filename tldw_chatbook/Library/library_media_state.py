@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, Sequence
 
+from rich.cells import cell_len, chop_cells
+
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
@@ -38,13 +40,17 @@ LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP = "Trash is still loading."
 LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP = "Trash could not be loaded."
 
 LIBRARY_MEDIA_BROWSE_PAGE_SIZE = 20
-#: Characters of a match-reason keyword a row shows before eliding
+#: Terminal CELLS of a match-reason keyword a row shows before eliding
 #: (task-28008). It keeps the line SHORT; it does not make it fit
 #: everywhere. At the Items pane's 36-cell floor a keyword row still clips
 #: at the pane edge (pinned by
 #: ``test_keyword_reason_clips_at_the_36_cell_items_floor``), and an
 #: analysed + keyword row clips at the default width too.
-_KEYWORD_REASON_CHARS = 10
+#:
+#: task-31955: cells, not code points. Ten CJK characters paint TWENTY
+#: cells, so a code-point cap handed a CJK keyword twice the budget every
+#: other keyword got.
+_KEYWORD_REASON_CELLS = 10
 _SQLITE_INTEGER_MAX = 2**63 - 1
 _MEDIA_BROWSE_SORTS = frozenset(
     {
@@ -171,6 +177,32 @@ def _freeze_media_summary_value(value: Any) -> Any:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return tuple(_freeze_media_summary_value(item) for item in value)
     raise TypeError("Media summary values must be JSON-like immutable data.")
+
+
+def library_media_int_backing_id(media_id: object) -> int | None:
+    """The positive integer backing id behind a Library media display id.
+
+    task-31962: ``library_screen`` grew three spellings of this one
+    coercion (the row re-projection's, the review-selected handler's inline
+    ``rsplit``, and the review cursor's ``int()``), which is how the next
+    change to the id shape half-lands. This is the single owner.
+
+    Args:
+        media_id: A canonical ``local:media:<id>`` display id, a bare
+            integer id in either text or int form, or anything else.
+
+    Returns:
+        The positive backing id, or ``None`` when the value carries none --
+        a legacy ``media-<n>`` row id, an unparseable tail, ``None``, or a
+        non-positive id (no media row has one).
+    """
+    if media_id is None:
+        return None
+    try:
+        backing_id = int(str(media_id).rsplit(":", 1)[-1])
+    except (TypeError, ValueError):
+        return None
+    return backing_id if backing_id > 0 else None
 
 
 def validate_media_browse_items(
@@ -880,6 +912,11 @@ class LibraryMediaTrashState:
         notice: Restore feedback line (e.g. "Restored 'Title'."), "" when
             nothing to report. Feedback only -- never a receipt: ADR-055's
             receipts accompany destruction, and restore is recovery.
+        reference_now: The instant every row's "trashed <age>" was measured
+            against (task-31635 fix round 1). Kept so a surface derived
+            from the SAME state -- the permanent-delete confirmation -- can
+            date its captured item against the same clock instead of
+            re-reading `now` and disagreeing by an hour at a boundary.
     """
 
     rows: tuple[LibraryMediaTrashRow, ...]
@@ -890,6 +927,28 @@ class LibraryMediaTrashState:
     loading: bool = False
     error: str = ""
     notice: str = ""
+    reference_now: datetime | None = None
+
+
+def media_trash_age_copy(trash_date: str | None, *, now: datetime | None = None) -> str:
+    """Render one trash timestamp the way the Trash list renders it.
+
+    task-31635 (critique #5 item 2): the rows say ``trashed 6h`` and the
+    permanent-delete confirmation said ``2026-08-11T11:00:00+00:00``, so
+    one screen named the same instant two ways and neither matched the
+    other. Both now read this.
+
+    Args:
+        trash_date: ISO-8601-ish deletion timestamp, or ``None``.
+        now: Reference time; defaults to the current UTC time.
+
+    Returns:
+        ``"trashed <age>"``, or ``""`` when the value is absent or
+        unparseable (the caller decides what to say instead).
+    """
+    reference = now if now is not None else datetime.now(timezone.utc)
+    age = format_console_relative_age(str(trash_date or ""), now=reference)
+    return f"trashed {age}" if age else ""
 
 
 def build_library_media_trash_state(
@@ -950,11 +1009,10 @@ def build_library_media_trash_state(
 
     rows = []
     for media_id, title, media_type, trash_date in entries:
-        age = format_console_relative_age(trash_date, now=reference_now)
         # The list's own secondary vocabulary ("{type} · {age}" / "{type}"
         # / "media"), with the age labelled for what it is here: when the
         # item was trashed, not when it was updated.
-        trashed_age = f"trashed {age}" if age else ""
+        trashed_age = media_trash_age_copy(trash_date, now=reference_now)
         rows.append(
             LibraryMediaTrashRow(
                 media_id=media_id,
@@ -986,6 +1044,7 @@ def build_library_media_trash_state(
         loading=resolved_loading,
         error=str(error or ""),
         notice=str(notice or ""),
+        reference_now=reference_now,
     )
 
 
@@ -1091,7 +1150,27 @@ def build_library_media_browse_state(
             _record_title(selected),
             f"Type: {media_type}",
             f"Updated: {age or 'unknown'}",
+            # task-31957: the row says "· analysed" or stays silent (a
+            # 36-cell line cannot spend cells saying "no"); this pane is a
+            # labelled line per fact, so it answers both ways with the
+            # row's own word instead of leaving the two surfaces to
+            # disagree about the same item. Kept to the pane's own narrow
+            # measure -- inside the Items pane it has ~15 cells of text
+            # width, which "Analysis: analysed" (18) would wrap.
+            f"Analysed: {'yes' if selected['has_analysis'] else 'no'}",
         )
+    # task-31635 (critique #5 item 8, declined-and-announced): a filter that
+    # narrows to exactly one row has that row loaded into the Reader before
+    # the user asks -- deliberate, and pinned both ways (the first result is
+    # selected; clearing the filter restores the previous anchor). Saying so
+    # is the honest half the list was missing; changing it would break the
+    # pinned behaviour. Only for a single hit: with several rows nothing
+    # surprising happened, and the line would just spend a row.
+    status_copy = (
+        "1 result · Enter opens"
+        if result.scope.query and len(rows) == 1
+        else ""
+    )
     empty_copy = ""
     if not rows:
         if result.scope.query:
@@ -1109,7 +1188,7 @@ def build_library_media_browse_state(
         rows=rows,
         type_options=(None, *normalized_types),
         active_type=result.scope.media_type,
-        status_copy="",
+        status_copy=status_copy,
         empty_copy=empty_copy,
         selected_id=resolved_selected_id,
         preview_lines=preview_lines,
@@ -1179,14 +1258,15 @@ def _secondary_text(
       'document · 5m · analysed' (24 cells) fits.
     - task-28008 (critique #5 P2): a row the browse filter found through a
       keyword alone gets a trailing ' · keyword: <term>', the term capped
-      at ten characters so an arbitrarily long tag cannot run away with
-      the line. The cap does NOT buy a fit: at the Items pane's 36-cell
-      floor 'article · 2m · keyword: notes' already clips at the pane edge,
-      and 'type · age · analysed · keyword: term' clips at the default
-      width too -- the cap bounds the damage, it does not remove it. It is
-      unconditional (not width-aware) so the line does not change under the
-      in-place density and select-mode rebuilds, which re-derive the label
-      from this text.
+      at ten CELLS (task-31955 -- a code-point cap let ten CJK characters
+      take twenty) so an arbitrarily long tag cannot run away with the
+      line. The cap does NOT buy a fit: at the Items pane's 36-cell floor
+      'article · 2m · keyword: notes' already clips at the pane edge, and
+      'type · age · analysed · keyword: term' clips at the default width
+      too -- the cap bounds the damage, it does not remove it. The cap is
+      the term's OWN width, not the pane's, so the line does not change
+      under the in-place density and select-mode rebuilds, which re-derive
+      the label from this text.
     """
     has_type = bool(media_type)
     has_age = bool(age)
@@ -1201,10 +1281,30 @@ def _secondary_text(
     if analysed:
         text = f"{text} · analysed"
     if keyword:
-        term = keyword[:_KEYWORD_REASON_CHARS]
-        if len(keyword) > _KEYWORD_REASON_CHARS:
-            term += "…"
-        text = f"{text} · keyword: {term}"
+        # ``chop_cells`` cuts by CELLS, so a wide character costs the two
+        # cells it actually paints and a ZWJ emoji cluster is never split
+        # mid-sequence (task-31955). Rich is already a hard dependency and
+        # ``console_prompt_queue`` uses the same module, so this adds
+        # nothing to install.
+        # ponytail: rich's splitter is not full UAX #29 -- a regional-
+        # indicator (flag) PAIR can halve at an odd cut offset. The CELL
+        # budget is what holds; pinned as a known ceiling by
+        # ``test_flag_pair_keyword_is_cut_on_a_cell_boundary_not_a_cluster_one``.
+        # ``chop_cells`` returns NOTHING for text that paints nothing (a
+        # lone ZWJ or combining mark survives the caller's non-empty
+        # check), so the whole keyword is the fallback -- a zero-width one
+        # has nothing to cut.
+        head = next(iter(chop_cells(keyword, _KEYWORD_REASON_CELLS)), keyword)
+        # A cut landing on a space would paint "abcdefghi …"; the space is
+        # the cut's own artefact, not part of the term.
+        term = head.rstrip()
+        # A cut head with no VISIBLE cells (zero-width, or nothing but
+        # spaces) leaves the label introducing nothing -- "keyword: " or,
+        # past the cap, "keyword: …". Say nothing instead.
+        if cell_len(term.strip()):
+            if head != keyword:
+                term += "…"
+            text = f"{text} · keyword: {term}"
     return text
 
 

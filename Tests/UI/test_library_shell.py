@@ -60,6 +60,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
@@ -559,7 +560,7 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
                     title=row.get("title"),
                     media_type=row.get("type"),
                     updated_at=row.get("last_modified"),
-                    has_analysis=bool(row.get("has_analysis")),
+                    has_analysis=self._has_analysis(row),
                 )
                 for index, row in enumerate(page, start=offset)
             ],
@@ -571,6 +572,28 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         if reasons:
             payload["match_reasons"] = reasons
         return payload
+
+    @staticmethod
+    def _has_analysis(row) -> bool:
+        """Mirror the real ``has_analysis`` projection (task-31635 Task 3).
+
+        Production projects it in SQL from the NEWEST ``DocumentVersions``
+        row's analysis text, so a fake that read only a hand-set
+        ``has_analysis`` flag could not see an analysis this same fake had
+        just persisted through ``save_analysis_version`` -- and every test
+        of "the row learns about a save" would have been passing against a
+        page that structurally could not learn.
+        """
+        if row.get("has_analysis"):
+            return True
+        versions = row.get("versions") or ()
+        # NEWEST only, like the projection: this fake's
+        # ``_append_document_version`` prepends, so index 0 is the newest --
+        # a cleared analysis must read as cleared, not as "some old version
+        # had one".
+        return bool(
+            versions and str(versions[0].get("analysis_content") or "").strip()
+        )
 
     def _match_reasons(self, page, query, offset) -> dict[str, str]:
         """Mirror task-28008's keyword-ONLY match reasons for the page.
@@ -10670,7 +10693,10 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
             generate = screen.query_one("#library-media-analysis-generate", Button)
             assert generate.disabled is True
             assert str(generate.label) == "○ Generate"
-            assert str(generate.tooltip) == "No analysis provider is configured."
+            assert str(generate.tooltip) == (
+                "No analysis provider is configured "
+                "· Set one in Settings ▸ Providers & Models."
+            )
             screen.handle_library_media_analysis_generate(
                 SimpleNamespace(stop=lambda: None)
             )
@@ -10782,6 +10808,21 @@ def _painted_text(host, region) -> str:
         strips[y].crop(region.x, region.right).text
         for y in range(region.y, min(region.bottom, len(strips)))
     )
+
+
+def _painted_label_column(host, button) -> int:
+    """Absolute column of the first glyph ``button`` paints (task-31959).
+
+    The Library's select-mode action rows clip their labels at the pane's
+    40-column floor, so the whole word is often not painted; what a user
+    sees move is where the label STARTS. The "○ " disabled marker is part
+    of the label, so an unpadded enabled spelling starts two cells left of
+    the disabled one it replaces.
+    """
+    painted = _painted_text(host, button.region)
+    stripped = painted.lstrip()
+    assert stripped, (button.id, painted)
+    return button.region.x + (len(painted) - len(stripped))
 
 
 def _row_is_painted_focused(host, row) -> bool:
@@ -10949,7 +10990,7 @@ async def test_library_shell_media_content_search_shows_match_count():
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 1 of 2 matches"
+        assert status == "Match 1 of 2"
         assert screen._library_media_content_query == "budget"
         assert screen._library_media_content_match_index == 0
 
@@ -10977,7 +11018,7 @@ async def test_library_shell_media_content_search_enter_advances_to_next_match()
         assert screen._library_media_content_match_index == 1
         assert str(
             screen.query_one("#library-media-content-search-status").renderable
-        ) == "Match 2 of 2 matches"
+        ) == "Match 2 of 2"
 
         # Wraps back to the first match.
         await pilot.press("enter")
@@ -11030,7 +11071,7 @@ async def test_library_shell_media_content_search_one_mark_per_matching_line():
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 1 of 1 matches"
+        assert status == "Match 1 of 1"
         # ...and exactly one styled mark in the body, so count == visible marks.
         content = screen.query_one(
             "#library-media-viewer-content-text", VirtualizedRawContent
@@ -11114,7 +11155,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 2 of 2 matches"
+        assert status == "Match 2 of 2"
 
         # Next wraps back around to the first match.
         screen.query_one("#library-media-content-search-next").press()
@@ -11125,7 +11166,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 1 of 2 matches"
+        assert status == "Match 1 of 2"
 
         # Prev wraps backwards to the last match.
         screen.query_one("#library-media-content-search-prev").press()
@@ -11136,7 +11177,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 2 of 2 matches"
+        assert status == "Match 2 of 2"
 
 
 @pytest.mark.asyncio
@@ -11475,7 +11516,7 @@ async def test_library_shell_media_viewer_inplace_navigation_holds_at_compact_si
             "#library-media-viewer-content", LibraryMediaContentBody
         )
         assert status.region.bottom <= body.region.y
-        assert str(status.render()) == "Match 1 of 101 matches"
+        assert str(status.render()) == "Match 1 of 101"
 
         parses_before_navigation = len(markdown_updates)
         next_button.focus()
@@ -11494,7 +11535,7 @@ async def test_library_shell_media_viewer_inplace_navigation_holds_at_compact_si
         assert screen.query_one("#library-media-content-search-next") is next_button
         assert screen.query_one("#library-media-content-search-status") is status
         assert screen.focused is next_button
-        assert str(status.render()) == "Match 2 of 101 matches"
+        assert str(status.render()) == "Match 2 of 101"
         assert len(markdown_updates) == parses_before_navigation
 
 
@@ -11701,7 +11742,7 @@ async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size()
             print(f"TASK-15774 row {index:02d} |{row.rstrip()}")
 
         assert len(rows) == 24
-        assert "Match 1 of 101 matches" in painted
+        assert "Match 1 of 101" in painted
         assert "◀ Prev" in painted
         assert "Next ▶" in painted
         # The chrome and the content region never overlap (the 170x48
@@ -11715,7 +11756,7 @@ async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size()
         await pilot.pause()
         await pilot.pause()
         painted_after_navigation = "\n".join(_painted_rows(screen))
-        assert "Match 2 of 101 matches" in painted_after_navigation
+        assert "Match 2 of 101" in painted_after_navigation
         assert "◀ Prev" in painted_after_navigation
         assert "Next ▶" in painted_after_navigation
 
@@ -11775,7 +11816,7 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
         assert controls_active.region.y == inactive_y
         assert header.region.y < controls_active.region.y
         assert len(screen.query("#library-media-content-search")) == 1
-        assert "Match 1 of 101 matches" in "\n".join(_painted_rows(screen))
+        assert "Match 1 of 101" in "\n".join(_painted_rows(screen))
 
         # Cleared: the chrome hides again and nothing has moved.
         search_input = screen.query_one("#library-media-content-search", Input)
@@ -11846,7 +11887,7 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         visible_strings = tuple(
             text
             for text in (
-                "Match 1 of 101 matches",
+                "Match 1 of 101",
                 "◀ Prev",
                 "Next ▶",
                 "Large budget document",
@@ -11865,7 +11906,7 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         assert status.region.bottom <= body.region.y
         assert previous.region.bottom <= body.region.y
         assert next_button.region.bottom <= body.region.y
-        assert "Match 1 of 101 matches" in painted
+        assert "Match 1 of 101" in painted
         assert "◀ Prev" in painted
         assert "Next ▶" in painted
         assert heading_row is not None
@@ -12925,7 +12966,11 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 # task-31220: the post-mutation refresh failed, and the copy
                 # says so instead of repainting the unchanged "Media changed"
                 # line that made recovery read as inert. Rows stay openable.
-                assert controller.stale_copy == "Couldn't retry · RuntimeError"
+                # task-31944: the mapped fallback reason, not the
+                # exception class name the reader could not act on.
+                assert controller.stale_copy == (
+                    "Couldn't retry · an unexpected error"
+                )
                 assert not screen.query_one(
                     "#library-media-row-0", Button
                 ).disabled
@@ -16153,10 +16198,14 @@ async def test_source_snapshot_timeout_logs_one_warning_with_a_deadline_marker(
 
 
 @pytest.mark.asyncio
-async def test_source_snapshot_hard_failure_paints_an_error_callout_named_by_class():
-    """task-31632 AC#2/#3: a hard failure is tinted as an error and names the
-    exception CLASS as its reason -- never the exception text, which can carry
-    a private path (the ``private-media-failure`` rule).
+async def test_source_snapshot_hard_failure_paints_an_error_callout_with_a_reason():
+    """task-31632 AC#2/#3: a hard failure is tinted as an error and carries a
+    reason -- never the exception text, which can carry a private path (the
+    ``private-media-failure`` rule).
+
+    task-31944: that reason was the exception CLASS name ("RuntimeError"),
+    which told the reader nothing they could act on; the shared mapper now
+    gives an unmapped class the same fallback the Media callout uses.
     """
     app = _library_source_failure_app(_RaisingLibraryNotesScopeService())
     host = LibraryHarness(app)
@@ -16170,7 +16219,8 @@ async def test_source_snapshot_hard_failure_paints_an_error_callout_named_by_cla
         )
         state = screen._library_lookup_recovery_state
         assert state.severity == "error"
-        assert state.why == "RuntimeError"
+        assert state.why == "an unexpected error"
+        assert "private-snapshot-failure" not in _visible_text(screen)
         assert state.unavailable_what == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
         assert state.retry_id == "library-source-retry"
 
@@ -16230,6 +16280,278 @@ async def test_source_snapshot_repeated_identical_failure_still_repaints():
             screen.query_one("#library-hub-load-failure-copy", Static).renderable
         )
         assert "attempt 2" in copy
+
+
+class _FlakyLibraryNotesScopeService:
+    """A notes source that fails until ``fail`` is cleared (task-31948)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.fail = True
+
+    def list_notes(self, **_kwargs):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("private-snapshot-failure")
+        return {"items": []}
+
+
+@pytest.mark.asyncio
+async def test_browse_row_error_callout_carries_its_own_retry():
+    """task-31948 AC#1/#2/#3: the BROWSE canvas's failed-source surface.
+
+    task-31632 gave the landing hub a ``ds-recovery-callout`` with a Retry
+    inside it, but ``#library-canvas-error`` -- the surface a browse row
+    (Notes, Conversations) paints when the same snapshot failed -- stayed a
+    bare sentence with no action, so the only recovery was to leave the
+    surface and come back. It now carries the same Retry, running the same
+    ``_refresh_local_source_snapshot`` the hub's Retry runs, and the
+    callout gives way to the real canvas once that fetch succeeds.
+    """
+    notes = _FlakyLibraryNotesScopeService()
+    app = _library_source_failure_app(notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        # PR M carry I1: the hub's own callout, for the SAME failure --
+        # captured before the browse row replaces it, so the two surfaces
+        # can be compared shape for shape below.
+        hub_callout = await _wait_for_selector(
+            screen, pilot, "#library-hub-load-failure"
+        )
+        hub_shape = _load_failure_callout_shape(hub_callout)
+
+        screen.query_one("#library-row-browse-notes", Button).press()
+        callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+
+        # PR M carry I1: three hand-rolled copies of this callout had
+        # already drifted apart. One builder, one shape, per-surface ids.
+        assert _load_failure_callout_shape(callout) == hub_shape, (
+            "the browse row and the landing hub must paint ONE callout shape"
+        )
+
+        # AC#1: the message and its Retry are one callout, side by side.
+        state = screen._library_lookup_recovery_state
+        assert callout.has_class("ds-recovery-callout")
+        assert callout.has_class("is-blocked")
+        copy = screen.query_one("#library-canvas-error-copy", Static)
+        retry = screen.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button)), (
+            "the Retry must live INSIDE the callout, next to the reason"
+        )
+        # AC#3: the PAINTED glyphs, not just ``.renderable`` (task-31221).
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "Retry" in _painted_text(host, retry.region)
+        assert "private-snapshot-failure" not in _visible_text(screen)
+
+        # A Retry against a failure that has not cleared still reads as a
+        # fresh press -- the callout repaints its attempt number in place.
+        calls_before = notes.calls
+        await pilot.click("#library-source-retry")
+        await _wait_for_condition(
+            pilot,
+            lambda: notes.calls > calls_before,
+            message="Retry never re-ran the source snapshot.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: "attempt 2"
+            in " ".join(
+                _painted_text(
+                    host,
+                    screen.query_one("#library-canvas-error-copy", Static).region,
+                ).split()
+            ),
+            message="A repeated failure never repainted the callout.",
+        )
+
+        # AC#2: the same fetch, on success, retires the callout for the
+        # real canvas -- without leaving Library.
+        notes.fail = False
+        # ``press()``, not a second ``pilot.click``: the repaint above grew
+        # the wrapped copy by a row, and a click issued before that reflow
+        # settles resolves against the pre-reflow offset (measured: the
+        # click reports a hit and no ``Pressed`` arrives). The click leg
+        # above already proved the painted button is hittable; this leg is
+        # about what the handler does.
+        screen.query_one("#library-source-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-canvas-error"),
+            message="A successful Retry never cleared the browse error callout.",
+        )
+        assert screen._library_lookup_error is None
+        assert screen.query("#library-notes-canvas")
+        assert host.seen_routes == []
+
+
+def _load_failure_callout_shape(node):
+    """The structural fingerprint two surfaces' callouts must share."""
+    return (
+        type(node).__name__,
+        sorted(node.classes),
+        [type(child).__name__ for child in node.children],
+    )
+
+
+class _TimeoutThenFailingLibraryNotesScopeService:
+    """A notes source that misses its deadline, then fails hard (PR M M2)."""
+
+    def __init__(self, delay: float = 1.0) -> None:
+        self.delay = delay
+        self.calls = 0
+        self.hard_failure = False
+
+    def list_notes(self, **_kwargs):
+        self.calls += 1
+        if self.hard_failure:
+            raise RuntimeError("private-snapshot-failure")
+        time.sleep(self.delay)
+        return {"items": []}
+
+
+class _FailingThenDeniedLibraryNotesScopeService:
+    """A notes source whose hard failure turns into a policy denial."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.denied = False
+
+    def list_notes(self, **_kwargs):
+        self.calls += 1
+        if self.denied:
+            raise PolicyDeniedError(
+                action_id="library.notes.list",
+                reason_code="capability_disabled",
+                user_message="Notes are disabled by workspace policy.",
+                effective_source="local",
+                authority_owner="workspace policy",
+            )
+        raise RuntimeError("private-snapshot-failure")
+
+
+@pytest.mark.asyncio
+async def test_browse_row_error_callout_keeps_the_right_tint_across_a_retry(
+    monkeypatch,
+):
+    """PR M carry M2/M6: the in-place repaint must move the TINT too.
+
+    A Retry can turn a deadline (warning, amber) into a hard failure (error,
+    red) -- the browse row's sync repainted only the sentence, so an amber
+    callout stood over a hard-failure reason. Its siblings (the landing hub,
+    the Media canvas) had always moved the tint; this is the divergence that
+    made the three copies one builder. M6: the same shape repaints in place,
+    so no replacement widget is built for it.
+    """
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
+    )
+    notes = _TimeoutThenFailingLibraryNotesScopeService()
+    app = _library_source_failure_app(notes)
+    host = LibraryHarness(app)
+
+    builds: list[int] = []
+    build_widget = library_screen_module.LibraryScreen._library_canvas_error_widget
+
+    def counted_build(self):
+        builds.append(1)
+        return build_widget(self)
+
+    monkeypatch.setattr(
+        library_screen_module.LibraryScreen,
+        "_library_canvas_error_widget",
+        counted_build,
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot timeout never produced a recovery state.",
+        )
+        screen.query_one("#library-row-browse-notes", Button).press()
+        callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+        assert callout.has_class("ds-recovery-callout")
+        assert not callout.has_class("is-blocked"), "a deadline is a warning"
+        builds_after_mount = len(builds)
+
+        notes.hard_failure = True
+        calls_before = notes.calls
+        screen.query_one("#library-source-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: notes.calls > calls_before,
+            message="Retry never re-ran the source snapshot.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: callout.has_class("is-blocked"),
+            message="A hard failure never repainted the callout's error tint.",
+        )
+        state = screen._library_lookup_recovery_state
+        assert state.severity == "error"
+        copy = screen.query_one("#library-canvas-error-copy", Static)
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "private-snapshot-failure" not in _visible_text(screen)
+        # M6: the mounted callout still fits the failure, so the reconcile
+        # repaints it instead of building a replacement it then discards.
+        assert len(builds) == builds_after_mount
+
+
+@pytest.mark.asyncio
+async def test_browse_row_error_callout_remounts_when_the_failure_shape_changes():
+    """PR M carry M3/M4: a failure a Retry cannot clear paints a BARE
+    sentence -- an inert Retry is worse than none (task-31948's rule).
+
+    So when a retryable failure becomes a policy denial, the mounted callout
+    must be REMOUNTED as that bare Static, never left standing with a Retry
+    that can no longer recover anything.
+    """
+    notes = _FailingThenDeniedLibraryNotesScopeService()
+    app = _library_source_failure_app(notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        screen.query_one("#library-row-browse-notes", Button).press()
+        callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+        assert list(callout.query(Button)), "a retryable failure keeps its Retry"
+
+        notes.denied = True
+        calls_before = notes.calls
+        screen.query_one("#library-source-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: notes.calls > calls_before,
+            message="Retry never re-ran the source snapshot.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_source_load_failure() is None
+            and len(screen.query("#library-canvas-error")) == 1
+            and isinstance(screen.query_one("#library-canvas-error"), Static),
+            message="The denied snapshot never remounted the bare error surface.",
+        )
+        node = screen.query_one("#library-canvas-error", Static)
+        assert not list(node.query(Button))
+        assert not screen.query("#library-source-retry")
+        assert "Notes are disabled by workspace policy." in _visible_text(screen)
+        # The taxonomy label for this denial, painted -- not a Retry.
+        assert "Capability disabled" in _painted_text(host, node.region)
 
 
 @pytest.mark.asyncio
@@ -34450,7 +34772,7 @@ async def test_library_media_analysis_tab_is_searchable():
                 .first()
                 .renderable
             )
-            == "Match 1 of 2 matches",
+            == "Match 1 of 2",
             message="Analysis-tab search did not report its two matches.",
         )
         # Two analysis lines contain "budget" -> the search corpus is the
@@ -34489,3 +34811,230 @@ async def test_library_media_switching_tabs_clears_the_search():
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
         assert screen._library_media_content_query == ""
         assert screen._library_media_content_match_index == 0
+
+
+# ---------------------------------------------------------------------------
+# task-31946: a BARE whole-screen recompose -- what a background job tick or
+# an ad-hoc repaint does -- must not drop focus to None.
+#
+# PR F gave ``LibraryScreen.refresh`` a Media-only capture/restore. Every
+# other route still ended a whole-screen ``refresh(recompose=True)`` with
+# ``screen.focused is None``: Textual removes every child, nothing re-picks
+# focus after the remount, and the keyboard is dead until the user clicks.
+# Both routes are pinned so the shared seam can never be narrowed back to
+# Media without a red test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_keeps_focus_on_a_mounted_widget_conversations():
+    """task-31946 AC#1/#3: the non-Media route the PR F seam never covered."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        row = await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.set_focus(row)
+        await pilot.pause()
+        assert screen.focused is row
+
+        # No follow-up, no ``then=``, no sync seam: the bare call a
+        # background worker's own repaint ends in.
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a bare whole-screen recompose left the Conversations route with "
+            "no focused widget -- the keyboard is dead until the user clicks"
+        )
+        assert focused.is_attached, focused
+        assert focused.id == "library-conversation-row-0", focused.id
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_keeps_focus_on_a_mounted_widget_media():
+    """task-31946 AC#1: the Media route keeps PR F's behaviour, once."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        row = await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.set_focus(row)
+        await pilot.pause()
+        assert screen.focused is row
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a bare whole-screen recompose left Media with no focused widget"
+        )
+        assert focused.is_attached, focused
+        assert focused.id == "library-media-row-0", focused.id
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_focus_fallback_stays_inside_screen_content():
+    """task-31946 (PR L review item 1): the fallback is never the nav bar.
+
+    When the captured widget is genuinely gone the seam still has to land
+    focus somewhere. ``focus_chain[0]`` is the ``MainNavigationBar``'s
+    first tab on EVERY screen -- a blind Enter there leaves the screen,
+    and that key was inert before this seam existed -- so the fallback is
+    scoped to ``#screen-content``.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        row = await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.set_focus(row)
+        await pilot.pause()
+
+        # The captured widget vanishes -- a row a write removed, or (the
+        # real case) a screen whose body mounts in a later callback --
+        # and the recompose leaves nothing focused (``set_focus(None)``
+        # models the drop; Textual's own removal handler happens to fall
+        # back to the row's scroll parent, which a recompose of the whole
+        # subtree does not).
+        await row.remove()
+        screen.set_focus(None)
+        await pilot.pause()
+        assert screen.focused is None
+
+        screen.restore_focus_after_recompose("#library-conversation-row-0")
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, "the fallback left focus at None"
+        assert focused.is_attached, focused
+        content = screen.query_one("#screen-content")
+        assert content in focused.ancestors, (
+            f"focus fell back to {focused.id!r}, outside #screen-content -- "
+            "the nav bar is where Enter navigates away"
+        )
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_restores_focus_on_an_empty_conversations_list():
+    """task-31946 (PR L review item 2): the stand-down cannot strand focus.
+
+    The seam stands down while a one-shot focus channel is armed, because
+    a foreign ``set_focus`` in that window disarms it. Conversations is
+    absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``, so the armed
+    channel lands NOTHING there -- standing down for it left a background
+    recompose inside the settle window with no restore at all, and the
+    keyboard dead for good.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        rail_row = screen.query_one("#library-row-browse-conversations")
+        rail_row.press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        screen.set_focus(rail_row)
+        await pilot.pause()
+        assert screen.focused is rail_row
+        assert not screen.query(".library-conversation-row"), "list must be empty"
+
+        # Inside the armed settle window: the channel owns the window on a
+        # route it can serve, and this one it cannot.
+        screen._arm_library_list_entry_focus()
+        assert screen._library_pending_list_entry_focus is True
+        assert screen._library_focus_channel_owns_this_window() is False
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a background recompose inside the armed window left the empty "
+            "Conversations list with no focused widget"
+        )
+        assert focused.is_attached, focused
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_restores_focus_on_a_filtered_empty_media_list():
+    """Qodo #2483: the Media channel stands down when it cannot land.
+
+    A filter MISS is the one empty Media page with no recovery action at
+    all -- the canvas returns right after its query-echoing status line,
+    so NONE of the four controls ``_focus_library_list_entry`` falls back
+    to is composed. The armed channel therefore lands nothing, and
+    standing the screen-level seam down for it left a background
+    recompose inside the settle window with a dead keyboard.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+
+        screen._request_library_media_filter("no-such-media-anywhere")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query(".library-media-row")
+            and not any(
+                screen.query(selector)
+                for selector in (
+                    "#library-media-type-filter",
+                    "#library-media-empty-clear-type",
+                    "#library-media-empty-import",
+                    "#library-media-retry",
+                )
+            ),
+            message="the filter miss never reached a recovery-less empty page",
+        )
+
+        filter_input = screen.query_one("#library-media-filter", Input)
+        screen.set_focus(filter_input)
+        await pilot.pause()
+        assert screen.focused is filter_input
+
+        # Inside the armed settle window, on a page the channel cannot serve.
+        screen._arm_library_list_entry_focus()
+        assert screen._library_pending_list_entry_focus is True
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a background recompose inside the armed window left the "
+            "recovery-less empty Media list with no focused widget"
+        )
+        assert focused.is_attached, focused
+        content = screen.query_one("#screen-content")
+        assert content in focused.ancestors, focused.id

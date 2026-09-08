@@ -70,10 +70,12 @@ class AdaptiveReaderLayoutProfile:
             opts in today.
         grip_width: Width of EACH of the two pane grips -- both what a grip
             paints and what the resolver holds back for it, so the two can
-            never disagree. Defaults to ``PANE_GRIP_WIDTH`` (5). Media passes
-            1: its two five-column grips left ten dead columns around the
-            Items pane (task-31633 AC#2). A grip narrower than four cells
-            paints the one-cell guillemet instead of the ``<---`` run.
+            never disagree (the resolved layout carries this width to the
+            shell). Defaults to ``PANE_GRIP_WIDTH`` (5). Media passes 1: its
+            two five-column grips left ten dead columns around the Items pane
+            (task-31633 AC#2), and task-31951 opted Conversations, Skills and
+            Collections in for the same reason. A grip narrower than four
+            cells paints the one-cell guillemet instead of the ``<---`` run.
     """
 
     list_min_width: int = 32
@@ -99,7 +101,37 @@ class AdaptiveReaderLayoutPreferences:
 
 @dataclass(frozen=True)
 class AdaptiveReaderEffectiveLayout:
-    """One rendered layout derived from preferences and available width."""
+    """One rendered layout derived from preferences and available width.
+
+    Attributes:
+        library_open: Whether the library (rail) pane is rendered. Starts
+            from the user's preference and is forced ``False`` when the
+            width cannot seat it and still leave ``work_min_width``.
+        items_open: Whether the items (list) pane is rendered, under the
+            same preference-then-width rule as ``library_open``.
+        library_width: Columns given to the library pane, ``0`` when it is
+            closed.
+        items_width: Columns given to the items pane, ``0`` when it is
+            closed.
+        reader_width: Columns left for the work (Reader) pane -- the
+            remainder, never negative.
+        priority_pane: Which pane a width-starved layout kept open
+            (``"library"``/``"items"``), or ``None`` when nothing had to
+            be dropped.
+        grip_width: The resolving profile's per-grip width in columns,
+            stamped here so the shell paints both grips from the same
+            number the resolver reserved (task-31952).
+
+    The three widths are what each pane actually gets to paint: the pane
+    GRIPS are already deducted. The resolver holds back ``2 * grip_width``
+    before dividing what is left, so ``library_width + items_width +
+    reader_width`` plus that reserve is the full terminal width.
+
+    ``grip_width`` carries the resolving profile's per-grip width through to
+    the shell, which sizes both grips from it (task-31952 AC#3): the columns
+    the resolver held back and the columns a grip paints are then literally
+    the same number, and a destination cannot reserve five and paint one.
+    """
 
     library_open: bool
     items_open: bool
@@ -107,6 +139,7 @@ class AdaptiveReaderEffectiveLayout:
     items_width: int
     reader_width: int
     priority_pane: PaneName | None
+    grip_width: int = PANE_GRIP_WIDTH
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -179,6 +212,7 @@ def resolve_adaptive_reader_layout(
     *,
     previous: AdaptiveReaderEffectiveLayout | None = None,
     priority: PaneName | None = None,
+    reader_has_item: bool = True,
 ) -> AdaptiveReaderEffectiveLayout:
     """Resolve saved pane preferences into one responsive effective layout.
 
@@ -188,6 +222,15 @@ def resolve_adaptive_reader_layout(
         profile: Destination list and work-pane width policy.
         previous: Previously resolved layout used for hysteresis.
         priority: Pane explicitly requested by the user, if any.
+        reader_has_item: Whether the work (Reader) pane has an item open.
+            When ``False`` (the pane shows only its empty-state placeholder)
+            the width normally reserved for a document is given to the Items
+            list instead, down to the work pane's floor, so a long title stops
+            truncating in the wasted space (task-31979). Defaults to ``True``,
+            which reproduces the pre-task split exactly; only the non-starved
+            main path reallocates -- a width-starved priority layout has no
+            surplus to give. Automatic widths only: obeyed as typed under
+            ``custom_widths_enabled``, matching the ``list_grows`` gate.
 
     Returns:
         Current effective pane geometry.
@@ -213,6 +256,7 @@ def resolve_adaptive_reader_layout(
             items_width=0,
             reader_width=0,
             priority_pane=None,
+            grip_width=profile.grip_width,
         )
 
     requested_library_width = (
@@ -280,6 +324,7 @@ def resolve_adaptive_reader_layout(
                 items_width=items_width,
                 reader_width=max(width - grip_width - library_width - items_width, 0),
                 priority_pane=priority,
+                grip_width=profile.grip_width,
             )
         priority = None
 
@@ -315,6 +360,11 @@ def resolve_adaptive_reader_layout(
     library_width = requested_library_width if library_open else 0
     items_width = preferences.items_width if items_open else 0
     if items_open and not library_open:
+        # task-31953: this clamp is deliberately NOT gated on
+        # `custom_widths_enabled` -- with the Library pane gone a typed 32
+        # still widens to the comfort ceiling (52 at width 100 on Media), as
+        # does the priority-pane clamp above. Documented, not changed; see
+        # `test_a_typed_custom_items_width_is_still_widened_once_the_library_closes`.
         comfort_width = max(
             items_width,
             min(profile.list_comfort_width, profile.list_max_width),
@@ -348,6 +398,16 @@ def resolve_adaptive_reader_layout(
                     items_width,
                 ),
             )
+    if items_open and not reader_has_item and not preferences.custom_widths_enabled:
+        # task-31979: the work (Reader) pane is showing only its empty-state
+        # placeholder, so the width normally held for a document is wasted
+        # while the Items list truncates long titles into ~56 cells. Hand that
+        # freed width to the list, down to the work pane's own floor; selecting
+        # an item (reader_has_item=True) restores the split unchanged. Gated on
+        # automatic widths like the list_grows block above: Custom obeys.
+        freed = width - grip_width - library_width - items_width - work_min_width
+        if freed > 0:
+            items_width += freed
     return AdaptiveReaderEffectiveLayout(
         library_open=library_open,
         items_open=items_open,
@@ -355,4 +415,5 @@ def resolve_adaptive_reader_layout(
         items_width=items_width,
         reader_width=max(width - grip_width - library_width - items_width, 0),
         priority_pane=priority,
+        grip_width=profile.grip_width,
     )

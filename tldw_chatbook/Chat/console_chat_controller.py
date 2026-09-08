@@ -3003,12 +3003,16 @@ class ConsoleChatController:
         """
         from types import SimpleNamespace
 
+        from .console_send_diagnostics import record_send_stage
+
+        record_send_stage("provider_resolution")
         try:
             return await asyncio.wait_for(
                 self.provider_gateway.resolve_for_send(selection),
                 timeout=self.PROVIDER_VALIDATION_TIMEOUT_SECONDS,
             )
-        except TimeoutError:
+        except TimeoutError as exc:
+            record_send_stage("provider_resolution", "failed", error=exc)
             return SimpleNamespace(
                 ready=False,
                 visible_copy=(
@@ -7084,6 +7088,41 @@ class ConsoleChatController:
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
     ) -> ConsoleSubmitResult:
+        """Observe the whole attempt, including refusals before trace setup."""
+        from .console_send_diagnostics import send_diagnostic_scope
+
+        async with send_diagnostic_scope("controller_submit") as diagnostic:
+            result = await self._submit_draft_lifecycle(
+                draft,
+                session_id=session_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                queue_authorization=queue_authorization,
+                wake_authorization=wake_authorization,
+                _resume_preparation_id=_resume_preparation_id,
+                _resume_resolution=_resume_resolution,
+            )
+            diagnostic.outcome = (
+                result.terminal_status.value
+                if result.terminal_status is not None
+                else "accepted"
+                if result.accepted
+                else "refused"
+            )
+            return result
+
+    async def _submit_draft_lifecycle(
+        self,
+        draft: str,
+        *,
+        session_id: str | None = None,
+        origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id: str | None = None,
+        queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
+        _resume_preparation_id: str | None = None,
+        _resume_resolution: Any | None = None,
+    ) -> ConsoleSubmitResult:
         """Fence one complete submit lifecycle for close and shutdown."""
 
         owner_key = session_id or self.store.active_session_id
@@ -7572,7 +7611,7 @@ class ConsoleChatController:
                 if resumed_preparation is not None
                 else await self._resolve_for_send_bounded(turn_selection)
             )
-        except BaseException:
+        except BaseException as exc:
             # A readiness probe that raises or is cancelled AFTER the optimistic
             # USER echo must still fail that row — otherwise a never-sent USER
             # message leaks into the NEXT send's provider context (`skip_failed`
@@ -7588,6 +7627,28 @@ class ConsoleChatController:
                     )
                 else:
                     self._mark_transient_echo_blocked(echoed_user.id)
+            # Validation owns a busy slot even before a provider starts. Release
+            # it on failure so retry and the view's idle polling cleanup can run.
+            # A closed session or an already-stopped run keeps its owner's state.
+            # Wakes own a separate retry loop; releasing their slot here would
+            # immediately retry the same failed wake ahead of other pending wakes.
+            if (
+                origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+                and self.run_state_for(session.id).status is ConsoleRunStatus.VALIDATING
+                and any(item.id == session.id for item in self.store.sessions())
+            ):
+                cancelled = isinstance(exc, asyncio.CancelledError)
+                self._set_run_state(
+                    ConsoleRunState(
+                        ConsoleRunStatus.STOPPED
+                        if cancelled
+                        else ConsoleRunStatus.BLOCKED,
+                        "Provider validation was cancelled."
+                        if cancelled
+                        else "Provider validation failed. Try sending again.",
+                    ),
+                    session_id=session.id,
+                )
             raise
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
@@ -7683,6 +7744,12 @@ class ConsoleChatController:
                     "capture_policy_preparation_failed"
                 )
                 capture_mode = ConsoleTraceCaptureMode.CAPTURE_OFF
+        from .console_send_diagnostics import record_send_stage
+
+        record_send_stage(
+            "capture_policy",
+            capture_enabled=capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
         if resumed_preparation is not None:
             pii_redaction_enabled = resumed_preparation.pii_redaction_enabled
             pii_ruleset_revision_id = resumed_preparation.pii_ruleset_revision_id
@@ -9002,6 +9069,9 @@ class ConsoleChatController:
             ),
             contributions=contributions,
         )
+        from .console_send_diagnostics import record_send_stage
+
+        record_send_stage("durable_commit")
         try:
             # TASK-22205: the ~10-statement BEGIN IMMEDIATE turn commit runs
             # off the event loop; the await is the dispatch-ordering barrier.
@@ -9009,6 +9079,7 @@ class ConsoleChatController:
                 self.store.commit_durable_turn, acceptance
             )
         except Exception as exc:  # noqa: BLE001 -- a failed commit is a retry, not a crash
+            record_send_stage("durable_commit", "failed", error=exc)
             # TASK-22251: the user-facing copy stays deliberately generic, but
             # something must record WHICH failure occurred. `commit_durable_turn`
             # is a multi-step transaction -- conversation create, Library-policy
@@ -9033,6 +9104,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 preparation_id=preparation.preparation_id,
             )
+        record_send_stage("durable_commit", "succeeded")
         fingerprint = self.store.durable_acceptance_fingerprint_for(
             preparation.preparation_id
         )
@@ -9230,8 +9302,11 @@ class ConsoleChatController:
                 ):
                     raise TraceCallPersistenceError()
                 await self._run_durable_db_call(
-                    verify_recovery, continuation,
+                    verify_recovery,
+                    continuation,
                     self._trace_call_boundaries_by_preparation.get(preparation_id),
+                    continuation.stream_signals,
+                    capture_mode_override or continuation.trace_capture_mode,
                 )
                 # This only proves the missing provider effect may be retried.
                 # Keep the completed checkpoint CAS and its attempt unchanged;
@@ -9239,6 +9314,15 @@ class ConsoleChatController:
                 # An explicit Capture-Off action uses this same ownership proof,
                 # but never re-admits or changes the abandoned trace reservation.
             except TraceCallPersistenceError:
+                visible_copy = (
+                    "Delivery status is unknown. Use Retry anyway or Discard."
+                )
+                # Publish the handoff as well as returning it: the trace pause
+                # has ended, so its card will hide. The dispatch-recovery UI
+                # must repaint the unknown-delivery explanation and actions.
+                self._set_run_state(
+                    ConsoleRunState.blocked(visible_copy), session_id=session_id
+                )
                 self.store.mark_dispatch_recovery_needed(
                     session_id,
                     commit.assistant_message_id,
@@ -9247,7 +9331,7 @@ class ConsoleChatController:
                 return ConsoleSubmitResult(
                     True,
                     True,
-                    "Delivery status is unknown. Use Retry anyway or Discard.",
+                    visible_copy,
                     session_id=session_id,
                     user_message_id=commit.user_message_id,
                     assistant_message_id=commit.assistant_message_id,

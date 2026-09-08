@@ -29,6 +29,9 @@ from ...Utils.token_counter import get_table_model_token_limit
 
 
 SUMMARY_PROMPT_ID = "console.rewind_summarize"
+#: TASK-31901: prompt used by the Console More-menu
+#: "Summarize up to here as note" action (PR #2467).
+NOTE_SUMMARY_PROMPT_ID = "console.summarize_note"
 
 CONTEXT_MEMORY_CONFIG_KEYS = (
     "conversation_budget_mode",

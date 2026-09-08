@@ -30,6 +30,7 @@ PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
+CONSOLE_CHARACTER_QUERY_MAX_LENGTH = 200
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
 RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
 _VLLM_DRAFT_INPUT_LIMITS = {
@@ -307,6 +308,29 @@ class ConsoleSwitcherQueryInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     query: str = Field(max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH)
+
+
+class ConsoleCharacterQueryInput(ConsoleSwitcherQueryInput):
+    """Character Keyword input constrained to the repository's raw query cap."""
+
+    query: str = Field(max_length=CONSOLE_CHARACTER_QUERY_MAX_LENGTH)
+
+    @field_validator("query")
+    @classmethod
+    def _reject_controls(cls, value: str) -> str:
+        if any(unicodedata.category(character) == "Cc" for character in value):
+            raise ValueError("Character search cannot contain control characters")
+        return value
+
+
+def validate_console_character_query(value: object) -> str:
+    """Validate raw Character Keyword text before trimming or reading storage."""
+    try:
+        return ConsoleCharacterQueryInput.model_validate({"query": value}).query
+    except PydanticValidationError:
+        raise ValueError(
+            "Character search: at most 200 characters, without control characters."
+        ) from None
 
 
 def validate_console_switcher_query(value: object) -> str:

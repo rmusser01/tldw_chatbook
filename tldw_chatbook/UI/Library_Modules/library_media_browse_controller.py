@@ -49,6 +49,33 @@ _RETRY_FAILED_PREFIX = "Couldn't retry · "
 # invented. (The 5 s figure belongs to the screen-level source snapshot,
 # a different path.)
 _TIMEOUT_REASON = "timed out"
+# task-31944: the reader-facing reason for the classes that actually reach
+# this mapper without a usable message of their own. Before this, they fell
+# through to ``type(exc).__name__`` and the callout read "Couldn't retry ·
+# ConnectionRefusedError" -- a name, not something to act on. Ordered
+# specific-first (``ConnectionError`` is an ``OSError``, every ``sqlite3``
+# error is a ``sqlite3.Error``); anything unmapped takes the fallback, which
+# keeps PR G's privacy rule -- an arbitrary exception's TEXT never reaches a
+# screen, only OS/SQLite messages do, path-redacted.
+_DATABASE_UNREADABLE_REASON = "the database could not be read"
+_CLASS_REASONS: tuple[tuple[type[BaseException], str], ...] = (
+    (ConnectionError, "the connection failed"),
+    # ``Client_Media_DB_v2`` wraps every sqlite3 failure in its OWN
+    # ``DatabaseError`` before it ever reaches this mapper (e.g.
+    # ``raise DatabaseError("Media search failed.") from None``), so this
+    # entry only covers a caller that talks to sqlite directly.
+    # ``DatabaseError`` is mapped separately, below, via a function-local
+    # import.
+    (sqlite3.Error, _DATABASE_UNREADABLE_REASON),
+)
+_UNMAPPED_REASON = "an unexpected error"
+# task-31982 AC#2: the recovery step a repeated failure names instead of
+# repeating its one sentence. A media read faulting the same way on a
+# consecutive Retry is a persistent fault the in-callout Retry cannot clear;
+# the only lever left is reconnecting to the store. Appended as its own
+# ``·`` clause so the callout grammar ("what · why") is unchanged. It carries
+# no exception text (PR G's privacy rule).
+_REOPEN_RECOVERY = "reopen Chatbook to reconnect to the media database"
 # Qodo PR G finding 3: an OSError/sqlite3 message is the reader's own words
 # (kept, unlike other exceptions -- see below), but that text can embed a
 # database or filesystem path. Match POSIX absolute (``/a/b``), home-relative
@@ -94,6 +121,32 @@ def _redact_paths(text: str) -> str:
     return _PATH_TOKEN_PATTERN.sub(lambda m: f"{m.group('prefix')}<path>", text)
 
 
+def _mapped_failure_reason(exc: BaseException) -> str:
+    """Name a failure kind for an exception with no usable message.
+
+    Args:
+        exc: The exception the failed request raised.
+
+    Returns:
+        The mapped reason for the first ``_CLASS_REASONS`` entry the
+        exception is an instance of, else ``_UNMAPPED_REASON``.
+    """
+    for kind, reason in _CLASS_REASONS:
+        if isinstance(exc, kind):
+            return reason
+    # Function-local: this UI controller must not import a DB module at
+    # module scope (mirrors the deferred import in
+    # ``Media/local_media_reading_service.py``). ``ConflictError`` is a
+    # ``DatabaseError`` subclass but means something else -- an
+    # optimistic-lock conflict, not "could not be read" -- so it is
+    # excluded here rather than added to ``_CLASS_REASONS``.
+    from ...DB.Client_Media_DB_v2 import ConflictError, DatabaseError
+
+    if isinstance(exc, DatabaseError) and not isinstance(exc, ConflictError):
+        return _DATABASE_UNREADABLE_REASON
+    return _UNMAPPED_REASON
+
+
 def _retry_failure_reason(exc: BaseException) -> str:
     """Name a failed refresh in the reader's terms, never as a bare class.
 
@@ -115,8 +168,9 @@ def _retry_failure_reason(exc: BaseException) -> str:
         # unredacted prefix.
         raw = getattr(exc, "strerror", None) or str(exc)
         message = " ".join(_redact_paths(raw).split())[:80]
-        return message or type(exc).__name__
-    return type(exc).__name__
+        if message:
+            return message
+    return _mapped_failure_reason(exc)
 
 
 def _load_failure(
@@ -132,11 +186,24 @@ def _load_failure(
     )
 
 
-def _raised_failure(what: str, exc: BaseException) -> DestinationRecoveryState:
-    """Name a raised load failure through the shared reason mapping."""
+def _raised_failure(
+    what: str, exc: BaseException, *, repeated: bool = False
+) -> DestinationRecoveryState:
+    """Name a raised load failure through the shared reason mapping.
+
+    Args:
+        what: What could not be loaded, as a clause.
+        exc: The exception the failed request raised.
+        repeated: True when this same reason has just recurred on a
+            consecutive Retry (task-31982 AC#2). The failure then names the
+            reopen recovery step instead of repeating its one sentence.
+    """
+    reason = _retry_failure_reason(exc)
+    if repeated:
+        reason = f"{reason} · {_REOPEN_RECOVERY}"
     return _load_failure(
         what,
-        _retry_failure_reason(exc),
+        reason,
         timed_out=isinstance(exc, TimeoutError),
     )
 
@@ -180,6 +247,13 @@ class LibraryMediaBrowseController:
         # the one the canvas paints.
         self.page_failure: DestinationRecoveryState | None = None
         self.facet_failure: DestinationRecoveryState | None = None
+        # task-31982 AC#2: the reason each fence last failed with, kept
+        # across Retries (``begin`` clears ``page_failure`` on every request,
+        # so it cannot tell a repeat from a first failure). A consecutive
+        # failure with the SAME reason names the reopen recovery step; a
+        # success on either fence clears its own tracker.
+        self._page_fault_reason = ""
+        self._facet_fault_reason = ""
         self._page_generation = 0
 
         self.type_options: tuple[str, ...] = ()
@@ -300,6 +374,13 @@ class LibraryMediaBrowseController:
             limit=scope.page_size,
             offset=scope.offset,
             library_summary=True,
+            # Qodo on #2475: this is the ONE caller that renders task-28008's
+            # keyword-only reasons ("· matched keyword X" on a row whose title
+            # and body hold nothing the user typed), so it is the one caller
+            # that pays the probe's extra SELECT. Every other library-summary
+            # pager -- "Review these", the selection ordering pass -- discards
+            # them and now asks for nothing.
+            match_reasons=True,
             isolate_in_worker=True,
             **filters,
         )
@@ -365,7 +446,12 @@ class LibraryMediaBrowseController:
             self.inflight_scope = None
             if self.freshness != "stale":
                 self.error_copy, failure_what = self._failure_copy(scope)
-                self.page_failure = _raised_failure(failure_what, exc)
+                reason = _retry_failure_reason(exc)
+                repeated = reason == self._page_fault_reason
+                self._page_fault_reason = reason
+                self.page_failure = _raised_failure(
+                    failure_what, exc, repeated=repeated
+                )
             else:
                 # task-31220: on a stale page the stale copy is the ONLY
                 # thing shown, and leaving it untouched is what made Retry
@@ -392,6 +478,7 @@ class LibraryMediaBrowseController:
         self.inflight_scope = None
         self.error_copy = ""
         self.page_failure = None
+        self._page_fault_reason = ""
         self.stale_copy = ""
         self.stale_reason = ""
         self._sync(focus_identity)
@@ -438,6 +525,45 @@ class LibraryMediaBrowseController:
         self.page_failure = None
         self.stale_copy = stale_copy.strip()
         self.stale_reason = self.stale_copy
+
+    def note_analysis_state(self, media_id: str, *, has_analysis: bool) -> bool:
+        """Re-project one retained row's ``has_analysis`` after an analysis write.
+
+        Qodo on #2475: ``has_analysis`` is a SQL projection frozen into the
+        retained row when the page applied, so an analysis saved from the
+        Reader (or by the bulk Analyze run) left its own row unmarked until
+        something re-paged the list. The caller supplies the value from that
+        same projection, re-read for this ONE id after the write
+        (``LibraryScreen._reproject_library_media_analysis_row``); nothing
+        here derives it, and nothing runs on the page path.
+
+        Freshness is deliberately untouched: this is not a page change, it
+        is the same page carrying a fact the projection has already been
+        asked about.
+
+        Args:
+            media_id: Canonical ``local:media:<id>`` row id.
+            has_analysis: Whether that item now carries analysis text.
+
+        Returns:
+            True when a retained row actually changed (so the caller can
+            skip a repaint it does not need).
+        """
+        target = str(media_id)
+        if not any(
+            str(item["id"]) == target and bool(item["has_analysis"]) != has_analysis
+            for item in self.retained_items
+        ):
+            return False
+        self.retained_items = validate_media_browse_items(
+            tuple(
+                {**item, "has_analysis": has_analysis}
+                if str(item["id"]) == target
+                else item
+                for item in self.retained_items
+            )
+        )
+        return True
 
     def begin_mutation(self) -> MediaBrowseScope:
         """Fence reads before a durable write and preserve its applied scope."""
@@ -534,7 +660,10 @@ class LibraryMediaBrowseController:
             )
             self.facet_loading = False
             self.facet_error_copy = _FACET_ERROR
-            self.facet_failure = _raised_failure(_FACET_WHAT, exc)
+            reason = _retry_failure_reason(exc)
+            repeated = reason == self._facet_fault_reason
+            self._facet_fault_reason = reason
+            self.facet_failure = _raised_failure(_FACET_WHAT, exc, repeated=repeated)
             self._sync(None)
             return
         if (
@@ -547,6 +676,7 @@ class LibraryMediaBrowseController:
         self.facet_loading = False
         self.facet_error_copy = ""
         self.facet_failure = None
+        self._facet_fault_reason = ""
         self._sync(None)
 
     def invalidate_facets(self, *, fingerprint: str = "") -> int:

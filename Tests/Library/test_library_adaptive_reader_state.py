@@ -455,6 +455,14 @@ SIBLING_PROFILES = {
     "skills": LIBRARY_SKILLS_READER_PROFILE,
     "collections": LIBRARY_COLLECTIONS_READER_PROFILE,
 }
+# task-31951: the three sibling readers joined Media on the one-cell grip.
+# Notes, File Notes and Prompts keep the five-cell default, so this is the
+# opt-in list, not "everything but Media".
+ONE_CELL_GRIP_PROFILE_NAMES = {
+    "LIBRARY_CONVERSATION_READER_PROFILE",
+    "LIBRARY_SKILLS_READER_PROFILE",
+    "LIBRARY_COLLECTIONS_READER_PROFILE",
+}
 DECLARED_PROFILES = {
     name: value
     for name, value in vars(screen_constants).items()
@@ -476,10 +484,14 @@ def _pane_widths(
 
 def test_only_the_media_profile_opts_into_list_growth() -> None:
     assert MEDIA_READER_LAYOUT_PROFILE.list_grows is True
-    # task-31633 AC#2: the one-cell grip is opt-in the same way.
+    # task-31633 AC#2: the one-cell grip is opt-in the same way. task-31951
+    # opted the three sibling readers in as well (each was PANE_GRIP_WIDTH);
+    # the default and the destinations that did not opt in stay at five.
     assert MEDIA_READER_LAYOUT_PROFILE.grip_width == 1
     for name, profile in DECLARED_PROFILES.items():
-        assert profile.grip_width == PANE_GRIP_WIDTH, name
+        expected = 1 if name in ONE_CELL_GRIP_PROFILE_NAMES else PANE_GRIP_WIDTH
+        assert profile.grip_width == expected, name
+    assert ONE_CELL_GRIP_PROFILE_NAMES <= set(DECLARED_PROFILES)
     assert AdaptiveReaderLayoutProfile().grip_width == PANE_GRIP_WIDTH
     assert set(SIBLING_PROFILES.values()) <= set(DECLARED_PROFILES.values())
     assert len(DECLARED_PROFILES) >= 6, sorted(DECLARED_PROFILES)
@@ -488,22 +500,65 @@ def test_only_the_media_profile_opts_into_list_growth() -> None:
     assert AdaptiveReaderLayoutProfile().list_grows is False
 
 
+@pytest.mark.parametrize("width", [100, 235])
+def test_every_profile_reserves_exactly_the_grip_columns_it_paints(width: int) -> None:
+    """task-31951 AC#3 / task-31952 AC#3: one number, not two.
+
+    The resolver holds back ``2 * profile.grip_width`` AND reports that same
+    per-grip width on the layout it returns, and the shell paints its grips
+    from the layout it is mounted with (pinned on the rendered widgets in
+    ``Tests/UI/test_library_adaptive_reader_shell.py``). A destination can no
+    longer reserve five columns and paint one.
+    """
+    profiles = dict(DECLARED_PROFILES)
+    profiles["MEDIA_READER_LAYOUT_PROFILE"] = MEDIA_READER_LAYOUT_PROFILE
+
+    for name, profile in profiles.items():
+        layout = resolve_adaptive_reader_layout(
+            width, AdaptiveReaderLayoutPreferences(), profile
+        )
+
+        assert layout.grip_width == profile.grip_width, name
+        assert (
+            layout.library_width
+            + layout.items_width
+            + layout.reader_width
+            + 2 * layout.grip_width
+        ) == width, name
+
+
 @pytest.mark.parametrize(
     ("surface", "width", "expected"),
     [
-        # Recorded from the resolver at badff73f1, before list growth existed.
-        ("conversations", 100, (False, True, 0, 46, 44)),
-        ("conversations", 117, (False, True, 0, 56, 51)),
-        ("conversations", 118, (True, True, 24, 40, 44)),
-        ("conversations", 235, (True, True, 34, 40, 151)),
-        ("skills", 100, (False, True, 0, 42, 48)),
-        ("skills", 121, (False, True, 0, 56, 55)),
-        ("skills", 122, (True, True, 24, 40, 48)),
-        ("skills", 235, (True, True, 34, 40, 151)),
-        ("collections", 100, (False, True, 0, 42, 48)),
-        ("collections", 121, (False, True, 0, 56, 55)),
-        ("collections", 122, (True, True, 24, 40, 48)),
-        ("collections", 235, (True, True, 34, 40, 151)),
+        # Recorded from the resolver at badff73f1, before list growth existed,
+        # and RE-ANCHORED by task-31951: the three siblings joined Media on
+        # the one-cell grip, so each row gained the eight cells their two
+        # five-cell grips used to hold back. Growth is still off for all
+        # three -- every cell below lands on the pane the resolver already
+        # gave the surplus to. Old value beside each row.
+        #
+        # `required_width()` counts the grips, so the rail-open threshold
+        # moved down by eight on every sibling as well: 118 -> 110 on
+        # Conversations, 122 -> 114 on Skills and Collections. Both edges of
+        # each moved band are pinned underneath.
+        ("conversations", 100, (False, True, 0, 54, 44)),  # was (…, 0, 46, 44)
+        ("conversations", 109, (False, True, 0, 56, 51)),  # was (…, 0, 55, 44)
+        ("conversations", 110, (True, True, 24, 40, 44)),  # was (False, …, 56, 44)
+        ("conversations", 117, (True, True, 24, 40, 51)),  # was (False, …, 56, 51)
+        ("conversations", 118, (True, True, 24, 40, 52)),  # was (…, 24, 40, 44)
+        ("conversations", 235, (True, True, 34, 40, 159)),  # was (…, 34, 40, 151)
+        ("skills", 100, (False, True, 0, 50, 48)),  # was (…, 0, 42, 48)
+        ("skills", 113, (False, True, 0, 56, 55)),  # was (…, 0, 55, 48)
+        ("skills", 114, (True, True, 24, 40, 48)),  # was (False, …, 56, 48)
+        ("skills", 121, (True, True, 24, 40, 55)),  # was (False, …, 56, 55)
+        ("skills", 122, (True, True, 24, 40, 56)),  # was (…, 24, 40, 48)
+        ("skills", 235, (True, True, 34, 40, 159)),  # was (…, 34, 40, 151)
+        ("collections", 100, (False, True, 0, 50, 48)),  # was (…, 0, 42, 48)
+        ("collections", 113, (False, True, 0, 56, 55)),  # was (…, 0, 55, 48)
+        ("collections", 114, (True, True, 24, 40, 48)),  # was (False, …, 56, 48)
+        ("collections", 121, (True, True, 24, 40, 55)),  # was (False, …, 56, 55)
+        ("collections", 122, (True, True, 24, 40, 56)),  # was (…, 24, 40, 48)
+        ("collections", 235, (True, True, 34, 40, 159)),  # was (…, 34, 40, 151)
     ],
 )
 def test_sibling_reader_layouts_are_untouched_by_media_list_growth(
@@ -574,13 +629,20 @@ def test_media_items_column_grows_once_the_reader_is_comfortable(
 
 @pytest.mark.parametrize("custom_items_width", [32, 34, 48])
 @pytest.mark.parametrize("width", [160, 235])
-def test_a_typed_custom_items_width_is_obeyed_rather_than_grown(
+def test_a_typed_custom_items_width_is_obeyed_by_the_growth_gate(
     width: int, custom_items_width: int
 ) -> None:
     """Settings > Appearance > Custom widths is a hand-typed number.
 
-    "Automatic" adapts; "Custom" obeys. Without the gate the typed value was
-    silently overridden above ~130 columns (review Important 1).
+    "Automatic" adapts; "Custom" obeys. Without the `list_grows` gate the
+    typed value was silently overridden above ~130 columns (review
+    Important 1).
+
+    Scope: the `list_grows` gate only, with BOTH panes open. It does NOT
+    cover the two comfort clamps, which still widen a typed width once the
+    Library pane is gone -- see
+    `test_a_typed_custom_items_width_is_still_widened_once_the_library_closes`
+    for what those actually do, and why.
     """
     custom = MediaReaderLayoutPreferences(
         custom_widths_enabled=True,
@@ -593,6 +655,36 @@ def test_a_typed_custom_items_width_is_obeyed_rather_than_grown(
 
     assert grown.items_width == custom_items_width
     assert grown == ungrown
+
+
+@pytest.mark.parametrize("priority", [None, "items"])
+def test_a_typed_custom_items_width_is_still_widened_once_the_library_closes(
+    priority: str | None,
+) -> None:
+    """task-31953: the comfort clamps are NOT gated on custom widths.
+
+    Decision: documented, not changed. TWO clamps widen a typed width once
+    the Library pane is gone -- the library-closed clamp in
+    `adaptive_reader_state.py` (`if items_open and not library_open`) and the
+    priority-pane clamp above it -- so "obey the typed width" is not the
+    one-line change this test-debt rider is scoped to, and
+    `test_resolution_never_mutates_saved_preferences` already pins one of the
+    widened values (a typed 40 resolves to 56). Changing it is a
+    user-visible width change on all four reader surfaces; it needs its own
+    task. This pin records what the resolver does today so the next reader
+    change is not blamed for it.
+    """
+    custom = MediaReaderLayoutPreferences(
+        custom_widths_enabled=True,
+        library_width=31,
+        items_width=32,
+    )
+
+    layout = resolve_media_reader_layout(100, custom, priority=priority)
+
+    # A typed 32 paints 52: 100 cells less the two one-cell grips and the
+    # 46-cell Reader minimum.
+    assert (layout.library_open, layout.items_width) == (False, 52)
 
 
 def test_media_items_column_is_wider_at_235_than_at_100() -> None:
@@ -636,3 +728,52 @@ def test_list_growth_never_shrinks_the_list_or_starves_the_reader(
         + grown.reader_width
         + 2 * MEDIA_READER_LAYOUT_PROFILE.grip_width
     ) == width
+
+
+def test_empty_reader_gives_freed_columns_to_the_items_list_at_235() -> None:
+    """task-31979: with no item open the Reader shows only its placeholder.
+
+    The width it would otherwise reserve for a document is wasted while the
+    Items list truncates long titles, so that width goes to the list instead,
+    down to the Reader's own floor. Opening an item (reader_has_item=True)
+    restores the split unchanged.
+    """
+    prefs = MediaReaderLayoutPreferences()
+    with_item = resolve_media_reader_layout(235, prefs, reader_has_item=True)
+    no_item = resolve_media_reader_layout(235, prefs, reader_has_item=False)
+
+    # Item open: exactly the pre-task split (do not regress it).
+    assert _pane_widths(with_item) == (True, True, 34, 56, 143)
+    # No item open: the Items pane absorbs the freed Reader columns down to
+    # the Reader's floor, so a 98-char title stops truncating at ~56 cells.
+    assert no_item.reader_width == MEDIA_READER_LAYOUT_PROFILE.work_min_width
+    assert no_item.items_width == 153
+    assert no_item.items_width > with_item.items_width
+    # Both panes and the two grips still tile the full terminal width.
+    assert (
+        no_item.library_width
+        + no_item.items_width
+        + no_item.reader_width
+        + 2 * MEDIA_READER_LAYOUT_PROFILE.grip_width
+    ) == 235
+
+
+@pytest.mark.parametrize("width", [60, 80, 100, 120, 160, 235])
+def test_reader_has_item_defaults_to_the_pre_task_behavior(width: int) -> None:
+    """task-31979: the new parameter defaults to True, so every existing
+    caller and every item-open resolution is byte-for-byte unchanged."""
+    prefs = MediaReaderLayoutPreferences()
+    assert resolve_media_reader_layout(width, prefs) == resolve_media_reader_layout(
+        width, prefs, reader_has_item=True
+    )
+
+
+def test_empty_reader_widening_is_off_under_custom_widths() -> None:
+    """task-31979: Custom widths obey the typed number (like the list_grows
+    gate); only Automatic mode adapts to the empty Reader."""
+    custom = MediaReaderLayoutPreferences(
+        custom_widths_enabled=True, library_width=31, items_width=40
+    )
+    assert resolve_media_reader_layout(
+        235, custom, reader_has_item=False
+    ) == resolve_media_reader_layout(235, custom, reader_has_item=True)

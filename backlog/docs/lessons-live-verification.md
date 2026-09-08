@@ -2247,3 +2247,52 @@ graceful exit; the published claims were narrowed rather than backfilled.
 a run ID/PID. Bind the final exception and process-exit result to that same identity.
 Keep source-checkout paths distinct from runtime/evidence directories. When historical
 receipts omit these fields, preserve the originals and state the evidence limits.
+
+## A security-relevant regex needs the reviewer to RUN probes, not read the pins (media wave 5 PR G, 2026-09-05)
+
+**The incident.** Qodo flagged that OS/SQLite exception text could carry filesystem or
+database paths into the Library landing callout. The fix added `_redact_paths` with pins
+for a POSIX path, a home-relative path, a Windows drive path and two negatives; every pin
+passed and the implementer reported the finding closed. The scoped re-review was told to
+execute six probes of its own choosing rather than read the tests:
+`~/Library/Application Support/media.db is missing` came back as
+`<path> Support/media.db is missing` — the regex stopped at the first space, so any macOS
+`Application Support` or Windows `Program Files` path leaked its tail. A second fix round
+consumed spaced segments; the controller then ran eight probes (four positive, four
+negative) against the committed function before pushing.
+
+**What to do.** For any change whose correctness is "input X never reaches the screen",
+the review gate is executed probes with inputs the implementer did not choose — paths with
+spaces, quoted paths, Windows drives, `file:` URIs — and the negatives that must survive
+(`and`/`or`, dates, product words like `Library`). Pins written by the same hand that wrote
+the regex only prove the cases that hand imagined.
+
+## `call_after_refresh` can focus a widget that the same recompose is about to detach — and an orphan with focus swallows every key (media wave 5 PR H, 2026-09-06)
+
+**The incident.** Task 3 of the wide-layout PR turned the Reader's `More` menu into a
+one-row `ItemGrid` and set an explicit focus target on the `More` button after the toggle.
+The first cut used `screen.call_after_refresh(button.focus)`: the callback ran against the
+OLD `More` button, which the recompose then detached, leaving focus on an orphan. Nothing
+painted a focus ring, and every key — Escape included — was delivered to the orphan and
+dropped. Textual raises no error for this. Routing the target through the viewer's own
+`queue_after_recompose` (which fires after the new children mount) fixed it; the test that
+caught it waits for the mounted widget before asserting focus. Four sibling sites still
+carry the original pattern (task-31950).
+
+**What to do.** When a handler sets focus across a recompose of the widget that owns the
+target, schedule it through that widget's post-recompose hook, never through a
+screen-level `call_after_refresh`. Any focus pin must assert `screen.focused` is a MOUNTED
+widget (`focused.is_attached` / present in the DOM), otherwise an orphan with focus passes
+the assertion while the app is effectively dead to the keyboard.
+
+## A shipped scratch config can still point at the REAL user database (media riders PR M, 2026-09-07)
+
+**Incident.** PR M's batch-2 live pass launched the app on a scratch profile (`TLDW_CONFIG_PATH`) whose `media_db_path` was deliberately broken to provoke the load-failure callout. The scratch config had been copied from the shipped template, and its `chachanotes_db_path` still pointed at `~/.local/share/tldw_cli/default_user/…` — the real database, which three other sessions' app instances also held open. The first launch hung on `Upgrading database (schema v65 -> v68)` against that file. The real DB was not written (mtime unchanged), but only because the upgrade blocked on the other holders.
+
+**Rule.** Before launching on a scratch profile, grep the config for every `*_db_path` and confirm each one resolves under the scratch directory: `grep -n "_db_path" <scratch>/config.toml`. A profile that breaks ONE path on purpose is exactly the profile most likely to have the others still pointing home. A stray launch on a branch with a newer schema migrates the real DB, and older branches cannot open it afterwards (see the `TLDW_CONFIG_PATH` scratch-profile note above).
+
+## Redirecting the app's stderr swallows the whole TUI (media riders PR M, 2026-09-07)
+
+**Incident.** Driving the app under tmux with `python -m tldw_chatbook.app 2>log` to catch tracebacks left a blank pane with a live process: Textual renders to stderr here, so the redirect took the UI with it. The pass cost a full relaunch.
+
+**Rule.** Never redirect stderr when driving the TUI; read loguru's file sink (or `[logging]` in the scratch config) for tracebacks instead. A fresh scratch profile's first-run wizard also does not reliably take Escape (PR O, same day) — set `[first_run] setup_completed = true` in the scratch config before the first launch.

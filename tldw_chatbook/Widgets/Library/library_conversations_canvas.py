@@ -21,6 +21,7 @@ from tldw_chatbook.Library.library_conversations_state import (
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
@@ -191,12 +192,15 @@ class LibraryConversationsCanvas(
                     # task-4023 AC#1 (RC-07): "○" disabled marker; base
                     # label stashed for `_apply_library_row_toggle`'s
                     # in-place patch.
-                    library_disabled_action_label("Export selected", export_disabled),
+                    library_disabled_action_label(
+                        "Export selected", export_disabled, align=True
+                    ),
                     id="library-conversations-export-selected",
                     classes="library-canvas-action",
                     compact=True,
                 )
                 export_selected._library_disabled_marker_base = "Export selected"
+                export_selected._library_disabled_marker_align = True
                 export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
@@ -248,7 +252,10 @@ class LibraryConversationsCanvas(
                 # rendered text), so the raw remainder is stashed here at
                 # the single point of truth.
                 label_rest = f" {_visible_row_title(row.title)}\n    {row.secondary}"
-                button = Button(
+                # task-31945: a row is one full-width Button and gets
+                # clicked twice in a row (☐ then the title); the shared
+                # helper drops the press flash that swallowed the second.
+                button = library_row_button(
                     f"{marker}{label_rest}",
                     id=f"library-conversation-row-{index}",
                     classes="library-conversation-row",

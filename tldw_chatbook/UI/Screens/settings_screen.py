@@ -166,7 +166,7 @@ from ...config import (
     ProviderSettingsError,
     CanvasConfigPolicy,
     RuntimeConfigSnapshot,
-    _default_base_data_dir,
+    _selected_default_base_data_dir,
     apply_settings_mutation_to_cli_config,
     apply_console_capture_settings,
     build_canvas_config_policy,
@@ -227,6 +227,7 @@ from .settings_search_index import (
 )
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,
+    NOTE_SUMMARY_PROMPT_ID,
     SUMMARY_PROMPT_ID,
     format_ratio_percent,
     load_context_memory_values,
@@ -10153,13 +10154,11 @@ class SettingsScreen(BaseAppScreen):
         return safe_user_name if safe_user_name else "default_user"
 
     def _configured_user_data_dir_path(self) -> Path:
-        """Read-only mirror of get_user_data_dir()'s resolution logic (minus
-        the mkdir side effect), so the Settings display never diverges from
-        the path the app actually uses. Uses _default_base_data_dir() (the
-        same call-time HOME resolution as get_user_data_dir()'s fallback)
-        rather than the import-time-frozen BASE_DATA_DIR_CLI constant --
-        those two can disagree, e.g. under test-isolated HOME (task-519
-        review)."""
+        """Display the selected profile path without creating directories.
+
+        Share HOME resolution and the durable fallback selection with the
+        runtime resolver, including fresh-install recovery under ADR-127.
+        """
         configured_data_dir = self._read_cli_config_value_without_writes(
             "paths", "data_dir", None
         )
@@ -10170,7 +10169,7 @@ class SettingsScreen(BaseAppScreen):
         base_data_dir = (
             Path(str(configured_data_dir)).expanduser()
             if configured_data_dir
-            else _default_base_data_dir()
+            else _selected_default_base_data_dir()
         )
         return validate_path_simple(
             base_data_dir / self._configured_user_folder_name(),
@@ -16727,6 +16726,15 @@ class SettingsScreen(BaseAppScreen):
                 "Edit summary prompt…",
                 id="settings-console-context-edit-summary-prompt",
                 tooltip="Open the existing Internal Prompts editor filtered to the Console summary prompt.",
+            )
+            yield Button(
+                "Edit summarize-to-note prompt…",
+                id="settings-console-context-edit-note-summary-prompt",
+                tooltip=(
+                    "Open the Internal Prompts editor filtered to the prompt "
+                    "used by the Console message More-menu 'Summarize up to "
+                    "here as note' action."
+                ),
             )
             yield Static(
                 "Text summary and Hybrid make one extra model call and store generated "
@@ -24154,6 +24162,33 @@ class SettingsScreen(BaseAppScreen):
         # panel this reaches for is built by the detail pane's own rebuild
         # (task-15475), which finishes later than a screen callback would.
         self._after_category_panes(_focus_summary_prompt)
+
+    @on(Button.Pressed, "#settings-console-context-edit-note-summary-prompt")
+    def handle_console_context_edit_note_summary_prompt(
+        self, event: Button.Pressed
+    ) -> None:
+        """TASK-31901: same reveal-and-focus jump for the note-summarize
+        prompt used by the Console More-menu note action."""
+        event.stop()
+        self._select_category(SettingsCategoryId.INTERNAL_PROMPTS.value)
+
+        def _focus_note_summary_prompt() -> None:
+            try:
+                panel = self.query_one(
+                    "#settings-internal-prompts-panel", InternalPromptsPanel
+                )
+            except QueryError:
+                self.app.notify(
+                    "Internal Prompts is not available.", severity="warning"
+                )
+                return
+            if not panel.focus_prompt(NOTE_SUMMARY_PROMPT_ID):
+                self.app.notify(
+                    "The Console summarize-to-note prompt is not registered.",
+                    severity="warning",
+                )
+
+        self._after_category_panes(_focus_note_summary_prompt)
 
     @on(Input.Changed, "#settings-console-default-user-display-name")
     def handle_console_default_user_display_name_changed(

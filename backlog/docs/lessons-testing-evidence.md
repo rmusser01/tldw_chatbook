@@ -155,6 +155,19 @@ A per-trajectory-marker close was removed because it split the real worker
 lifetime and added unnecessary checkpoint work. Broader older fixtures still
 retain handles, so this scoped result is not a claim of repository-wide cleanup.
 
+**TASK-31245, Library inspection qualification, 2026-09-07.** Closing the
+inspection fixture's SQLite registry, collections and evaluation owners removed
+the warning but still left seven regular descriptors per mounted case. A full
+post-teardown `fstat` census plus basename-only Darwin `F_GETPATH` and successful
+`lsof` identified the never-run app's workspace/subscriptions SQLite handles and
+profile lock. Capturing those exact constructor owners and disposing them only
+after harness/worker completion made the 103-case affected gate plateau at seven
+regular descriptors (logs/capture files), without changing production pooling or
+GC. An empty filtered basename report had initially missed those resource names.
+Measure all resource types after teardown, record diagnostic exit/stderr, and
+distinguish fixture lifetime from ordinary production reads; falling below the
+warning threshold is not evidence of a plateau.
+
 ## Capture queued UI ownership in the row, not only in the event
 
 **PR #2432, Canvas review, 2026-09-05.** A queued card-open event originally
@@ -11829,6 +11842,15 @@ of all subsequent pytest execution while the worker was limited to static edits.
 When a procedural warning demonstrably fails, narrow the execution workflow
 instead of repeating the warning and treating intent as isolation evidence.
 
+Follow-up incident (TASK-31245 activation review, 2026-09-07): a coordinator-only
+stdin diagnostic imported `Chat.__init__` → server/runtime-policy bootstrap →
+config before establishing a disposable profile. Logs showed ambient config
+loading and chat_dicts ensure; no prior metadata established whether directory
+creation or permission hardening occurred. No real-profile inspection/undo was
+attempted. The regression belongs in repository pytest's pre-import disposable
+bootstrap (with compatible qualification dependencies), not a raw import probe;
+an apparently pure coordinator module does not bypass its package initializer.
+
 ## Parameter IDs can accidentally activate keyword-based test gates
 
 Incident (TASK-31232 DOM-only correction, 2026-09-05): a local Chromium
@@ -11965,3 +11987,195 @@ pre-existing red baseline on dev — `Tests/UI/test_library_notes_reader.py`
 worktree run produced the identical 15 failures / 59 passes. Run the fast pure
 tree tests (`Tests/Library/test_library_notes_tree_*.py`) and a focused
 non-mounting wiring test instead of trusting these mounting suites' green/red.
+
+## "Base-red" means red at the MERGE-BASE, not at the branch's own earlier head (media wave 5 PR H / task-31633, 2026-09-06)
+
+PR H's Task 2 implementer compared its whole-file runs against a detached copy of
+7f3629949 — the branch head after Tasks 1 and 3 — and labelled three failures
+"known base-red … fails identically on the base". The final whole-branch reviewer
+re-ran them against the true merge-base (a9e13f4e3) with a control resolver:
+`test_library_media_reader_state.py:196` (56 vs 40 — Task 1's growth) and two
+`test_library_media_return_settlement.py` tests (a hard-coded `(0, 42)` scroll offset
+— Task 2's two-rows-per-item change) were green there and red on the branch. Task 1
+had never run those two files at all. Two task reviews approved the reports because
+the name-set tables looked complete; only the reviewer who chose a different base
+caught it.
+
+**What to do.** The comparison base for a task's evidence is the branch's merge-base
+with dev (`git merge-base origin/dev HEAD`), detached into its own worktree — never an
+earlier head of the same branch, which already contains the earlier tasks' behaviour.
+A controller dispatching Task N must hand the implementer the merge-base SHA
+explicitly, and the task reviewer should check which SHA the "base" column was
+measured against before trusting a "fails identically" claim. (This is the companion
+to the PR G lesson above: the rerun set is the census of files that assert on the
+change — this one is about the commit you compare that census against.)
+
+## A "both sides kept" conflict resolution can drop a line git factored out as shared context (media wave 5 PR I dev merge, 2026-09-06)
+
+Merging dev into PR I conflicted only in `test_library_media_render_fixes.py`, where
+both branches had appended tests. A mechanical both-keep (HEAD block, then the incoming
+block) produced a file that did not parse: git had factored the identical trailing
+`        )` of both blocks' last calls into the SHARED suffix, so the first block's call
+lost its closer; likewise the identical leading `@pytest.mark.asyncio` was factored into
+the shared prefix, so the second block's first test lost its decorator and would have run
+unmarked. The merge was committed before the parse check ran (a `;` instead of `&&` in
+the command chain) and had to be amended.
+
+**What to do.** Both-keep is fine for appended blocks, but the shared context around a
+hunk belongs to ONE side, not both: after resolving, run
+`python -c "import ast; ast.parse(open(f).read())"`, `pytest <file> --collect-only -q`,
+and an `awk` census of `async def test_` lines whose previous line is not a
+marker/parametrize — and gate the commit on all three with `&&`, never `;`.
+
+### TASK-31826: every Meetings UI pilot ran at 160x45 -- seven new rail rows shipped clipped out of the compositor
+
+Task 5 of the voiceprint program added seven rows to the Meetings rail (a plain `Vertical`) and its
+tests all passed: every pilot in `Tests/UI/test_meetings_screen.py` used `size=(160, 45)`. The
+task reviewer re-ran the screen at 100x30 and 80x24 and found the learning-offer buttons and the
+whole Voice row outside the compositor -- the offer was unanswerable on a normal laptop terminal.
+Rule: a change that adds rows to a rail gets a pilot at 100x30 and 80x24 that asserts the new
+widgets' `region` is non-zero after `scroll_end()` (a `VerticalScroll` rail) and that the primary
+control stays reachable.
+
+Second half of the same incident: the reviewer's "regression" baseline was measured in a harness
+WITHOUT the app stylesheet (see lessons-textual.md, "A geometry or `.display` test without
+`CSS_PATH = BUNDLED_STYLESHEET` measures nothing"): with the bundle loaded the parent commit
+already had Start below the fold at <=120x32. Measure layout baselines with the real bundle, on
+both commits, before calling something a regression.
+
+### TASK-31826: a controller-applied fix runs preflight like any implementer's commit
+
+The SDD controller applied a three-line round-2 fix by hand (a `logger.debug` in `on_unmount`)
+and committed without `./scripts/preflight.sh`; the next task's implementer hit the diagnostic
+inventory drift and had to re-pin someone else's row. The rule the implementers follow ("any
+`logger.*` change -> read the rows, `--write`") binds the controller too.
+
+
+## Trace recovery tests need the failure before a boundary exists
+
+**TASK-31976, 2026-09-07.** A user reported “Trace capture blocked” on a fresh
+Console send, then no send and no card after choosing Send without capture.
+The existing real trace/agent tests passed because their recovery failures had
+an established boundary. A mounted Console probe with a file-backed database
+and a failure in the first boundary factory reproduced the missing case: the
+controller demanded proof from a boundary that never existed, returned unknown
+delivery, and the UI discarded the result when the trace pause disappeared.
+Zero adapter calls and a rendered frame with no recovery guidance proved the
+failure; disappearance of the card alone would have looked like success.
+
+**What to do.** Cover construction failure separately from reservation/bind
+failure. Keep the real accepted-send, database, and agent paths; replace only
+the external adapter and inject the failing boundary operation. Assert one
+provider call and the completed original turn for successful recovery, or
+painted refusal/recovery actions for a refused action. An internal result or a
+hidden card is not evidence that a message sent or that the user can recover.
+
+## A trace-only probe cannot diagnose a send that never reaches tracing
+
+**TASK-31977, 2026-09-07.** A reporter reproduced Console flicker, but the
+throwaway launcher recorded only start/end: all its hooks began at trace
+reservation. New real-sink tests also showed that an existing durable-commit
+Loguru diagnostic never reached the support artifact. The responsiveness monitor
+recorded stalls but missed repeated syncs on a responsive loop. Instrumenting
+from the visible send action and testing both the private file and actual Copy
+all action produced useful evidence for those earlier failures. Independent
+review then found that nested queued sends shared one event allowance and
+WARNING thresholds dropped the runtime/capture context; separate submission
+budgets and self-contained failure records fixed both regression tests.
+
+**What to do.** Verify the artifact a reporter will share, from the earliest
+user action through refusal or completion. Test a responsive refresh episode
+separately from a stall, and test failure records at WARNING thresholds. A
+start/end-only log is absence of coverage, not proof that the send worked.
+
+---
+
+---
+
+## A boot census must poll for serially-gated workers, not use a flat settle window
+
+**PR #2467 CI, 2026-09-06.** The "UI latency guardrails" job failed once
+with `census looks degenerate -- boot workers that always start were not
+recorded: [('_backfill_chachanotes_messages_fts', 'chachanotes-fts-backfill')]`
+and passed everywhere else, including the identical commit locally. The
+chachanotes FTS backfill is THIRD in the staggered boot fleet, which
+`boot_worker_policy.py` runs strictly serially (`MAX_CONCURRENT = 1`,
+behind the two actor-pack prefetches whose durations are "milliseconds on
+a healthy profile"). The census probe snapshotted at `_ui_ready` + a flat
+1.0 s; on a contended runner the two prefetches occasionally consumed the
+whole window before the third worker was admitted, and the anti-vacuity
+assert read that as a degenerate census.
+
+**What to do.** When a probe asserts that gated/queued work "always"
+starts, wait for the expected starts (poll with a generous deadline)
+rather than a flat window sized to the happy path. The probe already
+records STARTS rather than running state, so waiting cannot miss a worker
+that finishes quickly.
+
+## A settled paint does not prove a failed send released its busy state
+
+**TASK-32010, 2026-09-07.** Extending the existing mounted Console diagnostic
+test to press Enter with capture enabled found zero repeated full-screen
+compositor updates after a readiness exception, yet the transcript's 200ms timer
+kept running. The failed echo was correctly marked unsent, but the controller
+remained VALIDATING and refused another send. Testing slot release and an actual
+controller retry exposed the missing exception cleanup. The same omission also
+affected cancellation before provider entry.
+
+**What to do.** Check send state, retry and timer termination alongside actual
+compositor output. An orphaned polling timer is a concrete lifecycle defect;
+without repeated paint evidence, it does not establish the cause of a reporter's
+visible terminal flicker.
+
+**TASK-32012 follow-up.** Holding provider validation open after Enter still
+produced zero full-screen updates and stable geometry, but actual partial spans
+repainted the unchanged transcript title, composer reason and footer hints about
+five times per second. Suppressing equal text writes at those three widgets in
+the experiment left only caret paints. The mounted regression therefore checks
+emitted partial spans, alongside full-screen updates, and then completes the send.
+The first implementation caught only one of two heading writers; the real-paint
+assertion remained red until both were guarded. Keep responsive width and
+visibility recalculation outside text equality guards.
+
+## A diagnostic field name can erase the rest of a descriptive log line
+
+**TASK-31977.1, Console flicker investigation, 2026-09-07.** The file and
+Copy all tests retained every send stage, but a full-app Copy visible probe
+lost phase, status and failure fields. Its generic credential redactor treats
+an unquoted `*_token` assignment through end-of-line as sensitive; the random
+`attempt_token` correlation label therefore swallowed every following field.
+Extending the real collector regression to both copy actions reproduced the
+failure. Renaming the emitted field to `attempt_id` preserved the same random
+correlation value across send and refresh events without bypassing redaction.
+
+**What to do.** Exercise each export's actual transformation chain. A
+metadata-only bulk export passing does not prove the descriptive live view
+retains that metadata. Avoid credential-like labels for non-credential IDs;
+keep credential redaction intact and verify both privacy and diagnostic detail.
+
+## Equal widget geometry can hide text moving on every caret blink
+
+**TASK-32012.1, Console flicker investigation, 2026-09-07.** Settled-screen
+probes showed no full-screen updates or repeated geometry changes, and the
+composer's existing blink tests passed. Comparing the text in both phases
+instead found 763 mismatches across 4,092 sampled caret positions. At width 11,
+`hello world` painted `hello ` / `world▌` while visible, then `hello world` /
+` ` while hidden: a space and a block have equal cell widths but different
+word boundaries. Mounted Enter-failure tests reproduced the moving word at
+80×24 and 97×30. Hit testing also missed that word because it wrapped the
+space-based layout. This establishes composer text movement, not the external
+reporter's exact whole-screen flicker.
+
+**What to do.** Compare actual painted characters and their positions across
+animation phases, alongside geometry and compositor activity. Wrap with one
+stable caret glyph and hide its mapped character afterward. Pasted-tab cases
+caught an offset mistake in the initial fix: tab expansion must be reflected
+in caret/style offsets and reversed for click mapping. Keep these cases plus
+literal caret-like text, Unicode and history suggestions in the regression.
+
+PR #2498 review added a second coordinate check: terminal cells are not Python
+character offsets. Eight mounted CJK/emoji/combining-text cases caught clicks
+landing after the final expanded tab space. A follow-up `❤️` case caught a
+prefix-width cutoff inside its variation-selector sequence. Hit testing now
+uses whole grapheme boundaries measured with the wrapper's cell-width policy;
+clicking either emoji cell and then typing must preserve the emoji.
