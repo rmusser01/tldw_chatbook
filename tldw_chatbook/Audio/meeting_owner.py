@@ -267,6 +267,10 @@ class MeetingSettings(BaseModel):
     def _validate_onnx_models_dir(cls, value: Any) -> Path | None:
         """The air-gapped models directory, or None for the standard placement.
 
+        Absolute and expanded, like `recordings_dir`: this path is handed to
+        the worker SUBPROCESS, whose cwd is not the app's, so a relative or
+        `~`-prefixed value would otherwise resolve differently on each side.
+
         Raises:
             ValueError: Rejected by `validate_path_simple` (traversal, null
                 bytes, ...) -- the same boundary `recordings_dir` uses.
@@ -276,10 +280,14 @@ class MeetingSettings(BaseModel):
         if isinstance(value, str):
             from tldw_chatbook.Utils.path_validation import validate_path_simple
 
-            return Path(validate_path_simple(value))
-        if not isinstance(value, Path):
+            # `~` is expanded BEFORE validation, not after: `validate_path_
+            # simple` refuses a literal "~/" (it cannot tell an unexpanded
+            # home from an injection attempt), and validating the string that
+            # is actually used beats validating the one that is not.
+            value = validate_path_simple(str(Path(value.strip()).expanduser()))
+        elif not isinstance(value, Path):
             raise ValueError("onnx_models_dir must be a path")
-        return value
+        return Path(value).expanduser().resolve()
 
     @classmethod
     def from_config(cls, get_setting: Callable[[str, str, Any], Any], data_dir: Path) -> "MeetingSettings":
@@ -489,6 +497,7 @@ def resolve_engine(settings: MeetingSettings, find_spec=importlib.util.find_spec
         missing-package problem.
     """
     backend = settings.diarizer_backend
+    missing: tuple[str, ...] = ()
     if backend in ENGINE_MODULES:
         # An explicit choice never walks on to the other engine, however
         # complete that one's packages are (spec §8).
@@ -496,7 +505,6 @@ def resolve_engine(settings: MeetingSettings, find_spec=importlib.util.find_spec
         return (None, missing) if missing else (backend, ())
     if backend != "auto":
         return None, ()
-    missing: tuple[str, ...] = ()
     for engine in AUTO_ORDER:
         missing = _missing_modules(ENGINE_MODULES[engine], find_spec)
         if not missing:
@@ -1124,7 +1132,14 @@ class MeetingSessionOwner:
         # a prepare from before the user installed (or removed) an engine's
         # packages, and the model id this meeting checks the voiceprint
         # against has to be the engine it is about to run.
-        self._resolved_engine = resolve_engine(self.settings)[0]
+        previous_engine, self._resolved_engine = self._resolved_engine, resolve_engine(self.settings)[0]
+        if previous_engine is not None and previous_engine != self._resolved_engine:
+            # The cached load was verified against the PREVIOUS engine's model
+            # id, so its "on" vector belongs to a vector space this meeting no
+            # longer runs in -- handing it to the new backend would match the
+            # user against noise. Re-read under the new id instead (the very
+            # switch `_switch_detail` exists to explain).
+            self._cache_voice_load(None)
         # Held for the whole body, OUTSIDE `self._lock`: a Start landing
         # during an in-flight stop() blocks here until that stop has fully
         # finalised the old session, instead of racing it to open a second

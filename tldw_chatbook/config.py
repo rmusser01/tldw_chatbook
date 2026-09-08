@@ -5213,8 +5213,8 @@ post_transcribe = true
 # Ask that offline pass for speaker diarization (needs torch + speechbrain).
 post_diarize = true
 # Assign speaker ids while recording instead of only in the offline pass
-# (feeds the live Speakers legend). Needs the same packages as post_diarize,
-# installed via the "diarization" extra: pip install -e ".[diarization]"
+# (feeds the live Speakers legend). Needs a diarizer engine -- the base
+# install ships one; see diarizer_backend below for the choice.
 live_diarization = false
 # Which engine assigns the live speaker ids when live_diarization is on:
 #   "auto"        - the first engine whose packages are installed (default)
@@ -5231,10 +5231,10 @@ diarizer_backend = "auto"
 # identity -- changing it means enrolling again.
 onnx_embedder = "titanet_small"
 # Where the ONNX model files live; empty = <data_dir>/models/diarization/onnx,
-# fetched on the first Start (~35 MB). Point it at a directory of pre-placed
-# files for an air-gapped install: the files already there are verified and
-# never re-fetched, and only missing ones are downloaded. The user guide lists
-# the file names, URLs and hashes.
+# fetched on the first Start (~46 MB for titanet_small). Point it at a
+# directory of pre-placed files for an air-gapped install: the files already
+# there are verified and never re-fetched, and only missing ones are
+# downloaded.
 onnx_models_dir = ""
 # Upper bound the local live diarizer uses when clustering voices into
 # speaker ids.

@@ -309,6 +309,9 @@ def test_legacy_local_backend_value_reads_as_auto(tmp_path):
     assert _settings(tmp_path).onnx_embedder == "titanet_small"
     assert _settings(tmp_path, onnx_models_dir="").onnx_models_dir is None
     assert _settings(tmp_path, onnx_models_dir=str(tmp_path / "m")).onnx_models_dir == tmp_path / "m"
+    # Absolute and expanded: the worker SUBPROCESS is handed this path and
+    # does not share the app's cwd (review M4).
+    assert _settings(tmp_path, onnx_models_dir="~/models").onnx_models_dir == Path.home() / "models"
 
 
 def test_settings_from_config_reads_the_engine_keys(tmp_path):
@@ -1410,6 +1413,17 @@ class _RecordingStore:
 
     def load(self, expected_model_id=None, timeout_s=1.5):
         self.expected.append(expected_model_id)
+        # Honours `expected_model_id` like the real store, so it cannot lie
+        # about the very thing these tests pin: a record from another engine
+        # reads as `needs_reenrollment`, never as a usable vector.
+        record = getattr(self.result, "voiceprint", None)
+        if record is not None and expected_model_id not in (None, record.model_id):
+            from tldw_chatbook.Audio import voiceprint as vp
+
+            return vp.LoadResult(
+                voiceprint=None, reason="needs_reenrollment", mode="keyring",
+                stored_model_id=record.model_id,
+            )
         return self.result
 
 
@@ -1505,6 +1519,40 @@ def test_no_switch_copy_for_an_unrecognisable_stored_model_id(tmp_path, monkeypa
     owner.prepare()
     owner.start()
     assert owner.voice_match.reason == "needs_reenrollment" and owner.voice_match.detail is None
+    owner.stop()
+
+
+def test_a_changed_engine_drops_the_cached_voiceprint_load(tmp_path, monkeypatch):
+    """Review M6: the cached load was verified against the PREVIOUS engine's
+    model id. A run where the resolved engine changes (the user installed or
+    removed the torch extra) must re-read under the new id -- otherwise the
+    stale "on" vector, from a different vector space, is handed to the new
+    backend and every comparison against it is noise."""
+    from tldw_chatbook.Audio import voiceprint as vp
+    from tldw_chatbook.Audio.diarizer_local import model_id_for
+
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    engine = ["speechbrain"]
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: (engine[0], ()))
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: FakeBackend())
+    record = vp.Voiceprint(
+        model_id=model_id_for("speechbrain"), centroid=vp.unit_normalise((0.6, 0.8)),
+        sample_count=10.0, meetings_contributed=1, created_at="2026-09-06T00:00:00",
+        updated_at="2026-09-06T00:00:00", threshold_used=0.2,
+    )
+    store = _RecordingStore(vp.LoadResult(voiceprint=record, reason=None, mode="keyring"))
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=store)
+    owner.prepare()
+    owner.start()
+    assert store.expected == [model_id_for("speechbrain")]
+    assert owner.voice_match == mo.VoiceMatchState("on", None)
+    owner.stop()
+
+    engine[0] = "onnx"                       # the packages changed under this run
+    owner.start()
+    assert store.expected == [model_id_for("speechbrain"), model_id_for("onnx")]
+    assert owner.voice_match.reason == "needs_reenrollment"     # not the stale "on"
     owner.stop()
 
 
@@ -1868,6 +1916,37 @@ def test_enroll_from_mic_saves_a_voiceprint_from_memory_only(tmp_path, monkeypat
     record = store.load().voiceprint
     assert record.model_id == MODEL_ID and record.centroid == pytest.approx([0.6, 0.8])
     assert backend.closed == 1                                  # the worker is not leaked
+
+
+def test_enrollment_spawns_the_resolved_engine_and_stamps_its_model_id(tmp_path, monkeypatch):
+    """Spec §6's invariant, end to end (review I1): the engine that PRODUCED
+    the vector and the model id it is STORED under must be the same one.
+
+    Both halves together, because either alone passes on a bug: an
+    `_embedding_diarizer` hard-wired back to SpeechBrain fails the first
+    assert while still writing an ONNX id, which is exactly the silent
+    corruption -- an ECAPA vector stored as a sherpa-onnx one -- that every
+    later match would then read as "not you"."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+    from tldw_chatbook.Audio.diarizer_local import model_id_for
+
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: ("onnx", ()))
+    backend = FakeBackend(centroid=(3.0, 4.0), seconds=27.0)
+    captured: dict = {}
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda **kw: captured.update(kw) or backend)
+    store = _store(tmp_path, enrolled=False)
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, diarizer_backend="onnx",
+        onnx_models_dir=str(tmp_path / "m"), voiceprint_store=store,
+    )
+    owner._mic_factory = PcmRecorder
+    owner._sleep = lambda seconds: None
+
+    assert owner.enroll_from_mic(seconds=1).ok is True
+    assert captured["engine"] == "onnx"                       # ... spawned the resolved engine
+    assert captured["embedder"] == "titanet_small"
+    assert captured["models_dir_override"] == tmp_path / "m"
+    assert store.load().voiceprint.model_id == model_id_for("onnx")   # ... and stamped its id
 
 
 def test_enroll_from_mic_reports_a_failed_embed_without_saving(tmp_path, monkeypatch):
