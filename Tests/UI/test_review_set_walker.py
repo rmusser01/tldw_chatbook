@@ -556,7 +556,11 @@ def test_create_from_selection_exits_select_mode_before_landing(
 def _worker_fake(service, *, search_media, scope=None):
     """Fake screen for the entry-point workers, wiring the real methods."""
     fake = _entry_fake(service)
-    fake._library_media_browse_controller = SimpleNamespace(applied_scope=scope)
+    fake._library_media_browse_controller = SimpleNamespace(
+        state=SimpleNamespace(
+            applied_scope=scope,
+        ),
+    )
     fake.app_instance.media_reading_scope_service = SimpleNamespace(
         search_media=search_media
     )
@@ -951,7 +955,11 @@ async def test_picker_worker_read_later_builds_a_set_in_saved_order(tmp_path):
     fake.app_instance.media_reading_scope_service = SimpleNamespace(
         search_media=search_media
     )
-    fake._library_media_browse_controller = SimpleNamespace(applied_scope=None)
+    fake._library_media_browse_controller = SimpleNamespace(
+        state=SimpleNamespace(
+            applied_scope=None,
+        ),
+    )
     for name in (
         "_order_selected_review_pairs",
         "_review_read_later_pairs",
@@ -1046,7 +1054,11 @@ async def test_read_later_pairs_run_against_the_real_media_db(tmp_path):
     fake.app_instance.media_reading_scope_service = SimpleNamespace(
         search_media=search_media
     )
-    fake._library_media_browse_controller = SimpleNamespace(applied_scope=None)
+    fake._library_media_browse_controller = SimpleNamespace(
+        state=SimpleNamespace(
+            applied_scope=None,
+        ),
+    )
     for name in (
         "_order_selected_review_pairs",
         "_review_read_later_pairs",

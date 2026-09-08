@@ -432,7 +432,7 @@ async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size)
             len(service.update_calls),
             len(service.delete_calls),
         )
-        scope = controller.applied_scope
+        scope = controller.state.applied_scope
         selected = screen._media_state.selected_media_id
 
         await pilot.resize_terminal(*size)
@@ -455,7 +455,7 @@ async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size)
         await pilot.pause()
 
         assert shell.query_one("#library-media-canvas") is items
-        assert controller.applied_scope == scope
+        assert controller.state.applied_scope == scope
         assert screen._media_state.selected_media_id == selected
         assert (
             len(service.search_calls),

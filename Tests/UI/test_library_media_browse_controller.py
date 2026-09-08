@@ -114,9 +114,9 @@ async def test_controller_sends_exact_summary_coordinates_and_full_scope() -> No
             "media_types": ["video"],
         }
     ]
-    assert controller.applied_scope == scope
-    assert controller.mutation_refresh_scope == scope
-    assert controller.scope_for_page(1) == scope.with_page(1)
+    assert controller.state.applied_scope == scope
+    assert controller.state.mutation_refresh_scope == scope
+    assert controller.state.scope_for_page(1) == scope.with_page(1)
 
 
 @pytest.mark.asyncio
@@ -143,7 +143,7 @@ async def test_controller_round_trips_nonblank_source_type_verbatim() -> None:
     controller.request(MediaBrowseScope(media_type=" pdf "), focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.type_options == (" pdf ", "pdf")
+    assert controller.state.type_options == (" pdf ", "pdf")
     assert service.search_calls[0]["media_types"] == [" pdf "]
 
 
@@ -168,18 +168,18 @@ async def test_controller_retains_applied_rows_while_loading_and_after_page_fail
     controller = _controller(screen, service)
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
-    retained = controller.retained_items
+    retained = controller.state.retained_items
 
     controller.request(MediaBrowseScope(page=2), focus_identity=None)
-    assert controller.loading is True
-    assert controller.retained_items is retained
-    assert controller.pager.status_copy == "Loading page 2…"
+    assert controller.state.loading is True
+    assert controller.state.retained_items is retained
+    assert controller.state.pager.status_copy == "Loading page 2…"
     await screen.pending.pop()
 
-    assert controller.retained_items is retained
-    assert controller.freshness == "fresh"
-    assert controller.error_copy == "Couldn't load page 2."
-    assert controller.pager.range_copy == "1-20 of 40"
+    assert controller.state.retained_items is retained
+    assert controller.state.freshness == "fresh"
+    assert controller.state.error_copy == "Couldn't load page 2."
+    assert controller.state.pager.range_copy == "1-20 of 40"
 
 
 @pytest.mark.asyncio
@@ -193,11 +193,11 @@ async def test_scope_failure_copy_and_retry_use_requested_scope() -> None:
     controller.request(requested, focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.error_copy == "Filter wasn't applied; showing previous results."
-    assert controller.mutation_refresh_scope == MediaBrowseScope()
+    assert controller.state.error_copy == "Filter wasn't applied; showing previous results."
+    assert controller.state.mutation_refresh_scope == MediaBrowseScope()
     controller.retry(focus_identity=None)
     await screen.pending.pop()
-    assert controller.requested_scope == requested
+    assert controller.state.requested_scope == requested
     assert service.search_calls[-1]["query"] == "new"
 
 
@@ -213,9 +213,9 @@ async def test_controller_clamps_once_and_keeps_original_requested_scope() -> No
 
     assert len(service.search_calls) == 2
     assert service.search_calls[-1]["offset"] == 40
-    assert controller.requested_scope == requested
-    assert controller.applied_scope == MediaBrowseScope(page=3)
-    assert controller.pager.page_copy == "Page 3 of 3"
+    assert controller.state.requested_scope == requested
+    assert controller.state.applied_scope == MediaBrowseScope(page=3)
+    assert controller.state.pager.page_copy == "Page 3 of 3"
 
 
 @pytest.mark.asyncio
@@ -225,16 +225,16 @@ async def test_second_shrink_goes_stale_without_a_third_read() -> None:
     controller = _controller(screen, service)
     controller.request(MediaBrowseScope(page=2), focus_identity=None)
     await screen.pending.pop()
-    retained = controller.retained_items
+    retained = controller.state.retained_items
 
     controller.request(MediaBrowseScope(page=99), focus_identity=None)
     await screen.pending.pop()
 
     assert len(service.search_calls) == 3
-    assert controller.retained_items is retained
-    assert controller.freshness == "stale"
-    assert controller.stale_copy
-    assert controller.pager.retry_visible is True
+    assert controller.state.retained_items is retained
+    assert controller.state.freshness == "stale"
+    assert controller.state.stale_copy
+    assert controller.state.pager.retry_visible is True
 
 
 @pytest.mark.asyncio
@@ -247,9 +247,9 @@ async def test_late_page_generation_cannot_replace_current_request() -> None:
     controller.begin(MediaBrowseScope(query="new"))
     await late
 
-    assert controller.requested_scope.query == "new"
-    assert controller.applied_result is None
-    assert controller.loading is True
+    assert controller.state.requested_scope.query == "new"
+    assert controller.state.applied_result is None
+    assert controller.state.loading is True
 
 
 @pytest.mark.asyncio
@@ -263,12 +263,12 @@ async def test_facets_are_complete_sorted_unique_and_independently_fenced() -> N
     late = screen.pending.pop()
     controller.invalidate_facets(fingerprint="new")
     await late
-    assert controller.type_options == ()
+    assert controller.state.type_options == ()
 
     controller.request_facets(fingerprint="new")
     await screen.pending.pop()
-    assert controller.type_options == ("ALL", "All", "all", "audio", "video")
-    assert controller.facet_fingerprint == "new"
+    assert controller.state.type_options == ("ALL", "All", "all", "audio", "video")
+    assert controller.state.facet_fingerprint == "new"
 
 
 @pytest.mark.asyncio
@@ -282,7 +282,7 @@ async def test_accepted_facet_transitions_publish_loading_and_outcome(
         screen,
         _Service(types=outcome),
         sync=lambda _focus: synced.append(
-            "loading" if controller.facet_loading else "settled"
+            "loading" if controller.state.facet_loading else "settled"
         ),
     )
 
@@ -292,9 +292,9 @@ async def test_accepted_facet_transitions_publish_loading_and_outcome(
 
     assert synced == ["loading", "settled"]
     if isinstance(outcome, Exception):
-        assert controller.facet_error_copy
+        assert controller.state.facet_error_copy
     else:
-        assert controller.type_options == ("video",)
+        assert controller.state.type_options == ("video",)
 
 
 @pytest.mark.asyncio
@@ -343,15 +343,15 @@ async def test_navigation_invalidation_fences_page_and_facets() -> None:
     await page_work
     await facet_work
 
-    assert controller.applied_result is None
-    assert controller.type_options == ()
+    assert controller.state.applied_result is None
+    assert controller.state.type_options == ()
 
 
 def test_retain_stale_items_does_not_forge_exact_metadata() -> None:
     screen = _Screen()
     controller = _controller(screen, _Service(_page(1, 1)))
     with pytest.raises(ValueError, match="before"):
-        controller.retain_stale_items((), stale_copy="Changed")
+        controller.state.retain_stale_items((), stale_copy="Changed")
 
 
 @pytest.mark.asyncio
@@ -364,30 +364,30 @@ async def test_committed_mutation_reconciles_retained_without_forging_envelope()
     scope = MediaBrowseScope(page=2)
     controller.request(scope, focus_identity=None)
     await screen.pending.pop()
-    applied = controller.applied_result
+    applied = controller.state.applied_result
 
     assert controller.begin_mutation() == scope
-    controller.reconcile_committed_mutation(
+    controller.state.reconcile_committed_mutation(
         remove_ids=("local:media:21",),
         upsert_items=(_item(99),),
     )
 
-    assert controller.applied_result is applied
-    assert [item["id"] for item in controller.retained_items] == [
+    assert controller.state.applied_result is applied
+    assert [item["id"] for item in controller.state.retained_items] == [
         "local:media:99",
         *(f"local:media:{media_id}" for media_id in range(22, 41)),
     ]
-    assert controller.freshness == "stale"
-    assert controller.pager.title_count is None
-    assert controller.pager.range_copy == "List may be out of date"
+    assert controller.state.freshness == "stale"
+    assert controller.state.pager.title_count is None
+    assert controller.state.pager.range_copy == "List may be out of date"
 
     controller.request(scope, focus_identity=None)
     await screen.pending.pop()
 
     assert service.search_calls[-1]["offset"] == 20
-    assert controller.applied_result is applied
-    assert controller.freshness == "stale"
-    assert controller.pager.retry_visible is True
+    assert controller.state.applied_result is applied
+    assert controller.state.freshness == "stale"
+    assert controller.state.pager.retry_visible is True
 
 
 @pytest.mark.asyncio
@@ -404,8 +404,8 @@ async def test_mutation_begin_fences_page_and_facet_results_before_write() -> No
     await late_page
     await late_facets
 
-    assert controller.applied_result is None
-    assert controller.type_options == ()
+    assert controller.state.applied_result is None
+    assert controller.state.type_options == ()
 
 
 @pytest.mark.asyncio
@@ -419,12 +419,12 @@ async def test_filtered_mutation_does_not_retain_out_of_scope_restore() -> None:
     restored = dict(_item(99), media_type="audio")
 
     controller.begin_mutation()
-    controller.reconcile_committed_mutation(upsert_items=(restored,))
+    controller.state.reconcile_committed_mutation(upsert_items=(restored,))
     controller.request(scope, focus_identity=None)
     await screen.pending.pop()
 
-    assert [item["id"] for item in controller.retained_items] == ["local:media:1"]
-    assert controller.freshness == "stale"
+    assert [item["id"] for item in controller.state.retained_items] == ["local:media:1"]
+    assert controller.state.freshness == "stale"
 
 
 @pytest.mark.asyncio
@@ -437,12 +437,12 @@ async def test_queried_mutation_does_not_guess_restored_row_membership() -> None
     await screen.pending.pop()
 
     controller.begin_mutation()
-    controller.reconcile_committed_mutation(upsert_items=(_item(99),))
+    controller.state.reconcile_committed_mutation(upsert_items=(_item(99),))
     controller.request(scope, focus_identity=None)
     await screen.pending.pop()
 
-    assert [item["id"] for item in controller.retained_items] == ["local:media:1"]
-    assert controller.freshness == "stale"
+    assert [item["id"] for item in controller.state.retained_items] == ["local:media:1"]
+    assert controller.state.freshness == "stale"
 
 
 @pytest.mark.asyncio
@@ -455,13 +455,13 @@ async def test_mutation_refresh_clamps_once_after_page_two_becomes_empty() -> No
     await screen.pending.pop()
 
     controller.begin_mutation()
-    controller.reconcile_committed_mutation(remove_ids=("local:media:21",))
+    controller.state.reconcile_committed_mutation(remove_ids=("local:media:21",))
     controller.request(scope, focus_identity=None)
     await screen.pending.pop()
 
     assert [call["offset"] for call in service.search_calls] == [20, 20, 0]
-    assert controller.applied_scope == MediaBrowseScope(page=1)
-    assert controller.freshness == "fresh"
+    assert controller.state.applied_scope == MediaBrowseScope(page=1)
+    assert controller.state.freshness == "fresh"
 
 
 @pytest.mark.parametrize(
@@ -494,23 +494,23 @@ async def test_failed_retry_under_the_stale_gate_says_why_and_clears_on_success(
     await screen.pending.pop()
 
     controller.begin_mutation()
-    controller.reconcile_committed_mutation(remove_ids=("local:media:1",))
-    assert controller.stale_copy == "Media changed; retry to load a current page."
+    controller.state.reconcile_committed_mutation(remove_ids=("local:media:1",))
+    assert controller.state.stale_copy == "Media changed; retry to load a current page."
 
     controller.retry(focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.stale_copy == f"Couldn't retry · {reason}"
-    assert controller.freshness == "stale"
-    assert controller.error_copy == ""
-    assert controller.pager.retry_visible is True
-    assert controller.pager.status_copy == f"Couldn't retry · {reason}"
+    assert controller.state.stale_copy == f"Couldn't retry · {reason}"
+    assert controller.state.freshness == "stale"
+    assert controller.state.error_copy == ""
+    assert controller.state.pager.retry_visible is True
+    assert controller.state.pager.status_copy == f"Couldn't retry · {reason}"
 
     controller.retry(focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.stale_copy == ""
-    assert controller.freshness == "fresh"
+    assert controller.state.stale_copy == ""
+    assert controller.state.freshness == "fresh"
 
 
 @pytest.mark.asyncio
@@ -530,22 +530,22 @@ async def test_stale_reason_survives_a_failed_retry_for_the_tooltip() -> None:
     await screen.pending.pop()
 
     controller.begin_mutation()
-    controller.reconcile_committed_mutation(remove_ids=("local:media:1",))
+    controller.state.reconcile_committed_mutation(remove_ids=("local:media:1",))
     why_stale = "Media changed; retry to load a current page."
-    assert controller.stale_copy == why_stale
-    assert controller.stale_reason == why_stale
+    assert controller.state.stale_copy == why_stale
+    assert controller.state.stale_reason == why_stale
 
     controller.retry(focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.stale_copy == "Couldn't retry · timed out"
-    assert controller.stale_reason == why_stale
+    assert controller.state.stale_copy == "Couldn't retry · timed out"
+    assert controller.state.stale_reason == why_stale
 
     controller.retry(focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.stale_copy == ""
-    assert controller.stale_reason == ""
+    assert controller.state.stale_copy == ""
+    assert controller.state.stale_reason == ""
 
 
 @pytest.mark.asyncio
@@ -557,8 +557,8 @@ async def test_shrink_and_first_load_failure_copies_are_untouched() -> None:
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.stale_copy == ""
-    assert controller.error_copy == (
+    assert controller.state.stale_copy == ""
+    assert controller.state.error_copy == (
         "Couldn't load media. Check the local Library and retry."
     )
 
@@ -570,7 +570,7 @@ async def test_shrink_and_first_load_failure_copies_are_untouched() -> None:
     shrink.request(MediaBrowseScope(page=99), focus_identity=None)
     await shrink_screen.pending.pop()
 
-    assert shrink.stale_copy == "List changed while paging; retry to load a current page."
+    assert shrink.state.stale_copy == "List changed while paging; retry to load a current page."
 
 
 @pytest.mark.asyncio
@@ -592,24 +592,24 @@ async def test_page_failure_publishes_a_recovery_state_with_the_reason(
     controller = _controller(screen, service)
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
-    assert controller.failure is None
+    assert controller.state.failure is None
 
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
 
-    state = controller.failure
+    state = controller.state.failure
     assert state is not None
     assert state.message == f"Couldn't load page 1 · {reason}"
     assert state.severity == severity
     assert state.retry_id == "library-media-retry"
     assert state.stable_selector == "#library-media-load-failure"
     # Existing consumers keep the plain sentence.
-    assert controller.error_copy == "Couldn't load page 1."
+    assert controller.state.error_copy == "Couldn't load page 1."
 
     controller.retry(focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.failure is None
+    assert controller.state.failure is None
 
 
 @pytest.mark.asyncio
@@ -619,13 +619,13 @@ async def test_first_load_failure_recovery_state_names_the_service() -> None:
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
 
-    state = controller.failure
+    state = controller.state.failure
     assert state is not None
     assert state.message == "Couldn't load media · unable to open database file"
     assert state.severity == "error"
     assert state.retry_id == "library-media-retry"
     assert state.stable_selector == "#library-media-load-failure"
-    assert controller.error_copy == (
+    assert controller.state.error_copy == (
         "Couldn't load media. Check the local Library and retry."
     )
 
@@ -637,13 +637,13 @@ async def test_exhausted_clamp_without_an_applied_page_still_has_a_reason() -> N
     controller.request(MediaBrowseScope(page=99), focus_identity=None)
     await screen.pending.pop()
 
-    state = controller.failure
+    state = controller.state.failure
     assert state is not None
     assert state.message == "Couldn't load media · the list changed while loading"
     assert state.severity == "error"
     assert state.retry_id == "library-media-retry"
     assert state.stable_selector == "#library-media-load-failure"
-    assert controller.error_copy == (
+    assert controller.state.error_copy == (
         "Couldn't load media. Check the local Library and retry."
     )
 
@@ -658,18 +658,18 @@ async def test_facet_failure_publishes_its_own_recovery_state_and_clears_on_succ
     controller.request_facets(fingerprint="current")
     await screen.pending.pop()
 
-    state = controller.failure
+    state = controller.state.failure
     assert state is not None
     assert state.message == "Couldn't load media types · an unexpected error"
     assert state.severity == "error"
     assert state.retry_id == "library-media-retry"
-    assert controller.facet_error_copy == "Couldn't load media types. Retry."
+    assert controller.state.facet_error_copy == "Couldn't load media types. Retry."
 
     service.types = ("video",)
     controller.request_facets(fingerprint="current")
     await screen.pending.pop()
 
-    assert controller.failure is None
+    assert controller.state.failure is None
 
 
 @pytest.mark.asyncio
@@ -687,8 +687,8 @@ async def test_retry_reloads_the_type_facets_that_failed() -> None:
     await screen.pending.pop()
     controller.request_facets(fingerprint="current")
     await screen.pending.pop()
-    assert controller.page_failure is None
-    assert controller.facet_failure is not None
+    assert controller.state.page_failure is None
+    assert controller.state.facet_failure is not None
     assert len(service.search_calls) == 1
 
     service.types = ("video",)
@@ -698,8 +698,8 @@ async def test_retry_reloads_the_type_facets_that_failed() -> None:
 
     assert len(service.search_calls) == 1, "page fence must not be re-requested"
     assert len(service.type_calls) == 2
-    assert controller.type_options == ("video",)
-    assert controller.failure is None
+    assert controller.state.type_options == ("video",)
+    assert controller.state.failure is None
 
 
 @pytest.mark.asyncio
@@ -710,14 +710,14 @@ async def test_a_page_success_never_clears_a_live_facet_failure() -> None:
     controller = _controller(screen, service)
     controller.request_facets(fingerprint="current")
     await screen.pending.pop()
-    facet_failure = controller.failure
+    facet_failure = controller.state.failure
     assert facet_failure is not None
 
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
 
-    assert controller.applied_result is not None
-    assert controller.failure is facet_failure
+    assert controller.state.applied_result is not None
+    assert controller.state.failure is facet_failure
 
 
 @pytest.mark.asyncio
@@ -727,14 +727,14 @@ async def test_a_facet_success_never_clears_a_live_page_failure() -> None:
     controller = _controller(screen, service)
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
-    page_failure = controller.failure
+    page_failure = controller.state.failure
     assert page_failure is not None
 
     controller.request_facets(fingerprint="current")
     await screen.pending.pop()
 
-    assert controller.type_options == ("video",)
-    assert controller.failure is page_failure
+    assert controller.state.type_options == ("video",)
+    assert controller.state.failure is page_failure
 
 
 @pytest.mark.asyncio
@@ -751,14 +751,14 @@ async def test_a_page_failure_is_live_until_the_next_request_starts() -> None:
     controller = _controller(screen, service)
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
-    assert controller.failure is not None
+    assert controller.state.failure is not None
 
     controller.retry(focus_identity=None)
-    assert controller.failure is None
+    assert controller.state.failure is None
 
     await screen.pending.pop()
-    assert controller.failure is None
-    assert controller.applied_result is not None
+    assert controller.state.failure is None
+    assert controller.state.applied_result is not None
 
 
 @pytest.mark.asyncio
@@ -768,15 +768,15 @@ async def test_a_facet_failure_is_live_until_the_next_facet_request_starts() -> 
     controller = _controller(screen, service)
     controller.request_facets(fingerprint="current")
     await screen.pending.pop()
-    assert controller.failure is not None
+    assert controller.state.failure is not None
 
     service.types = ("video",)
     controller.request_facets(fingerprint="next")
-    assert controller.failure is None
+    assert controller.state.failure is None
 
     await screen.pending.pop()
-    assert controller.failure is None
-    assert controller.type_options == ("video",)
+    assert controller.state.failure is None
+    assert controller.state.type_options == ("video",)
 
 
 @pytest.mark.asyncio
@@ -815,7 +815,7 @@ async def test_page_failure_reason_redacts_filesystem_paths(
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
 
-    state = controller.failure
+    state = controller.state.failure
     assert state is not None
     assert state.why == reason
     assert "/Users/x" not in state.message
@@ -871,7 +871,7 @@ async def test_page_failure_reason_redacts_home_relative_and_windows_paths() -> 
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
 
-    state = controller.failure
+    state = controller.state.failure
     assert state is not None
     assert state.why == "<path> is missing"
 
@@ -883,7 +883,7 @@ async def test_page_failure_reason_redacts_home_relative_and_windows_paths() -> 
     windows_controller.request(MediaBrowseScope(), focus_identity=None)
     await windows_screen.pending.pop()
 
-    windows_state = windows_controller.failure
+    windows_state = windows_controller.state.failure
     assert windows_state is not None
     assert windows_state.why == "<path> not found"
 
@@ -897,8 +897,8 @@ async def test_retry_retries_the_page_fence_alone_for_a_page_only_failure() -> N
     await screen.pending.pop()
     controller.request(MediaBrowseScope(), focus_identity=None)
     await screen.pending.pop()
-    assert controller.page_failure is not None
-    assert controller.facet_failure is None
+    assert controller.state.page_failure is not None
+    assert controller.state.facet_failure is None
     assert len(service.type_calls) == 1
 
     controller.retry(focus_identity=None)
@@ -907,8 +907,8 @@ async def test_retry_retries_the_page_fence_alone_for_a_page_only_failure() -> N
 
     assert len(service.search_calls) == 2
     assert len(service.type_calls) == 1, "facet fence must not be re-requested"
-    assert controller.applied_result is not None
-    assert controller.failure is None
+    assert controller.state.applied_result is not None
+    assert controller.state.failure is None
 
 
 @pytest.mark.asyncio
@@ -924,8 +924,8 @@ async def test_retry_retries_both_fences_when_both_have_failed() -> None:
     await screen.pending.pop()
     controller.request_facets(fingerprint="current")
     await screen.pending.pop()
-    assert controller.page_failure is not None
-    assert controller.facet_failure is not None
+    assert controller.state.page_failure is not None
+    assert controller.state.facet_failure is not None
 
     service.types = ("video",)
     controller.retry(focus_identity=None)
@@ -934,9 +934,9 @@ async def test_retry_retries_both_fences_when_both_have_failed() -> None:
 
     assert len(service.search_calls) == 2
     assert len(service.type_calls) == 2
-    assert controller.type_options == ("video",)
-    assert controller.applied_result is not None
-    assert controller.failure is None
+    assert controller.state.type_options == ("video",)
+    assert controller.state.applied_result is not None
+    assert controller.state.failure is None
 
 
 # --- task-31944: the exception -> reason map --------------------------------

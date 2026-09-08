@@ -719,7 +719,7 @@ async def test_media_trash_entry_requests_one_independent_initial_page():
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_media_browse_controller.applied_scope
+                    screen._library_media_browse_controller.state.applied_scope
                     == MediaBrowseScope(media_type="audio")
                 ),
                 message="Normal Media type scope never applied.",
@@ -728,7 +728,7 @@ async def test_media_trash_entry_requests_one_independent_initial_page():
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_media_browse_controller.applied_scope
+                    screen._library_media_browse_controller.state.applied_scope
                     == MediaBrowseScope(query="Interview", media_type="audio")
                 ),
                 message="Normal Media query scope never applied.",
@@ -1899,12 +1899,12 @@ async def test_media_trash_restore_refreshes_normal_page_without_forging_rank():
         normal = screen._library_media_browse_controller
         await _wait_for_condition(
             pilot,
-            lambda: normal.applied_result is not None,
+            lambda: normal.state.applied_result is not None,
             message="Normal Media page never applied.",
         )
-        retained_applied = normal.applied_result
-        retained_items = normal.retained_items
-        retained_requested_scope = normal.requested_scope
+        retained_applied = normal.state.applied_result
+        retained_items = normal.state.retained_items
+        retained_requested_scope = normal.state.requested_scope
         retained_selected_id = screen._media_state.selected_media_id
 
         await _wait_for_selector(screen, pilot, "#library-media-trash-open")
@@ -1929,18 +1929,18 @@ async def test_media_trash_restore_refreshes_normal_page_without_forging_rank():
 
         await _wait_for_condition(
             pilot,
-            lambda: normal.freshness == "fresh" and not normal.loading,
+            lambda: normal.state.freshness == "fresh" and not normal.state.loading,
             message="Normal Media page never refreshed itself after Restore.",
         )
         # Re-read through the service, never re-ranked in place.
-        assert normal.applied_result is not retained_applied
-        assert normal.retained_items is not retained_items
-        assert normal.retained_items == retained_items
-        assert normal.requested_scope == retained_requested_scope
+        assert normal.state.applied_result is not retained_applied
+        assert normal.state.retained_items is not retained_items
+        assert normal.state.retained_items == retained_items
+        assert normal.state.requested_scope == retained_requested_scope
         # A refresh the user never asked for must not move their selection.
         assert screen._media_state.selected_media_id == retained_selected_id
-        assert normal.pager.title_count is not None
-        assert normal.pager.retry_visible is False
+        assert normal.state.pager.title_count is not None
+        assert normal.state.pager.retry_visible is False
         assert trash.state.freshness == "fresh"
 
 
@@ -2410,11 +2410,11 @@ async def test_media_trash_restore_bounds_request_and_retained_summary():
         normal = screen._library_media_browse_controller
         await _wait_for_condition(
             pilot,
-            lambda: normal.applied_result is not None,
+            lambda: normal.state.applied_result is not None,
             message="Normal Media page never applied.",
         )
-        retained_normal_result = normal.applied_result
-        retained_normal_items = normal.retained_items
+        retained_normal_result = normal.state.applied_result
+        retained_normal_items = normal.state.retained_items
         await _wait_for_selector(screen, pilot, "#library-media-trash-open")
         screen.query_one("#library-media-trash-open", Button).press()
         trash = screen._library_media_trash_browse_controller
@@ -2465,12 +2465,12 @@ async def test_media_trash_restore_bounds_request_and_retained_summary():
         # the restore response can reach the retained page either.
         await _wait_for_condition(
             pilot,
-            lambda: normal.freshness == "fresh" and not normal.loading,
+            lambda: normal.state.freshness == "fresh" and not normal.state.loading,
             message="Normal Media page never refreshed itself after Restore.",
         )
-        assert normal.applied_result is not retained_normal_result
-        assert normal.retained_items is not retained_normal_items
-        assert "private-" not in repr(normal.retained_items)
+        assert normal.state.applied_result is not retained_normal_result
+        assert normal.state.retained_items is not retained_normal_items
+        assert "private-" not in repr(normal.state.retained_items)
 
 
 @pytest.mark.asyncio
@@ -2738,16 +2738,16 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
         controller = screen._library_media_browse_controller
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_scope == MediaBrowseScope(),
+            lambda: controller.state.applied_scope == MediaBrowseScope(),
             message="Initial Media page never applied.",
         )
         screen._request_library_media_page(2, focus_identity=None)
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_scope == MediaBrowseScope(page=2),
+            lambda: controller.state.applied_scope == MediaBrowseScope(page=2),
             message="Media page 2 never applied.",
         )
-        selected_id = str(controller.retained_items[4]["id"])
+        selected_id = str(controller.state.retained_items[4]["id"])
         screen._media_state.selected_media_id = selected_id
         row_scroll = screen.query_one("#library-media-row-scroll")
         row_scroll.scroll_to(y=4, animate=False, force=True, immediate=True)
@@ -2813,7 +2813,7 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
             message="Trash return did not restore toolbar focus.",
         )
 
-        assert controller.applied_scope == MediaBrowseScope(page=2)
+        assert controller.state.applied_scope == MediaBrowseScope(page=2)
         assert screen._media_state.selected_media_id == selected_id
         assert screen._media_state.viewer_return == viewer_receipt
         restored_scroll = screen.query_one("#library-media-row-scroll")
@@ -3179,11 +3179,13 @@ def _bind_trash_mutation_seams(fake):
     scope = MediaBrowseScope()
     fake._mutation_events = events
     fake._library_media_browse_controller = SimpleNamespace(
-        mutation_refresh_scope=scope,
-        begin_mutation=lambda: events.append(("begin",)) or scope,
-        reconcile_committed_mutation=lambda **kwargs: events.append(
-            ("reconcile", kwargs)
+        state=SimpleNamespace(
+            mutation_refresh_scope=scope,
+            reconcile_committed_mutation=lambda **kwargs: events.append(
+                ("reconcile", kwargs)
+            ),
         ),
+        begin_mutation=lambda: events.append(("begin",)) or scope,
         request=lambda requested, **kwargs: events.append(
             ("request", requested, kwargs)
         ),
@@ -3788,9 +3790,11 @@ async def test_media_trash_permanent_delete_uses_only_scope_service_target_seam(
         ),
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_browse_controller=SimpleNamespace(
-            mutation_refresh_scope=MediaBrowseScope(page=2),
-            reconcile_committed_mutation=lambda **kwargs: events.append(
-                ("reconcile", kwargs)
+            state=SimpleNamespace(
+                mutation_refresh_scope=MediaBrowseScope(page=2),
+                reconcile_committed_mutation=lambda **kwargs: events.append(
+                    ("reconcile", kwargs)
+                ),
             ),
             request=lambda *args, **kwargs: events.append(
                 ("media-request", args, kwargs)
@@ -3894,9 +3898,11 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
         _notes_state=SimpleNamespace(focus_intent_generation=0),
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_browse_controller=SimpleNamespace(
-            mutation_refresh_scope=MediaBrowseScope(),
-            reconcile_committed_mutation=lambda **kwargs: events.append(
-                ("reconcile", kwargs)
+            state=SimpleNamespace(
+                mutation_refresh_scope=MediaBrowseScope(),
+                reconcile_committed_mutation=lambda **kwargs: events.append(
+                    ("reconcile", kwargs)
+                ),
             ),
             request=lambda *args, **kwargs: events.append(
                 ("media-request", args, kwargs)
@@ -4476,10 +4482,10 @@ async def test_restore_from_trash_returns_a_fresh_media_list(tmp_path):
             normal = screen._library_media_browse_controller
             await _wait_for_condition(
                 pilot,
-                lambda: normal.applied_result is not None,
+                lambda: normal.state.applied_result is not None,
                 message="Normal Media page never applied.",
             )
-            assert len(normal.retained_items) == 3
+            assert len(normal.state.retained_items) == 3
 
             await _wait_for_selector(screen, pilot, "#library-media-trash-open")
             screen.query_one("#library-media-trash-open", Button).press()
@@ -4506,7 +4512,7 @@ async def test_restore_from_trash_returns_a_fresh_media_list(tmp_path):
                 pilot,
                 lambda: (
                     screen._media_state.view == "list"
-                    and not normal.loading
+                    and not normal.state.loading
                     and bool(screen.query("#library-media-canvas"))
                 ),
                 message="Media list never returned from Trash.",
@@ -4514,9 +4520,9 @@ async def test_restore_from_trash_returns_a_fresh_media_list(tmp_path):
             await _wait_for_selector(screen, pilot, "#library-media-row-0")
             await pilot.pause()
 
-            assert normal.freshness == "fresh"
-            assert len(normal.retained_items) == 4
-            assert {str(item["title"]) for item in normal.retained_items} == {
+            assert normal.state.freshness == "fresh"
+            assert len(normal.state.retained_items) == 4
+            assert {str(item["title"]) for item in normal.state.retained_items} == {
                 "Kept one",
                 "Kept two",
                 "Trashed three",

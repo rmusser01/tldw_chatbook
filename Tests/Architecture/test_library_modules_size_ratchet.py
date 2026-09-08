@@ -241,7 +241,10 @@ _BUDGETS: dict[str, int] = {
     # Raising it from a passing branch would launder dev-side debt behind a
     # Library merge, which this file's own guidance forbids; it needs an
     # owner on dev. Recorded in recipe §7's documented-pre-existing list.
-    "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
+    # 2026-09-08, ADR-128: explicit UI-local presentation composition pays
+    # down that debt; IO/generation orchestration remains in this controller.
+    "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 323,
+    "tldw_chatbook/UI/Library_Modules/library_media_browse_state.py": 295,
     # 2026-09-06, wave-7 task 2 (media controller PR, media series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 140 moved methods (byte-for-byte; every one

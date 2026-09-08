@@ -3114,7 +3114,7 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     # is covered live in ``Tests/UI/test_library_shell.py::
     # test_library_media_deep_link_back_loads_exact_page_and_facets``.
     applied_scope = MediaBrowseScope()
-    screen._library_media_browse_controller.applied_result = MediaBrowseResult(
+    screen._library_media_browse_controller.state.applied_result = MediaBrowseResult(
         scope=applied_scope,
         items=(
             summary_row(

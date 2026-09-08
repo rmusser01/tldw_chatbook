@@ -434,8 +434,8 @@ async def test_delete_receipt_paints_a_live_undo_on_a_stale_page(size):
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
         controller = screen._library_media_browse_controller
-        controller.freshness = "stale"
-        controller.stale_copy = "Media changed; retry to load a current page."
+        controller.state.freshness = "stale"
+        controller.state.stale_copy = "Media changed; retry to load a current page."
         screen._media_state.delete_receipt_ids = ("local:media:1",)
         _sync_library_canvas(screen, "media")
         receipt = await _wait_for_selector(
@@ -1814,7 +1814,7 @@ async def test_reprojection_skips_rows_the_page_does_not_retain():
 
         retained = {
             str(item["id"])
-            for item in screen._library_media_browse_controller.retained_items
+            for item in screen._library_media_browse_controller.state.retained_items
         }
         assert len(retained) == 20, retained
         off_page = [
@@ -1846,8 +1846,8 @@ async def _apply_media_filter(screen, pilot, query: str) -> None:
     await _wait_for_condition(
         pilot,
         lambda: (
-            screen._library_media_browse_controller.applied_scope is not None
-            and screen._library_media_browse_controller.applied_scope.query == query
+            screen._library_media_browse_controller.state.applied_scope is not None
+            and screen._library_media_browse_controller.state.applied_scope.query == query
         ),
         message=f"The media filter never applied query {query!r}.",
     )
@@ -2628,14 +2628,14 @@ async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
     await _wait_for_condition(
         pilot,
         lambda: (
-            controller.failure is not None
-            and not controller.loading
+            controller.state.failure is not None
+            and not controller.state.loading
             # The callout composes before the row scroll: settle on BOTH the
             # mounted callout and the remounted retained rows, not on the
             # controller alone (a single pause raced the mount elsewhere).
             and bool(screen.query("#library-media-load-failure-copy"))
             and len(screen.query(".library-media-row"))
-            == len(controller.retained_items)
+            == len(controller.state.retained_items)
         ),
         message="The forced Media page failure never settled.",
     )
@@ -2706,7 +2706,7 @@ async def test_media_load_failure_callout_retry_issues_a_new_request():
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading,
+            lambda: not controller.state.loading,
             message="The retried request never settled.",
         )
         await pilot.pause()
@@ -2714,7 +2714,7 @@ async def test_media_load_failure_callout_retry_issues_a_new_request():
         # Still one callout, repainted with the fresh reason -- never a
         # silent press.
         assert len(screen.query("#library-media-load-failure")) == 1
-        assert controller.failure is not None
+        assert controller.state.failure is not None
 
 
 @pytest.mark.asyncio
@@ -2735,12 +2735,12 @@ async def test_media_facet_failure_paints_the_same_callout():
         screen._request_library_media_facets()
         await _wait_for_condition(
             pilot,
-            lambda: controller.facet_failure is not None and not controller.facet_loading,
+            lambda: controller.state.facet_failure is not None and not controller.state.facet_loading,
             message="The forced Media facet failure never settled.",
         )
         await pilot.pause()
 
-        assert controller.page_failure is None
+        assert controller.state.page_failure is None
         callout = screen.query_one("#library-media-load-failure")
         copy = screen.query_one("#library-media-load-failure-copy", Static)
         painted = " ".join(_painted(host, copy.region).split())
@@ -2783,7 +2783,7 @@ async def test_repeated_media_load_failure_names_the_reopen_recovery():
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading,
+            lambda: not controller.state.loading,
             message="The retried request never settled.",
         )
         await pilot.pause()
@@ -2825,7 +2825,7 @@ async def test_changed_page_context_failure_is_not_a_repeated_retry():
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading,
+            lambda: not controller.state.loading,
             message="The page-2 request never settled.",
         )
         await pilot.pause()
@@ -2867,7 +2867,7 @@ async def test_resume_refresh_failure_is_not_a_repeated_retry():
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading,
+            lambda: not controller.state.loading,
             message="The resume refresh never settled.",
         )
         await pilot.pause()
@@ -2901,8 +2901,8 @@ async def test_facet_only_failure_leaves_the_row_supported_actions_live():
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.facet_failure is not None
-                and not controller.facet_loading
+                controller.state.facet_failure is not None
+                and not controller.state.facet_loading
             ),
             message="The forced Media facet failure never settled.",
         )
@@ -2910,8 +2910,8 @@ async def test_facet_only_failure_leaves_the_row_supported_actions_live():
 
         # The page read succeeded, its rows are retained, and the "nothing to
         # select" predicate the whole-list gate reads stays False.
-        assert controller.page_failure is None
-        assert len(controller.retained_items) == 2
+        assert controller.state.page_failure is None
+        assert len(controller.state.retained_items) == 2
         assert not screen._library_media_list_unselectable()
 
         # ...so every action the row data supports stays live and un-gated.
@@ -3854,9 +3854,9 @@ async def _open_media_with_a_failed_first_page(host, pilot, exc: BaseException):
     await _wait_for_condition(
         pilot,
         lambda: (
-            controller.failure is not None
-            and not controller.loading
-            and not controller.retained_items
+            controller.state.failure is not None
+            and not controller.state.loading
+            and not controller.state.retained_items
             and bool(screen.query("#library-media-load-failure-copy"))
         ),
         message="The first-page Media failure never settled.",
@@ -4029,7 +4029,7 @@ async def test_page_failure_that_retains_rows_leaves_export_live():
 
         # The callout IS up (the broad predicate this used to gate on)...
         assert screen.query("#library-media-load-failure-copy")
-        assert screen._library_media_browse_controller.failure is not None
+        assert screen._library_media_browse_controller.state.failure is not None
         assert len(screen.query(".library-media-row")) == 2
         # ...and Export… is still live over the rows that survived it.
         export = screen.query_one("#library-media-export", Button)
@@ -4171,9 +4171,9 @@ async def _apply_media_filter(screen, pilot, query: str) -> None:
     await _wait_for_condition(
         pilot,
         lambda: (
-            screen._library_media_browse_controller.applied_scope is not None
-            and screen._library_media_browse_controller.applied_scope.query == query
-            and not screen._library_media_browse_controller.loading
+            screen._library_media_browse_controller.state.applied_scope is not None
+            and screen._library_media_browse_controller.state.applied_scope.query == query
+            and not screen._library_media_browse_controller.state.loading
         ),
         message=f"The filter {query!r} never applied.",
     )
@@ -4358,7 +4358,7 @@ async def _decoration_fixture(host, pilot):
     _sync_library_canvas(screen, "media")
     for _ in range(3):
         await pilot.pause()
-    items = screen._library_media_browse_controller.retained_items
+    items = screen._library_media_browse_controller.state.retained_items
     assert len(items) == 4, items
     return screen, service, set_id, items, loads
 

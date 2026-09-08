@@ -520,9 +520,6 @@ from ..Library_Modules.library_collections_capture_controller import (
     LibraryCollectionsCaptureController,
 )
 from ..Library_Modules.library_collections_state import LibraryCollectionsState
-from ..Library_Modules.library_conversation_reader_controller import (
-    LibraryConversationReaderController,  # noqa: F401 - canonical compatibility re-export
-)
 from ..Library_Modules.library_conversations_controller import (
     LibraryConversationsController,
 )
@@ -8463,7 +8460,7 @@ class LibraryScreen(BaseAppScreen):
         # task-32039 AC#1: a new visit's auto-refresh (below) re-issues the
         # same scope; the fault episode must not read that as a consecutive
         # Retry and prepend the reopen recovery step on a first failure.
-        self._library_media_browse_controller.clear_fault_episode()
+        self._library_media_browse_controller.state.clear_fault_episode()
         # task-32039 AC#2: the select-mode bulk-Analyze reason is memoised for
         # the whole select-mode session (resolving it shells out to the
         # keychain). A provider configured mid-session (while Library was
@@ -8521,7 +8518,7 @@ class LibraryScreen(BaseAppScreen):
             and self._pending_library_source_open is None
         ):
             self._request_library_media_browse(
-                self._library_media_browse_controller.mutation_refresh_scope,
+                self._library_media_browse_controller.state.mutation_refresh_scope,
                 focus_identity=None,
             )
             self._request_library_media_facets()
@@ -8996,7 +8993,7 @@ class LibraryScreen(BaseAppScreen):
         state["library_rag_answer"] = self._rag_search_state.answer
         state["library_rag_answer_query"] = self._rag_search_state.answer_query
         state["library_rag_answer_mode"] = self._rag_search_state.answer_mode
-        applied_media = self._library_media_browse_controller.applied_result
+        applied_media = self._library_media_browse_controller.state.applied_result
         state["library_media_scope"] = dataclasses.asdict(
             applied_media.scope if applied_media is not None else MediaBrowseScope()
         )
@@ -9068,7 +9065,7 @@ class LibraryScreen(BaseAppScreen):
         if row_id == LIBRARY_ROW_BROWSE_MEDIA:
             if self._media_state.view == "trash":
                 return None
-            applied = self._library_media_browse_controller.applied_result
+            applied = self._library_media_browse_controller.state.applied_result
             if applied is None:
                 return None
             media_scope = applied.scope
@@ -13273,8 +13270,8 @@ class LibraryScreen(BaseAppScreen):
                 )
 
         if (
-            self._library_media_browse_controller.freshness == "stale"
-            and self._library_media_browse_controller.stale_copy
+            self._library_media_browse_controller.state.freshness == "stale"
+            and self._library_media_browse_controller.state.stale_copy
         ):
             return LibraryLandingAttentionAction(
                 message="Media may be out of date.",
@@ -15352,10 +15349,10 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_media_content_signature(self) -> tuple[object, ...]:
         """Return applied normal-Media scope plus ordered stable row IDs."""
-        controller = self._library_media_browse_controller
+        browse = self._library_media_browse_controller.state
         return (
-            controller.applied_scope,
-            tuple(str(item["id"]) for item in controller.retained_items),
+            browse.applied_scope,
+            tuple(str(item["id"]) for item in browse.retained_items),
         )
 
     def _library_media_layout_signature(self) -> tuple[object, ...]:
@@ -15428,7 +15425,7 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_media_type_options(self) -> tuple[str | None, ...]:
         """Return the unfiltered sentinel plus every complete stored facet."""
-        return (None, *self._library_media_browse_controller.type_options)
+        return (None, *self._library_media_browse_controller.state.type_options)
 
     def _claim_library_media_mutation(
         self,
@@ -15539,11 +15536,11 @@ class LibraryScreen(BaseAppScreen):
                 self._sync_library_media_browse_state(None)
             return
         controller = self._library_media_browse_controller
-        controller.reconcile_committed_mutation(
+        controller.state.reconcile_committed_mutation(
             remove_ids=remove_ids,
             upsert_items=upsert_items,
         )
-        refresh_scope = scope or controller.mutation_refresh_scope
+        refresh_scope = scope or controller.state.mutation_refresh_scope
         if (
             not has_authority
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
@@ -15670,21 +15667,21 @@ class LibraryScreen(BaseAppScreen):
             or self._media_state.view == "trash"
         ):
             return
-        applied = self._library_media_browse_controller.applied_scope
+        applied = self._library_media_browse_controller.state.applied_scope
         if applied is not None:
             self._media_state.type_filter = applied.media_type
-        controller = self._library_media_browse_controller
+        browse = self._library_media_browse_controller.state
         applied_selection_id = ""
         if (
             applied is not None
-            and not controller.loading
-            and applied == controller.requested_scope
+            and not browse.loading
+            and applied == browse.requested_scope
         ):
-            page_ids = {str(item["id"]) for item in controller.retained_items}
+            page_ids = {str(item["id"]) for item in browse.retained_items}
             if applied.query and self._media_state.filter_select_first:
                 self._media_state.selected_media_id = (
-                    str(controller.retained_items[0]["id"])
-                    if controller.retained_items
+                    str(browse.retained_items[0]["id"])
+                    if browse.retained_items
                     else ""
                 )
                 applied_selection_id = self._media_state.selected_media_id
@@ -15695,8 +15692,8 @@ class LibraryScreen(BaseAppScreen):
                     self._media_state.selected_media_id = (
                         self._media_state.filter_restore_id
                         if self._media_state.filter_restore_id in page_ids
-                        else str(controller.retained_items[0]["id"])
-                        if controller.retained_items
+                        else str(browse.retained_items[0]["id"])
+                        if browse.retained_items
                         else ""
                     )
                     applied_selection_id = self._media_state.selected_media_id
@@ -15745,7 +15742,7 @@ class LibraryScreen(BaseAppScreen):
             selected_title = next(
                 (
                     str(item.get("title") or applied_selection_id)
-                    for item in controller.retained_items
+                    for item in browse.retained_items
                     if str(item["id"]) == applied_selection_id
                 ),
                 applied_selection_id,
@@ -15928,7 +15925,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> Any | None:
         """Request page one after changing only the applied Media type scope."""
         self._clear_library_media_selection_for_scope_change()
-        applied = self._library_media_browse_controller.mutation_refresh_scope
+        applied = self._library_media_browse_controller.state.mutation_refresh_scope
         return self._request_library_media_browse(
             dataclasses.replace(applied, media_type=media_type, page=1),
             focus_identity=focus_identity,
@@ -21477,7 +21474,7 @@ class LibraryScreen(BaseAppScreen):
                 )
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self._request_library_media_browse(
-                self._library_media_browse_controller.mutation_refresh_scope,
+                self._library_media_browse_controller.state.mutation_refresh_scope,
                 focus_identity="#library-media-row-0",
             )
             self._request_library_media_facets()
@@ -21945,10 +21942,10 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             True when a fresh page with at least one row is showing.
         """
-        controller = self._library_media_browse_controller
-        if controller.freshness == "stale":
+        browse = self._library_media_browse_controller.state
+        if browse.freshness == "stale":
             return False
-        return bool(controller.retained_items)
+        return bool(browse.retained_items)
 
     def action_library_media_toggle_select_mode(self) -> None:
         return self._media_controller.action_library_media_toggle_select_mode()
@@ -21969,7 +21966,7 @@ class LibraryScreen(BaseAppScreen):
         """
         if not self._media_state.select_mode:
             return
-        if self._library_media_browse_controller.freshness == "stale":
+        if self._library_media_browse_controller.state.freshness == "stale":
             return
         if self._media_state.confirming_bulk_delete:
             return
@@ -22508,7 +22505,7 @@ class LibraryScreen(BaseAppScreen):
 
             if len(media_ids) == 1 and len(restored_items) == 1:
                 restored_item = restored_items[0]
-                scope = self._library_media_browse_controller.applied_scope
+                scope = self._library_media_browse_controller.state.applied_scope
                 visible = bool(
                     scope is not None
                     and not scope.query
@@ -30260,7 +30257,7 @@ class LibraryScreen(BaseAppScreen):
         """
         try:
             scope = getattr(
-                self._library_media_browse_controller, "applied_scope", None
+                self._library_media_browse_controller.state, "applied_scope", None
             )
             if scope is None:
                 return
@@ -30351,7 +30348,7 @@ class LibraryScreen(BaseAppScreen):
             return []
         from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
 
-        scope = getattr(self._library_media_browse_controller, "applied_scope", None)
+        scope = getattr(self._library_media_browse_controller.state, "applied_scope", None)
         sort_by = scope.sort_by if scope is not None else "last_modified_desc"
         # Qodo #2335: bound the query to the cap (+1 to flag overflow), not the
         # unrestricted selection size.
@@ -31133,7 +31130,7 @@ class LibraryScreen(BaseAppScreen):
                         (
                             item
                             for item in (
-                                self._library_media_browse_controller.retained_items
+                                self._library_media_browse_controller.state.retained_items
                             )
                             if item["id"] == media_id
                         ),
@@ -31276,7 +31273,7 @@ class LibraryScreen(BaseAppScreen):
         """
         deleted = False
         controller = getattr(self, "_library_media_browse_controller", None)
-        retained = getattr(controller, "retained_items", ())
+        retained = getattr(getattr(controller, "state", None), "retained_items", ())
         deleted_index = next(
             (
                 index
@@ -31412,8 +31409,8 @@ class LibraryScreen(BaseAppScreen):
             True when the browse controller carries a failure AND no rows
             survive to be selected.
         """
-        controller = self._library_media_browse_controller
-        return controller.failure is not None and not controller.retained_items
+        browse = self._library_media_browse_controller.state
+        return browse.failure is not None and not browse.retained_items
 
     def _build_library_media_reader(self) -> LibraryMediaViewer:
         return self._media_controller._build_library_media_reader()
@@ -32183,7 +32180,7 @@ class LibraryScreen(BaseAppScreen):
             leaves the row exactly as it was -- the next page fetch is still
             authoritative.
         """
-        controller = self._library_media_browse_controller
+        browse = self._library_media_browse_controller.state
         # task-31961: the membership test goes ABOVE the fetch. A bulk
         # Analyze over a multi-page selection saves items the retained page
         # never mounted, and an id-scoped SELECT for one of those can only
@@ -32191,7 +32188,7 @@ class LibraryScreen(BaseAppScreen):
         # one round trip later. (This subsumes the old "no retained items at
         # all" guard: an empty page holds no member.)
         target = str(media_id)
-        if not any(str(item["id"]) == target for item in controller.retained_items):
+        if not any(str(item["id"]) == target for item in browse.retained_items):
             return
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         search_media = getattr(service, "search_media", None)
@@ -32219,7 +32216,7 @@ class LibraryScreen(BaseAppScreen):
         if not items:
             return
         row = items[0]
-        if controller.note_analysis_state(
+        if browse.note_analysis_state(
             str(row.get("id") or ""), has_analysis=bool(row.get("has_analysis"))
         ):
             _sync_library_canvas(self, "media", allow_screen_fallback=False)
@@ -33521,7 +33518,7 @@ class LibraryScreen(BaseAppScreen):
             # alongside the opened item. focus_identity=None keeps focus on the
             # just-opened viewer rather than yanking it to the first list row.
             self._request_library_media_browse(
-                self._library_media_browse_controller.mutation_refresh_scope,
+                self._library_media_browse_controller.state.mutation_refresh_scope,
                 focus_identity=None,
             )
             self._request_library_media_facets()
