@@ -592,7 +592,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-8"></a>
 ## Task 8: Add recovery adapters for workspace operational and device-local state
 
-**Backlog:** [TASK-31991](../../../backlog/tasks/task-31991%20-%20Add-recovery-adapters-for-workspace-operational-and-device-local-state.md) — To Do.
+**Backlog:** [TASK-31991](../../../backlog/tasks/task-31991%20-%20Add-recovery-adapters-for-workspace-operational-and-device-local-state.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -619,7 +619,7 @@ the following exact contracts. Factories return only installed owner declaration
 def recovery_adapters() -> tuple[OwnerAdapter, ...]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_operational_owners.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_operational_owners.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -630,19 +630,19 @@ def test_sync_capture_policy_keeps_runtime_authority_inactive():
     assert all(adapter.activation_required for adapter in adapters)
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_operational_owners.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_operational_owners.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Capture workspace registry/state, agent run history, subscriptions, notifications/cursors, scheduling definitions/history, local MCP/permission stores, File Notes recovery data, and device-local Notes sync journals according to each owner census row. Memory-only Sync keys remain uncaptured.
+- [x] **Step 3:** Capture workspace registry/state, agent run history, subscriptions, notifications/cursors, scheduling definitions/history, local MCP/permission stores, File Notes recovery data, and device-local Notes sync journals according to each owner census row. Memory-only Sync keys remain uncaptured.
 
-- [ ] **Step 4:** Add activation_required: bool to OwnerAdapter with False for passive content and True for execution/reconnection owners. Preserve imported operational bytes as quarantined evidence; relocate fresh identity/scope bindings separately from immutable historical references. Never replay pending filesystem intent during capture/inspection.
+- [x] **Step 4:** Add activation_required: bool to OwnerAdapter with False for passive content and True for execution/reconnection owners. Preserve imported operational bytes as quarantined evidence; relocate fresh identity/scope bindings separately from immutable historical references. Never replay pending filesystem intent during capture/inspection.
 
-- [ ] **Step 5:** Implement owner-safe record export for recovery and checked SQLite snapshots without changing ADR-059/060 selective bundle restrictions. Distinguish File Notes disk authority from database projections; external folder capture stays opt-in.
+- [x] **Step 5:** Implement owner-safe record export for recovery and checked SQLite snapshots without changing ADR-059/060 selective bundle restrictions. Distinguish File Notes disk authority from database projections; external folder capture stays opt-in.
 
-- [ ] **Step 6:** Test historical running/queued states, permissions, leases, device claims, file bindings, pending intents, and local recovery bytes survive capture but cannot authorize a write. Include shared config/keyring scopes, optional-disabled services, and no silent conversion of managed folder membership.
+- [x] **Step 6:** Test historical running/queued states, permissions, leases, device claims, file bindings, pending intents, and local recovery bytes survive capture but cannot authorize a write. Include shared config/keyring scopes, optional-disabled services, and no silent conversion of managed folder membership.
 
-- [ ] **Step 7:** Keep adapters near their actual owners; DB/recovery_operations.py aggregates only database policies. Add new census-discovered local operational owners to this cohort with explicit rows rather than scanning home or ignoring them.
+- [x] **Step 7:** Keep adapters near their actual owners; DB/recovery_operations.py aggregates only database policies. Add new census-discovered local operational owners to this cohort with explicit rows rather than scanning home or ignoring them.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -654,7 +654,7 @@ if imported_binding_is_authoritative:
     raise ValueError("imported_authority_not_admitted")
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -663,11 +663,11 @@ python -m pytest Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_in
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): add recovery adapters for workspace operational and device-local state`. Recheck task-ID collisions
   before merge and preserve unrelated work.
