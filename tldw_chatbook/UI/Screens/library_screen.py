@@ -761,6 +761,8 @@ from ..Library_Modules.screen_constants import (
     _LIBRARY_READER_SHELL_SELECTOR,
     LIBRARY_NOTES_SOURCE_DATABASE,
     LIBRARY_NOTES_SOURCE_FILES,
+    LIBRARY_NOTE_LOAD_DEADLINE_SECONDS,
+    LIBRARY_NOTE_LOAD_TIMEOUT_COPY,
     LIBRARY_CANVAS_KIND_NOTES,
     LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS,
     LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES,
@@ -18604,48 +18606,53 @@ class LibraryScreen(BaseAppScreen):
         note_id: str,
         *,
         entry_origin: bool = False,
-        navigation_generation: int | None = None,
-        topology_epoch: int | None = None,
-        lifecycle_generation: int | None = None,
     ) -> LibraryEntryReconcileResult | None:
         """Open one normalized coordinator session and apply its typed outcome.
+
+        task-32050 (critique #8 P0): this load used to be fenced by the Notes
+        *tree* tokens (``_library_notes_navigation_generation`` and the
+        topology/lifecycle epochs) as well. Those belong to the folder-tree
+        locator, and ``on_descendant_focus`` revokes the navigation one the
+        moment the user focuses a control while "Locating note…" is showing --
+        which is exactly what the row click that started this load does, ~20 ms
+        in. Every load therefore completed and was then discarded by the guard
+        below, leaving the canvas on "Loading note…" for ever. The detail load
+        is superseded three other ways that key on its own identity: the
+        exclusive ``library_note_detail`` worker group, the coordinator's
+        session request token (a STALE outcome), and ``_selected_note_id`` /
+        view / source below.
 
         Args:
             note_id: The Library note id to fetch full detail for.
         """
         entry_route_key = self._library_entry_route_key() if entry_origin else None
 
-        def navigation_is_current() -> bool:
-            return bool(
-                (
-                    navigation_generation is None
-                    or navigation_generation
-                    == self._library_notes_navigation_generation
-                )
-                and (
-                    topology_epoch is None
-                    or topology_epoch == self._library_notes_tree_topology_epoch
-                )
-                and (
-                    lifecycle_generation is None
-                    or lifecycle_generation
-                    == self._library_notes_tree_lifecycle_generation
-                )
-            )
-
         if (
-            not navigation_is_current()
-            or note_id != self._selected_note_id
+            note_id != self._selected_note_id
             or self._library_notes_view != "editor"
             or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
-        outcome = await self._library_note_session.open_session(note_id)
+        try:
+            outcome = await asyncio.wait_for(
+                self._library_note_session.open_session(note_id),
+                timeout=LIBRARY_NOTE_LOAD_DEADLINE_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            # A load with no terminal state is what made task-32050 a
+            # permanent hang rather than a slow open; give the stuck one the
+            # existing failed state so Retry is reachable. ``wait_for``
+            # cancels the coordinator call, and ``open_session`` only catches
+            # ``Exception``, so no cancelled load can still start a session.
+            self._library_note_load_state = "failed"
+            self._library_note_load_message = LIBRARY_NOTE_LOAD_TIMEOUT_COPY
+            return await self._project_library_note_entry_result(
+                entry_origin=entry_origin
+            )
         if outcome.kind is NoteLoadOutcomeKind.STALE:
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         if (
-            not navigation_is_current()
-            or note_id != self._selected_note_id
+            note_id != self._selected_note_id
             or self._library_notes_view != "editor"
             or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
             or (
@@ -18714,8 +18721,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Reset presentation, invalidate old work, and start one editor load."""
         navigation_generation = self._supersede_library_notes_navigation()
-        topology_epoch = self._library_notes_tree_topology_epoch
-        lifecycle_generation = self._library_notes_tree_lifecycle_generation
         self._library_note_session.close_session()
         self._selected_note_id = note_id
         self._library_notes_view = "editor"
@@ -18734,9 +18739,6 @@ class LibraryScreen(BaseAppScreen):
             self._refresh_library_note_detail(
                 note_id,
                 entry_origin=entry_origin,
-                navigation_generation=navigation_generation,
-                topology_epoch=topology_epoch,
-                lifecycle_generation=lifecycle_generation,
             ),
             exclusive=True,
             group="library_note_detail",

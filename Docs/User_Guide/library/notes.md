@@ -317,6 +317,16 @@ here."
 | **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
 | **Delete** (Info → Danger) | Asks inline first: "Delete this note? Undo will be available in the Notes list." Confirm with "Delete" or back out with "Cancel". A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
+Opening a note shows "Loading note…" only while the note is being read. If a
+read takes longer than about three seconds the editor stops waiting and shows
+"Unable to load note — timed out after 3 s. Press Retry." with a **Retry**
+button; **‹ Notes** takes you back to the list, and opening another note still
+works.
+
+*Verified against fix/library-crit8-notes-loader — 2026-09-08 (task-32050:
+opening a stored note no longer stays on "Loading note…" for ever, and a
+stuck load now reaches a failed state with Retry).*
+
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If the same note was changed
 somewhere else while you were editing, a banner appears: "This note
