@@ -71,7 +71,10 @@ def test_active_terminal_qualification_example_uses_python_312() -> None:
     qualification = _text("scripts/terminal_qualification/README.md")
 
     assert "tldw-task-22512-macos-arm64-py312" in qualification
-    assert "python3.12 scripts/terminal_qualification/common.py prepare-row" in qualification
+    assert (
+        "python3.12 scripts/terminal_qualification/common.py prepare-row"
+        in qualification
+    )
     assert "--row-id macos-arm64-py312" in qualification
     assert "native Windows x64 CPython 3.11 qualification row" in qualification
 
@@ -86,14 +89,10 @@ def test_ci_jobs_that_install_or_parse_chatbook_use_python_312() -> None:
         comprehensive, "artifact-lease-spike"
     )
     assert 'python-version: "3.12"' in _job_block(comprehensive, "textual-minimum")
-    assert 'python-version: "3.11"' in _job_block(
-        comprehensive, "artifact-lease-shape"
-    )
+    assert 'python-version: "3.11"' in _job_block(comprehensive, "artifact-lease-shape")
 
     css_guard = _text(".github/workflows/css-bundle-guard.yml")
-    assert "python-version: '3.12'" in _job_block(
-        css_guard, "css-bundle-reproducible"
-    )
+    assert "python-version: '3.12'" in _job_block(css_guard, "css-bundle-reproducible")
 
 
 def test_nightly_matrix_starts_at_python_312_without_duplicate_floor_row() -> None:

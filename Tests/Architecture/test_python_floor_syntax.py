@@ -253,8 +253,7 @@ def test_detector_agrees_with_the_real_python311_interpreter() -> None:
     interpreter = _version_interpreter(legacy_version)
     if interpreter is None or _reports_version(interpreter) != legacy_version:
         pytest.skip(
-            "no Python 3.11 available to re-derive the pinned historical "
-            "verdicts from"
+            "no Python 3.11 available to re-derive the pinned historical verdicts from"
         )
 
     probe = (

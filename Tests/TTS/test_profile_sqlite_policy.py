@@ -63,9 +63,7 @@ def test_configure_native_policy_verifies_flag_without_sql() -> None:
     connection.set_trace_callback(statements.append)
     try:
         policy.configure_native_close_policy(connection)
-        assert (
-            connection.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE) is True
-        )
+        assert connection.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE) is True
         assert statements == []
         connection.execute("SELECT 1")  # The borrowed handle remains open.
     finally:
@@ -155,9 +153,7 @@ def test_false_configuration_verification_is_refused_without_closing_borrowed_ha
         policy.configure_native_close_policy(connection)  # type: ignore[arg-type]
 
     _assert_runtime_unsupported(failure.value)
-    assert connection.set_calls == [
-        (sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)
-    ]
+    assert connection.set_calls == [(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)]
     assert connection.get_calls == [sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE]
     assert connection.close_calls == 0
 
