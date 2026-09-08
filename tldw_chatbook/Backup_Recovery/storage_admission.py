@@ -245,7 +245,7 @@ class _CaptureLease:
 
     def retire(self):
         if self.connection is not None:
-            # Bypass a custom pooling/failed close before retiring native authority.
+            # Retire the native handle before releasing its capture authority.
             sqlite3.Connection.close(self.connection)
         self.close()
 

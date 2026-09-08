@@ -81,8 +81,11 @@ are allowed. Writes are limited to regular nonaliased staging descendants. Ordin
 owners receive no exemption. The capability is scoped to its issuing PID/thread
 and native session identity; copied, expired and cross-thread objects are refused.
 
-Each actual capture SQLite connection is tracked and native-closed before scope
-exit even if its Python reference escapes or a custom close method fails. A native
+Capture qualifies only the default `sqlite3.Connection` factory. Custom factories
+are refused before their `__new__` or `__init__` runs or staging files are created;
+ordinary owner custom-factory compatibility is unchanged. Each actual capture
+connection is tracked and native-closed before scope exit even if its Python
+reference escapes. A native
 retirement failure conservatively retains the actual native lock stacks until
 process exit and reports `capture_resources_not_retired`; no destructors release or
 retry that unresolved authority. This failure is not qualified recovery completion.
@@ -98,6 +101,7 @@ must qualify owner/startup drain; this task does not release process holds on UI
 Targeted tests construct all five real stores, capture retained committed WAL,
 compare complete SQLite dumps and explicit FTS/BLOB/deletion evidence, exercise
 cancellation, malformed schemas, profile-specific dependencies, escaped connections,
+custom constructor refusal, bounded per-invocation peer validation,
 fixed/unbound authority and independent-process blocking. Source main/WAL bytes and
 main mtime are preserved; reader-induced access-time and SQLite-managed shared-memory
 coordination are not claimed immutable. No user configuration, credentials or data

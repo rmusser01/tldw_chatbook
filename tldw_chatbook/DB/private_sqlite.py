@@ -1112,9 +1112,15 @@ def _with_storage_admission(function):
             Path(database), owner_id=owner_id,
             read_only=kwargs.get("read_only", False),
         )
+        factory = kwargs.get("factory", sqlite3.Connection)
+        if lease is not None and factory is not sqlite3.Connection:
+            # Custom __new__/__init__ may retain a native handle then raise before
+            # the seam receives it. Capture qualifies only the native constructor;
+            # ordinary owner factory compatibility remains unchanged below.
+            lease.close()
+            raise RecoveryRequired("capture_factory_not_qualified")
         if lease is None:
             lease = acquire_storage(Path(database))
-        factory = kwargs.get("factory", sqlite3.Connection)
         try:
             if not isinstance(factory, type) or not issubclass(factory, sqlite3.Connection):
                 raise RecoveryRequired("connection_factory_not_qualified")

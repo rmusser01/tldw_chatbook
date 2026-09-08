@@ -1,7 +1,7 @@
 """Installed core recovery declarations, independent of runtime constructors."""
 
 from dataclasses import dataclass
-from contextlib import closing
+from contextlib import ExitStack, closing
 import sqlite3
 from pathlib import Path
 from threading import Event
@@ -153,10 +153,18 @@ class _CoreAdapter:
             return issues
         adapters = {adapter.owner_id: adapter for adapter in core_adapters()}
         try:
-            with closing(
-                connect_private_sqlite(self.backup_owner_id, candidate, read_only=True)
-            ) as connection:
+            with (
+                closing(
+                    connect_private_sqlite(
+                        self.backup_owner_id, candidate, read_only=True
+                    )
+                ) as connection,
+                ExitStack() as peer_stack,
+            ):
                 connection.execute("PRAGMA trusted_schema=OFF")
+                # Lifetime is this stable candidate-validation invocation only.
+                # At most the installed core-owner count of connections is held.
+                peers = {self.owner_id: connection}
                 references = []
                 if self.owner_id == "db.library_ingest_jobs":
                     references = [
@@ -221,23 +229,30 @@ class _CoreAdapter:
                         if key not in item.dependencies or key not in candidates:
                             return ("dependency_unavailable",)
                         target = candidates[key]
-                    validation = adapters[owner].validate(target)
-                    if validation:
-                        return ("dependency_unavailable",)
-                    with closing(
-                        connect_private_sqlite(
-                            adapters[owner].backup_owner_id, target, read_only=True
+                    if owner not in peers:
+                        validation = adapters[owner].validate(target)
+                        if validation:
+                            return ("dependency_unavailable",)
+                        peer = peer_stack.enter_context(
+                            closing(
+                                connect_private_sqlite(
+                                    adapters[owner].backup_owner_id,
+                                    target,
+                                    read_only=True,
+                                )
+                            )
                         )
-                    ) as peer:
                         peer.execute("PRAGMA trusted_schema=OFF")
-                        # Identifiers above are installed literals, never DB text.
-                        if not validate_identifier(table) or not validate_identifier(
-                            column
-                        ):
-                            return ("unsupported_domain_reference",)
-                        query = f"SELECT 1 FROM {escape_identifier(table)} WHERE {escape_identifier(column)}=?"
-                        if peer.execute(query, (identity,)).fetchone() is None:
-                            return ("invalid_domain_reference",)
+                        peers[owner] = peer
+                    peer = peers[owner]
+                    # Identifiers above are installed literals, never DB text.
+                    if not validate_identifier(table) or not validate_identifier(
+                        column
+                    ):
+                        return ("unsupported_domain_reference",)
+                    query = f"SELECT 1 FROM {escape_identifier(table)} WHERE {escape_identifier(column)}=?"
+                    if peer.execute(query, (identity,)).fetchone() is None:
+                        return ("invalid_domain_reference",)
                 return ()
         except (OSError, ValueError, sqlite3.Error):
             return ("dependency_unavailable",)

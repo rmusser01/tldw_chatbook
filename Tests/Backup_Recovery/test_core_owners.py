@@ -312,9 +312,7 @@ def test_committed_wal_domain_records_blobs_and_soft_deletes(
         observer.close()
 
 
-def test_capture_scope_retires_escaped_native_handle_even_failed_custom_close(
-    tmp_path, monkeypatch
-):
+def test_capture_scope_retires_escaped_default_native_handle(tmp_path, monkeypatch):
     import sqlite3
     from tldw_chatbook.Backup_Recovery.admission import Admission
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
@@ -327,18 +325,12 @@ def test_capture_scope_retires_escaped_native_handle_even_failed_custom_close(
     stage.mkdir(mode=0o700)
     authority = application_authority(tmp_path, source, monkeypatch)
 
-    class FailedClose(sqlite3.Connection):
-        def close(self):
-            raise RuntimeError("explicit_close_failed")
-
     with authority.maintenance(("core", "bootstrap.unbound"), 1) as session:
         with session.capture_scope((source,), stage):
             escaped = connect_private_sqlite(
-                "recovery.core.media", stage / "escaped.db", factory=FailedClose
+                "recovery.core.media", stage / "escaped.db"
             )
             escaped.execute("CREATE TABLE evidence(value)")
-            with pytest.raises(RuntimeError, match="explicit_close_failed"):
-                escaped.close()
             escaped.execute("INSERT INTO evidence VALUES (1)")
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
             escaped.execute("INSERT INTO evidence VALUES (2)")
@@ -913,3 +905,148 @@ def test_existing_admission_authority_never_repairs_lost_evidence(
     assert after == before
     if damage == "lost_authority":
         assert not authority.control_root.exists()
+
+
+@pytest.mark.parametrize("custom_phase", ("new", "init"))
+def test_failed_capture_factory_cannot_leave_a_retained_native_handle(
+    scoped_files, custom_phase
+):
+    import sqlite3
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    authority, source, stage = scoped_files
+    retained = []
+    invoked = []
+
+    class RetainingFailure(sqlite3.Connection):
+        def __new__(cls, *args, **kwargs):
+            invoked.append("new")
+            instance = super().__new__(cls)
+            if custom_phase == "new":
+                sqlite3.Connection.__init__(instance, *args, **kwargs)
+                retained.append(instance)
+                raise RuntimeError("partial_initialization_failed")
+            return instance
+
+        def __init__(self, *args, **kwargs):
+            invoked.append("init")
+            super().__init__(*args, **kwargs)
+            retained.append(self)
+            self.execute("CREATE TABLE factory_evidence(value)")
+            self.commit()
+            raise RuntimeError("partial_initialization_failed")
+
+    try:
+        with authority.maintenance(("core", "bootstrap.unbound"), 1) as session:
+            with session.capture_scope((source,), stage):
+                with pytest.raises(
+                    RecoveryRequired, match="capture_factory_not_qualified"
+                ):
+                    connect_private_sqlite(
+                        "recovery.core.media",
+                        stage / "partial.db",
+                        factory=RetainingFailure,
+                    )
+                assert invoked == []
+                assert not (stage / "partial.db").exists()
+        with authority.normal(("core",)):
+            assert retained == []
+            assert not (stage / "partial.db").exists()
+    finally:
+        for connection in retained:
+            sqlite3.Connection.close(connection)
+
+
+def test_dependency_validation_scans_each_real_peer_once_per_invocation(tmp_path):
+    import sys
+    from collections import Counter
+    from contextlib import closing
+    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+    from tldw_chatbook.Library.library_collections_service import (
+        LocalLibraryCollectionsService,
+    )
+    from tldw_chatbook.Backup_Recovery.models import StorageItem
+    from tldw_chatbook.DB import private_sqlite
+
+    stores = {
+        "db.library_collections": LibraryCollectionsDB(tmp_path / "collections.db"),
+        "db.media.primary": MediaDatabase(tmp_path / "media.db", "fixture"),
+        "db.prompts.primary": PromptsDatabase(tmp_path / "prompts.db", "fixture"),
+    }
+    paths = {owner: Path(store.db_path) for owner, store in stores.items()}
+    try:
+        service = LocalLibraryCollectionsService(stores["db.library_collections"])
+        collection = service.create_collection("References")
+        other = service.create_collection("Other")
+        for index in range(4):
+            media_id, _, _ = stores["db.media.primary"].add_media_with_keywords(
+                title=f"Media {index}",
+                media_type="document",
+                content=f"Unique content {index}",
+            )
+            service.add_item_to_collection(
+                collection.collection_id, source_type="media", source_id=str(media_id)
+            )
+        for index in range(3):
+            prompt_id, _, _ = stores["db.prompts.primary"].add_prompt(
+                f"Prompt {index}", "Author", "Details"
+            )
+            service.add_item_to_collection(
+                collection.collection_id, source_type="prompt", source_id=str(prompt_id)
+            )
+        for target in (collection, other):
+            service.add_item_to_collection(
+                collection.collection_id,
+                source_type="collection",
+                source_id=target.collection_id,
+            )
+    finally:
+        for store in stores.values():
+            store.close()
+    adapter = adapter_for("library_collections")
+    dependencies = ("profile:a:db.media.primary", "profile:a:db.prompts.primary")
+    item = StorageItem(
+        adapter.owner_id,
+        "profile:a:" + adapter.owner_id,
+        paths[adapter.owner_id],
+        "included",
+        dependencies,
+    )
+    candidates = {"profile:a:" + owner: path for owner, path in paths.items()}
+    validations = Counter()
+    connections = Counter()
+    validate_code = type(adapter).validate.__code__
+    connect_code = private_sqlite._connect_registered_sqlite.__code__
+
+    def profile(frame, event, arg):
+        if event == "call" and frame.f_code is validate_code:
+            validations[frame.f_locals["self"].owner_id] += 1
+        if event == "call" and frame.f_code is connect_code:
+            connections[frame.f_locals["owner_id"]] += 1
+
+    previous = sys.getprofile()
+    try:
+        sys.setprofile(profile)
+        result = adapter.validate_dependencies(item, item.path, candidates)
+    finally:
+        sys.setprofile(previous)
+    assert result == ()
+    assert validations == Counter({owner: 1 for owner in stores})
+    assert connections == Counter(
+        {
+            "recovery.core.library_collections": 2,
+            "recovery.core.media": 2,
+            "recovery.core.prompts": 2,
+        }
+    )
+    # A later invocation must not reuse a stale process-wide validation cache.
+    import sqlite3
+
+    with closing(sqlite3.connect(paths["db.media.primary"])) as connection:
+        connection.execute("CREATE TABLE unqualified(payload)")
+    assert adapter.validate_dependencies(item, item.path, candidates) == (
+        "dependency_unavailable",
+    )
