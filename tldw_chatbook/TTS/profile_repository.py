@@ -5168,6 +5168,16 @@ class TTSProfileRepository:
             value=value,
         )
 
+    def _has_cleanup_ownership(self) -> bool:
+        """Include late owners after native cleanup when deciding retry/shutdown."""
+
+        return (
+            self._exact_authority_quarantined
+            or self._connection is not None
+            or self._lease is not None
+            or bool(self._residual_cleanup_paths)
+        )
+
     async def close(self) -> ProfileStoreResult[None]:
         """Close safely, retaining quarantined authority until it matches again.
 
@@ -5176,6 +5186,8 @@ class TTSProfileRepository:
         reports ``operation_failed`` and retains the worker, connection, and
         lease.  A later call may settle cleanup after the exact inode cohort is
         restored; otherwise process exit is the only non-mutating release.
+        Helper proof loss instead reports ``restart_required`` from its first
+        observation and cannot be retried in-process.
         """
 
         lifecycle_lock = self._bind_or_check_loop()
@@ -5184,10 +5196,7 @@ class TTSProfileRepository:
                 if self._helper_restart_required:
                     raise _repository_error("restart_required")
                 if self._terminal:
-                    if (
-                        not self._exact_authority_quarantined
-                        and self._connection is None
-                    ):
+                    if not self._has_cleanup_ownership():
                         return ProfileStoreResult(
                             generation=self._generation,
                             value=None,
@@ -5201,13 +5210,13 @@ class TTSProfileRepository:
                     self._state = ProfileRepositoryState.CLOSED
                 executor = self._executor
                 pending = tuple(self._pending_futures)
-                authority_quarantined = self._exact_authority_quarantined
+                cleanup_owned = self._has_cleanup_ownership()
 
             for future in pending:
                 future.cancel()
 
             if executor is None:
-                if authority_quarantined:
+                if cleanup_owned:
                     raise _repository_error("operation_failed")
                 return ProfileStoreResult(generation=generation, value=None)
 
@@ -5243,10 +5252,15 @@ class TTSProfileRepository:
                 cleanup_error = error
 
         with self._state_lock:
-            authority_quarantined = self._exact_authority_quarantined
-        if cleanup_error is not None and (
-            authority_quarantined or self._connection is not None
-        ):
+            cleanup_owned = self._has_cleanup_ownership()
+            restart_required = self._helper_restart_required
+        if cleanup_owned:
+            if cleanup_error is not None and not isinstance(cleanup_error, Exception):
+                raise cleanup_error
+            if restart_required:
+                raise _repository_error("restart_required") from None
+            if cleanup_error is None:
+                raise _repository_error("operation_failed")
             _raise_cleanup_errors(cleanup_error)
 
         shutdown_error: BaseException | None = None
@@ -5268,6 +5282,14 @@ class TTSProfileRepository:
         _raise_cleanup_errors(cleanup_error, shutdown_error)
 
     def _worker_cleanup(self) -> None:
+        """Seal terminal loss from every cleanup phase before error projection."""
+
+        try:
+            self._worker_cleanup_owned_resources()
+        except ExactProfileStoreProofLostError as error:
+            self._worker_seal_exact_authority(error)
+
+    def _worker_cleanup_owned_resources(self) -> None:
         """Close SQLite before its lease, only under revalidated authority."""
 
         if self._helper_restart_required:
@@ -5350,8 +5372,8 @@ class TTSProfileRepository:
         if connection is not None:
             try:
                 connection.close()
-            except ExactProfileStoreProofLostError as error:
-                self._worker_seal_exact_authority(error)
+            except ExactProfileStoreProofLostError:
+                raise
             except BaseException as error:
                 connection_error = error
             if connection_error is None:

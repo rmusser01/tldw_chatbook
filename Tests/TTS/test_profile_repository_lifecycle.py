@@ -7,6 +7,8 @@ import gc
 import importlib
 import os
 import sqlite3
+import subprocess
+import sys
 import threading
 import traceback
 from collections.abc import Awaitable, Callable
@@ -4114,6 +4116,101 @@ async def test_close_failure_retains_real_shared_lease_and_connection_fail_close
     assert executors[0].shutdown_calls == 1
 
     assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
+
+
+@pytest.mark.parametrize("remaining_owner", ["lease", "residual_path", "residual_only"])
+def test_close_retries_late_cleanup_owner_on_retained_worker(tmp_path, remaining_owner):
+    program = """
+import asyncio, sys, threading
+from pathlib import Path
+import Tests.conftest
+from tldw_chatbook.TTS import profile_repository as module
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+async def main():
+    path = Path(sys.argv[1])
+    repository = module.TTSProfileRepository(path)
+    await repository.open()
+    owner, lease, executor = repository._connection, repository._lease, repository._executor
+    close_threads, release_threads, unlink_threads = [], [], []
+    native_close = owner.close
+    def close():
+        close_threads.append(threading.get_ident())
+        return native_close()
+    owner.close = close
+    remaining_owner = sys.argv[2]
+    fail = True
+    release = type(lease).release
+    def release_once(self):
+        nonlocal fail
+        if self is lease:
+            release_threads.append(threading.get_ident())
+            if remaining_owner == "lease" and fail:
+                fail = False
+                raise OSError("private lease failure")
+        return release(self)
+    type(lease).release = release_once
+    residual = path.with_name("owned-residual")
+    unlink = module._unlink_path_if_present
+    if remaining_owner != "lease":
+        residual.write_bytes(b"owned cleanup evidence")
+        repository._residual_cleanup_paths = (residual,)
+    def unlink_once(selected):
+        nonlocal fail
+        if selected == residual:
+            unlink_threads.append(threading.get_ident())
+            if fail:
+                fail = False
+                if remaining_owner == "residual_only":
+                    # Native cleanup is complete here. Settle the real lease
+                    # to isolate residual ownership from the lease predicate.
+                    assert owner._sqlite_closed and repository._connection is None
+                    release(lease)
+                    repository._lease = None
+                raise OSError("private residual failure")
+        return unlink(selected)
+    module._unlink_path_if_present = unlink_once
+    try:
+        await repository.close()
+    except ProfileRepositoryError as error:
+        assert error.code == "operation_failed", error.code
+        assert "private" not in str(error)
+    else:
+        raise AssertionError("close reported success with retained ownership")
+    assert repository._connection is None and owner._sqlite_closed
+    if remaining_owner == "residual_only":
+        assert repository._lease is None and not lease.acquired
+    else:
+        assert repository._lease is lease and lease.acquired
+    if remaining_owner != "lease":
+        assert repository._residual_cleanup_paths == (residual,) and residual.exists()
+    retained_worker = repository._executor is executor and not repository._executor_shutdown
+    await repository.close()
+    assert retained_worker, "first close discarded worker with late cleanup owner"
+    assert repository._lease is None and not lease.acquired, "second close falsely succeeded"
+    assert not repository._residual_cleanup_paths and not residual.exists()
+    assert repository._active_database_path is None and repository._executor is None
+    assert len(close_threads) == 1, close_threads
+    assert len(release_threads) == {"lease": 2, "residual_path": 1, "residual_only": 0}[remaining_owner]
+    assert len(unlink_threads) == (0 if remaining_owner == "lease" else 2)
+    assert len(set(close_threads + release_threads + unlink_threads)) == 1
+    assert close_threads[0] != threading.get_ident()
+    await repository.close()
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            program,
+            str(tmp_path / "profiles.sqlite3"),
+            remaining_owner,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.asyncio
