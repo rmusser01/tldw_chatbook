@@ -269,7 +269,10 @@ def run_cell(spec: dict) -> dict:
     # macOS reports bytes, Linux kilobytes.
     peak_mb = usage / (1 << 20) if sys.platform == "darwin" else usage / 1024.0
     return {
-        "spec": {k: v for k, v in spec.items() if k != "files"},
+        # `files` and `models_dir` are absolute paths on whoever ran this, and
+        # the results are committed (spec §8: ids and numbers only, never a
+        # path). The corpus ids are recorded once, per run, not per cell.
+        "spec": {k: v for k, v in spec.items() if k not in ("files", "models_dir")},
         "rows": rows,
         "peak_rss_mb": peak_mb,
         "rss_scope": "self" if scope == resource.RUSAGE_SELF else "children",

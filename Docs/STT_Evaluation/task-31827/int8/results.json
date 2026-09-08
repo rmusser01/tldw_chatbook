@@ -1,0 +1,634 @@
+{
+  "machine": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "cpu_count": 18,
+    "python": "3.12.11",
+    "commit": "737173f6e093d45dda0b9c7a2b219180776b8393",
+    "cpu_brand": "Apple M5 Max"
+  },
+  "sherpa_onnx": "1.13.7",
+  "corpus": {
+    "files": 3,
+    "voxconverse": 3,
+    "ami": 0,
+    "seconds": 1072.9705,
+    "ids": [
+      "voxconverse/wmori",
+      "voxconverse/mvjuk",
+      "voxconverse/zcdsd"
+    ]
+  },
+  "models": [
+    [
+      "pyannote-segmentation-3-0.onnx",
+      "220ad67ca923",
+      5992913
+    ],
+    [
+      "pyannote-segmentation-3-0-int8.onnx",
+      "d582f4b4c6b4",
+      1540506
+    ],
+    [
+      "nemo_en_titanet_small.onnx",
+      "ad4a1802485d",
+      40257283
+    ],
+    [
+      "3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx",
+      "c59158379255",
+      26485263
+    ],
+    [
+      "wespeaker_en_voxceleb_resnet34.onnx",
+      "5ef208a9da14",
+      26534365
+    ],
+    [
+      "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
+      "357a834f702b",
+      29596978
+    ]
+  ],
+  "cells": [
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "titanet_small",
+        "segmentation": "float",
+        "via": "worker",
+        "cluster_threshold": 0.95
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "rtf": 0.04149876130450811,
+          "der": 0.03404397157887293,
+          "hyp_segments": 12,
+          "hyp_speakers": 2,
+          "ref_speakers": 2,
+          "separation": {
+            "self_similarity": 0.9525654008596747,
+            "other_similarity": 0.30554281427502317,
+            "separation": 0.6470225865846515,
+            "recommended_threshold": 0.3709458924326511
+          }
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "rtf": 0.045618949107865604,
+          "der": 0.06157874414330138,
+          "hyp_segments": 39,
+          "hyp_speakers": 7,
+          "ref_speakers": 3,
+          "separation": {
+            "self_similarity": 0.9631761786463228,
+            "other_similarity": 0.7409501129606871,
+            "separation": 0.22222606568563563,
+            "recommended_threshold": 0.14793685419649505
+          }
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "rtf": 0.04893758586741692,
+          "der": 0.02345649844462445,
+          "hyp_segments": 40,
+          "hyp_speakers": 8,
+          "ref_speakers": 5,
+          "separation": {
+            "self_similarity": 0.9886636550513294,
+            "other_similarity": 0.24321164604018758,
+            "separation": 0.7454520090111418,
+            "recommended_threshold": 0.3840623494542415
+          }
+        }
+      ],
+      "peak_rss_mb": 2092.734375,
+      "rss_scope": "children"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "titanet_small",
+        "segmentation": "float",
+        "via": "inprocess",
+        "cluster_threshold": 0.95
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "der": 0.03404397157887293,
+          "rtf": 0.04072654880113438,
+          "hyp_segments": 12,
+          "hyp_speakers": 2
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "der": 0.06157874414330138,
+          "rtf": 0.044748679835604634,
+          "hyp_segments": 39,
+          "hyp_speakers": 7
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "der": 0.02345649844462445,
+          "rtf": 0.05044929733771745,
+          "hyp_segments": 40,
+          "hyp_speakers": 8
+        }
+      ],
+      "peak_rss_mb": 1855.046875,
+      "rss_scope": "self"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "titanet_small",
+        "segmentation": "int8",
+        "via": "inprocess",
+        "cluster_threshold": 0.95
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "der": 0.057059889976374435,
+          "rtf": 0.05662356185385057,
+          "hyp_segments": 17,
+          "hyp_speakers": 2
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "der": 0.08808840506762308,
+          "rtf": 0.06205973346330851,
+          "hyp_segments": 37,
+          "hyp_speakers": 7
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "der": 0.025830565259215434,
+          "rtf": 0.06698457784798093,
+          "hyp_segments": 44,
+          "hyp_speakers": 8
+        }
+      ],
+      "peak_rss_mb": 1543.203125,
+      "rss_scope": "self"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "eres2net_en",
+        "segmentation": "float",
+        "via": "worker",
+        "cluster_threshold": 0.9
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "rtf": 0.09092723249189202,
+          "der": 0.01834496496663851,
+          "hyp_segments": 11,
+          "hyp_speakers": 2,
+          "ref_speakers": 2,
+          "separation": {
+            "self_similarity": 0.9682272868329077,
+            "other_similarity": 0.24783755724905107,
+            "separation": 0.7203897295838566,
+            "recommended_threshold": 0.3919675779590206
+          }
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "rtf": 0.10152567515906158,
+          "der": 0.08257525437132557,
+          "hyp_segments": 42,
+          "hyp_speakers": 8,
+          "ref_speakers": 3,
+          "separation": {
+            "self_similarity": 0.970513009863863,
+            "other_similarity": 0.7176296110375232,
+            "separation": 0.2528833988263398,
+            "recommended_threshold": 0.1559286895493069
+          }
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "rtf": 0.11308262007017818,
+          "der": 0.03236713912573409,
+          "hyp_segments": 43,
+          "hyp_speakers": 8,
+          "ref_speakers": 5,
+          "separation": {
+            "self_similarity": 0.9924895527367442,
+            "other_similarity": 0.38088992027096474,
+            "separation": 0.6115996324657795,
+            "recommended_threshold": 0.3133102634961455
+          }
+        }
+      ],
+      "peak_rss_mb": 1897.75,
+      "rss_scope": "children"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "eres2net_en",
+        "segmentation": "float",
+        "via": "inprocess",
+        "cluster_threshold": 0.9
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "der": 0.01834496496663851,
+          "rtf": 0.08488410720848232,
+          "hyp_segments": 11,
+          "hyp_speakers": 2
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "der": 0.08257525437132557,
+          "rtf": 0.08895815957925403,
+          "hyp_segments": 42,
+          "hyp_speakers": 8
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "der": 0.03236713912573409,
+          "rtf": 0.09462921197109872,
+          "hyp_segments": 43,
+          "hyp_speakers": 8
+        }
+      ],
+      "peak_rss_mb": 1938.078125,
+      "rss_scope": "self"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "eres2net_en",
+        "segmentation": "int8",
+        "via": "inprocess",
+        "cluster_threshold": 0.9
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "der": 0.06397875237717607,
+          "rtf": 0.0871718035381451,
+          "hyp_segments": 18,
+          "hyp_speakers": 2
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "der": 0.04384919014804836,
+          "rtf": 0.09343129646069641,
+          "hyp_segments": 31,
+          "hyp_speakers": 6
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "der": 0.023709647083878942,
+          "rtf": 0.1017034473282676,
+          "hyp_segments": 41,
+          "hyp_speakers": 8
+        }
+      ],
+      "peak_rss_mb": 1494.671875,
+      "rss_scope": "self"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "wespeaker_resnet34",
+        "segmentation": "float",
+        "via": "worker",
+        "cluster_threshold": 0.6
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "rtf": 0.05907825958151203,
+          "der": 0.4452323162682044,
+          "hyp_segments": 11,
+          "hyp_speakers": 1,
+          "ref_speakers": 2,
+          "separation": {
+            "self_similarity": 0.9619033581766617,
+            "other_similarity": null,
+            "separation": null,
+            "recommended_threshold": null
+          }
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "rtf": 0.07798921404720524,
+          "der": 0.044258709195293816,
+          "hyp_segments": 38,
+          "hyp_speakers": 6,
+          "ref_speakers": 3,
+          "separation": {
+            "self_similarity": 0.9710154410643393,
+            "other_similarity": 0.7954230589034844,
+            "separation": 0.17559238216085493,
+            "recommended_threshold": 0.11678075001608812
+          }
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "rtf": 0.09148856904574061,
+          "der": 0.04138926875125636,
+          "hyp_segments": 41,
+          "hyp_speakers": 8,
+          "ref_speakers": 5,
+          "separation": {
+            "self_similarity": 0.9912508584579931,
+            "other_similarity": 0.7145498143141823,
+            "separation": 0.2767010441438108,
+            "recommended_threshold": 0.1470996636139123
+          }
+        }
+      ],
+      "peak_rss_mb": 847.453125,
+      "rss_scope": "children"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "wespeaker_resnet34",
+        "segmentation": "float",
+        "via": "inprocess",
+        "cluster_threshold": 0.6
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "der": 0.4452323162682044,
+          "rtf": 0.0702079091069285,
+          "hyp_segments": 11,
+          "hyp_speakers": 1
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "der": 0.044258709195293816,
+          "rtf": 0.07939769476210431,
+          "hyp_segments": 38,
+          "hyp_speakers": 6
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "der": 0.04138926875125636,
+          "rtf": 0.08470491755385338,
+          "hyp_segments": 41,
+          "hyp_speakers": 8
+        }
+      ],
+      "peak_rss_mb": 830.40625,
+      "rss_scope": "self"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "wespeaker_resnet34",
+        "segmentation": "int8",
+        "via": "inprocess",
+        "cluster_threshold": 0.6
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "der": 0.4711684058451586,
+          "rtf": 0.07088158508262477,
+          "hyp_segments": 16,
+          "hyp_speakers": 1
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "der": 0.10053817316162225,
+          "rtf": 0.0843572168310492,
+          "hyp_segments": 35,
+          "hyp_speakers": 6
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "der": 0.323881898611107,
+          "rtf": 0.09153095882087667,
+          "hyp_segments": 51,
+          "hyp_speakers": 8
+        }
+      ],
+      "peak_rss_mb": 799.484375,
+      "rss_scope": "self"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "campplus_en",
+        "segmentation": "float",
+        "via": "worker",
+        "cluster_threshold": 0.8
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "rtf": 0.06494884421424633,
+          "der": 0.18165892614009338,
+          "hyp_segments": 21,
+          "hyp_speakers": 2,
+          "ref_speakers": 2,
+          "separation": {
+            "self_similarity": 0.8724868430234937,
+            "other_similarity": 0.12986466585084147,
+            "separation": 0.7426221771726522,
+            "recommended_threshold": 0.49882424556283245
+          }
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "rtf": 0.05882797701942757,
+          "der": 0.22674130854511748,
+          "hyp_segments": 62,
+          "hyp_speakers": 8,
+          "ref_speakers": 3,
+          "separation": {
+            "self_similarity": 0.8397603785489519,
+            "other_similarity": 0.5001440357639217,
+            "separation": 0.33961634278503017,
+            "recommended_threshold": 0.33004779284356317
+          }
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "rtf": 0.0546934838599634,
+          "der": 0.25166875812024486,
+          "hyp_segments": 74,
+          "hyp_speakers": 8,
+          "ref_speakers": 5,
+          "separation": {
+            "self_similarity": 0.8364612667656753,
+            "other_similarity": 0.23793837089075703,
+            "separation": 0.5985228958749182,
+            "recommended_threshold": 0.46280018117178384
+          }
+        }
+      ],
+      "peak_rss_mb": 689.40625,
+      "rss_scope": "children"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "campplus_en",
+        "segmentation": "float",
+        "via": "inprocess",
+        "cluster_threshold": 0.8
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "der": 0.18165892614009338,
+          "rtf": 0.04753844072540482,
+          "hyp_segments": 21,
+          "hyp_speakers": 2
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "der": 0.22674130854511748,
+          "rtf": 0.05212678888255866,
+          "hyp_segments": 62,
+          "hyp_speakers": 8
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "der": 0.25166875812024486,
+          "rtf": 0.06440938707423377,
+          "hyp_segments": 74,
+          "hyp_speakers": 8
+        }
+      ],
+      "peak_rss_mb": 784.953125,
+      "rss_scope": "self"
+    },
+    {
+      "spec": {
+        "kind": "stop",
+        "engine": "onnx",
+        "embedder": "campplus_en",
+        "segmentation": "int8",
+        "via": "inprocess",
+        "cluster_threshold": 0.8
+      },
+      "rows": [
+        {
+          "id": "wmori",
+          "source": "voxconverse",
+          "duration_s": 120.12,
+          "der": 0.4711684058451586,
+          "rtf": 0.06694009532138477,
+          "hyp_segments": 16,
+          "hyp_speakers": 1
+        },
+        {
+          "id": "mvjuk",
+          "source": "voxconverse",
+          "duration_s": 375.048,
+          "der": 0.31892106624128147,
+          "rtf": 0.06493964727984029,
+          "hyp_segments": 78,
+          "hyp_speakers": 8
+        },
+        {
+          "id": "zcdsd",
+          "source": "voxconverse",
+          "duration_s": 577.8025,
+          "der": 0.423916372469331,
+          "rtf": 0.07140758931459831,
+          "hyp_segments": 90,
+          "hyp_speakers": 8
+        }
+      ],
+      "peak_rss_mb": 693.84375,
+      "rss_scope": "self"
+    }
+  ],
+  "skipped": []
+}
