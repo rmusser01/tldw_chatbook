@@ -2,7 +2,8 @@
 
 - Commit: `7ead25e9e8ac0f7a0ea2883f4dc9a7e8a4712724`
 - Machine: Apple M5 Max, 18 cores, macOS-26.5.2-arm64-arm-64bit, Python 3.12.11
-- sherpa-onnx: 1.13.7
+- sherpa-onnx: 1.13.7 (harness interpreter)
+- Baseline interpreter (`--speechbrain-python`): python 3.12.11, scikit-learn 1.9.0, speechbrain 1.1.1, torch 2.14.0, torchaudio 2.11.0, torchcodec 0.16.0
 - Corpus: 24 files (20 VoxConverse dev + 4 AMI dev), 188 minutes of audio
 - Collar: 0.25 s. Live window: 3.0 s. max_speakers: 8.
 
@@ -21,7 +22,7 @@
 
 Baseline (SpeechBrain/ECAPA): DER 0.371, purity 0.941, RTF 0.015, latency 27.6 ms, separation 0.734.
 
-Gates: DER within 0.02 absolute, purity within 0.03, RTF <= 0.15, embed latency <= 150 ms (M-series) / 300 ms (runner), separation within 0.05.
+Gates: DER within 0.02 absolute, purity within 0.03, RTF <= 0.15, embed latency <= 150 ms (the spec's ceiling for this machine: 150 ms M-series / 300 ms runner), separation within 0.05.
 
 | embedder | DER | live purity | RTF | embed latency | separation | best thresholds |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -43,24 +44,24 @@ Gates: DER within 0.02 absolute, purity within 0.03, RTF <= 0.15, embed latency 
 
 ## Live purity / coverage and per-window embed latency
 
-| engine | embedder | live threshold | purity | coverage | clusters vs speakers | latency median (ms) | p95 (ms) | windows |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| onnx | titanet_small | 0.45 | 1.000 | 1.000 | +0.54 | 11.8 | 13.5 | 1130 |
-| onnx | eres2net_en | 0.45 | 1.000 | 1.000 | +0.75 | 36.7 | 41.9 | 1130 |
-| onnx | wespeaker_resnet34 | 0.10 | 0.888 | 0.868 | +4.67 | 36.9 | 39.7 | 1130 |
-| onnx | campplus_en | 0.15 | 0.847 | 0.847 | +3.71 | 12.9 | 15.6 | 1130 |
-| speechbrain | ecapa | -- | 0.941 | 0.926 | +4.67 | 27.6 | 34.2 | 1130 |
+| engine | embedder | live threshold | purity | coverage | clusters vs speakers | latency median (ms) | p95 (ms) | windows | latency samples |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| onnx | titanet_small | 0.45 | 1.000 | 1.000 | +0.54 | 11.8 | 13.5 | 1154 | 1130 |
+| onnx | eres2net_en | 0.45 | 1.000 | 1.000 | +0.75 | 36.7 | 41.9 | 1154 | 1130 |
+| onnx | wespeaker_resnet34 | 0.10 | 0.888 | 0.868 | +4.67 | 36.9 | 39.7 | 1154 | 1130 |
+| onnx | campplus_en | 0.15 | 0.847 | 0.847 | +3.71 | 12.9 | 15.6 | 1154 | 1130 |
+| speechbrain | ecapa | -- | 0.941 | 0.926 | +4.67 | 27.6 | 34.2 | 1154 | 1130 |
 
 ## Self-match separation (VoxConverse speakers)
 
-| engine | embedder | cluster threshold | self cos | best other cos | separation | recommended voice_match_threshold |
-| --- | --- | --- | --- | --- | --- | --- |
-| onnx | titanet_small | 0.90 | 0.933 | 0.312 | 0.631 | 0.373 |
-| onnx | titanet_small | 0.95 | 0.933 | 0.303 | 0.640 | 0.377 |
-| onnx | eres2net_en | 0.90 | 0.954 | 0.323 | 0.631 | 0.362 |
-| onnx | wespeaker_resnet34 | 0.60 | 0.964 | 0.724 | 0.241 | 0.156 |
-| onnx | campplus_en | 0.80 | 0.765 | 0.250 | 0.515 | 0.493 |
-| speechbrain | ecapa | -- | 0.847 | 0.107 | 0.734 | 0.526 |
+| engine | embedder | cluster threshold | self cos | best other cos | separation | recommended voice_match_threshold | n files |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| onnx | titanet_small | 0.90 | 0.933 | 0.312 | 0.631 | 0.373 | 18 |
+| onnx | titanet_small | 0.95 | 0.933 | 0.303 | 0.640 | 0.377 | 18 |
+| onnx | eres2net_en | 0.90 | 0.954 | 0.323 | 0.631 | 0.362 | 20 |
+| onnx | wespeaker_resnet34 | 0.60 | 0.964 | 0.724 | 0.241 | 0.156 | 18 |
+| onnx | campplus_en | 0.80 | 0.765 | 0.250 | 0.515 | 0.493 | 20 |
+| speechbrain | ecapa | -- | 0.847 | 0.107 | 0.734 | 0.526 | 18 |
 
 
 ---
@@ -99,8 +100,13 @@ for the task that acts on this report; as the gate is written today, it fails.
 
 ### Recommended pins if the engine is selected explicitly
 
-Measured optima on this corpus (the harness sweeps the two thresholds
-independently -- see the runner's docstring for why):
+Measured optima on this corpus. The harness sweeps the two thresholds
+independently (see the runner's docstring for why), and these values came from
+a **three-file narrowing sweep** whose cells are not in this `results.json` --
+it holds only the final full-corpus cells at the chosen thresholds. The
+narrowing procedure is written out in [`README.md`](README.md#reproducing);
+"optimum" here means "best of the swept grid", not "reproducible from the
+committed JSON".
 
 | embedder | cluster threshold | live threshold | recommended `voice_match_threshold` |
 | --- | --- | --- | --- |
@@ -135,11 +141,15 @@ wiring it into `model_paths`.
 
 ### Not measured
 
-- **The x86 proxy run.** `.github/workflows/diarizer-bakeoff.yml` is landed
-  and `workflow_dispatch`-only, but has not been dispatched. Every number
-  above is from the Apple M-series machine, so the "RTF <= 0.15 on both
-  machines" and "latency <= 300 ms on the runner" halves of those two gates
-  are unverified. Both pass on the M-series with 2-4x of headroom.
+- **The x86 proxy run.** The x86 runner job is landed but **not dispatched
+  for this PR** — the RTF and latency *runner* halves are unmeasured, and
+  **the verdict does not depend on them**. Every number above is from the
+  Apple M-series machine, so "RTF <= 0.15 on both machines" and "latency
+  <= 300 ms on the runner" are unverified; both pass on the M-series with
+  2-4x of headroom, and the two gates that actually fail (separation,
+  purity) are machine-independent. The report generator now derives the
+  latency ceiling from the recorded machine, so a runner report will grade
+  itself at 300 ms rather than the M-series' 150 ms.
 - **Peak RSS of the ONNX worker looks high** (0.8-2.3 GB, vs 1.1 GB for the
   ECAPA worker). This is ONNX Runtime arena behaviour over a whole file, not
   steady-state live cost; the spec sets no numeric gate on it, and it was not
@@ -151,7 +161,9 @@ wiring it into `model_paths`.
 >= 2.9 routes that through torchcodec, which is a separate package: without
 it the call raises `ImportError` and the SpeechBrain **Stop pass returns no
 segments at all** (the live path is unaffected). Measured here on
-torchaudio 2.9 / torch 2.14; the baseline above only ran after torchcodec was
-installed and the Homebrew ffmpeg dylibs were put on the loader path. Worth
-filing against the SpeechBrain engine -- the `diarization` extra does not pin
-torchaudio below 2.9 or require torchcodec.
+**torchaudio 2.11.0 / torch 2.14.0** -- the exact versions are now recorded in
+`results.json` as `baseline_python`, so the header above proves this report is
+the post-torchcodec run and not the broken one. The baseline only ran after
+torchcodec 0.16.0 was installed and the Homebrew ffmpeg dylibs were put on the
+loader path. Worth filing against the SpeechBrain engine -- the `diarization`
+extra pins neither `torchaudio < 2.9` nor `torchcodec`.
