@@ -47,6 +47,7 @@ from tldw_chatbook.TTS.character_request_resolver import TTSVoiceRefusalDomain
 from tldw_chatbook.TTS.legacy_bridge import UnknownLegacyModelError
 from tldw_chatbook.TTS.adapter_types import (
     TTSConfigurationRevisionError,
+    TTSNativeCapabilitySnapshot,
     TTSOperationError,
     TTSProgress,
     TTSProviderReconfiguringError,
@@ -1274,11 +1275,22 @@ class TTSEventHandler:
                     reference=resolution.reference,
                 )
 
+        async def read_native_capability(
+            provider_id: str,
+            model_id: str,
+            voice_id: str | None,
+        ) -> TTSNativeCapabilitySnapshot:
+            return await service.get_native_capability_snapshot(
+                provider_id,
+                (model_id,) if voice_id is not None else (),
+            )
+
         effective = await TTSEffectiveSettingsResolver().resolve_non_studio(
             global_preferences=service.preferences_snapshot(),
             global_preferences_revision=service.preferences_generation(),
             provider_revision_reader=service.configuration_revision,
             catalog_reader=service.get_catalog,
+            native_capability_reader=read_native_capability,
             character_profile=character_profile,
             default_profile=default_profile,
         )

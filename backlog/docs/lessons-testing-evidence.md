@@ -12527,3 +12527,36 @@ had no persisted conversation when the transform ran, so the applier returned
 unchanged text. Persist first, assert transformed wire content, and verify the
 origin's `active_request` row and exact source pin before claiming transform
 coverage. Both corrected controls passed with the discard fix.
+
+## Native Console speech tests must resolve the destination first
+
+**Incident (TASK-32096, 2026-09-08).** Real Supertonic inference through the
+pinned audio.cpp runtime worked in Speech Lab, but Speak replies failed with
+`TTSEffectiveResolutionError: catalog_unavailable`. The Console destination
+check omitted the native capability reader. Earlier native request tests passed
+because they called the handler without first resolving a destination or
+supplying its expected fingerprint. Adding both operations to the existing
+real-service regression reproduced the failure for explicit and server-default
+voices. Wiring the public capability reader fixed both tests and real CPU/Metal
+playback, without weakening exact model/voice validation.
+
+**Practice.** Exercise the same destination-resolution and authorization path
+as automatic speech, before admitting and draining its audio request. A working
+adapter, Speech Lab run, or handler call without a destination fingerprint does
+not prove Speak replies can reach that adapter.
+
+## Optional runtime imports can conceal an unusable model dependency
+
+**Incident (TASK-32096, 2026-09-08).** Chatterbox 0.1.7 imported successfully in a
+fresh environment, but model construction failed because Perth 1.0.1 suppressed
+a missing `pkg_resources` import and exported `PerthImplicitWatermarker=None`.
+An unseeded wheel-extra install reproduced the failure with setuptools 84;
+the repaired extra selected a version below 82 and passed watermarker-callable
+and bundled-resource checks. The unconstrained extra also resolved an older
+Chatterbox release with a broken `pkuseg` source build, requiring a minimum
+Chatterbox version in that extra.
+
+**Practice.** Validate optional runtime installation from a built wheel in an
+unseeded environment. Probe the capability and required resources, not just the
+top-level import or declared dependency consistency. Preserve the original
+extra-only evidence before adding test instrumentation.
