@@ -7719,6 +7719,29 @@ class LibraryScreen(BaseAppScreen):
                     event.stop()
                     event.prevent_default()
                 return
+            # task-32046: on any list canvas that owns its own filter input,
+            # `/` focuses THAT filter -- the footer's "/ focus search" then
+            # lands where the user is looking, not on the rail's global
+            # search two panes away (the lead critique-#7 P1). Mirrors the
+            # Conversations branch above and the notes action below; Notes
+            # keeps its own check_action-gated path (it adds scroll-visible
+            # and a navigator-region gate). A lookup miss -- or an absent
+            # widget, e.g. the Media viewer sub-view where no list filter is
+            # mounted -- falls through to the rail-search grab, the prior
+            # behaviour.
+            canvas_filter = {
+                LIBRARY_ROW_BROWSE_MEDIA: "#library-media-filter",
+                LIBRARY_ROW_BROWSE_PROMPTS: "#library-prompts-filter",
+            }.get(self._library_selected_row_id)
+            if canvas_filter is not None:
+                try:
+                    self.query_one(canvas_filter, Input).focus()
+                except (NoMatches, QueryError):
+                    pass
+                else:
+                    event.stop()
+                    event.prevent_default()
+                    return
             # task-3315: this screen-wide rail-search grab predates the
             # notes-adaptive "/" binding (library_notes_focus_filter, PR
             # #1439) and runs BEFORE bindings dispatch, so the notes-scoped
@@ -7905,6 +7928,16 @@ class LibraryScreen(BaseAppScreen):
         work already running on its thread).
         """
         self._library_screen_suspended = False
+        # task-32039 AC#1: a new visit's auto-refresh (below) re-issues the
+        # same scope; the fault episode must not read that as a consecutive
+        # Retry and prepend the reopen recovery step on a first failure.
+        self._library_media_browse_controller.clear_fault_episode()
+        # task-32039 AC#2: the select-mode bulk-Analyze reason is memoised for
+        # the whole select-mode session (resolving it shells out to the
+        # keychain). A provider configured mid-session (while Library was
+        # suspended) leaves that memo stale, so drop it here -- the next
+        # canvas sync re-resolves it exactly once.
+        self._media_state.analyze_reason_cache = None
         self.call_after_refresh(self._navigation_controller.present_pending_repair)
         self.call_after_refresh(self.refresh_notes_sync_runtime)
         if getattr(self, "_prepared_library_inspection_entry", None) is not None:

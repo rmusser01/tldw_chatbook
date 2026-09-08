@@ -91,6 +91,12 @@ LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP = (
 )
 LIBRARY_ANALYZE_SELECTED_TOOLTIP = "Generate an analysis for the selected items."
 
+# task-32045 (critique #7 P2): Export/Review/Delete all gate on the same
+# "nothing selected" condition, so unlike Analyze (whose reason varies with
+# provider readiness) they share ONE inline reason line rather than one
+# per button.
+LIBRARY_BULK_ACTIONS_NO_SELECTION_REASON = "Select items to enable."
+
 # task-4023 AC#1 (RC-07): disabled state finally joins the product's
 # non-colour vocabulary. Every disabled Library action label carries a
 # leading "○" -- the existing ✓/○ pair's neutral glyph (ingest option

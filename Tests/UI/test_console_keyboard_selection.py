@@ -13,6 +13,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.events import MouseDown
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -30,7 +31,7 @@ _DIFF_OLD = "alpha\nbeta\ngamma\n"
 _DIFF_NEW = "alpha\nBETA\ngamma\ndelta\n"
 
 
-class _KeyboardSelectionApp(App[None]):
+class _KeyboardSelectionApp(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         transcript = ConsoleTranscript(id="console-native-transcript")
         transcript.set_messages(
@@ -582,8 +583,11 @@ async def test_menu_anchor_derives_from_row_region_and_stays_in_transcript():
         await pilot.pause()
         transcript.focus()
         row = transcript.query_one("#console-message-m1")
-        row_region = row.region
         await pilot.press("s")
+        # Selection adds a source highlight and can reflow the row. Capture
+        # its position when Enter will open the menu, after mode entry.
+        row_region = row.region
+        transcript_region = transcript.region
         await pilot.press("enter")
         await pilot.pause()
 
@@ -592,6 +596,8 @@ async def test_menu_anchor_derives_from_row_region_and_stays_in_transcript():
         bounds = transcript.region
         assert bounds.x <= anchor_x <= bounds.right
         assert bounds.y <= anchor_y <= bounds.bottom
+        assert bounds == transcript_region  # the overlay must not shrink its owner
+        assert bounds.contains_region(menu.region)
         # The menu can hop entirely above the row because the keyboard path
         # handed it the row's top, exactly like the mouse path does.
         assert menu._selection_top == row_region.y

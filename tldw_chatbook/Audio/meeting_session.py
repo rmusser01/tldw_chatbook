@@ -70,6 +70,12 @@ class MeetingMeta:
     #: Diagnostic: how many `assign` replies the backend saw flagged `self`
     #: (only the first is ever applied). Stamped from the backend at Stop.
     self_candidates_seen: int = 0
+    #: Which diarizer backend ran this meeting ("onnx" / "speechbrain") and
+    #: the engine's model id (spec §4 "Stamping"), stamped by
+    #: `MeetingSessionOwner.start()`. None for direct-construction call sites
+    #: and back-filled None for meetings recorded before this field existed.
+    diarizer_engine: str | None = None
+    diarizer_model_id: str | None = None
     format_version: int = 2
 
     def to_json(self) -> dict:
@@ -159,6 +165,34 @@ class SpeakerSegment:
     text: str = ""
 
 
+def _speaker_for_segment(meeting_segment: Any, speaker_segments: Sequence[SpeakerSegment]) -> str | None:
+    """Pick `meeting_segment`'s speaker from the Stop-pass batch (spec §5).
+
+    Largest time overlap wins. On an exact tie among the max overlaps (or
+    when every overlap is 0 -- no batch segment overlaps at all) fall back to
+    the first batch segment whose span contains the midpoint. Returns None
+    when nothing overlaps and nothing contains the midpoint either, so the
+    caller keeps the segment's existing id.
+    """
+    start, end = meeting_segment.t_audio_start, meeting_segment.t_audio_end
+    midpoint = (start + end) / 2.0
+    best_overlap = -1.0
+    best_speaker: str | None = None
+    tied = False
+    for speaker_segment in speaker_segments:
+        overlap = max(0.0, min(end, speaker_segment.end_s) - max(start, speaker_segment.start_s))
+        if overlap > best_overlap:
+            best_overlap, best_speaker, tied = overlap, speaker_segment.speaker, False
+        elif overlap == best_overlap:
+            tied = True
+    if best_speaker is not None and best_overlap > 0.0 and not tied:
+        return best_speaker
+    for speaker_segment in speaker_segments:
+        if speaker_segment.start_s <= midpoint <= speaker_segment.end_s:
+            return speaker_segment.speaker
+    return None
+
+
 class MeetingSink(Protocol):
     def on_started(self, meta: MeetingMeta) -> None: ...
     def on_partial(self, text: str, label: str | None) -> None: ...
@@ -237,6 +271,10 @@ def read_meeting_json(folder: Path) -> dict:
     # exist, so no meeting before it ever matched a cluster to the user.
     payload.setdefault("matched_self", None)
     payload.setdefault("matched_self_overridden", False)
+    # Back-fill pre-task-31827 recordings: the ONNX backend did not exist,
+    # so no meeting before it ever stamped which engine diarized it.
+    payload.setdefault("diarizer_engine", None)
+    payload.setdefault("diarizer_model_id", None)
     return payload
 
 
@@ -729,13 +767,8 @@ class MeetingSession:
                     transitions: list[tuple[str | None, str]] = []
                     changed: list[MeetingSegment] = []
                     for meeting_segment in meeting_segments:
-                        midpoint = (meeting_segment.t_audio_start + meeting_segment.t_audio_end) / 2.0
                         old = meeting_segment.speaker_id
-                        new = old
-                        for speaker_segment in speaker_segments:
-                            if speaker_segment.start_s <= midpoint <= speaker_segment.end_s:
-                                new = speaker_segment.speaker
-                                break
+                        new = _speaker_for_segment(meeting_segment, speaker_segments) or old
                         if old is not None:
                             transitions.append((old, new))
                         if new != old:

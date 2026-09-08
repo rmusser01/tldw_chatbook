@@ -6872,6 +6872,74 @@ async def test_slash_on_the_focused_rail_search_rearms_selection():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+async def test_slash_focuses_the_media_filter_not_the_rail_search(size):
+    """task-32046: on the Media list `/` focuses THIS canvas's own filter
+    (``#library-media-filter``), not the rail's global search two panes
+    away. The footer advertises "/ focus search"; before this fix the key
+    landed on ``#library-search-input`` and a filter query did nothing to
+    the list. Mirrors the notes ``/`` action; must hold at both the wide
+    three-pane width and the narrow stacked one."""
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        await pilot.pause()
+
+        media_filter = screen.query_one("#library-media-filter", Input)
+        rail_search = screen.query_one("#library-search-input", Input)
+        assert not media_filter.has_focus
+        await pilot.press("/")
+        await pilot.pause()
+        assert media_filter.has_focus, (
+            f"/ landed on {screen.focused!r}, expected the Media filter"
+        )
+        assert not rail_search.has_focus
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+async def test_media_list_arrow_keys_move_the_cursor_at_every_width(size):
+    """task-32041 AC#1/#4: with the Media list owning focus, Down/Up move
+    the list cursor between rows at every supported width -- the 235x52 wide
+    three-pane layout as well as the 100x30 stacked one that already worked.
+    Focus must stay on a ``.library-media-row`` and never leak into the
+    reader pane."""
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        await pilot.pause()
+
+        row_0 = screen.query_one("#library-media-row-0", Button)
+        row_1 = screen.query_one("#library-media-row-1", Button)
+        row_0.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert screen.focused is row_1, (
+            f"Down leaked to {screen.focused!r} instead of advancing the list"
+        )
+        assert screen.focused.has_class("library-media-row")
+        await pilot.press("up")
+        await pilot.pause()
+        assert screen.focused is row_0
+        assert screen.focused.has_class("library-media-row")
+
+
+@pytest.mark.asyncio
 async def test_search_deep_link_registers_the_use_in_console_footer_hint():
     """F-012: the `u` hint must be visible whenever `u` works. Only the
     rail-row switch re-registered the footer, so a navigation-context deep
@@ -17930,9 +17998,13 @@ async def test_library_shell_workspaces_body_lives_under_details():
 
 
 def test_generated_stylesheet_includes_library_shell_rules():
+    # TASK-15450 split library-owned selectors out of the boot bundle
+    # (``tldw_cli_modular.tcss``) into ``screen_agentic_library.tcss``, the
+    # sheet ``LibraryScreen.CSS_PATH`` loads at runtime -- so that split sheet,
+    # not the boot bundle, is where these rules must land now (task-32039 AC#4).
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
     component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
-    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    generated_css = (root / "screen_agentic_library.tcss").read_text()
     for selector in (
         "#library-shell-grid",
         "#library-header-line",
@@ -17953,9 +18025,13 @@ def test_generated_stylesheet_includes_library_shell_rules():
 
 
 def test_generated_stylesheet_includes_library_media_rules():
+    # TASK-15450 split library-owned selectors out of the boot bundle
+    # (``tldw_cli_modular.tcss``) into ``screen_agentic_library.tcss``, the
+    # sheet ``LibraryScreen.CSS_PATH`` loads at runtime -- so that split sheet,
+    # not the boot bundle, is where these rules must land now (task-32039 AC#4).
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
     component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
-    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    generated_css = (root / "screen_agentic_library.tcss").read_text()
     for selector in (
         "#library-media-title",
         ".library-media-row",

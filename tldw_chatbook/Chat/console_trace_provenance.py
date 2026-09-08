@@ -919,6 +919,7 @@ class ConsoleRequestProvenance:
                 artifact_sources=frozenset(
                     {
                         TraceProvenanceSource.ACTIVE_REQUEST,
+                        TraceProvenanceSource.PROJECT_INSTRUCTION,
                         TraceProvenanceSource.PREFILL,
                         TraceProvenanceSource.TOOL_CALL,
                         TraceProvenanceSource.TOOL_RESULT,
@@ -955,6 +956,7 @@ class ConsoleRequestProvenance:
             artifact_sources=frozenset(
                 {
                     TraceProvenanceSource.ACTIVE_REQUEST,
+                    TraceProvenanceSource.PROJECT_INSTRUCTION,
                     TraceProvenanceSource.PREFILL,
                     TraceProvenanceSource.TOOL_CALL,
                     TraceProvenanceSource.TOOL_RESULT,

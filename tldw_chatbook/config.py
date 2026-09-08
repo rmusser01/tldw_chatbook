@@ -5213,12 +5213,34 @@ post_transcribe = true
 # Ask that offline pass for speaker diarization (needs torch + speechbrain).
 post_diarize = true
 # Assign speaker ids while recording instead of only in the offline pass
-# (feeds the live Speakers legend). Needs the same packages as post_diarize,
-# installed via the "diarization" extra: pip install -e ".[diarization]"
+# (feeds the live Speakers legend). Needs a diarizer engine -- the base
+# install ships one; see diarizer_backend below for the choice.
 live_diarization = false
-# Which live diarizer to build when live_diarization is on. Only "local"
-# (in-process, no server round trip) is implemented today.
-diarizer_backend = "local"
+# Which engine assigns the live speaker ids when live_diarization is on:
+#   "auto"        - the first engine whose packages are installed, ONNX before
+#                   SpeechBrain (default; "local" is the old name for it).
+#                   ONNX ships with the base install, so "auto" means ONNX
+#                   unless that package is broken.
+#   "onnx"        - sherpa-onnx; ships with the base install, no torch needed
+#   "speechbrain" - needs the "diarization" extra (torch, torchaudio,
+#                   speechbrain, scikit-learn)
+#   "server"      - reserved; not available yet
+# ONNX measures better on accuracy, live purity and speed; SpeechBrain keeps a
+# wider margin between one enrolled voice and everyone else's
+# (Docs/STT_Evaluation/task-31827/report.md). The two produce different kinds
+# of voiceprint vector, so switching engines means enrolling your voice again
+# -- an existing SpeechBrain voiceprint reads "needs re-enrollment" until you do.
+diarizer_backend = "auto"
+# Which speaker embedder the "onnx" engine uses: titanet_small,
+# wespeaker_resnet34, eres2net_en or campplus_en. Also part of the voiceprint
+# identity -- changing it means enrolling again.
+onnx_embedder = "titanet_small"
+# Where the ONNX model files live; empty = <data_dir>/models/diarization/onnx,
+# fetched from the sherpa-onnx GitHub releases on the first Start (~47 MB for
+# titanet_small). Point it at a directory of pre-placed files for an
+# air-gapped install: the files already there are hash-verified and never
+# re-fetched, and only missing ones are downloaded.
+onnx_models_dir = ""
 # Upper bound the local live diarizer uses when clustering voices into
 # speaker ids.
 max_speakers = 8

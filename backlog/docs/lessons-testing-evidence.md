@@ -12223,3 +12223,130 @@ starts, wait for the expected starts (poll with a generous deadline)
 rather than a flat window sized to the happy path. The probe already
 records STARTS rather than running state, so waiting cannot miss a worker
 that finishes quickly.
+
+
+## Preserve real project defaults and verify the provider input
+
+**TASK-31976.1, 2026-09-07.** The trace recovery helper disabled project
+instructions, so its passing sends missed the production default that selected
+a ready workspace containing AGENTS.md. Real workspace/controller/agent/factory
+tests reproduced trace_turn_unavailable before HTTP: the appended context had
+been mistaken for a saved user turn. Keeping that context exposed consecutive
+turn replacement and filtered-artifact equality failures. Review then found
+that the generic provider path could replay filtered trace artifacts as actual
+provider input; llama.cpp's separate wire path concealed that error.
+
+Use real workspace defaults when testing sends. Assert each reconstructed call
+and the actual provider input across subsequent sends, tool calls, fallback
+and a cold trace factory; test credential and PII filtering with distinct
+secrets in the context. A saved trace alone cannot prove what the model received.
+
+### TASK-31827: git-ignored scratch inside a worktree dies with the worktree -- mirror it
+
+At 18:13 on 2026-09-07 an unidentified bulk cleanup removed the whole `.claude/worktrees/`
+directory (a peer session lost two worktrees in the same event). The branch survived in
+git, but the SDD workspace under the worktree's `.superpowers/` -- ledger, briefs, contexts,
+reports, reviews -- was git-ignored scratch and vanished with it, along with the worktree's
+venv and one task's uncommitted edits. The ledger had to be reconstructed from the session
+transcript. Rule: anything a program needs to resume (ledgers, briefs, evidence) is mirrored
+outside the worktree after every append -- a `cp` to the session scratchpad costs nothing.
+Second half: recreating the worktree from an isolated session is a two-step (`ExitWorktree`
+keep, then `git worktree add` from the main checkout, then `EnterWorktree path`); the
+isolation hook refuses `cd`/`-C` forms and the `!` prefix runs through the same hook.
+
+### TASK-31827: a "pre-existing" bug in the code you are touching is yours if the feature leans on it
+
+Task 4's re-reviewer found that `wait_ready` snapshotted the READY Event on entry, so a caller
+blocked across a crash-restart was released on the dead worker's gate and gave up while the
+replacement warmed up -- the Stop pass was then skipped. The bug predated the branch
+(identical behaviour on the parent commit) and the temptation was to park it as out of scope.
+It was load-bearing for exactly the restart path the new engine exercises, and the fix was a
+re-wait loop. Rule: "pre-existing" decides blame, not scope; if the branch's own paths
+traverse the defect, it is in scope.
+
+### TASK-31827: a size cap must measure the thing that is streamed, not the thing that is stored
+
+The model downloader's manifest recorded the SHA-256 and size of the EXTRACTED segmentation
+model, because that is what the loader verifies. The controller's ruling capped the streamed
+download at "manifest size + 1 MiB" -- which left 83 KB of headroom against the 6.96 MB tarball
+that actually comes over the wire. The implementer flagged it; the fix was a separate
+`download_size` field. Rule: when an artefact changes shape between transport and use, pin both
+sizes and be explicit about which check reads which.
+
+### TASK-31827: reviewers earn their seat -- the count that mattered
+
+Across nine tasks, per-task reviews found: two Criticals in the downloader (https→http redirect
+hops followed; a tar member with no size cap that let a 411-byte archive write 400 MB), one
+Critical from a controller ruling (reusing an unset READY Event regressed the crash-restart),
+one pre-existing restart bug, and a dozen unpinned invariants where a mutation left the suite
+green. None of these were visible in the implementers' own green test runs. Rule (already the
+process, restated with the evidence): never skip the task review because the implementer's
+tests passed; ask the reviewer to run mutations against the claims.
+
+### TASK-31827: a healthy live path can hide a dead Stop pass -- the bake-off found a silent dependency break
+
+The first ECAPA baseline run scored DER 1.000: `torchaudio.load` on torchaudio >= 2.9 (2.11.0 in the scratch venv) delegates to
+the separate `torchcodec` package, and without it the SpeechBrain Stop pass returned NO segments
+while live labels (which never touch torchaudio) looked perfectly healthy. The `diarization`
+extra pinned neither. Nothing in the unit suite could see it -- the Stop pass is exercised with
+fakes. Two rules: a "run the real thing end to end" evidence step belongs in every plan that wraps
+a native/ML dependency (the bake-off was that step here, by accident of purpose); and a reader
+for a file format you control (the meeting writes 16 kHz mono PCM16) should be stdlib, not a
+media library whose backend can change under a minor version.
+
+## Verify a named agent's model at the provider boundary (TASK-32026, 2026-09-07)
+
+**Incident.** The bulk-reader pilot needed a cheaper worker model. Existing
+AgentService tests showed that a named definition's model reached `chat_call`,
+but a recording gateway behind the real Console `_StreamingModelAdapter`
+observed `primary-model` when the child requested `cheap-worker`. The adapter
+accepted the override and then dispatched its constructor's parent resolution;
+usage normalization also labeled the call with that parent model. Testing only
+the service callback had left the actual provider behavior unverified.
+
+**Resolution.** Derive an immutable resolution per adapter call, changing only
+the model, and use it for request preparation, dispatch, and usage. The
+regression test runs parent and child calls concurrently and verifies their
+gateway model identities, unchanged shared resolution, matching usage labels,
+and isolation of the parent's continuation state. A separate real local-tool
+test verifies that the reader's allowlist still refuses a write.
+
+**Rule.** When a feature selects a model, endpoint, or credential scope, verify
+the selection at the final dispatch boundary as well as at the runtime callback.
+If parent and child share an adapter, include concurrent calls and continuation
+ownership in that check. Configuration persistence alone cannot demonstrate
+that a cheaper worker was used or that its usage was priced correctly.
+
+## Exercise real config and typed streams in a reader pilot (TASK-32026, 2026-09-08)
+
+**Incident.** The first live bulk-reader comparison made 41 calls after the
+focused offline checks were green. Every cost was unknown despite complete
+provider usage and configured prices: real `load_settings()` kept pricing
+under `COMPREHENSIVE_CONFIG_RAW`, while the evaluator read only the top level.
+Separately, ZAI stripped private reasoning from chunks into empty deltas; the
+Console's generic mapping parser rendered an unsupported-shape message for each
+one. Those locally generated strings polluted agent history and consumed output
+limits. The fake provider streams had not exercised this sanitized frame shape.
+
+**What worked.** A real-loader regression failed for normalized config while
+its raw-config control passed. A typed ZAI stream through the real Console
+normalizer reproduced three diagnostic chunks around one valid text chunk.
+Provider-local empty visible content removed the noise while native-tool
+loopback tests preserved fragments and private continuation metadata. Keep raw
+live captures immutable and put repricing/review in separate artifacts. The
+corrected repeat still failed to invoke the reader in all four delegated arms;
+fixing the harness did not establish a model-quality or savings benefit.
+
+
+## An isolated helper must import the checkout being verified (TASK-32026, 2026-09-08)
+
+**Incident.** Preparing the bulk-reader pilot PR against current dev moved file
+reads onto WorkspaceToolExecutor. Parent-process tests imported the PR worktree,
+but the shared virtual environment was installed from the older user checkout;
+the real helper starts with `python -I` and could not import workspace_tool_worker.
+A dedicated validation interpreter exposing the PR checkout to isolated imports
+restored real reads without changing the user environment.
+
+**What to do.** For subprocess-backed tests, verify package provenance inside
+the child interpreter with its actual isolation flags. A passing parent import
+from the working directory does not prove the helper will execute that code.

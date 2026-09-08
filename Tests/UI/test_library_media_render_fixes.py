@@ -30,6 +30,7 @@ from types import SimpleNamespace
 from textual.widgets import Button, Input, OptionList, Static, TextArea
 from textual.worker import WorkerState
 
+from tldw_chatbook.Library.ingest_analysis import NO_ANALYSIS_PROVIDER_NEXT_STEP
 from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Library.library_media_state import (
@@ -72,8 +73,6 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 
-
-from tldw_chatbook.Library.ingest_analysis import NO_ANALYSIS_PROVIDER_NEXT_STEP
 
 #: task-31981: the full surfaced reason for the no-provider case, derived
 #: from the source's next-step constant so only the reason half is pinned
@@ -1972,10 +1971,16 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_reader_generate_reason_is_painted_inline_not_hover_only(size):
-    """task-31981 AC#1/#4: the blocked Generate's reason reaches the glass
-    as an always-visible line adjacent to the control, not only as a mouse
-    tooltip a keyboard user can never reach. Painted at both sizes, no hover.
-    AC#2: the reason names the next step (Settings ▸ Providers & Models)."""
+    """The blocked Generate's reason paints inline, not as hover-only chrome.
+
+    task-31981 AC#1/#4: it reaches the glass as an always-visible line adjacent
+    to the control, not only as a mouse tooltip a keyboard user can never reach.
+    Painted at both sizes, no hover. AC#2: the reason names the next step
+    (Settings ▸ Providers & Models).
+
+    Args:
+        size: The terminal dimensions under test.
+    """
     host = _host()  # the test config configures no analysis provider
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
@@ -2012,9 +2017,15 @@ async def test_reader_generate_reason_line_is_absent_when_a_provider_is_ready():
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_select_mode_analyze_reason_is_painted_inline_not_hover_only(size):
-    """task-31981 AC#1/#4: the select-mode bulk Analyze gates on the same
-    provider condition, and its reason must paint inline too -- same silence,
-    same fix, at both sizes with no hover."""
+    """The select-mode bulk Analyze reason paints inline, like Generate's.
+
+    task-31981 AC#1/#4: the select-mode bulk Analyze gates on the same provider
+    condition, and its reason must paint inline too -- same silence, same fix,
+    at both sizes with no hover.
+
+    Args:
+        size: The terminal dimensions under test.
+    """
     host = _host()  # the test config configures no analysis provider
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
@@ -2027,6 +2038,107 @@ async def test_select_mode_analyze_reason_is_painted_inline_not_hover_only(size)
         painted = _painted(host, reason_line.region).replace("\n", " ")
         assert "No analysis provider is configured" in painted, painted
         assert "Providers & Models" in painted, painted
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_select_mode_bulk_reason_is_painted_with_nothing_selected(size):
+    """task-32045 (critique #7 P2): zero selected dims Export/Review/Delete
+    with the "○" marker but said nothing inline, while Analyze already
+    explains its own block (task-31981). Export/Review/Delete share one
+    gate (``selected_count == 0``), so one reason line -- same
+    ``.library-media-action-reason`` grammar -- covers all three rather
+    than repeating per button.
+
+    Args:
+        size: The terminal dimensions under test.
+    """
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._toggle_library_media_select_mode()
+        await _wait_for_selector(screen, pilot, "#library-media-select-actions")
+        await pilot.pause()
+        export_btn = screen.query_one("#library-media-export-selected", Button)
+        review_btn = screen.query_one("#library-media-review-selected", Button)
+        delete_btn = screen.query_one("#library-media-delete-selected", Button)
+        assert export_btn.disabled is True
+        assert review_btn.disabled is True
+        assert delete_btn.disabled is True
+        reason_line = screen.query_one("#library-media-select-bulk-reason", Static)
+        assert reason_line.styles.visibility == "visible"
+        painted = _painted(host, reason_line.region).replace("\n", " ")
+        assert "Select items to enable" in painted, painted
+
+        screen.query_one("#library-media-row-0").press()
+        await pilot.pause()
+        # task-252 Tier 1: a single row press is patched in place (never a
+        # recompose), so the line stays mounted but hidden -- "gone" means
+        # ``visibility: hidden`` (nothing painted; the row list below keeps
+        # its height, unlike ``display=False`` which would shift it).
+        hidden_reason = screen.query_one("#library-media-select-bulk-reason", Static)
+        assert hidden_reason.styles.visibility == "hidden"
+        assert "Select items to enable" not in _painted(
+            host, hidden_reason.region
+        ).replace("\n", " ")
+        assert (
+            screen.query_one("#library-media-export-selected", Button).disabled
+            is False
+        )
+        assert (
+            screen.query_one("#library-media-review-selected", Button).disabled
+            is False
+        )
+        assert (
+            screen.query_one("#library-media-delete-selected", Button).disabled
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_select_mode_analyze_reason_refreshes_on_resume():
+    """task-32039 AC#2: a provider configured mid-session clears the gate on return.
+
+    The select-mode bulk-Analyze reason is memoised for the whole select-mode
+    session. Configuring a provider while Library is suspended must not leave a
+    stale "no provider" memo gating the action -- ``on_screen_resume``
+    re-resolves it, so a provider configured mid-session is reflected without a
+    restart.
+    """
+    host = _host()  # the test config configures no analysis provider
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await pilot.press("s")  # enter select mode; arms row focus
+        await pilot.pause()
+        await pilot.press("space")  # check a row so count is not the gate
+        await pilot.pause()
+        assert screen._media_state.row_selection.count == 1
+        await _wait_for_selector(screen, pilot, "#library-media-analyze-selected")
+        analyze = screen.query_one("#library-media-analyze-selected", Button)
+        assert analyze.disabled is True
+        # The memo is now populated with the no-provider reason.
+        assert screen._library_media_analyze_reason(), "reason memo never populated"
+
+        with pytest.MonkeyPatch.context() as mp:
+            # A provider is configured mid-session (Library was suspended).
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            # Without the resume refresh the stale memo still gates it.
+            assert screen._library_media_analyze_reason(), "memo cleared too early"
+            screen.on_screen_resume()
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen.query_one(
+                    "#library-media-analyze-selected", Button
+                ).disabled,
+                message="The bulk Analyze gate never cleared after resume.",
+            )
+            await pilot.pause()
+            assert screen._library_media_analyze_reason() == ""
+            assert not screen.query("#library-media-analyze-selected-reason")
 
 
 @pytest.mark.asyncio
@@ -2629,6 +2741,90 @@ async def test_repeated_media_load_failure_names_the_reopen_recovery():
         second = " ".join(_painted(host, copy.region).split())
         assert second.startswith("Couldn't load page 1 · database is locked"), second
         assert "reopen Chatbook to reconnect to the media database" in second, second
+
+
+@pytest.mark.asyncio
+async def test_changed_page_context_failure_is_not_a_repeated_retry():
+    """task-32039 AC#1: a same-reason failure in a NEW context is not a Retry.
+
+    The repeated-fault episode is scoped to its request context. A page (or
+    query/type) change that happens to hit the same reason is a first failure
+    of that context, so it must NOT wear the reopen recovery step -- that is
+    reserved for a genuine consecutive Retry of the same context.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+        calls = await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        first = " ".join(_painted(host, copy.region).split())
+        assert first == "Couldn't load page 1 · database is locked", first
+
+        # A DIFFERENT page hits the same reason -- a changed context, never a
+        # consecutive Retry of the one that just failed.
+        screen._request_library_media_page(2, focus_identity=None)
+        await _wait_for_condition(
+            pilot,
+            lambda: len(calls) >= 2,
+            message="The page-2 request never issued.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not controller.loading,
+            message="The page-2 request never settled.",
+        )
+        await pilot.pause()
+
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        second = " ".join(_painted(host, copy.region).split())
+        assert second.startswith("Couldn't load page 2 · database is locked"), second
+        assert "reopen Chatbook to reconnect to the media database" not in second, second
+
+
+@pytest.mark.asyncio
+async def test_resume_refresh_failure_is_not_a_repeated_retry():
+    """task-32039 AC#1: a Library resume auto-refresh is a new visit, not a Retry.
+
+    Leaving and returning re-issues the same scope through ``on_screen_resume``.
+    That failing with the same reason is the FIRST failure of a new visit, so
+    the reopen recovery step must not appear -- only a genuine consecutive
+    Retry within a visit escalates.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+        calls = await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        first = " ".join(_painted(host, copy.region).split())
+        assert "reopen Chatbook to reconnect to the media database" not in first, first
+
+        # Leave and return: the resume auto-refresh re-issues the same page and
+        # fails with the same reason. A new visit, not a Retry.
+        screen.on_screen_resume()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(calls) >= 2,
+            message="The resume refresh never re-issued the page request.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not controller.loading,
+            message="The resume refresh never settled.",
+        )
+        await pilot.pause()
+
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        second = " ".join(_painted(host, copy.region).split())
+        assert second.startswith("Couldn't load page 1 · database is locked"), second
+        assert "reopen Chatbook to reconnect to the media database" not in second, second
 
 
 @pytest.mark.asyncio

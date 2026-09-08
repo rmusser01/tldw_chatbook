@@ -9,15 +9,18 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_trace_final_values import CompletedToolTurnWitness
 from tldw_chatbook.Chat.console_trace_models import TraceCallState, new_opaque_id
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
     DerivedTraceProvenance,
+    ProviderArtifactTraceProvenance,
     ProviderRequestProvenance,
     RequestRouteTraceProvenance,
     SavedRevisionTraceProvenance,
     TraceProvenance,
+    TraceProvenanceSource,
     frozen_policy_from_provenance,
     request_route_provenance,
 )
@@ -178,15 +181,20 @@ class ConsoleTraceBoundaryFactory:
                     self.service._retire_preparation(boundary.admission)
                     admission, surface = self.service.prepare_current_surface_delta(
                         cursor,
-                        owner_id=reserved.owner_id, segment_id=reserved.segment_id,
+                        owner_id=reserved.owner_id,
+                        segment_id=reserved.segment_id,
                         route_identity=boundary.admission.route_identity,
-                        preparation_identity=new_opaque_id(), provenance=request.provenance,
-                        values=tuple(request.messages_payload) + tuple(
+                        preparation_identity=new_opaque_id(),
+                        provenance=request.provenance,
+                        values=tuple(request.messages_payload)
+                        + tuple(
                             group.checkpoint for group in request.continuation_groups
                         ),
                         completed_tool_turn=boundary.admission.completed_tool_turn,
-                        current_turn_id=reserved.turn_id, current_policy_id=reserved.policy_id,
+                        current_turn_id=reserved.turn_id,
+                        current_policy_id=reserved.policy_id,
                         reserved_call=reserved,
+                        known_credentials=(getattr(resolution, "api_key", None) or "",),
                     )
                 recovered = ConsoleTraceCallBoundary(
                     service=self.service, database=self.database, identity=boundary.identity,
@@ -213,7 +221,7 @@ class ConsoleTraceBoundaryFactory:
 
         Args:
             request: Prepared request carrying normalized trace provenance.
-            _resolution: Reserved provider resolution argument.
+            _resolution: Provider resolution supplying transient known credentials.
             route: Dispatch route, when the caller has resolved one.
 
         Returns:
@@ -265,17 +273,53 @@ class ConsoleTraceBoundaryFactory:
         )
         if not message_revision_ids:
             raise ValueError("trace_owner_unavailable")
-        active_descriptor_index = -1
+        active_descriptor_index = len(provenance.messages_payload) - 1
+        # A startup rider is provider-only context appended to the current
+        # user turn. Require both the app's row marker and its typed provenance;
+        # never search backwards past an ordinary unsaved user message.
+        while active_descriptor_index >= 0:
+            descriptor = provenance.messages_payload[active_descriptor_index]
+            message = request.messages_payload[active_descriptor_index]
+            tagged_context = message.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions"
+            context_artifact = (
+                type(descriptor) is ProviderArtifactTraceProvenance
+                and descriptor.source is TraceProvenanceSource.PROJECT_INSTRUCTION
+            )
+            if not tagged_context and not context_artifact:
+                break
+            if not (
+                tagged_context and context_artifact and message.get("role") == "user"
+            ):
+                raise ValueError("trace_turn_unavailable")
+            active_descriptor_index -= 1
+        if active_descriptor_index < 0:
+            raise ValueError("trace_turn_unavailable")
+        skipped_project_context = (
+            active_descriptor_index < len(provenance.messages_payload) - 1
+        )
         if route_record.route is ConsoleRequestRoute.DIRECT_PREFILL:
             if (
-                len(provenance.messages_payload) < 2
-                or not request.messages_payload
-                or request.messages_payload[-1].get("role") != "assistant"
+                active_descriptor_index < 1
+                or request.messages_payload[active_descriptor_index].get("role")
+                != "assistant"
             ):
                 raise ValueError("trace_prefill_unavailable")
             # The final provider row is an unsaved response prefill. The
             # preceding active user revision still owns the durable turn.
-            active_descriptor_index = -2
+            active_descriptor_index -= 1
+        if (
+            skipped_project_context
+            and route_record.route is not ConsoleRequestRoute.TOOL_LOOP
+        ):
+            active_start = len(request.messages_payload) - len(
+                request.semantic.active_request
+            )
+            if (
+                active_descriptor_index < active_start
+                or request.messages_payload[active_descriptor_index].get("role")
+                != "user"
+            ):
+                raise ValueError("trace_turn_unavailable")
         active_revision_ids = tuple(
             _saved_revision_ids(provenance.messages_payload[active_descriptor_index])
         )
@@ -422,10 +466,12 @@ class ConsoleTraceBoundaryFactory:
                 if (
                     route_record.route
                     in {ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.FRESH}
-                    and len(provenance.messages_payload) >= 2
+                    and active_descriptor_index >= 1
                     and all(
                         type(item) is SavedRevisionTraceProvenance
-                        for item in provenance.messages_payload[-2:]
+                        for item in provenance.messages_payload[
+                            active_descriptor_index - 1 : active_descriptor_index + 1
+                        ]
                     )
                 ):
                     latest = self.repository.get_latest_call_boundary(
@@ -445,8 +491,22 @@ class ConsoleTraceBoundaryFactory:
                         completed_tool_turn = CompletedToolTurnWitness(
                             origin.call_id,
                             terminal.call_id,
-                            provenance.messages_payload[-2].revision_id,
+                            provenance.messages_payload[
+                                active_descriptor_index - 1
+                            ].revision_id,
                             current_revision_id,
+                            project_context_count=(
+                                len(provenance.messages_payload)
+                                - active_descriptor_index
+                                - 1
+                                if skipped_project_context
+                                or self.service.has_completed_project_context(
+                                    cursor,
+                                    segment_id=owner.root_segment_id,
+                                    terminal_surface_id=terminal.surface_node_id,
+                                )
+                                else None
+                            ),
                         )
                 admission, surface_boundary = (
                     self.service.prepare_current_surface_delta(
@@ -460,6 +520,9 @@ class ConsoleTraceBoundaryFactory:
                         completed_tool_turn=completed_tool_turn,
                         current_turn_id=turn_id,
                         current_policy_id=policy.policy_id,
+                        known_credentials=(
+                            getattr(_resolution, "api_key", None) or "",
+                        ),
                     )
                 )
                 reserved = self.repository.reserve_call(

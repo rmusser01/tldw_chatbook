@@ -398,7 +398,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 
 | Key | Action |
 |---|---|
-| / | Focus the **Search Library…** box when the full rail is visible (unless a text field already has focus). Get started has no hidden search target; use **Explore all tools** or a direct route. |
+| / | Focus the filter of the list you're on — the Media, Conversations, Prompts, or Notes canvas's own **Title/keyword…** / filter box — so the footer's "/ focus search" lands where you're looking. On the landing (and any canvas with no filter of its own) it focuses the rail's **Search Library…** box instead. Never fires while a text field already has focus. Get started has no hidden search target; use **Explore all tools** or a direct route. |
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
 | ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list, move to the previous/next row (stops at the first/last row — it does not wrap) |
 | Enter | Open the focused list row (same as clicking it) |
@@ -440,6 +440,12 @@ inside the File Notes surface's own panels and dialogs — see
 **Continue in Study**), Escape returns to the Study decks staging canvas
 here in Library.
 
+*Verified against fix/media-crit7-keyboard — 2026-09-08 (task-32046: `/`
+now focuses the active list canvas's own filter — Media/Prompts share the
+per-canvas route the Conversations and Notes canvases already had — instead
+of the rail's global search two panes away; pinned at 235x52 and 100x30 in
+`test_slash_focuses_the_media_filter_not_the_rail_search`).*
+
 ## Related settings & docs
 
 - `config.toml`: `[library]` (ingest backend, last directory, and scan
@@ -477,6 +483,14 @@ here in Library.
   attempt number; a success replaces the message with the real list.
   Failures a retry cannot clear (a policy denial, a runtime with no
   source services) keep the plain sentence and no button.
+
+—
+*Verified against fix/media-crit7-selreason — 2026-09-08 (task-32045: with
+nothing checked, Select mode's Export/Review/Delete row now carries its own
+always-visible "Select items to enable." line — the same inline-reason
+grammar the Analyze row already used — instead of dimming with only the "○"
+marker and a hover-only tooltip. The line disappears the moment any row is
+checked.)*
 
 —
 *Verified against fix/media-riders-m — 2026-09-07 (task-31943: a bulk delete

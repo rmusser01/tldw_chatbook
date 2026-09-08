@@ -87,6 +87,14 @@ CENTROID_BUDGET_S = 10.0
 #: (spec §7). Never a path, a name, or transcript text.
 COARSE_UNAVAILABLE = "backend unavailable"
 COARSE_CRASHED = "backend crashed"
+#: The ONNX engine's model fetch failed (spec §3/§8) -- distinct from
+#: `COARSE_UNAVAILABLE` (a worker that spawned but never warmed up) so the
+#: footer can tell "no models" from "worker trouble" apart.
+COARSE_MODELS_UNAVAILABLE = "models unavailable"
+#: Wall-clock ceiling for the ONNX engine's model fetch (spec §3), separate
+#: from `READY_TIMEOUT_S` -- the fetch has its own budget and the READY
+#: timeout only starts once the worker is actually spawned (task 4: 31827).
+MODELS_DOWNLOAD_BUDGET_S = 600.0
 
 _SENTINEL = object()  # placed on the reply queue when the worker's stdout EOFs
 
@@ -109,11 +117,17 @@ def diarize_budget_s(duration_s: float) -> float:
     return min(DIARIZE_BUDGET_CEILING_S, max(DIARIZE_BUDGET_FLOOR_S, wanted))
 
 
-class SpeechBrainDiarizer:
-    """Talks to the SpeechBrain worker subprocess; degrades to coarse on failure."""
+class LocalDiarizer:
+    """Talks to the diarizer worker subprocess; degrades to coarse on failure.
+
+    `engine` selects which worker module does the embedding (spec §2): the
+    default `"speechbrain"` starts the worker synchronously, exactly as
+    before; `"onnx"` first fetches its ONNX models on a daemon warm-up
+    thread (task 4: 31827) so construction still never blocks (spec §7)."""
 
     def __init__(
         self,
+        engine: str = "speechbrain",
         max_speakers: int = 8,
         *,
         spawn: Callable[..., Any] = subprocess.Popen,
@@ -121,7 +135,14 @@ class SpeechBrainDiarizer:
         voiceprint: Sequence[float] | None = None,
         match_threshold: float = 0.2,
         match_min_seconds: float = 4.0,
+        embedder: str | None = None,
+        models_dir_override: Path | None = None,
+        ensure_models: Callable[..., Any] | None = None,
     ) -> None:
+        self._engine = engine
+        self._embedder = embedder
+        self._models_dir_override = models_dir_override
+        self._ensure_models = ensure_models
         self._max = max_speakers
         self._spawn = spawn
         self._budget = assign_budget_s
@@ -159,6 +180,10 @@ class SpeechBrainDiarizer:
         self._ready = threading.Event()
         self._ready_ok = False
         self._degraded = False
+        #: `close()` has run: no worker may be spawned any more, not even by
+        #: an ONNX warm-up thread still inside its model fetch (final review
+        #: I1 -- that spawn used to leak a worker for the life of the app).
+        self._closed = False
         #: Live labelling is over for this meeting (a crash), even though the
         #: restarted worker still serves the Stop pass (Qodo Q10).
         self._coarse_only = False
@@ -175,11 +200,67 @@ class SpeechBrainDiarizer:
         #: Static reason the meeting is on coarse labels, for the footer.
         self.coarse_reason: str | None = None
         self._lock = threading.Lock()
-        # Spawn and return: the READY handshake runs on its own thread so
-        # Start is never held behind a cold model download (fix C1).
-        if not self._start():
+        #: What the rail shows for this backend's warm-up (task 4: 31827) --
+        #: one of "downloading <a> / <b> MB", "warming up", "ready",
+        #: "unavailable". Read via the `warmup_status` property.
+        self._status = "warming up"
+        # Deviation from the brief's step 3 (see task-4-report.md): the brief
+        # has the daemon thread itself set the initial "downloading 0 / N MB"
+        # status as its first action. Measured: a freshly started thread is
+        # NOT guaranteed to run even that far before `Thread.start()` returns
+        # to this constructor, so a caller that checks `warmup_status` right
+        # after construction can race an empty thread and still see "warming
+        # up". Computed here instead, synchronously, before the thread (which
+        # only runs the fetch itself) is started -- `diarizer_engine_onnx` is
+        # still imported lazily (a local import, not at module scope), just
+        # one call frame earlier than the brief described.
+        #
+        # Fix round 1 (review C1/I4/m5): this whole block also validates
+        # `self._engine` and (for "onnx") `self._embedder` BEFORE ever
+        # spawning anything, and never lets either failure escape the
+        # constructor (M2/M3's "constructor never raises", extended by the
+        # review to the engine/embedder lookups this task added) -- an
+        # unknown engine (reachable from `[meetings] diarizer_backend`) or
+        # embedder (`[meetings] onnx_embedder`) degrades exactly like a
+        # failed model fetch rather than raising `KeyError`/`ValueError` out
+        # of user-editable config.
+        try:
+            from tldw_chatbook.Audio.diarizer_worker import ENGINES
+
+            if self._engine not in ENGINES:
+                raise ValueError(f"unknown engine: {self._engine}")
+            if self._engine == "onnx":
+                from tldw_chatbook.Audio.diarizer_engine_onnx import DEFAULT_EMBEDDER, assets_to_fetch
+
+                self._embedder = self._embedder or DEFAULT_EMBEDDER
+                # m1/Minor 2 (re-review 1): the SAME helper `ensure_models`
+                # itself now sums its own total from -- so the rail's first
+                # line never overstates a PARTIAL re-fetch (one asset
+                # already on disk, e.g. after switching `onnx_embedder`) and
+                # never disagrees with the first real `progress()` update.
+                total_mb = sum(a.size for a in assets_to_fetch(self._embedder, self._models_dir_override)) // (
+                    1 << 20
+                )
+        except Exception as exc:  # noqa: BLE001 - the constructor must never raise (M2/M3, I4)
+            logger.warning("diarizer: models unavailable ({})", type(exc).__name__)
+            self._mark_coarse(COARSE_MODELS_UNAVAILABLE)
             self._degraded = True
-            self._mark_coarse(COARSE_UNAVAILABLE)
+            self._status = "unavailable"
+            self._ready.set()
+        else:
+            if self._engine == "onnx":
+                self._status = f"downloading 0 / {total_mb} MB"
+                # The model fetch (spec §3) is the first step of warm-up,
+                # ahead of the spawn -- run it on its own daemon thread so
+                # construction still returns at once (fix C1 extended to the
+                # ONNX engine).
+                threading.Thread(target=self._warmup, daemon=True, name="diarizer-warmup").start()
+            # Spawn and return: the READY handshake runs on its own thread so
+            # Start is never held behind a cold model download (fix C1).
+            elif not self._start():
+                self._degraded = True
+                self._mark_coarse(COARSE_UNAVAILABLE)
+                self._status = "unavailable"
 
     @property
     def voiceprint(self) -> list[float] | None:
@@ -200,6 +281,13 @@ class SpeechBrainDiarizer:
         cluster or not -- diagnostic only."""
         return self._self_candidates_seen
 
+    @property
+    def warmup_status(self) -> str:
+        """What the rail shows for this backend's warm-up (spec §3/§7):
+        one of ``"downloading <a> / <b> MB"``, ``"warming up"``, ``"ready"``,
+        ``"unavailable"``."""
+        return self._status
+
     # ---- process lifecycle ------------------------------------------------
     def _command(self) -> list[str]:
         """The worker argv. Isolated here so the frozen-app case has one seam.
@@ -213,7 +301,7 @@ class SpeechBrainDiarizer:
         """
         if getattr(sys, "frozen", False):
             logger.warning("diarizer: live diarization unsupported in frozen build; coarse labels only")
-        cmd = [sys.executable, "-m", WORKER_MODULE]
+        cmd = [sys.executable, "-m", WORKER_MODULE, "--engine", self._engine]
         if self.max_id_seen:
             # A restart (31749): the replacement's clusterer numbers from here,
             # so it can never re-mint an id the dead worker already gave out
@@ -228,9 +316,33 @@ class SpeechBrainDiarizer:
             self.coarse_reason = reason
 
     def _start(self) -> bool:
-        """Spawn the worker; READY is awaited on a thread. False -> degrade."""
+        """Spawn the worker; READY is awaited on a thread. False -> degrade.
+
+        Refuses outright once `close()` has run (final review I1): the ONNX
+        warm-up thread reaches here AFTER a fetch of up to
+        `MODELS_DOWNLOAD_BUDGET_S`, long after its owner may have closed the
+        backend, and a worker spawned then is one nobody holds -- a live
+        subprocess with the model resident plus two daemon threads on its
+        pipes, until the app quits. Both callers treat False as "spawn
+        failed", which is the right end state for a closed backend.
+        """
+        if self._closed:
+            return False
         try:
             env = {**os.environ, "TLDW_DIARIZER_MAX_SPEAKERS": str(self._max)}
+            # The ONNX worker has no other way to learn which embedder (and,
+            # for an override/air-gapped install, which directory) the app
+            # already fetched the models into (task 4: 31827, ruling 2).
+            # ONNX spawns only (final review Minor 5): the owner passes
+            # `settings.onnx_embedder` on EVERY build, so a SpeechBrain
+            # worker was being handed ONNX vars it ignores -- harmless, but
+            # it made `test_speechbrain_env_has_no_onnx_vars_when_unconfigured`
+            # read as a guarantee about the real call site, which it was not.
+            if self._engine == "onnx":
+                if self._embedder:
+                    env["TLDW_DIARIZER_EMBEDDER"] = self._embedder
+                if self._models_dir_override is not None:
+                    env["TLDW_DIARIZER_MODELS_DIR"] = str(self._models_dir_override)
             self._proc = self._spawn(
                 self._command(),
                 stdin=subprocess.PIPE,
@@ -243,15 +355,40 @@ class SpeechBrainDiarizer:
             self._proc = None
             return False
         proc = self._proc
+        if self._closed:
+            # `close()` landed while the spawn was in flight: it swapped a
+            # `self._proc` that was still None, so this child would outlive
+            # the backend that owns it. Reclaim it here (final review I1).
+            self._proc = None
+            self._kill(proc)
+            return False
         if proc.poll() is not None:
             logger.warning("diarizer: worker exited before READY")
             return False
         # Fresh reply queue and READY gate per worker session: a previous
         # (dead) worker's EOF sentinel must never be read as this worker's
         # crash, nor its handshake as this worker's readiness.
-        self._q = queue.Queue()
-        self._ready = threading.Event()
+        #
+        # Fix round 1 (review C1): key the Event replacement on "is this a
+        # restart" (`self._restarted`, set by `_fail()` immediately before
+        # its own `_start()` call), NOT on "is the Event currently set".
+        # `_send_enroll` can call `_fail()` -> `_start()` from INSIDE the
+        # dying watcher's own thread, before that watcher's `ready.set()`
+        # runs (`_watch_stderr` below) -- at that instant `self._ready` is
+        # still unset, so the old "reuse when unset" rule handed the
+        # REPLACEMENT watcher the SAME Event object the dying watcher was
+        # about to `.set()`, opening the new worker's gate without it ever
+        # reporting READY. The first spawn (constructor, and the ONNX
+        # warm-up thread's first `_start()` call) always has `_restarted ==
+        # False`, so it still reuses the Event `__init__` created -- which is
+        # what the brief's own first test needs, since that Event may
+        # already have an external `wait_ready` waiter by the time this
+        # runs. Every actual restart gets a fresh Event, exactly as before
+        # this task's change.
+        if self._restarted:
+            self._ready = threading.Event()
         self._ready_ok = False
+        self._q = queue.Queue()
         threading.Thread(target=self._read_stdout, args=(proc, self._q), daemon=True, name="diarizer-stdout").start()
         threading.Thread(
             target=self._watch_stderr, args=(proc, self._ready), daemon=True, name="diarizer-stderr"
@@ -277,6 +414,15 @@ class SpeechBrainDiarizer:
                 if not ready.is_set() and b"READY" in raw:
                     self._ready_ok = True
                     self._send_enroll(proc)
+                    # Fix round 1 (review I3/m2): status BEFORE the gate, and
+                    # only for the worker `self._proc` still points at -- a
+                    # dying worker's `_send_enroll` can restart `self._proc`
+                    # onto a REPLACEMENT from inside this very call (C1's
+                    # path); this watcher's own `proc` is then stale, and
+                    # must not overwrite the status the new worker's own
+                    # watcher is reporting (or will report) for itself.
+                    if self._proc is proc:
+                        self._status = "ready"
                     ready.set()
         except Exception:  # noqa: BLE001
             pass
@@ -284,6 +430,7 @@ class SpeechBrainDiarizer:
             if not ready.is_set():
                 logger.warning("diarizer: worker never reported READY")
                 self._mark_coarse(COARSE_UNAVAILABLE)
+                self._status = "unavailable"
             ready.set()  # unblock `wait_ready` -- `_ready_ok` says whether it worked
 
     def _send_enroll(self, proc: Any) -> None:
@@ -325,13 +472,90 @@ class SpeechBrainDiarizer:
         `_ready` without waiting so a cold model never stalls the transcript
         thread.
 
+        Fix round 2 (re-review 1, New Important 1; pre-existing, not
+        introduced by this task): a caller already blocked here when a
+        crash-restart swaps `self._ready` for a fresh Event (`_fail()` runs
+        on a different thread) used to be released on the DEAD gate with
+        `_ready_ok` still False -- the one restart spec §7 grants would then
+        be lost for exactly the caller that was waiting for it (reachable
+        through `diarize`'s own `wait_ready` call). Re-reads `self._ready`
+        after every wait and, if it changed under us, waits again on the
+        CURRENT Event for whatever budget remains -- looping until the
+        Event stops changing (at most once in practice: only one restart is
+        ever granted) or the deadline passes.
+
         Args:
             timeout: Seconds to wait at most.
 
         Returns:
-            True when the worker reported READY within `timeout`.
+            True when the (possibly replaced) worker reported READY within
+            `timeout`.
         """
-        return self._ready.wait(timeout) and self._ready_ok
+        deadline = time.monotonic() + timeout
+        ev = self._ready
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            got = ev.wait(remaining)
+            if self._ready is ev:
+                return got and self._ready_ok
+            if time.monotonic() >= deadline:
+                return self._ready_ok
+            ev = self._ready  # the gate changed under us -- honour the replacement's own
+
+    def _warmup(self) -> None:
+        """`engine == "onnx"` only: fetch the models, then spawn (spec §3).
+
+        Runs entirely on its own daemon thread, started by `__init__` (which
+        returns immediately, same as the speechbrain path -- fix C1 extended
+        to the model fetch). Touches only `_status`, `_degraded`,
+        `coarse_reason` and `_ready` directly -- `_lock` is never acquired
+        here (ruling 8), so a slow or wedged download can never block
+        `assign`/`pin`, which check readiness without waiting. The READY
+        timeout itself only starts once `_start()` actually spawns -- the
+        fetch has its own separate `MODELS_DOWNLOAD_BUDGET_S` budget.
+
+        `self._embedder` is already resolved (never None) by the time this
+        runs -- `__init__` settles it, synchronously, before starting this
+        thread (see the constructor's comment).
+        """
+        try:
+            ensure = self._ensure_models
+            if ensure is None:
+                from tldw_chatbook.Audio.diarizer_engine_onnx import ensure_models as ensure
+            ensure(
+                self._embedder,
+                models_dir_override=self._models_dir_override,
+                progress=self._set_status,
+                budget_s=MODELS_DOWNLOAD_BUDGET_S,
+            )
+        except Exception as exc:  # noqa: BLE001 - a daemon thread must never raise
+            logger.warning("diarizer: models unavailable ({})", type(exc).__name__)
+            self._mark_coarse(COARSE_MODELS_UNAVAILABLE)
+            self._degraded = True
+            self._status = "unavailable"
+            self._ready.set()  # unblock `wait_ready` -- no worker will ever spawn
+            return
+        self._status = "warming up"
+        # Fix round 1 (review I2/m6): a spawn failure -- `_start()` returning
+        # False, or raising outright -- must ALSO release `wait_ready`
+        # promptly and must not escape this daemon thread into
+        # `threading.excepthook`. Distinct from the fetch failure above:
+        # the models are already on disk, so this is `COARSE_UNAVAILABLE`
+        # (worker trouble), never `COARSE_MODELS_UNAVAILABLE`.
+        try:
+            started = self._start()
+        except Exception as exc:  # noqa: BLE001 - a daemon thread must never raise
+            logger.warning("diarizer: worker spawn failed ({})", type(exc).__name__)
+            started = False
+        if not started:
+            self._degraded = True
+            self._mark_coarse(COARSE_UNAVAILABLE)
+            self._status = "unavailable"
+            self._ready.set()  # unblock `wait_ready` -- no worker will ever spawn
+
+    def _set_status(self, status: str) -> None:
+        """`ensure_models`'s `progress` callback -- integers only (spec §8)."""
+        self._status = status
 
     def _read_stdout(self, proc: Any, q: "queue.Queue[Any]") -> None:
         try:
@@ -387,11 +611,18 @@ class SpeechBrainDiarizer:
             self._kill(proc)
         if self._restarted:
             self._degraded = True
+            self._status = "unavailable"
             return
         self._restarted = True
         logger.warning("diarizer: worker lost; restarting once, live labels stay coarse")
+        # Fix round 1 (review I3): the dead worker's own "ready" status must
+        # not read as truthful for the whole second warm-up -- set BEFORE
+        # `_start()` so `warmup_status` never shows a stale "ready" while the
+        # replacement is still loading.
+        self._status = "warming up"
         if not self._start():
             self._degraded = True
+            self._status = "unavailable"
 
     # ---- Diarizer protocol ------------------------------------------------
     def assign(self, pcm: bytes, sample_rate: int, seq: int) -> str | None:
@@ -678,8 +909,15 @@ class SpeechBrainDiarizer:
             return [float(x) for x in centroid], float(reply.get("seconds") or 0.0)
 
     def close(self) -> None:
-        """Best-effort: ask the worker to exit, then tear it down. Idempotent."""
+        """Best-effort: ask the worker to exit, then tear it down. Idempotent.
+
+        `_closed` is what an in-flight ONNX warm-up sees: it is still inside
+        `ensure_models` here, with `self._proc` None, so swapping the proc
+        alone told it nothing and it went on to spawn a worker this call
+        could never reach (final review I1).
+        """
         with self._lock:
+            self._closed = True
             self._degraded = True
             proc, self._proc = self._proc, None
         if proc is None:
@@ -701,3 +939,54 @@ class SpeechBrainDiarizer:
         if pcm:
             proc.stdin.write(pcm)
         proc.stdin.flush()
+
+
+class SpeechBrainDiarizer(LocalDiarizer):
+    """`LocalDiarizer` pinned to the SpeechBrain engine (spec §2).
+
+    Kept as a real subclass -- not a `functools.partial` -- so
+    `isinstance(x, SpeechBrainDiarizer)` and every existing import keep
+    working unchanged; its `__init__` simply forces `engine="speechbrain"`
+    and forwards everything else."""
+
+    def __init__(self, max_speakers: int = 8, **kwargs: Any) -> None:
+        # Fix round 1 (review m4): no silent `kwargs.pop("engine", None)` --
+        # an explicit `SpeechBrainDiarizer(engine=...)` now collides with the
+        # positional `"speechbrain"` below and raises `TypeError`, the same
+        # way any other duplicate-argument caller bug would.
+        super().__init__("speechbrain", max_speakers, **kwargs)
+
+
+def model_id_for(engine: str, embedder: str | None = None) -> str:
+    """The voiceprint model id for `engine` (spec §6): stable across a run,
+    changing only if the underlying model file or its manifest hash does.
+    The owner reads this BEFORE any worker exists (a Start-time
+    re-enrollment check), so it must work without spawning anything.
+
+    Args:
+        engine: `"speechbrain"` or `"onnx"`.
+        embedder: For `"onnx"`, one of the manifest's embedder keys;
+            `DEFAULT_EMBEDDER` when omitted. Ignored for `"speechbrain"`.
+
+    Returns:
+        `"speechbrain/spkrec-ecapa-voxceleb@unpinned"` for `"speechbrain"`;
+        `"sherpa-onnx/<embedder file name>@<first 12 hex of its sha256>"`
+        for `"onnx"`.
+
+    Raises:
+        ValueError: `engine` is neither known engine name.
+    """
+    if engine == "speechbrain":
+        # Fix round 1 (review m3): read the one canonical copy of this
+        # literal (`diarizer_worker.MODEL_ID`) instead of keeping a third,
+        # untethered copy here -- `diarizer_worker` is import-cheap (no
+        # torch/numpy at module scope), imported lazily to match the "onnx"
+        # branch below rather than as a module-scope import.
+        from tldw_chatbook.Audio.diarizer_worker import MODEL_ID
+
+        return MODEL_ID
+    if engine == "onnx":
+        from tldw_chatbook.Audio.diarizer_engine_onnx import DEFAULT_EMBEDDER, model_id_for_embedder
+
+        return model_id_for_embedder(embedder or DEFAULT_EMBEDDER)
+    raise ValueError(f"unknown engine: {engine}")

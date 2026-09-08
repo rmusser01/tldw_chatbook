@@ -82,6 +82,41 @@ LEARN_PROGRESS_COPY = {"warming up": "Warming up the voice model…"}
 #: mistaken for one the user typed (spec §3.4).
 SELF_MARKER = " ·"
 ENROLL_SECONDS = 30.0
+#: `PrepareResult.diarizer_engine` -> the name the rail shows (spec §4). The
+#: owner's `ENGINE_NAMES` is keyed by MODEL-ID PREFIX, which is what its own
+#: `_engine_name` needs and not what this copy is keyed on.
+DIARIZER_ENGINE_NAMES = {"onnx": "ONNX", "speechbrain": "SpeechBrain"}
+#: `diarizer_local.COARSE_MODELS_UNAVAILABLE` -- the one coarse reason that
+#: means "the model fetch or load failed" rather than "the worker failed".
+#: COPIED, not imported: `diarizer_local` must stay out of this module's
+#: import graph (`Tests/Audio/test_meeting_import_safety.py`, the UI-ready
+#: census) and off the per-tick path. `test_meetings_screen.py` pins the two
+#: strings equal.
+DIARIZER_MODELS_UNAVAILABLE = "models unavailable"
+
+
+def _onnx_download_mb(embedder: str | None) -> int | None:
+    """Megabytes the ONNX engine fetches on its first Start, or None.
+
+    `diarizer_engine_onnx` is imported HERE, lazily: the screen's module-scope
+    import graph is pinned (`Tests/Audio/test_meeting_import_safety.py`, the
+    UI-ready census), and a manifest read must not widen it.
+
+    Args:
+        embedder: `[meetings] onnx_embedder`; the manifest default if empty.
+
+    Returns:
+        The rounded total of what goes over the wire (the segmentation
+        tarball plus the embedder), or None if the manifest cannot be read --
+        the rail then names the engine without the size rather than guessing.
+    """
+    try:
+        from ...Audio.diarizer_engine_onnx import DEFAULT_EMBEDDER, EMBEDDERS, SEGMENTATION
+
+        asset = EMBEDDERS[embedder or DEFAULT_EMBEDDER]
+        return round(((SEGMENTATION.download_size or SEGMENTATION.size) + asset.size) / 1_000_000)
+    except Exception:  # noqa: BLE001 - a missing/renamed manifest costs the size, not the line
+        return None
 
 
 def _validated_transfer_path(text: str, action: str) -> Path:
@@ -161,6 +196,12 @@ class MeetingsScreen(BaseAppScreen):
         # show the indicator rather than being permanently suppressed by a
         # previous session's loss.
         self._lost_shown = False
+        # ---- live diarizer warm-up (TASK-31827) ----
+        # The last text written into the live-labels line, and the display
+        # name of the engine the last `prepare()` resolved -- what the line
+        # goes back to once that engine reports itself ready.
+        self._live_labels_line = ""
+        self._live_engine_name = ""
         # ---- self voiceprint (TASK-31826) ----
         # The store is built lazily, OFF the UI thread (the prepare worker),
         # and never imported at module scope: `Audio.voiceprint` pulls the
@@ -417,26 +458,44 @@ class MeetingsScreen(BaseAppScreen):
         self._refresh_voice_row()
 
     def _live_diarization_copy(self, prepared: PrepareResult) -> str:
-        """Rail copy for `PrepareResult.live_diarization_active` (fix I4).
+        """Rail copy for the LIVE speaker-label engine (spec §4).
 
-        The flag was computed and read by nobody, so a user who turned live
-        diarization on had no way to learn it would not run.
+        Driven by the engine the owner resolved, not by the configured
+        backend name: a pinned `diarizer_backend = "onnx"` on an install
+        without sherpa-onnx used to read "off (unsupported backend: onnx)",
+        which is the wrong repair for a backend that is perfectly supported
+        (Task 5 review I3). `diarizer_missing` -- not the Library ingest
+        pass's `diarization_missing`, which the post-meeting line above keeps
+        -- is the engine's own list.
 
         Args:
             prepared: The owner's probe result.
 
         Returns:
-            "on", or "off (<reason>)" with a static, non-identifying reason.
+            "on (<engine>)", or "off (<reason>)" with a static,
+            non-identifying reason. Integers and engine names only.
         """
-        if getattr(prepared, "live_diarization_active", False):
-            return "on"
         settings = getattr(self._owner, "settings", None)
         if not getattr(settings, "live_diarization", False):
             return "off (not enabled in settings)"
-        if prepared.diarization_missing:
-            return f"off ({', '.join(prepared.diarization_missing)} missing)"
         backend = getattr(settings, "diarizer_backend", "")
-        return f"off (unsupported backend: {backend})" if backend else "off"
+        if backend == "server":
+            return "off (unsupported backend: server)"
+        engine = getattr(prepared, "diarizer_engine", None)
+        if engine is None:
+            missing = tuple(getattr(prepared, "diarizer_missing", ()) or ())
+            # Only for an EXPLICIT choice: under "auto" that list is the last
+            # candidate's packages, which is not advice the user asked for.
+            if missing and backend in DIARIZER_ENGINE_NAMES:
+                return f"off (missing: {', '.join(missing)})"
+            return "off (install the diarization extra)"
+        name = DIARIZER_ENGINE_NAMES.get(engine, engine)
+        if engine != "onnx" or getattr(prepared, "diarizer_models_ready", False):
+            return f"on ({name})"
+        # Models are fetched at Start (spec §3) and do not gate live labels;
+        # the rail just warns that the first Start pays for a download.
+        size = _onnx_download_mb(getattr(settings, "onnx_embedder", None))
+        return f"on ({name}, ~{size} MB of models fetched at Start)" if size else f"on ({name})"
 
     def _apply_prepared(self, prepared: PrepareResult) -> None:
         if not self.is_mounted:
@@ -457,9 +516,9 @@ class MeetingsScreen(BaseAppScreen):
         else:
             diar = f"Speaker labels after the meeting: off ({', '.join(prepared.diarization_missing)} missing)"
         self.query_one("#meetings-diarization-status", Static).update(diar)
-        self.query_one("#meetings-live-diarization-status", Static).update(
-            f"Live speaker labels: {self._live_diarization_copy(prepared)}"
-        )
+        engine = getattr(prepared, "diarizer_engine", None)
+        self._live_engine_name = DIARIZER_ENGINE_NAMES.get(engine, engine) if engine else ""
+        self._set_live_labels(f"Live speaker labels: {self._live_diarization_copy(prepared)}")
         # Provisional: `prepare()` only stats the store, so "on" here means
         # "a voiceprint exists and will be verified at Start" (Task 4).
         self._render_voice_match(getattr(prepared, "voice_match", None))
@@ -562,6 +621,14 @@ class MeetingsScreen(BaseAppScreen):
         prepared = getattr(self._owner, "prepared", None)
         self._live_labels_requested = bool(getattr(prepared, "live_diarization_active", False))
         self._live_labels_built = getattr(session, "_diarizer", None) is not None
+        # The engine that ACTUALLY ran (Qodo 6): `start()` re-resolves it, so
+        # the meeting can run one engine while the prepare this screen cached
+        # named the other. `meta` is authoritative; it is None when nothing
+        # was built (Qodo 8), and then the prepared answer still describes
+        # what the rail has been showing all along.
+        meta = getattr(session, "meta", None)
+        engine = getattr(meta, "diarizer_engine", None) or getattr(prepared, "diarizer_engine", None)
+        self._live_engine_name = DIARIZER_ENGINE_NAMES.get(engine, engine) if engine else ""
         session.subscribe(self._on_session_event)
         # The verified verdict: `start()` performed the one decrypt, so the
         # provisional "on" the rail may be showing is now settled either way.
@@ -973,8 +1040,47 @@ class MeetingsScreen(BaseAppScreen):
                 self.query_one("#meetings-system-status", Static).update(
                     "System audio: System source lost — continuing from the microphone"
                 )
+            self._tick_diarizer_status()
         except Exception as exc:  # noqa: BLE001
             logger.debug("meetings tick: {}", exc)
+
+    def _tick_diarizer_status(self) -> None:
+        """Show the live backend's warm-up on the rail (spec §3).
+
+        The models are fetched as the first step of the backend's own warm-up,
+        so the download is the first thing there is to report; "ready" leaves
+        the engine's name alone on the line -- by then the download the rail
+        warned about has happened.
+        """
+        owner = self._owner
+        # Only while the meeting is RUNNING: after Stop the owner can still
+        # answer from the worker retained for a learning offer, and a finished
+        # meeting's rail must not be repainted from it (owner addendum).
+        status = owner.diarizer_status() if owner is not None and owner.is_active else None
+        if not status:                       # no backend, or nothing to say yet
+            return
+        if status == "ready":
+            name = self._live_engine_name
+            copy = f"Live speaker labels: on ({name})" if name else ""
+        elif status == "unavailable":
+            # Engine-specific (final review I3): "unavailable" is also what a
+            # SpeechBrain worker that never reported READY (or a second crash
+            # on either engine) reports, and that has nothing to do with
+            # models -- pointing the user at a download would be a wrong
+            # repair. The backend already tells the two apart.
+            models = owner.diarizer_coarse_reason() == DIARIZER_MODELS_UNAVAILABLE
+            copy = f"Live speaker labels: off ({'models' if models else 'backend'} unavailable)"
+        else:                                # "downloading <a> / <b> MB", "warming up"
+            copy = f"Live speaker labels: {status}"
+        if copy:
+            self._set_live_labels(copy)
+
+    def _set_live_labels(self, copy: str) -> None:
+        """Write the live-labels line, only when it actually changes."""
+        if not self.is_mounted or copy == self._live_labels_line:
+            return
+        self._live_labels_line = copy
+        self.query_one("#meetings-live-diarization-status", Static).update(copy)
 
     # ---- self voiceprint: rail line, offer, enrollment, Voice row ---------
     def _voice_match_copy(self, state: Any | None) -> str:
@@ -984,12 +1090,17 @@ class MeetingsScreen(BaseAppScreen):
             state: The owner's verdict, or None when there is none yet.
 
         Returns:
-            "Voice match: on", or "Voice match: off (<static reason>)".
+            "Voice match: on", or "Voice match: off (<static reason>)",
+            followed by `state.detail` when the owner has one -- one extra
+            static sentence for a cause the reason alone does not explain
+            (today: the engine changed under an enrolled voiceprint, spec §6).
         """
         if getattr(state, "state", "off") == "on":
             return "Voice match: on"
         reason = VOICE_MATCH_OFF_COPY.get(getattr(state, "reason", None) or "")
-        return f"Voice match: off ({reason})" if reason else "Voice match: off"
+        copy = f"Voice match: off ({reason})" if reason else "Voice match: off"
+        detail = getattr(state, "detail", None)
+        return f"{copy}. {detail}" if detail else copy
 
     def _render_voice_match(self, state: Any | None) -> None:
         if not self.is_mounted:
@@ -1212,7 +1323,9 @@ class MeetingsScreen(BaseAppScreen):
                 self._enroll_timer = self.set_interval(1.0, self._tick_countdown)
             return
         self._stop_countdown()
-        self._set_enroll_progress(f"{status.capitalize()}…")
+        # Only the first character: `str.capitalize()` would turn
+        # "downloading 3 / 44 MB" into "... mb" (final re-review).
+        self._set_enroll_progress(f"{status[:1].upper()}{status[1:]}…")
 
     def _tick_countdown(self) -> None:
         if not self.is_mounted:

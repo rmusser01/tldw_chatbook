@@ -599,8 +599,8 @@ def test_checkpoint_normalization_does_not_construct_arbitrary_sequences() -> No
         (
             "custom-openai-api",
             {"api_key_resolved": True},
-            {"api_key_resolved": True},
-            "credential_decision",
+            {},  # Credential selection survives as metadata, not a credential field.
+            "credential_redaction",
         ),
     ],
 )
@@ -644,6 +644,7 @@ def test_provider_shape_matrix_is_sanitized_and_projected(
     if expected_overlay is not None:
         assert expected_overlay in {item.kind for item in result.overlays}
     if endpoint == "custom-openai-api":
+        assert "api_key_resolved" not in result.handler_kwargs
         assert result.credential_source is ProviderCredentialSource.EXPLICIT_KEYLESS
 
 
