@@ -1247,3 +1247,75 @@ expected failures to three passes. The two complete Reader/render files pass
 changing its pin. Existing mounted shell highlight add/delete and analysis-save
 tests remain part of the pending final complete Library run. All implementation
 files are frozen for checkpoint and latest-dev integration.
+
+### Published final-code checkpoint — 2026-09-08
+
+Checkpoint `ed42fc8c27` is preserved by
+`codex/pr2427-before-trace69-rebase-20260908`. Its rebase onto dev
+`a59536eb70` completed at **`8efe3b03823c5cfdde6cb001ea1386fe829c4c76`**,
+published with the exact old-head lease against `8fe8c40e79`. Source provenance
+and shell/selection/optional-deps hashes remain unchanged across rebase.
+The Console conflict retains both upstream current-turn derived provenance and
+the reviewed contiguous-prefix rendered-system classification; independent
+review confirms saved/derived owners take precedence. Both appended lessons
+remain, and the reviewed TTS diagnostic changes are reflected in the rebuilt
+inventory (599 owners, 1348 TASK-492 calls, 55 TASK-31551 calls, 7675 TASK-494
+calls, 12 sinks).
+
+Fresh post-rebase complete-file evidence:
+
+- Eight architecture/import/UI-ready/CSS guard files: **73 passed, 6 warnings,
+  22.33s**. The runner's later default-temp garbage-cleanup warnings are separate
+  from that successful test verdict; subsequent cohorts use explicit unique
+  basetemps.
+- Ten incoming Chat files, three migration files, agent bridge and connection
+  quiescence: **647 passed, 2 warnings, 220.26s**. Qodo's transaction reads and
+  cold-restart owner cleanup remain intact.
+- Six offline TTS/Settings/Speech files: **102 passed, 3 warnings, 9.95s**.
+  Synthetic-buffer codecs run locally; no model downloads, device playback or
+  dependency installs.
+- Media state/render and complete four-size Live walkthrough: **218 passed,
+  7 warnings, 227.65s**. The real walkthrough itself takes 61.25s.
+
+The final **850-case** shell run uses the existing native per-test descriptor
+snapshots without the earlier diagnostic connection monkeypatches, plus an
+explicit end-of-pytest snapshot. At 84%, native inspection finds only the current
+test's constructor quartet and no old Notes/export/ingest paths. Completion and
+the end snapshot are still pending at this checkpoint.
+
+Qodo confirms review through exact head `8efe3b0382` on 2026-09-08 at 17:49 UTC:
+**0 open bugs, 0 rule violations, 0 skill insights**; all thirteen historical
+findings are resolved or previously dismissed. GitHub's PR Fast Lane reports
+**754 passed / 2 failed**: both failures are Backlog uniqueness assertions, not
+additional runtime failures. Preflight likewise passes every check except IDs.
+The latest dev adds a third collision, review TASK-32040 versus upstream private
+trace-history ownership, alongside review TASK-32014/32015. The user has been
+asked for the precise three-review-task exception; no upstream or review ID is
+silently reassigned. Final merge remains blocked on that approval, corrected
+identity gates and completed shell evidence.
+
+### Final Library verification completed — 2026-09-08
+
+The complete frozen-head Library run finishes **850 passed, 10 known
+dependency/deprecation warnings in 1482.71s (24m42s), exit 0**. The shell source
+hash remains `3bb2b963f8dacbdc5647911786fdb97d049ce8d5feab3763fcf76dead9c5265d`
+at published code head `8efe3b03823c5cfdde6cb001ea1386fe829c4c76`.
+The final native observer record is exactly `exit_code: 0, sqlite_paths: []`;
+the session FD-growth sentinel emits no warning. The late native sample showed
+only the current test's constructor databases, with no persistent Notes,
+export, Media or ingest paths. Immediate per-test deltas are not conflated with
+persistent leaks: 59 of 850 snapshots had transient additions, but the late
+sample and final empty snapshot establish retirement.
+
+Evidence: `/private/tmp/pr2427-shell-850-native.log`,
+`/private/tmp/pr2427-shell-850-resource.GQt7OZ`, and the independent audit
+`/private/tmp/pr2427-shell-850-final-native-audit.md`. This completes the pending
+full affected-file cleanup qualification without a full-repository sweep or
+any warning/descriptor-limit relaxation.
+
+The remaining merge blocker is the explicit exception for renumbering only
+review-created TASK-32014, TASK-32015 and TASK-32040 while preserving upstream
+IDs and historical references. Approval has not arrived; no IDs were changed.
+The follow-up is paused rather than repeatedly polling this user decision.
+After approval, revalidate free IDs/references, perform the narrow renumbering,
+publish, and obtain green identity/final-head checks before normal merge.
