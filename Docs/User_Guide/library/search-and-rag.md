@@ -495,10 +495,10 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 | Key | Action |
 |---|---|
 | Enter (in the query box) | Run the search |
-| Tab | Move focus through the panel, including each evidence card in turn |
-| Enter (on a focused evidence card) | Select that evidence — the same as clicking its select action |
-| `o` (on a focused evidence card) | Open that item in its own Library surface |
-| `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library. With an evidence card focused it selects that card first, so one key stages what you're looking at |
+| Tab | Move focus through the panel. **Known gap:** Tab does not currently reach the evidence cards — repeated presses walk the query box, the source toggle and then leave Library for the nav bar. Reach a card with the mouse instead; making the cards Tab-focusable is tracked as task-32053. |
+| Enter (on a focused evidence card) | Select that evidence — the same as clicking its select action. Reachable today only after clicking the card. |
+| `o` (on a focused evidence card) | Open that item in its own Library surface. Same reachability caveat as Enter. |
+| `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library. With an evidence card focused it selects that card first, so one key stages what you're looking at — but see the Tab caveat above: focusing a card needs the mouse today |
 
 ## Related settings & docs
 
@@ -811,3 +811,12 @@ clears the query cache. Pinned by
 `Tests/Library/test_library_rechunk_service.py`,
 `Tests/UI/test_library_rag_rechunk_action.py`, and
 `Tests/RuntimePolicy/test_rechunk_policy_pin.py`.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): `enter`, `o` and `u` are bound and
+advertised in the footer, and each one gates on a focused
+`.library-rag-result-card` — but nothing gives an evidence card focus by
+keyboard, so the advertised flow is unreachable without a mouse (14
+consecutive Tabs never landed on a card and eventually left Library for
+the nav bar). The keys themselves are unchanged; the table now says which
+half works today. The fix is task-32053.)*

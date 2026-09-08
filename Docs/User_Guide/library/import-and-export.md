@@ -204,8 +204,8 @@ checkpoint before any tool is allowed to run, as required by
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
 | "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Importing on the server adds one more: a selection this machine reads perfectly well but that backend will not take at all (a folder of nothing but images) gates Start with "Nothing in this selection can be sent to the server — 3 files unsupported by the server. Switch to importing on this machine, or choose video, audio, document, PDF or e-book files." — a different sentence from the one above, because the files are fine and the destination is the problem. None of these leaves a failed row behind: the import never starts. |
-| Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
-| Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. |
+| Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · attempt 2" after the first retry, " · attempt 3" after the next) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
+| Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error, and appears only on a failure that carried one (see Quirks); "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. |
 | "Show details" | Opens inline under the row: a plain-language reason ("Reason: No text could be extracted." / "The file couldn't be read." / "The file is empty." / "The Library couldn't be written to."), the full message when it says more than the row line, the underlying tool output once (never repeated between the message and the chain), and — only when a retry could actually change the outcome — one line of advice derived from that same reason. A deterministic failure whose text actually named a remedy says so ("Retrying now will fail the same way — install the tooling named above first, then Retry."); when nothing on screen named one, the advice states the determinism without inventing a remedy ("Retrying now will fail the same way — this file's content, or the tooling for it, has to change first."); a named missing package is named ("Missing dependency: pymupdf. Install it, then Retry."); and a cause we can't classify says nothing rather than encouraging a retry that would repeat itself. |
 | "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
 | "Retry this batch" | Below the queue, once your last import of the session has settled (while a job is still queued/parsing/writing it is hidden, and `r` is inert too — re-staging mid-run invites a duplicate batch): one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. If the form currently holds work the re-stage would overwrite (a different path, a title you started typing, an option you flipped), it takes two presses: the first renames the button "Press again to replace form" and changes nothing. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
@@ -288,7 +288,9 @@ destination, or leaving the Import canvas cancels pending consent.
    collection. Choose the rail's **Export** row for `Everything` when the bundle
    should also include media, conversations, and notes.
 7. **Retry a failed job** — Find the "✗ failed" row in the Queue and press
-   "Retry"; the new attempt shows a " · retry 1" suffix. No Retry button
+   "Retry"; the new attempt shows a **" · attempt 2"** suffix (then
+   " · attempt 3", and so on — the label counts attempts, not retries, so
+   the first retry reads 2). No Retry button
    means the failure is permanent (unsupported type or missing file) — fix
    the source and start a fresh import, and use "Dismiss" to drop the row.
    A URL your web-security settings refuse fails with a plain receipt:
@@ -429,8 +431,16 @@ imported items afterwards.
   timestamps, deleted rows, retained history, collections, and usage state;
   import assigns ordinary destination-owned identity and lifecycle state. Legacy
   single-`content` Prompt records remain accepted.
-- **"Show details" is your first stop on a confusing failure** — it opens
-  the full error behind the shortened reason on the row.
+- **"Show details" is your first stop on a confusing failure** — when it is
+  there. The row action appears **only when the failure carried a detail to
+  show**; a failure whose reason arrived with nothing behind it offers no
+  "Show details" at all. Infrastructure failures that stop the import
+  worker before it reads a single file are the case you are most likely to
+  meet: they surface as a raw system message on the row ("Parse pool could
+  not start: [Errno 28] No space left on device", which on macOS usually
+  means exhausted POSIX semaphores rather than a full disk) with no details
+  row and no plain-language remedy. Mapping those to a readable reason with
+  a next step is tracked as task-32054.
 
 —
 *Verified against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: the rail
@@ -856,3 +866,15 @@ collapsed **"Import behavior"** panel's own title carrying the toggle's
 state while the fold is closed ("Import behavior · analysis on" / "·
 analysis off", AC#6), previously undocumented. No behaviour changed on
 this page; verified by reading the current source strings.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): the Library import queue's retry
+suffix is **" · attempt N"** (`library_ingest_state.py`), not the
+" · retry 1" this page claimed — the " · retry N" form belongs to Home's
+Active work card, a different surface. And **"Show details"** ships but is
+conditional on the failed job carrying an error detail, so the pool-start
+failures critique #8 hit showed a raw errno with no details row; the copy
+fix for those is task-32054. Import could not be exercised end to end on
+the review host (every local import failed at process-pool start there),
+so both were verified against the shipping code paths rather than a live
+run; every other claim on this page is unchanged.)*

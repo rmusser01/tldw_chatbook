@@ -74,8 +74,9 @@ editor's own Back control returns to its list.
 - **Source strip** — a "Library notes | Folder files" toggle above the canvas.
   This page covers the Library notes side; see below for Folder files.
 - **Notes list** — the default view: a "Notes (N)" header, the
-  "Filter notes… (Enter)" field, a toolbar (sort / Add from files… /
-  Export… / Select), and one row per note showing its title and age. Its own
+  "Filter notes… (Enter)" field, a toolbar (**New** / sort / Add from
+  files… / Export… / Select), a **New folder** action beneath it, the
+  folder tree, and one row per note showing its title and age. Its own
   grip collapses or restores the list without changing the Folder Files tree
   choice. Renaming a note updates its list row as soon as the note saves —
   returning to the list shows the new title with no filter re-query needed.
@@ -292,6 +293,11 @@ both stay closed until you choose to reopen one.
 | Control | What it does |
 |---|---|
 | "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |
+| "New" | Creates a note directly from the list — the same destination as the rail's **New note** row, without the template picker. Disabled while another notes operation is running. |
+| "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
+| Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
+| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
+| "Restore folder" | Appears after a folder removal, to put it back. |
 | "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
@@ -352,8 +358,10 @@ the receipt is the in-Library recovery action.
 "Blank note" drops you straight into the editor with an empty title (shown
 as an "Untitled" placeholder — just start typing) and an empty body. If you
 leave again via "‹ Back to list" without typing anything, the blank note is
-quietly discarded rather than left behind as a stray "Untitled" row; typing
-anything, or pressing "Save", keeps it. That includes naming it "Untitled"
+quietly discarded rather than left behind as a stray "Untitled" row.
+Pressing "Save" keeps it, and so does typing anything **that is not only
+whitespace** — a title of nothing but spaces, with an empty body and no
+keywords, still counts as blank and is discarded on the way out. That includes naming it "Untitled"
 yourself: once you have touched the title field the note is yours, and it
 is kept even with an empty body. The "From a template" list
 pre-fills title, body, and keywords instead; each row shows the template
@@ -504,10 +512,14 @@ automatic-sync setting.
 
 | Key | Action |
 |---|---|
+| **Ctrl+N** | New note |
+| **/** | Focus the note filter ("find note") |
+| **Escape** | Focus the rail |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
 
-That is the only screen-specific key. In particular, Notes does not register
-**Ctrl+S** and does not replace it with another save shortcut. Use the visible
+The footer advertises these as `ctrl+n new note | / find note | esc focus
+rail`. Notes does not register **Ctrl+S** and does not replace it with
+another save shortcut. Use the visible
 Database **Save** button for an immediate save; Folder Files saves
 automatically. Global navigation keys live in the [guide index](../index.md).
 
@@ -619,3 +631,13 @@ foreground approval, subagent draft boundary, credential refusal, and
 untrusted-retrieval contract added for TASK-24309 — 2026-08-30. See
 [ADR-105](../../../backlog/decisions/105-portable-notes-organization-and-agent-lessons.md)
 and [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md).*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8; live at 235x52 on a seeded profile):
+the **New** and **New folder** toolbar actions, the folder-selected
+**Rename / Move / Remove** set, the note-selected **Add to folder / Move
+note / Remove placement** set, and the footer's **ctrl+n new note** and
+**/ find note** keys all ship and were undocumented here. The
+whitespace-title rule was corrected: the abandon-discard check tests
+`title.strip()`, so a spaces-only title with an empty body does NOT keep
+the note, contrary to the "typing anything keeps it" claim.)*

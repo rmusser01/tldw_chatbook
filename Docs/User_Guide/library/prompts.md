@@ -199,6 +199,14 @@ archive aborts instead of claiming a partial success.
 - **Advanced: System and User blocks** — exposes the complete structured
   block editor plus compiled previews, keywords, author, Collections, and
   retained history.
+- **Info: provenance and lifecycle** — the third mode button beside Basic
+  and Advanced. It does not edit anything: it states where the saved Prompt
+  came from and what state it is in ("Persisted source: Local · Prompt ·
+  \<definition state\>"), reminds you that "History and collection
+  memberships describe the saved Prompt; unsaved Basic or Advanced edits
+  remain draft-only until Save.", and shows the **Collections** membership
+  block that Advanced also carries. Your draft is untouched by switching
+  into and out of it. Disabled while a save is in flight.
 - **Remembered view** — choosing Basic or Advanced is saved for this profile.
   A Recipe, multi-block Prompt, compatibility/conversion state, version
   conflict, or record that cannot be safely updated opens in Advanced with a
@@ -457,3 +465,10 @@ pattern — press opens Newest / Name with ✓ on the active one, a pick
 requests that exact scope at page 1, Escape cancels; the collection
 control's label dropped the cycle glyph — it opens the collection
 manager, a direct-pick surface, and never cycled.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): the editor's **Info** mode — a third
+button beside Basic and Advanced, carrying the persisted-source/
+definition-state line, the draft-vs-saved reminder, and the Collections
+membership block — shipped undocumented and is now described. Basic and
+Advanced are unchanged.)*
