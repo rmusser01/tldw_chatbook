@@ -17,9 +17,9 @@ from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
-    _CssTrueDestinationHarness,
     _wait_for_selector,
 )
+from Tests.UI.full_app_destination_context import FullAppDestinationContext
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_evidence_models import (
@@ -1194,8 +1194,9 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
         )
     )
     app.open_active_home_item_in_console = Mock()
-    # The app bundle owns the Inspector's scroll rule; lifted defaults do not.
-    host = _CssTrueDestinationHarness(app, "watchlists_collections")
+    # Production loads the Watchlists route stylesheet before mounting its
+    # screen; the boot bundle alone omits the Inspector's scroll rule.
+    host = FullAppDestinationContext(app, "watchlists_collections")
 
     async with host.run_test(size=(180, 40)) as pilot:
         await pilot.pause(0.1)
@@ -1209,7 +1210,7 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
         # Console actions can be below this terminal's Inspector viewport.
         button.scroll_visible(animate=False)
         await pilot.pause()
-        await pilot.click("#watchlists-follow-in-console")
+        assert await pilot.click("#watchlists-follow-in-console")
         await pilot.pause(0.1)
 
     app.open_active_home_item_in_console.assert_called_once_with(
