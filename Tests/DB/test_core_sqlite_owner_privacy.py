@@ -21,6 +21,7 @@ from tldw_chatbook.DB import (
     RAG_Indexing_DB,
     base_db,
 )
+from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ CORE_OWNER_CASES = (
             "detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
             "check_same_thread": False,
             "timeout": 15,
+            "factory": base_db._QuiescentSQLiteConnection,
         },
         {"foreign_keys": 1, "journal_mode": "wal"},
         True,
@@ -376,11 +378,14 @@ def test_core_owner_never_resolves_selected_path(
 ) -> None:
     target = tmp_path / case.name / "owner.sqlite"
     target.parent.mkdir()
-    monkeypatch.setattr(
-        Path,
-        "resolve",
-        lambda *args, **kwargs: pytest.fail("core owner called Path.resolve()"),
-    )
+    real_resolve = Path.resolve
+
+    def forbid_selected_resolve(selected: Path, *args: Any, **kwargs: Any) -> Path:
+        if selected == target:
+            pytest.fail("core owner resolved the selected database path")
+        return real_resolve(selected, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", forbid_selected_resolve)
     database = _construct(case, target, monkeypatch, [])
     _close_database(case, database)
 
@@ -395,11 +400,11 @@ def test_core_owner_normalizes_relative_path_lexically(
     relative_target = Path(case.name) / "owner.sqlite"
     relative_target.parent.mkdir()
     expected_target = tmp_path / relative_target
-    seen: list[str] = []
-    prepared: list[Path] = []
+    seen: list[tuple[str, str]] = []
+    prepared: list[PrepareRequest] = []
     raw_seen: list[str] = []
     real_connect = private_sqlite.connect_private_sqlite
-    real_prepare = private_sqlite._prepare_artifact
+    real_prepare = private_sqlite.prepare_in_helper
     real_raw_connect = sqlite3.connect
 
     def recording_connect(
@@ -407,13 +412,12 @@ def test_core_owner_normalizes_relative_path_lexically(
         database: str | os.PathLike[str],
         **kwargs: Any,
     ) -> sqlite3.Connection:
-        del owner_id
-        seen.append(os.fspath(database))
-        return real_connect(case.owner_id, database, **kwargs)
+        seen.append((owner_id, os.fspath(database)))
+        return real_connect(owner_id, database, **kwargs)
 
-    def recording_prepare(selected: Path, **kwargs: Any) -> bool:
-        prepared.append(selected)
-        return real_prepare(selected, **kwargs)
+    def recording_prepare(request: PrepareRequest, **kwargs: Any) -> object:
+        prepared.append(request)
+        return real_prepare(request, **kwargs)
 
     def recording_raw_connect(
         database: str | os.PathLike[str],
@@ -424,7 +428,7 @@ def test_core_owner_normalizes_relative_path_lexically(
         return real_raw_connect(database, *args, **kwargs)
 
     monkeypatch.setattr(case.module, "connect_private_sqlite", recording_connect)
-    monkeypatch.setattr(private_sqlite, "_prepare_artifact", recording_prepare)
+    monkeypatch.setattr(private_sqlite, "prepare_in_helper", recording_prepare)
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", recording_raw_connect)
     database = _construct(case, relative_target, monkeypatch, [])
     try:
@@ -435,12 +439,16 @@ def test_core_owner_normalizes_relative_path_lexically(
             relative_target if case.name == "evals" else expected_target
         )
         assert database.db_path == expected_stored_path
-        assert seen
-        assert set(seen) == {os.fspath(expected_owner_target)}
-        assert expected_target in prepared
-        assert all(path.is_absolute() for path in prepared)
-        assert raw_seen
-        assert set(raw_seen) == {os.fspath(expected_target)}
+        assert seen == [(case.owner_id, os.fspath(expected_owner_target))]
+        assert prepared == [
+            PrepareRequest(
+                path=str(expected_target),
+                writable=True,
+                create_if_missing=True,
+                preserve_source_mode=False,
+            )
+        ]
+        assert raw_seen == [os.fspath(expected_target)]
     finally:
         _close_database(case, database)
 
@@ -650,11 +658,14 @@ def test_backup_target_uses_centralized_private_backup_helper(
         "backup_connection_to_private",
         recording_backup,
     )
-    monkeypatch.setattr(
-        Path,
-        "resolve",
-        lambda *args, **kwargs: pytest.fail("backup path called Path.resolve()"),
-    )
+    real_resolve = Path.resolve
+
+    def forbid_backup_path_resolve(selected: Path, *args: Any, **kwargs: Any) -> Path:
+        if selected in {source, target}:
+            pytest.fail("backup resolved its selected source or target path")
+        return real_resolve(selected, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", forbid_backup_path_resolve)
     previous_umask = os.umask(0)
     try:
         assert database.backup_database(str(target)) is True
