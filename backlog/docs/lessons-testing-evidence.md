@@ -14031,3 +14031,18 @@ before dispatch. A real-provider regression holds manual retry open through
 failed mutation settlement, then requires the same Worker to remain uncancelled,
 finish successfully, and complete its provider read. Checking only call counts
 or whether the replacement coroutine fetched would miss the cancellation.
+
+### PR 2427: thread-local close is not cross-thread fixture cleanup
+
+On 2026-09-08, a native-observed Library shell run had 834 passing tests but
+retained 331 extra descriptors. Eleven real Notes fixtures opened cached
+same-file connections on worker threads; `close_all_user_connections()` called
+thread-local close from the teardown thread and did not retire those handles.
+A file-backed export fixture retained the same database family's worker handles.
+Use the existing same-file quiescence barrier only for the fixture's uniquely
+owned temporary database, after app/workers settle. Actual-finalizer regression
+controls must cover setup failure and worker/test failure, retain foreign-path
+usability, and have safety cleanup of their own. The repaired fourteen-case
+native cohort had zero post-test descriptor deltas across 166 observed opens;
+ordinary test success and a current-test-only midpoint sample had not established
+that outcome.

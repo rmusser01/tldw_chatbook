@@ -2669,7 +2669,7 @@ class LibraryMediaController:
             media_id
         )
         if self.is_mounted:
-            self.refresh(recompose=True)
+            self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-sort")
     def handle_library_media_sort(self, event: Button.Pressed) -> None:
@@ -4643,7 +4643,7 @@ class LibraryMediaController:
         media_id = self._selected_media_id
         if not media_id:
             self._library_media_editing_analysis = False
-            self.refresh(recompose=True)
+            self._sync_library_media_viewer_or_recompose()
             return
         try:
             analysis_content = self.query_one(
@@ -4651,7 +4651,7 @@ class LibraryMediaController:
             ).text
         except (NoMatches, QueryError):
             self._library_media_editing_analysis = False
-            self.refresh(recompose=True)
+            self._sync_library_media_viewer_or_recompose()
             return
         # Validate/sanitize the user-entered analysis at the UI boundary
         # before it reaches the persistence service.

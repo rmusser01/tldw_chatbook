@@ -492,6 +492,43 @@ def test_install_hint_audio_processing_uses_audio_extra() -> None:
     assert "pip install" in hint["command"]
 
 
+def test_core_diarization_install_hint_preserves_the_capability():
+    hint = _install_hint("diarization_onnx")
+    assert hint == {
+        "hint": "Live speaker labels without torch",
+        "command": "pip install -e .",
+    }
+
+
+@pytest.mark.parametrize(
+    "available, expected",
+    [
+        (set(), False),
+        ({"sherpa_onnx"}, False),
+        ({"numpy"}, False),
+        ({"sherpa_onnx", "numpy"}, True),
+    ],
+)
+def test_core_diarization_readiness_requires_both_packages(
+    monkeypatch, available, expected
+):
+    calls = []
+
+    def find_spec(name):
+        calls.append(name)
+        return object() if name in available else None
+
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        find_spec,
+    )
+    assert _is_installed("diarization_onnx") is expected
+    assert calls == (
+        ["sherpa_onnx", "numpy"] if "sherpa_onnx" in available else ["sherpa_onnx"]
+    )
+
+
 def test_install_hint_resolves_known_extra_for_every_group_feature() -> None:
     for caps in _TYPE_GROUPS.values():
         for feature in caps.required_features + caps.optional_features:

@@ -23403,7 +23403,8 @@ async def test_library_shell_create_blank_note_lands_in_editor():
         assert "(3)" in rail_label
 
 
-def _real_notes_scope_service(tmp_path):
+@pytest.fixture
+def real_notes_scope_service(tmp_path):
     """A REAL ``NotesScopeService`` over a real (temp-file) ChaChaNotes DB.
 
     Mirrors ``Tests/Notes/test_notes_scope_service_library_canvas.py``'s
@@ -23423,22 +23424,110 @@ def _real_notes_scope_service(tmp_path):
     global_db = CharactersRAGDB(
         str(db_dir / "unified.db"), client_id="library-p2-t3-app"
     )
-    interop = NotesInteropService(
-        base_db_directory=db_dir,
-        api_client_id="library-p2-t3-client",
-        global_db_to_use=global_db,
-    )
-    return NotesScopeService(
-        local_notes_service=interop,
-        server_service=None,
-        policy_enforcer=None,
-        folder_repository=LocalNoteFolderRepository(global_db),
-    )
+    try:
+        interop = NotesInteropService(
+            base_db_directory=db_dir,
+            api_client_id="library-p2-t3-client",
+            global_db_to_use=global_db,
+        )
+        yield NotesScopeService(
+            local_notes_service=interop,
+            server_service=None,
+            policy_enforcer=None,
+            folder_repository=LocalNoteFolderRepository(global_db),
+        )
+    finally:
+        with global_db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert global_db.registered_connection_count() == 0
+
+
+def test_real_notes_scope_service_fixture_quiesces_setup_failure(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+
+    databases = []
+    original_init = CharactersRAGDB.__init__
+
+    def capture_database(database, *args, **kwargs):
+        original_init(database, *args, **kwargs)
+        databases.append(database)
+
+    def fail_interop(*_args, **_kwargs):
+        raise RuntimeError("forced notes interop setup failure")
+
+    monkeypatch.setattr(CharactersRAGDB, "__init__", capture_database)
+    monkeypatch.setattr(NotesInteropService, "__init__", fail_interop)
+
+    fixture = real_notes_scope_service.__wrapped__(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="forced notes interop setup failure"):
+            next(fixture)
+
+        assert len(databases) == 1
+        assert databases[0].registered_connection_count() == 0
+    finally:
+        try:
+            fixture.close()
+        finally:
+            for database in databases:
+                with database.quiesce_connections(timeout_seconds=2.0):
+                    pass
+
+
+def test_real_notes_scope_service_fixture_quiesces_worker_after_test_failure(
+    tmp_path,
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    fixture = real_notes_scope_service.__wrapped__(tmp_path)
+    owner = None
+    foreign = None
+    worker_connection = None
+    try:
+        service = next(fixture)
+        owner = service.local_notes_service.unified_db_template
+        foreign = CharactersRAGDB(tmp_path / "foreign.db", client_id="foreign")
+        foreign_connection = foreign.get_connection()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker_connection = executor.submit(
+                lambda: service.local_notes_service.notes_db(
+                    "default_user"
+                ).get_connection()
+            ).result(timeout=2.0)
+        service.local_notes_service.close_all_user_connections()
+        assert owner.registered_connection_count() > 0
+        assert worker_connection.execute("SELECT 1").fetchone()[0] == 1
+
+        primary = RuntimeError("forced test failure")
+        with pytest.raises(RuntimeError, match="forced test failure") as caught:
+            try:
+                raise primary
+            finally:
+                fixture.close()
+        assert caught.value is primary
+        assert owner.registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connection.execute("SELECT 1")
+        assert foreign_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        try:
+            fixture.close()
+        finally:
+            try:
+                if owner is not None:
+                    with owner.quiesce_connections(timeout_seconds=2.0):
+                        pass
+            finally:
+                if foreign is not None:
+                    with foreign.quiesce_connections(timeout_seconds=2.0):
+                        pass
 
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """LIB-14 (AC#5b, real DB): "Blank note" still commits a row immediately
     (create-on-first-edit was rejected as the larger-diff option -- see
@@ -23447,7 +23536,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
     a permanent literal "Untitled" row behind."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -23499,7 +23588,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """P0 regression: Library > Notes > New > Blank note > Escape must NOT
     crash the app.
@@ -23549,7 +23638,7 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -23611,14 +23700,14 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """Contrast case for the GC test above: once the user types anything,
     leaving via Back must save (not GC) the note -- exactly one row
     remains in the real DB, carrying the typed content."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -23655,7 +23744,7 @@ async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_db(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """LIB-14 review round 1 fix: typing into a Blank note and then deleting
     everything back to empty -- title AND body both end up blank -- must
@@ -23667,7 +23756,7 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
     back at 0 after Back, never sticking at 1."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -23733,7 +23822,7 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
 
 @pytest.mark.asyncio
 async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_db(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """Scope guard for the fix above: a PRE-EXISTING note (never created
     via "Blank note" this session) that the user empties out completely is
@@ -23741,7 +23830,7 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
     save (survive) even though its final state is title="" / body=""."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     created_id = await real_service.save_note(
         scope="local_note",
@@ -23796,7 +23885,7 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back(
-    tmp_path, monkeypatch
+    real_notes_scope_service, monkeypatch
 ):
     """Documents and locks in the autosave-interaction decision: if
     autosave already persisted real content for a session-blank note
@@ -23809,7 +23898,7 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
     monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     host = LibraryHarness(app)
 
@@ -23868,7 +23957,7 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """P0 (xhigh review + live-verify round): a note the user DELIBERATELY
     titles "Untitled" must survive navigate-away, body empty or not.
@@ -23881,7 +23970,7 @@ async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     host = LibraryHarness(app)
 
@@ -23930,7 +24019,7 @@ async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
 
 @pytest.mark.asyncio
 async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_trip(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """Mutation guard for the test above: the untouched seed must STILL be
     GC'd. The user types only in the BODY (never the title), then empties
@@ -23938,7 +24027,7 @@ async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_tri
     and the abandoned row must not survive."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     host = LibraryHarness(app)
 
@@ -23977,7 +24066,7 @@ async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_tri
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """The save seam substitutes the seed title for a blank one on the
     wire, but the reply carries no title -- so the session snapshot (and
@@ -23985,7 +24074,7 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
     not have. Both sides now derive the persisted name from one helper."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     created_id = await real_service.save_note(
         scope="local_note",
@@ -24044,7 +24133,7 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_switch(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """task-4021 AC#1 (rail-switch exit path, real DB): the untouched-blank
     GC fix lives in ``_flush_library_note_save``, the one seam shared by
@@ -24056,7 +24145,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_swi
     seams AC#1 enumerates rather than only the two most-obvious ones."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     app.media_reading_scope_service = StaticLibraryMediaScopeService(_two_media_items())
     host = LibraryHarness(app)
 
@@ -24099,7 +24188,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_swi
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_screen_leave(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """task-4021 AC#1 (screen-leave exit path, real DB): mirrors the
     rail-switch test above for ``flush_pending_work`` -- the app's
@@ -24109,7 +24198,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_screen_l
     either."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -29095,38 +29184,45 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
     chachanotes_db = CharactersRAGDB(
         tmp_path / "export-thread-ccn.db", client_id="export-pilot-thread-ccn"
     )
-    chachanotes_db.add_conversation({"title": "Conv"})
-    app.chachanotes_db = chachanotes_db
-    app.prompts_db = PromptsDatabase(
-        tmp_path / "export-thread-prompts.db",
-        client_id="export-pilot-thread-prompts",
-    )
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-
-        assert not bool(getattr(media_db, "is_memory_db", False))
-        assert not bool(getattr(chachanotes_db, "is_memory_db", False))
-
-        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
-        await _wait_for_selector(screen, pilot, "#library-export-header")
-
-        for _ in range(150):
-            if screen._export_state.counts is not None:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("Export counts never landed via the worker thread.")
-
-        screen.refresh(recompose=True)
-        await pilot.pause()
-
-        scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == (
-            "Everything: 1 media item · 1 conversation · 0 notes · 0 prompts"
+    try:
+        chachanotes_db.add_conversation({"title": "Conv"})
+        app.chachanotes_db = chachanotes_db
+        app.prompts_db = PromptsDatabase(
+            tmp_path / "export-thread-prompts.db",
+            client_id="export-pilot-thread-prompts",
         )
+        host = LibraryHarness(app)
+
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+
+            assert not bool(getattr(media_db, "is_memory_db", False))
+            assert not bool(getattr(chachanotes_db, "is_memory_db", False))
+
+            screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+            await _wait_for_selector(screen, pilot, "#library-export-header")
+
+            for _ in range(150):
+                if screen._export_state.counts is not None:
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError(
+                    "Export counts never landed via the worker thread."
+                )
+
+            screen.refresh(recompose=True)
+            await pilot.pause()
+
+            scope_line = str(screen.query_one("#library-export-scope-line").renderable)
+            assert scope_line == (
+                "Everything: 1 media item · 1 conversation · 0 notes · 0 prompts"
+            )
+    finally:
+        with chachanotes_db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert chachanotes_db.registered_connection_count() == 0
 
 
 class _GatedExportCountMediaDB:
