@@ -18,7 +18,7 @@ import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.library_media_rows import summary_row
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, OptionList, Static
@@ -290,6 +290,69 @@ async def test_media_trash_permanent_confirmation_names_missing_identity_fields(
             app.query_one("#library-media-trash-delete-confirm-time", Static).renderable
             == "Unknown deletion time"
         )
+
+
+class _AppCSSTrashCanvasApp(ConsolidatedCSSApp):
+    """Trash canvas under the FULL app CSS tier (bundle + split sheets), not
+    just the widget-default sheets ``_TrashCanvasApp`` loads -- the danger role
+    on ``#library-media-trash-delete-confirm`` lives in the agentic-library
+    split, so it only resolves when those sheets are registered."""
+
+    def __init__(self, state, **presentation):
+        super().__init__(css_path=[str(path) for path in APP_STYLESHEETS])
+        self._state = state
+        self._presentation = presentation
+
+    def compose(self):
+        yield LibraryMediaTrashCanvas(
+            canvas=self._state,
+            **self._presentation,
+            id="library-media-trash-canvas",
+        )
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_permanent_delete_confirm_is_danger_marked_and_separated(size):
+    """task-31980 (critique #6 P2): the destructive commit must not share the
+    neutral body palette one cell from a fully-styled Cancel. It carries the
+    theme's readable $error role (colour differs from Cancel) and sits at
+    least three cells clear of the safe button, at both regimes."""
+    state = _trash_state(
+        records=[
+            {
+                "id": "local:media:11",
+                "title": "Doomed clip",
+                "type": "video",
+                "trash_date": "2026-08-11T11:00:00+00:00",
+            }
+        ],
+        selected_id="local:media:11",
+    )
+    target = MediaTrashMutationTarget(
+        stable_id="local:media:11",
+        backing_media_id=11,
+        title="Doomed clip",
+        media_type="video",
+        trash_date="2026-08-11T11:00:00+00:00",
+        page_index=0,
+    )
+    app = _AppCSSTrashCanvasApp(state, confirmation_target=target)
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        cancel = app.query_one("#library-media-trash-delete-cancel", Button)
+        confirm = app.query_one("#library-media-trash-delete-confirm", Button)
+
+        # AC#1/#4: the destructive commit's ink is not the neutral Cancel's.
+        assert confirm.styles.color is not None
+        assert confirm.styles.color != cancel.styles.color, (
+            confirm.styles.color,
+            cancel.styles.color,
+        )
+        # AC#2: at least three empty cells stand between them.
+        gap = confirm.region.x - cancel.region.right
+        assert gap >= 3, (gap, cancel.region, confirm.region)
 
 
 @pytest.mark.asyncio
