@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 18:25'
-updated_date: '2026-09-08 20:26'
+updated_date: '2026-09-08 20:27'
 labels:
   - library
   - media
@@ -40,8 +40,18 @@ At 60x24 activating Media paints 'Select a media item to read it here.' with two
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Two changes, both scoped to the widths where the defect exists.
+
+AC#1 (resolver): a new opt-in profile flag, `list_first_when_empty`, set only on the Media profile (the `list_grows` precedent). Below the ordinary single-stage floor (64 -- `LIBRARY_EMERGENCY_WIDTH`, the constant the rail-and-canvas layouts already use), with NOTHING open in the work pane, the LIST wins the stage instead of being dropped for an empty Reader; the Reader keeps the remainder for its placeholder. Opening an item (`reader_has_item=True`) resolves the ordinary way and hands the width straight back. Bounded to <64 deliberately: at 80x24 the Items pane is dropped on purpose and focus evacuates to its grip, which three existing tests pin.
+
+AC#2: a '‹ Library' Button at the top of the Media Items pane, shown only while the Library pane is closed below that same floor. It posts the grip's own `PaneToggleRequested('library')`, so pane state and preference persistence are unchanged and no new action/gate exists. Deliberately NOT `LibraryEmergencyReturn`: that widget's visibility belongs to the ordinary-route emergency stage, which force-hides every one of them whenever an adaptive reader shell is mounted. Its display is computed at compose time AND after each layout sync -- live at 60x24 the sync-only version came back hidden after the recompose a pane collapse triggers (pinned by test).
+
+Live at 60x24 on the seeded profile: the Items list paints 11 rows with '‹ Library' above it; pressing it brings the rail back; collapsing the rail brings the control back. Captures: caps/32065-60x24-*.txt.
+
 Fix round (found by the covering run, fixed here): the below-64 stage exposed two OLDER defects in the deep-link path, both now fixed in the same task.
 - `_open_library_item_by_id` says it mirrors the row path's state-set exactly, but it never reclaimed the Reader's width when the view flips to 'viewer'. Under task-31979 that cost a few columns; under this task it cost the whole stage (a deep-linked item painted into an 18-cell Reader beside the list). It now calls the same `_restore_library_media_reader_width_on_open` the selection seam does, after the refresh that composes the surface.
 - `_library_entry_canvas_owner` promises to skip recovery chrome but only managed it because that chrome is normally hidden; a VISIBLE return control became the 'route owner'. Both the ordinary emergency bar and this task's '‹ Library' are skipped by identity now.
 Pinned by `test_automatic_entry_worker_composes_screen_once_and_routes_in_place[pending-media-size0]`, which caught both in turn (18/18 green). The three other failures in that file are pre-existing (verified against the branch base).
+
+Files: tldw_chatbook/Utils/adaptive_reader_state.py, tldw_chatbook/Library/library_media_reader_state.py, tldw_chatbook/UI/Screens/library_screen.py, Tests/UI/test_library_crit8_polish_media.py, Docs/User_Guide/library/media-and-conversations.md.
 <!-- SECTION:NOTES:END -->
