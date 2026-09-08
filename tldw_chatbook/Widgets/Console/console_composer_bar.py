@@ -2937,8 +2937,9 @@ class ConsoleComposerBar(Horizontal):
             # work on the first keystroke; the file IO itself already runs
             # off the event loop inside `load()`, and the call is idempotent.
             # Note: recall workers run exclusive=True in this same group and
-            # may cancel this warm load mid-flight — safe because `get_entry`
-            # re-awaits `load()` inline when `_loaded` is still False.
+            # may cancel this warm load mid-flight. PromptHistory keeps its
+            # source lock until actual native completion and cache delivery;
+            # queued cancellations leave `_loaded` false for the recall retry.
             self.run_worker(
                 self._prompt_history.load(),
                 exclusive=False,

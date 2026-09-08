@@ -279,17 +279,14 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chat/console_context_repository.py | ConsoleContextRepository.finish_auxiliary_attempt | to_json | 2 | memory | serialization-into-db.chachanotes.primary; no-independent-file |
 | tldw_chatbook/Chat/console_generate_video.py | _stage_pending_video | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/console_image_view.py | ConsoleImageRenderCache.prepare | open | 1 | memory | PIL-BytesIO-render-cache; no-independent-file |
-| tldw_chatbook/Chat/prompt_history.py | PromptHistory._append_impl.write_history | mkdir | 1 | unsupported | chat.prompt_history; participant-task10 |
-| tldw_chatbook/Chat/prompt_history.py | PromptHistory._append_impl.write_history | open | 2 | unsupported | chat.prompt_history; participant-task10 |
-| tldw_chatbook/Chat/prompt_history.py | PromptHistory._append_impl.write_history | write | 2 | unsupported | chat.prompt_history; participant-task10 |
-| tldw_chatbook/Chat/prompt_history.py | PromptHistory.load.read_history | open | 1 | unsupported | chat.prompt_history; participant-task10 |
 | tldw_chatbook/Chat/prompt_template_manager.py | load_template | open | 1 | unsupported | files |
 | tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _file | open | 2 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | mkdir | 2 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | open | 1 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _remove_temporary | os.unlink | 2 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _replace | os.replace | 2 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
+| tldw_chatbook/Chat/prompt_history.py | PromptHistory._history_io | write | 1 | unsupported | phase7 async source lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _file | open | 2 | generic_boundary | source-bound raw native IO; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | mkdir | 2 | generic_boundary | source-bound raw native IO; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | open | 1 | generic_boundary | source-bound raw native IO; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _remove_temporary | os.unlink | 2 | generic_boundary | source-bound raw native IO; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _replace | os.replace | 2 | generic_boundary | source-bound raw native IO; runtime composition pending |
 | tldw_chatbook/Chat_Grammars_Interop/local_chat_grammars_service.py | LocalChatGrammarsService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
@@ -935,10 +932,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget.audiobook_generation_complete | write | 3 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._begin_console_realtime_reply_audio | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._connect_console_realtime | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._load_sidebar_state | open | 1 | unsupported | ui.state; participant-task10 |
-| tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | dump | 1 | unsupported | ui.state; participant-task10 |
-| tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | mkdir | 1 | unsupported | ui.state; participant-task10 |
-| tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | open | 2 | unsupported | ui.state; participant-task10 |
+| tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | dump | 1 | unsupported | phase7 async source lifetime; runtime composition pending |
 | tldw_chatbook/UI/Screens/image_gen_demo_screen.py | ImageGenDemoScreen._render_result | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/library_screen.py | LibraryScreen._write_library_note_export_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/library_screen.py | LibraryScreen._write_library_prompt_export_file | write_text | 1 | unsupported | miscellaneous |
@@ -1663,8 +1657,8 @@ No startup hold is released as a shortcut for a raw writer lacking tokens.
 
 | Installed owner | Exact selector and capture policy | Installed source; task10 full mutation lifetime |
 | --- | --- | --- |
-| chat.prompt_history | data/prompt_history.jsonl, all persisted history bytes | `Chat.prompt_history.default_prompt_history_path`, `PromptHistory._append_impl.write_history` append and capped rewrite; pending. |
-| ui.state | active config-parent/ui_state.toml, persisted sidebar state | `ChatScreen._load_sidebar_state`, `_write_sidebar_state_snapshot`, debounce/flush worker; pending. |
+| chat.prompt_history | data/prompt_history.jsonl, all persisted history bytes | `Chat.prompt_history.default_prompt_history_path`, `PromptHistory._history_io` append and capped rewrite, source-owned async queued/native lifetime; runtime composition pending. |
+| ui.state | active config-parent/ui_state.toml, persisted sidebar state | `ChatScreen._load_sidebar_state`, `_write_sidebar_state_snapshot`, source-owned debounce/flush jobs; runtime composition pending. |
 | ui.emoji_recents | active config-parent/recent_emojis.json, persisted recents | `Widgets.emoji_picker._recent_emojis_path`, `save_recent_emoji`; pending. |
 | ui.themes | active config-parent/themes, every retained file and empty directory | `SettingsThemeEditor.__init__`, `on_save_theme`, `_delete_user_theme`; pending. `on_export_theme` writes a separate external Downloads destination, never authority to scan home. |
 | chatbooks.registry | `database_path(config, "prompts_db_path").with_name("tldw_chatbook_chatbooks.json")`, baseline opaque registry including provenance/outbox and retained records | `TldwCli._build_chatbook_db_paths` always supplies Prompts; `LocalChatbookService._default_registry_path` selects it first; `_load_registry`/`_save_registry`, create/update/delete and provenance mutations require full read-modify-save lifetime in10. Final dependency IDs are this profile's config and db.prompts.primary. |
@@ -2056,3 +2050,72 @@ payloads. Full runtime census coverage, startup retirement/reacquisition, respon
 Complete/replacement exposure and independent whole-Task10 review remain unavailable.
 Earlier phase2 app/bootstrap ordering and other named caller cohorts remain required;
 this phase does not convert pending declarations into runtime coverage.
+
+
+### Task10 phase7 — PromptHistory and ChatScreen async file lifetimes
+
+The exact default `PromptHistory` instance and exact loaded production `ChatScreen`
+are raw sources `chat.prompt_history` and `ui.state`. Default history path and
+active config-parent UI-state path are resolved before queued dispatch and checked
+again in the actual worker reservation. A bound source refuses selection changes;
+it cannot become an ordinary custom source to bypass a closed gate. Originally
+custom history paths/subclasses remain ordinarily fenced and uninstalled. Factory
+return values, class-name/module-name labels and instance callbacks confer no
+source authority. `UIState` remains the data class, not the on-disk owner.
+
+`Backup_Recovery/async_file_participants.py::_FileJob` registers one pending
+acquisition before selection/snapshot/cache changes for only these two routes.
+It grants no transferable IO permission. The worker invokes the actual class
+method and acquires its own fixed raw scope, including selected file, fixed `.tmp`
+publication sidecar and any missing directories. A pause before native admission
+can refuse a previously queued job with no source mutation. Thread/task/copied-job
+provenance is checked; raw/native authority stays on the real worker thread.
+
+A synchronized queued/running/cancelled transition proves never-started work cannot
+enter its source, even if the executor later invokes the disabled callback. Running
+cancellation retains source serialization until actual worker completion and
+creator bookkeeping. The actual worker completion signal is independent of the
+executor's cancellable asyncio wrapper; shutdown/failed enqueue/queued cancellation
+retire their pending records positively. The worker never waits for an event-loop
+acknowledgement. File/native close or publication uncertainty remains in the raw
+registry and blocks drainage; a cancelled/finished Textual worker is not retirement.
+
+History load and append share one async lock. Appends use immutable payloads and
+publish cached entries only after successful IO; capped rewrites publish an owned
+sidecar. A draft stashed during a pending append survives its completion. Native
+append errors that may have changed durable bytes retain uncertain source evidence.
+`persistence_safe_point()` waits for actual history bookkeeping and returns false
+when `persistence_error` remains; it does not load, save or discard a live draft.
+
+Sidebar debounce remains an exclusive Textual worker. A source lock lasts through
+native result delivery, and revision comparison clears dirty only for the current
+successful snapshot. `_flush_sidebar_state_now()->bool` waits on that source lock,
+flushes the latest dirty UI preferences while ordinary admission permits, and
+returns false on failure/refusal while preserving dirty/error state. Direct
+`_load_sidebar_state` and `_save_sidebar_state` use fixed raw scopes too. TOML
+read/merge/sidecar publication preserves unrelated sections and previous good bytes
+on a failed write. Pending queued snapshots cannot redirect to another profile.
+
+Actual caller handoff: `ConsolePromptsController._ensure_console_prompt_history`
+retains the shared default instance; `console_prompt_history_factory` is an
+external/test seam, not installed authority. Composer mount warm-load and exclusive
+recall share the history lifetime, and accepted-send `_record_prompt_history`
+remains best effort on persistence refusal. `ChatScreen.on_unmount` uses the same
+flush API; later maintenance composition must explicitly observe its false result,
+dirty revision and error, plus history's safe-point result. It must close/gate
+future mutations and reconcile late dirty data, not infer drain from timers,
+Textual flags or an emptied reference, and cannot flush after pause by claiming
+new permission. Independent instances retain existing cached last-writer behavior;
+this phase adds no cross-process CRUD transaction/cache-refresh protocol.
+
+Post-worker creator bookkeeping performs no further history/sidebar persistence.
+The existing process startup native hold remains until a future qualified
+whole-process local drain observes all pending work retired; that hold must be
+reacquired before reopening admission. Tests use actual startup plus an independent
+native maintainer to verify this composition, without enabling startup retirement.
+Persistent/queued diagnostic sinks still have their separate census/drain obligation;
+logging is not claimed globally IO-free. All other caller/job cohorts, full runtime
+coverage, app/headless pause composition and independent whole-Task10 review remain
+required. Earlier phase2 combined-order callback/bootstrap and Task13 malformed
+Media-schema fixture debts remain; this cohort's focused runs did not reproduce
+them. No Complete/replacement capability or responder is enabled.

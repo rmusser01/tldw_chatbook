@@ -372,3 +372,77 @@ ordinary semantics. The focused source rerun passed12 cases and the final Kanban
 private-interop/mutation checks passed36; final source census passed11. Full exact
 late RED/GREEN commands and the corrected report boundary are recorded in the phase
 report. No additional runtime coverage or Task10 completion is claimed.
+
+
+### Phase7 implementation plan (before code)
+
+1. Inspect actual PromptHistory load/append and Console warm-load/recall/accepted-send callers, plus ChatScreen sidebar debounce, direct IO and unmount flush. Settle the exact two-source pending/queued/native cancellation strategy with the controller before production edits.
+2. Add behavioral RED tests for predispatch pause, queued cancellation and running cancellation without cache/dirty loss. Use source-bound pending reservations with independent worker admission; never transfer raw authority across tasks or threads.
+3. Integrate immutable history snapshots and serialized complete operations, fixed selected paths and pinned native IO, plus sidebar revision/failure tracking and a usable safe-point flush. Preserve ordinary custom/subclass behavior without installed authority and preserve best-effort accepted-send behavior.
+4. Exercise actual asyncio/Textual callers, late writes/cap rewrites, refusals, source/path/task provenance and positive/uncertain native retirement with independent native observers. Run focused domain/shared and source-census checks only.
+5. Update exact owner census and caller obligations, record RED/GREEN and fixture corrections, self-review, run scoped static checks, and commit this bounded phase. Keep Task31993 In Progress, all three ACs unchecked and earlier notes/Design references intact.
+
+ADR required: no (existing ADR applies).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of the approved full-operation admission/retirement contract for two existing async file sources. No startup retirement, runtime coverage promotion, responder, Complete or replacement capability.
+
+Phase7 controller refinement: retain the no-transfer/no-ack job strategy. The creator's post-IO work is only cache/dirty/error bookkeeping under its original pending reservation. Actual process startup retains the native hold until future whole-process local drain sees all pending work retired; this phase does not retire it. All file writes/publication/cleanup/native-close effects stay inside the worker raw scope. An initial test demanding a standalone per-job native hold during cache delivery omitted actual startup; replace that unsupported assumption with actual startup plus local pending drain and independent native observer evidence. Do not add a worker waiting on event-loop acknowledgement or its shutdown deadlock risk.
+
+
+### Phase7 implementation notes
+
+Implemented only PromptHistory and ChatScreen sidebar full async file jobs under
+ADR-126 (`backlog/decisions/126-complete-local-backup-and-recovery.md`). Source-bound
+queued records register pending work before selectors/snapshots, and actual worker
+threads acquire their own fixed raw scopes; no token/context/callback transfers
+permission. Queued cancellation atomically prevents source entry. Running and
+repeated cancellation retain source serialization through actual callback completion
+and result bookkeeping. A separate actual-worker result signal fixes independent
+executor-wrapper cancellation without waiting for an event-loop acknowledgement.
+Failure/uncertain close retains source evidence; startup retirement stays disabled.
+
+History load/append now share a lock, immutable writes publish cache on success,
+capped rewrites use an owned sidecar, and newly stashed drafts survive delayed writes.
+`persistence_safe_point()` exposes pending/error state without saving/discarding text.
+Sidebar keeps revision-safe dirty state across exclusive Textual worker cancellation,
+flushes through its actual source lock, preserves unrelated TOML via atomic sidecar
+publication, and refuses queued config-profile redirection. Direct sidebar read/save
+routes are admitted too. Initial state tracking is initialized before its first read.
+Accepted-send recording remains best effort; composer warm-load/recall uses the same
+source lifetime. Exact source bindings cannot demote to bypass a gate after config
+changes; raw IO accepts only explicit r/w/a modes with operation permission checks.
+
+Behavioral REDs covered paused writes, queued cache pollution, premature running
+cancellation, newer live-draft loss, an independently cancelled executor wrapper
+spinning in an isolated child, bound-source demotion and read-scope r+ file creation.
+A proposed per-job native-tail assertion omitted actual startup and was corrected
+per controller ruling: supported process startup plus pending/local-drain already
+protect creator bookkeeping. Two fixture corrections delayed the native observer
+until after admission and limited a json.loads gate to actual string history lines;
+no production admission was weakened. The old sidebar race fixture now gates actual
+TOML serialization instead of a spoofable instance writer callback.
+
+Final covering verification: 54 passed (20 new async/native, 25 existing history,
+6 prior Feedback/Grammar and 3 prior raw mode/scope cases); latest real Textual
+cancellation/profile-retarget cases 3 passed. Earlier complete focused UI/sidebar/
+composer domain 31 passed, accepted-send history subset 5 passed, shared raw/
+participant guards 74 passed and source census 11 passed. Counts overlap and are
+not additive. All subprocesses were reaped; actual native-close uncertainty and
+independent maintenance were exercised in private children. Final scoped static,
+format and diff checks are recorded in task-10-phase7-report.md. No full suite,
+network/download, real user data, shared environment mutation or per-phase reviewer.
+
+Changed paths: async_file_participants.py, raw_participants.py, prompt_history.py,
+chat_screen.py, composer warm-load comment, the new focused async test module,
+sidebar domain tests, accepted-send caller test, exact owner/source census and the
+cancellation lesson. Source owners and actual caller obligations are detailed in the
+inventory and phase report. Controller owns independent whole-Task10 review.
+
+Phase7 is complete; Task10 remains In Progress with all three ACs unchecked.
+App/headless composition must observe source safe-point failures/late dirty state,
+retain startup until all actual producers drain, reacquire before reopening, and
+qualify remaining source/jobs and persistent/queued diagnostic sinks. Neither
+logging nor the whole app is claimed IO-free/drained. Earlier phase2 combined-order
+callback/bootstrap and Task13 Media schema-fixture debts remain; focused phase7
+runs did not reproduce them. No runtime coverage, responder, Complete or replacement
+capability is activated.

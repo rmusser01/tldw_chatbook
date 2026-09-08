@@ -5593,3 +5593,25 @@ async def test_unattributed_fleet_tokens_is_zero_for_an_unwatched_session():
     session = store.ensure_session()
     assert controller.unattributed_fleet_tokens(session.id) == 0
     assert controller.unattributed_fleet_tokens("no-such-session") == 0
+
+
+@pytest.mark.asyncio
+async def test_accepted_send_survives_prompt_history_maintenance_refusal(tmp_path, monkeypatch):
+    from tldw_chatbook.Chat import prompt_history
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+    selected = tmp_path / "prompt_history.jsonl"
+    monkeypatch.setattr(prompt_history, "default_prompt_history_path", lambda: selected)
+    history = prompt_history.PromptHistory(selected)
+    participant = raw._raw_participant(history)
+    participant.close_admission()
+    controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=StreamingGateway())
+    controller.prompt_history = history
+    try:
+        result = await controller.submit_draft("accepted despite history refusal")
+        assert result.accepted
+        assert history.size == 0
+        assert history.persistence_error == "RecoveryRequired"
+        assert not selected.exists()
+    finally:
+        participant.resume()

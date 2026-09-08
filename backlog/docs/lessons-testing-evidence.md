@@ -3492,6 +3492,17 @@ must use events or instrumented locks to force both cancel-wins and commit-wins
 orders, including cancellation after commit but before metadata append; a sleep and
 an assertion that “nothing happened yet” are not evidence of ordering.
 
+**TASK-31993 phase7 supplement, 2026-09-08.** Shielding the awaiter was still
+insufficient when the executor's own asyncio wrapper future was independently
+cancelled while its actual PromptHistory callback was writing. A private subprocess
+regression released the real native gate after 0.1 seconds, but the shield loop kept
+observing an already-cancelled future and spun until the parent reaped the child at
+six seconds. A separate result signal from the actual worker completed the same
+case, with persisted bytes and cache delivered before cancellation. Queued work uses
+a synchronized transition that prevents all source entry; the worker never waits
+for an event-loop acknowledgement. Test caller cancellation, queued executor
+cancellation, and independently cancelled running executor wrappers separately.
+
 ## Returning from a Textual handler does not make its detached child cancellation-safe
 
 **TASK-3402, 2026-08-11.** An H3 image edit originally awaited its whole operation

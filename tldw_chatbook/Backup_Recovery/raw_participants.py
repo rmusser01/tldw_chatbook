@@ -9,6 +9,7 @@ import io
 import os
 from pathlib import Path
 import stat
+import sys
 import threading
 import time
 import weakref
@@ -79,6 +80,15 @@ def _participant_state(participant):
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     if _source_participants.get(source) is not participant:
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+    if state.owner in {"chat.prompt_history", "ui.state"}:
+        route = (
+            "prompt_history"
+            if state.owner == "chat.prompt_history"
+            else "sidebar_state"
+        )
+        selected, installed = _async_source_selection(source, route)
+        if not installed or selected != state.selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     if state.owner == "notes.file_notes_replica" and source.db_path != state.selected:
         raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     return state
@@ -96,6 +106,36 @@ def _types():
         LocalChatGrammarsService: "chat.grammars",
         ChunkingTemplateManager: "chunking.templates",
     }
+
+
+def _async_source_selection(source, route):
+    """Resolve only the two actual async file owners; labels grant no authority."""
+    if route == "prompt_history":
+        from ..Chat.prompt_history import PromptHistory, default_prompt_history_path
+
+        if not isinstance(source, PromptHistory):
+            raise bootstrap.RecoveryRequired("raw_source_not_supported")
+        selected = lexical_path(source.path)
+        installed = type(source) is PromptHistory and selected == lexical_path(
+            default_prompt_history_path()
+        )
+    else:
+        module = sys.modules.get("tldw_chatbook.UI.Screens.chat_screen")
+        cls = getattr(module, "ChatScreen", None)
+        if route != "sidebar_state" or cls is None or not isinstance(source, cls):
+            raise bootstrap.RecoveryRequired("raw_source_not_supported")
+        selected = lexical_path(
+            module._get_effective_config_path().parent / "ui_state.toml"
+        )
+        installed = type(source) is cls
+    # An already bound source cannot silently become an ordinary custom source
+    # to bypass its closed gate when configuration changes beneath it.
+    participant = _source_participants.get(source)
+    if participant is not None:
+        state = _participants[participant]
+        if not installed or state.selected != selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+    return selected, installed
 
 
 def _pinned_io_available():
@@ -117,7 +157,19 @@ def _raw_participant(source):
     from ..Notes.file_notes_replica import FileNotesReplica
 
     types = _types()
-    if type(source) is FileNotesReplica:
+    from ..Chat.prompt_history import PromptHistory
+
+    screen_module = sys.modules.get("tldw_chatbook.UI.Screens.chat_screen")
+    screen_type = getattr(screen_module, "ChatScreen", None)
+    if type(source) is PromptHistory or (
+        screen_type is not None and type(source) is screen_type
+    ):
+        route = "prompt_history" if type(source) is PromptHistory else "sidebar_state"
+        selected, installed = _async_source_selection(source, route)
+        if not installed:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        owner = "chat.prompt_history" if route == "prompt_history" else "ui.state"
+    elif type(source) is FileNotesReplica:
         owner, selected = "notes.file_notes_replica", source.db_path
     elif source is emoji_picker:
         owner, selected = "ui.emoji_recents", emoji_picker._recent_emojis_path()
@@ -259,6 +311,11 @@ def _retire(state):
 
 
 def _selection(source, route, template, user_template, selected_read):
+    if route in {"prompt_history", "sidebar_state"}:
+        selected, installed = _async_source_selection(source, route)
+        if selected_read is not None and lexical_path(selected_read) != selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        return selected, installed, False
     if route == "file_notes_directory":
         from ..Notes.file_notes_replica import FileNotesReplica
 
@@ -326,8 +383,21 @@ def _scope(
     previous = getattr(_local, "operation", None)
     if previous is not None:
         previous_state = _check(previous)
-        if previous_state.source is source and route == "service":
-            _check(previous, source.store_path, writing=writing)
+        if previous_state.source is source and route in {
+            "service",
+            "prompt_history",
+            "sidebar_state",
+        }:
+            selected = (
+                source.store_path
+                if route == "service"
+                else _async_source_selection(source, route)[0]
+            )
+            if selected_read is not None and lexical_path(
+                selected_read
+            ) != lexical_path(selected):
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+            _check(previous, selected, writing=writing)
             yield previous
             return
     # Core and raw scopes are independent. Keep outer registration/lease live,
@@ -349,7 +419,7 @@ def _scope(
         )
         installed = installed and pinned
         paths = () if directory_only else (selected,)
-        if route == "service" and writing:
+        if route in {"service", "prompt_history", "sidebar_state"} and writing:
             paths += (selected.with_suffix(selected.suffix + ".tmp"),)
         parent = selected if directory_only else selected.parent
         missing = []
@@ -373,12 +443,16 @@ def _scope(
             binding = _participant_state(participant)
             if binding.owner != "chunking.templates" and binding.selected != selected:
                 raise bootstrap.RecoveryRequired("raw_source_selection_changed")
-        source_key = str(selected.resolve()) if route == "service" else None
+        source_key = (
+            str(selected.resolve())
+            if route in {"service", "prompt_history", "sidebar_state"}
+            else None
+        )
         with storage._changed:
             attempt.check()
             if participant is not None and _participant_state(participant).closed:
                 raise bootstrap.RecoveryRequired("storage_locally_paused")
-            if route == "service":
+            if source_key is not None:
                 source_lock = _path_locks.get(source_key)
                 if source_lock is None:
                     source_lock = threading.RLock()
@@ -514,7 +588,9 @@ def _mkdirs(operation):
 
 @contextmanager
 def _file(operation, path, mode):
-    state = _check(operation, path, writing=mode == "w")
+    if mode not in {"r", "w", "a"}:
+        raise ValueError("raw_file_mode_invalid")
+    state = _check(operation, path, writing=mode in {"w", "a"})
     path = lexical_path(path)
     parent = state.pins.get(path.parent)
     if (state.pinned and parent is None) or (
@@ -523,6 +599,8 @@ def _file(operation, path, mode):
         raise FileNotFoundError("raw_parent_not_created")
     temporary = path in state.paths[1:]
     flags = os.O_RDONLY if mode == "r" else os.O_WRONLY | os.O_CREAT
+    if mode == "a":
+        flags |= os.O_APPEND
     if mode == "w" and temporary:
         flags |= os.O_EXCL
     flags |= (
