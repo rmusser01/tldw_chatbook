@@ -14013,3 +14013,21 @@ recreation, while the unchanged warm-reuse tests cover ordinary navigation. All
 31 ownership/reuse cases pass, retaining the original 45 cancellation, identity
 and draft-provenance assertions. Verify the actual lifecycle event before
 classifying a teardown failure; do not turn intentional suspension into disposal.
+
+## Exclusive-worker guards must run before dispatch to preserve active work
+
+**PR 2427 / TASK-31932, 2026-09-08.** Prompt delete confirmation resumed Library
+after mutation admission. The resume handler started a competing unfocused
+browse and source snapshot, violating exactly-once refresh and consuming the
+post-delete fault injection too early. Suppressing those reads needed an error
+settlement counterpart: failed delete/undo otherwise lost the return snapshot.
+
+A proposed retry-only argument checked inside the snapshot coroutine was rejected
+before implementation. Textual's work decorator dispatches an exclusive worker
+and cancels the previous group member before entering the coroutine body. A
+hard-error no-op would therefore cancel an explicit manual retry. The repair
+reads the Screen-owned failure state through the existing dependency pattern
+before dispatch. A real-provider regression holds manual retry open through
+failed mutation settlement, then requires the same Worker to remain uncancelled,
+finish successfully, and complete its provider read. Checking only call counts
+or whether the replacement coroutine fetched would miss the cancellation.

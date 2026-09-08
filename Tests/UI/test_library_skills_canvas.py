@@ -28,7 +28,11 @@ from textual import events
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+    app_css_text,
+)
 from textual.pilot import _get_mouse_message_arguments
 from textual.widgets import Button, Input, SelectionList, Static, TextArea
 
@@ -88,7 +92,6 @@ from Tests.UI.app_factory import _build_test_app as _build_shared_test_app
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTIC_TERMINAL = REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-BUNDLED_STYLESHEET = REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
 
 def _build_test_app(*args: Any, **kwargs: Any) -> TldwCli:
@@ -519,7 +522,7 @@ class _EditorHost(ConsolidatedCSSApp):
 class _ProductionEditorHost(_EditorHost):
     """Mount the isolated editor with the real application stylesheet stack."""
 
-    CSS_PATH = TldwCli.CSS_PATH
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 @pytest.mark.asyncio
@@ -616,7 +619,7 @@ async def test_skill_editor_production_geometry_contains_basic_and_advanced_work
         tool_catalog=tuple(f"tool-{index:02d}" for index in range(60)),
     )
     async with app.run_test(size=size) as pilot:
-        assert app.CSS_PATH == TldwCli.CSS_PATH
+        assert app.CSS_PATH == [str(path) for path in APP_STYLESHEETS]
         canvas = app.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
         for selector in (
             "#library-skill-name",
@@ -1762,7 +1765,7 @@ async def test_library_skills_items_priority_floor_moves_with_the_grip_width(
 async def test_library_skills_manual_items_priority_survives_compact_layout_sync(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """An explicit 80-column Items expansion must outlive ordinary refreshes."""
+    """An explicit Items expansion at the 82-column floor outlives refreshes."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -1773,9 +1776,12 @@ async def test_library_skills_manual_items_priority_survives_compact_layout_sync
             for index in range(45)
         ]
     )
+    app.app_config.setdefault("library", {}).setdefault("skills_reader", {})[
+        "items_open"
+    ] = False
     host = LibraryHarness(app)
 
-    async with host.run_test(size=(80, 24)) as pilot:
+    async with host.run_test(size=(82, 24)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         monkeypatch.setattr(
@@ -2638,7 +2644,7 @@ async def test_revoke_button_disabled_when_the_skill_has_no_grant(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Stylesheet parity pin (dual-target: source + regenerated bundle) --
+# Stylesheet parity pin (dual-target: source + app-loaded stylesheet union) --
 # mirrors test_library_prompts_canvas.py's own pin tests for its sibling
 # canvas.
 # ---------------------------------------------------------------------------
@@ -2648,9 +2654,10 @@ def test_library_skill_row_class_matches_prompt_row_visual_parity():
     """``.library-skill-row`` (the row Buttons in ``library_skills_canvas.py``)
     must have a stylesheet block, with the same width/height/border/
     background as ``.library-prompt-row`` -- visual parity with the sibling
-    prompts list, not default auto-width Buttons."""
+    prompts list, not default auto-width Buttons, in both the source module
+    and the app-loaded stylesheet union."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert ".library-skill-row {" in text
@@ -2682,9 +2689,10 @@ def test_library_skills_header_filter_empty_have_css_blocks():
     """``#library-skills-header``/``#library-skills-filter`` (+ ``:focus``)/
     ``#library-skills-empty`` (``library_skills_canvas.py``) must have
     stylesheet rules matching their ``#library-prompts-*`` siblings, instead
-    of silently falling back to unstyled defaults."""
+    of silently falling back to unstyled defaults, in both the source module
+    and the app-loaded stylesheet union."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-skills-header {" in text
@@ -2723,10 +2731,10 @@ def test_library_skill_name_input_css_blocks_match_prompt_name_parity():
     """``#library-skill-name`` (the editor's Name Input, Task 4) must have a
     stylesheet block matching its ``#library-prompt-name`` sibling's field
     look (same tall-border/focus-accent Input styling), dual-pinned against
-    both the source module AND the regenerated bundle -- mirrors
+    both the source module and the app-loaded stylesheet union -- mirrors
     ``test_library_skills_header_filter_empty_have_css_blocks`` above."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-skill-name," in text or "#library-skill-name {" in text
@@ -2757,10 +2765,10 @@ def test_library_skills_import_row_css_blocks_match_prompt_parity():
     (the inline import row in ``library_skills_canvas.py``, Task 5) must have
     stylesheet blocks matching their ``#library-prompts-import-*`` siblings,
     with same field look (tall-border/focus-accent Input) and muted status
-    line -- dual-pinned against both the source module AND the regenerated
-    bundle."""
+    line -- dual-pinned against both the source module and the app-loaded
+    stylesheet union."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-skills-import-path {" in text
@@ -2812,10 +2820,10 @@ def test_library_skill_trust_setup_explanation_css_block_matches_review_files_pa
     setup state's explanation line, gate fix wave FIX 2) must have a
     stylesheet block with the same muted secondary-line look as its
     ``#library-skill-trust-review-files`` sibling -- dual-pinned against
-    both the source module AND the regenerated bundle, same pattern as
+    both the source module and the app-loaded stylesheet union, same pattern as
     every other Skills CSS pin above."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-skill-trust-setup-explanation {" in text
@@ -3921,6 +3929,8 @@ async def test_action_library_skill_back_honors_dirty_guard():
             _library_pending_list_entry_focus=False,
             _library_pending_list_entry_media_return=None,
             _library_list_entry_focus_generation=0,
+            focused=None,
+            _library_media_return_candidate=lambda receipt: False,
             _focus_library_list_entry=lambda: None,
             call_after_refresh=lambda callback: focus_calls.append(callback),
             # ``_arm_library_list_entry_focus`` also arms a settle-window

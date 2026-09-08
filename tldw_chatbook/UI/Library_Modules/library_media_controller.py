@@ -60,24 +60,16 @@ Two completeness checks ran alongside the census:
   it is worth recording: an uncritical bare-name fixpoint over a cluster that
   owns a generic dispatcher will claim half the screen.)
 
-**Single vs. split controller: SINGLE, decided by connected components, not
-by feel.** The plan made the split decision a real one this wave ("at ~244
-methods a single controller would be ~8-9k lines"). Building the
-``self.<name>`` reference graph among all 251 candidates yields **one
-connected component of 213 names plus 28 isolated singletons and four small
-2-3 member components**; adding an edge between any two candidates that
-touch the same ``LibraryMediaState`` field collapses that to **one component
-of 238 plus 11 singletons**. There is no second component of any size, so
-there is no seam to split on. The plan's own candidate seam (browse/viewer
-vs trash/maintenance) was probed directly and does not hold: the 35
-trash-named candidates carry **16 cross-call edges** to the rest and share
-**6 media state fields** with it, and only 20 of the 140 movers are
-trash-named -- a second controller for 20 methods, still coupled through six
-shared fields, buys nothing the ratchet's per-file governance does not
-already give. The feared size did not materialise either: the hazard
-exclusions below remove 111 of the 251 candidates, so the 140 that move
-carry **3,166 source lines** of body, putting this file within a few hundred
-lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
+**Single vs. split controller: SINGLE, based on connected components.**
+The ``self.<name>`` graph of 251 candidates has one 213-name component,
+28 singletons and four 2–3-member components. Shared ``LibraryMediaState``
+field edges join these into one 238-name component and 11 singletons.
+The proposed browse/viewer vs. trash/maintenance split has no independent
+seam: 35 trash-named candidates have 16 cross-call edges and share six
+state fields with the rest; only 20 of the 140 movers are trash-named.
+Splitting those methods would retain the coupling without improving the
+existing per-file governance. The 111 exclusions leave 140 movers with
+3,166 body lines, not the predicted 8–9k-line controller.
 
 **111 of the 251 candidates excluded, not moved (140 move):**
 

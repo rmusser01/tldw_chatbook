@@ -833,3 +833,135 @@ variants. All Media and ingest selections pass. Seven Prompt and eight Skills
 failures remain under investigation; exactly-once refresh, stale-page, hit-test,
 priority-pane and dirty-draft assertions have not been waived. This checkpoint
 is not merge-ready and does not claim the full Library shell file is green.
+
+## 2026-09-08 checkpoint rebase and canvas failure attribution
+
+Saved the preceding work at 4407a89b71, then rebased all 198 branch commits onto
+dev 5aeac5ab221958ae612dd84ff47e047b23cd3f5d. The final tree differs from 4407
+only by upstream's 59-line critique document; executable sources are unchanged.
+Published f755da2daf631899dc3a4f394ec064ce3dbdfc4d with an exact lease against
+remote 3b40d6871021b6c8b9d304486a45003828a01961. Qodo's updated checkpoint
+comment reports zero active bugs/rules and all six inline threads are resolved;
+fresh CI is running. This remains a progress checkpoint, not merge approval.
+
+The seven Prompts failures separate into one obsolete version-field assertion
+and six cases of competing resume/mutation reads. A read-only observer records
+delete admission, then ScreenResume's snapshot and unfocused browse while
+mutation_in_flight is true, then deletion's own focused browse and snapshot.
+The extra read also consumes the injected post-delete refresh failure. The
+relevant Screen bodies match pre-cleanup source after receiver normalization;
+PromptsController is byte-identical. Evidence:
+`/private/tmp/pr2427-prompt-origin.log`. Step 25 records a narrow admission guard
+and ordinary/cancelled-modal negative controls; existing exactly-once and stale
+page assertions stay intact.
+
+The eight Skills failures are fixture drift: five bundle-only CSS pins omit
+the Library-owned sheet; the isolated editor similarly loads only boot CSS;
+the manual Items test uses 80 columns below the existing 82-column floor; and
+the dirty-exit double omits the focus surface its real entry-focus method reads.
+Step 26 retains real hit-testing, exact CSS/geometry contracts, a genuinely
+manual closed-to-open transition and dirty-veto behavior. No production Skills
+or CSS repair is proposed for these eight failures.
+
+Skills fixture repair: the exact eight previously failing cases pass in 3.78s.
+The dirty-exit fake additionally needed the existing non-Media return-candidate
+seam after the focus read; actual entry-focus code remains active. Independent
+spec/quality review passes, including the genuine closed-to-open transition,
+real compositor checks and unchanged CSS property assertions. Complete-file
+qualification remains pending (`/private/tmp/pr2427-skills-fixture-report.md`).
+
+The first Prompt repair passes nine focused cases, but review is not yet clear:
+failed delete/undo settlement refreshed only browse and would lose the suppressed
+source snapshot. Before implementing a proposed retry-only worker argument,
+Textual's wrapper was checked: exclusive cancellation happens before the worker
+body, so that alternative could cancel an active manual retry. It was rejected
+without source changes. The recorded fix uses the existing explicit dependency
+pattern to check Screen-owned failure state before worker dispatch, with real
+provider-read and manual-retry controls. No automatic retry of hard failures,
+new state owner, or worker-signature change is authorized.
+
+Fresh post-rebase derived-artifact preflight passes all six checks
+(`/private/tmp/pr2427-preflight-post-rebase.log`). Fresh ratchets are **46 passed /
+2 failed**, not the earlier 47/1: the eight-line Media deep-link repair landed
+after that previous measurement and now measures 4,638 / 4,630. Its recorded
+follow-up is documentation-only reduction with executable AST identity, not a
+cap increase. Media Browse still measures 589 / 371 pending its separate design.
+
+The corrected Prompt error settlement passes **23 focused checks** in 35.47s,
+including real provider reads and an uncancelled manual Worker that completes
+successfully. Independent re-review marks the lost-snapshot finding addressed,
+with no new production findings. Media's documentation-only reduction reaches
+4,630 lines with unchanged executable AST; Prompts reaches 4,997 / 4,998 and
+Screen 35,392 / 35,393 lines, still 1,260 methods.
+
+The first 677-case complete verification run was deliberately stopped near 31%
+after an exact-resource check found the two new ordinary/cancel controls did not
+finalize their separate Prompt DB. It is not qualifying evidence. SIGINT did not
+finish teardown; the exact owned process was terminated (exit 143), and its log
+is preserved at `/private/tmp/pr2427-canvas-complete.log`. Finalize only the new
+controls' exact resources before restarting the complete selection; no process
+termination or test-interruption result counts as a cleanup pass.
+
+The finalized opt-in resource fixture now supplies all 15 new controls, closes
+only its DB instance's captured main/thread handles after workers drain and the
+harness exits, and verifies every handle rejects a query as closed. All 15 pass;
+independent cleanup review passes without changed behavioral assertions.
+
+The restarted nine-file qualification finishes **678 passed / 2 failed** in
+525.15s (`/private/tmp/pr2427-canvas-final.log`). Both complete canvas files,
+Prompts characterization/wiring/private-owner checks and entry-compose tests
+pass. Remaining failures are the known Media Browse size and the isolated
+Library suspend fixture, whose `__new__` bypass omits `_unavailable_navigation`.
+Four export cases additionally surface an unawaited Textual callback warning
+from the RAG indexing-guidance path (`app.py:11567`); those require attribution,
+not a warning filter. Fresh final-source preflight passes all six checks
+(`/private/tmp/pr2427-preflight-final-canvas.log`). The branch is not merge-ready.
+
+The isolated suspend fixture now exercises the actual unavailable-navigation
+cleanup, with its constructor-owned state and a scoped non-modal app context.
+All original seven-timer stop/clear assertions remain; new assertions require
+cleared return admissions, advanced generation and a hidden return control.
+Its complete four-case file passed in 15.40s before the indexing cleanup below
+(`/private/tmp/pr2427-reuse-fixture.log`).
+
+The warning observer identifies the two raw reuse-app tests as producers:
+their real Media DB initialization installs global ingest callbacks and an
+indexer notifier bound to an app whose loop is later closed. The later Export
+fixture dispatches that same callback. An opt-in fixture now restores only each
+producer's exact registrations, preserves borrowed/transferred services, and
+stops only a captured newly owned worker while the pytest loop can service its
+callbacks. Review rejected a global reset dispatched through `to_thread`: a
+replacement may arrive before execution. The final local helper rechecks
+identity and notifier ownership under the existing locks before exact-object
+stop. A deterministic replacement control fails against the old reset arm and
+passes with this fix. Four ownership controls and both real producers followed
+by an Export consumer pass (seven cases, 18.43s, only three baseline dependency
+warnings; `/private/tmp/pr2427-indexer-fixture-report.md`). No production
+indexing, configuration or warning-filter changes were made.
+
+Fresh checkpoint preflight passes all six checks
+(`/private/tmp/pr2427-preflight-checkpoint.log`). Scoped Ruff passes on the
+Prompts owner and affected test files. MediaController's seven and Screen's
+50 baseline Ruff code/message findings are unchanged; this is not a whole-file
+lint-clean claim. The fresh remote still has PR head `f755da2daf` and dev
+`5aeac5ab22`; all required CI checks pass on that published checkpoint, and
+Qodo reports zero active findings there. Unpublished repairs require their own
+review/checkpoint; the Media Browse and Watchlists design gates remain open.
+
+Independent review passes the combined suspend/indexer fixture changes and
+confirms every original assertion remains. The first complete two-file run
+finished 99 passed / three baseline dependency warnings in 83.58s, but a
+post-freeze fixture edit overlapped it. It is not final qualification evidence
+(`/private/tmp/pr2427-reuse-entry-final.log`). The unreviewed edit was restored;
+the reviewed reuse file has git blob hash
+`1b5e9dca67e9a5c0e66861f0e5d8ef7fa802e1f4`. A fresh frozen-source run is required.
+
+That fresh complete reuse + entry-compose run passes **99 tests in 81.27s**,
+process exit 0 (`/private/tmp/pr2427-reuse-entry-qualified.log`). The reuse
+file's hash is unchanged before/after and matches independent review. The four
+unawaited-callback warnings are absent, with no warning filters; only the three
+existing requests/pydub/webrtcvad dependency warnings remain. The entire
+entry-compose file is unchanged. Combined with the prior complete canvas and
+Prompts qualification, this closes the attributed canvas/suspend/indexer-fixture
+failures, not the Media Browse size or Watchlists focus gates. The complete
+Library shell rerun and final revision's external review/CI remain required.

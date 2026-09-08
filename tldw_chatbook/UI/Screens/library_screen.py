@@ -2569,6 +2569,9 @@ class LibraryScreen(BaseAppScreen):
             register_footer_shortcuts=(
                 lambda *a, **k: self._register_footer_shortcuts(*a, **k)
             ),
+            library_source_load_failure=(
+                lambda: self._library_source_load_failure()
+            ),
             run_library_service_call=(
                 lambda *a, **k: self._run_library_service_call(*a, **k)
             ),
@@ -8488,15 +8491,8 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.selection_timer = None
 
     def _refresh_library_visit_surfaces(self) -> None:
-        """Re-kick the active row's data surfaces for this visit.
-
-        Runs on every ``ScreenResume``. On the first visit this is the
-        initial load; on a repeat visit (screen reused, was suspended) it
-        refreshes what may have changed elsewhere while hidden -- new
-        conversations from Console, media from background ingest, notes
-        from file sync. Each kick keeps ``on_mount``'s original gating by
-        the selected rail row, so only the surface the user is looking at
-        re-fetches.
+        """Refresh entry/resume data, retaining each surface's admission gates.
+        Prompt mutations own settlement reads; modal return must not compete.
         """
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
@@ -8574,7 +8570,9 @@ class LibraryScreen(BaseAppScreen):
         # callout carries the Retry, in reach, and a failing read is not
         # worth the deadline again on every visit).
         source_failure = self._library_source_load_failure()
-        if source_failure is None or source_failure.severity != "error":
+        if not self._prompts_state.mutation_in_flight and (
+            source_failure is None or source_failure.severity != "error"
+        ):
             self._refresh_local_source_snapshot()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
@@ -8585,6 +8583,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
             and self._prompts_state.view == "list"
+            and not self._prompts_state.mutation_in_flight
         ):
             self._request_library_prompts_browse(
                 self._library_prompt_browse_controller.scope,
