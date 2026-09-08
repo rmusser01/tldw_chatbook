@@ -636,3 +636,17 @@ See [deadline correction evidence](../superpowers/reviews/2026-09-08-canvas-star
 This is an explicitly revised test contract, not a production speedup or proof
 of the historical startup delay's cause. Prior evidence and remaining host,
 platform/optional and aggregate static gates remain; task In Progress, V2 off.
+
+## Static baseline attribution — 2026-09-08
+
+The remaining static failures now have a paired source comparison at d599fa037b:
+1373 current diagnostics versus 1411 baseline diagnostics under the same py312
+target. Of the current diagnostics, 1360 match unchanged complete source spans;
+the remaining 13 are ten modified previously failing import blocks, two updated
+version guards and one relocated alias. The modified blocks are not blanket-
+certified as correctly ordered. All 307 formatter edit groups in the twelve
+previously failing files match baseline edit content and neighboring lines.
+
+See [static attribution](../superpowers/reviews/2026-09-08-sqlite-static-attribution.md)
+for the language-floor control, exact scope and limits. No fixes, suppression,
+pytest/browser/benchmark replay or static-gate waiver; task In Progress, V2 off.

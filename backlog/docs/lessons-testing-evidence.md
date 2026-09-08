@@ -11220,6 +11220,16 @@ and all of them failed identically without the change.
 * Paying for the baseline arm is the cost of an attributable answer. A cheaper
   run that cannot attribute is not cheaper — it is worthless.
 
+**Lint follow-up (TASK-31942, 2026-09-08).** Paired Ruff checks found six extra
+recommendations on identical baseline source solely from changing the explicit
+language target from py311 to the approved py312 floor. One affected alias had
+also moved modules, defeating an unchanged-location comparison. Use one target
+for both source arms, then a separate old-target control; distinguish unchanged
+spans, modified failing blocks and relocated diagnostics. Equal counts alone
+establish none of these. The twelve dirty formatter files were attributed by
+matching all 307 edit groups and adjacent lines, not by their file count.
+Evidence: `Docs/superpowers/reviews/2026-09-08-sqlite-static-attribution.md`.
+
 ## A manually pumped component path does not prove production wiring
 
 **TASK-22512 Task 15, 2026-09-01.** Persistent-terminal component tests passed
