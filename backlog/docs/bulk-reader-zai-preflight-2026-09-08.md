@@ -1,5 +1,9 @@
 # Bulk-reader ZAI selection and preflight — 2026-09-08
 
+**Follow-up:** the credential gap was resolved and two live attempts were completed.
+See the [live results and adoption decision](bulk-reader-zai-live-2026-09-08.md).
+The preflight record below describes the earlier state.
+
 The user delegated model selection. Use **ZAI `glm-5.3` as main** and
 **`glm-5.3-flash` as the read-only worker** on the configured ZAI endpoint.
 Both document function calling; Flash documents text-parameter compatibility

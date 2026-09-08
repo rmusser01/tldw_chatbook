@@ -19,8 +19,8 @@ fixtures and records per-call provider usage and human-reviewable evidence.
 - The preset tools are exactly fs_list, fs_read, fs_glob, fs_grep; existing runtime permissions still apply.
 - Only targeted tests are authorized. Never run the full suite.
 - The user delegated model selection on 2026-09-08: use ZAI glm-5.3 as main
-  and glm-5.3-flash as worker. Live execution is authorized; credential
-  readiness currently prevents calls.
+  and glm-5.3-flash as worker. A temporary credential was supplied and
+  both the initial and corrected live runs are recorded.
 - Limit the first live comparison runner to Moonshot/ZAI; refuse unsupported
   providers before application imports because their transport policies are
   outside the current bounded-request seam. The preset remains provider-neutral.
@@ -149,12 +149,20 @@ BULK_READER_PRESET = AgentDefinition(
   automatic routing or proven savings until a live report is reviewed.
 - [x] Run focused tests, CLI help/refusal smoke checks and changed-file lint.
 
+### Live pricing regression discovered on 2026-09-08
+
+- [x] Cover real load_settings normalized pricing through the live entry point.
+- [x] Resolve configured pricing from the normalized raw-config section while preserving direct top-level configuration support.
+- [x] Keep the original live report and record corrected cost estimates separately; review all answers and failures.
+
+- [x] Reproduce and repair ZAI reasoning/control chunks generating fallback copy through the Console normalizer; preserve native tool deltas and terminal metadata.
+- [x] Repeat the live comparison after the two reproduced defects are fixed.
+
 ### Completion
 
-- [ ] Once a ZAI credential is available, run the selected glm-5.3 /
-  glm-5.3-flash comparison and review expected facts. The 2026-09-08 preflight
-  stopped before model calls with Missing API key; see
-  backlog/docs/bulk-reader-zai-preflight-2026-09-08.md.
+- [x] Once a ZAI credential is available, run the selected glm-5.3 /
+  glm-5.3-flash comparison and review expected facts. The preflight credential gap was resolved; the two completed attempts and
+  negative adoption decision are in backlog/docs/bulk-reader-zai-live-2026-09-08.md.
 - [x] Review the combined diff, integrate only this task's files into the user's
   checkout without overwriting concurrent edits, and recheck integration.
 - [x] Add task implementation notes and test/live evidence; check only satisfied

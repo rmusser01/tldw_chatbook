@@ -1,0 +1,168 @@
+{
+  "cases": [
+    {
+      "delegated": {
+        "answer_quality": "needs_minor_correction",
+        "calls": 8,
+        "citation_review": "Quoted source facts and line references match; the annotated code block adds explanatory line comments.",
+        "core_facts_covered": 4,
+        "estimated_cost_usd": 0.013361,
+        "expected_core_facts": 4,
+        "method_failure": "The answer reports two rejected spawn calls with an empty task; it then reads sources directly. No child or worker-model call occurred.",
+        "named_worker_exercised": false,
+        "runtime_status": "non_delegating",
+        "status_reasons": [
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "unsupported_claims": [
+          "The answer says four constants; the supplied file defines three constants."
+        ]
+      },
+      "direct": {
+        "answer_quality": "pass",
+        "calls": 5,
+        "citation_review": "Constants at leases.py:2-4, lookup at 7, renewal branch at 8-9, and rejected proposal at lease-notes.md:2-3 all match.",
+        "core_facts_covered": 4,
+        "estimated_cost_usd": 0.005775,
+        "expected_core_facts": 4,
+        "named_worker_exercised": false,
+        "runtime_status": "completed",
+        "status_reasons": [],
+        "unsupported_claims": []
+      },
+      "id": "repo-ttl-exceptions"
+    },
+    {
+      "delegated": {
+        "answer_quality": "fail_no_answer",
+        "calls": 3,
+        "citation_review": "No answer or citations to inspect.",
+        "core_facts_covered": 0,
+        "estimated_cost_usd": 0.005381,
+        "expected_core_facts": 4,
+        "method_failure": "Runtime stopped after three identical spawn_subagent calls without progress; no child was created.",
+        "named_worker_exercised": false,
+        "runtime_status": "non_delegating",
+        "status_reasons": [
+          "runtime_stuck",
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "unsupported_claims": []
+      },
+      "direct": {
+        "answer_quality": "pass",
+        "calls": 4,
+        "citation_review": "profiles.py:2-6 and store.py:6-10 contain the quoted subsets; notes.txt:1 explicitly says the background invalidator is unimplemented. The exception propagation inference follows the supplied function.",
+        "core_facts_covered": 4,
+        "estimated_cost_usd": 0.005373,
+        "expected_core_facts": 4,
+        "named_worker_exercised": false,
+        "qualification": "The statement about no fallback mechanism is supported only within the supplied files.",
+        "runtime_status": "completed",
+        "status_reasons": [],
+        "unsupported_claims": []
+      },
+      "id": "repo-cache-order"
+    },
+    {
+      "delegated": {
+        "answer_quality": "fail_no_answer",
+        "calls": 3,
+        "citation_review": "No answer or citations to inspect.",
+        "core_facts_covered": 0,
+        "estimated_cost_usd": 0.004866,
+        "expected_core_facts": 6,
+        "method_failure": "Runtime stopped after three identical spawn_subagent calls without progress; no child was created.",
+        "named_worker_exercised": false,
+        "runtime_status": "non_delegating",
+        "status_reasons": [
+          "runtime_stuck",
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "unsupported_claims": []
+      },
+      "direct": {
+        "answer_quality": "fail_no_answer",
+        "calls": 8,
+        "citation_review": "No answer or citations to inspect; the recorded stop is step budget exhausted after eight model calls.",
+        "core_facts_covered": 0,
+        "estimated_cost_usd": 0.016616,
+        "expected_core_facts": 6,
+        "named_worker_exercised": false,
+        "runtime_status": "incomplete",
+        "status_reasons": [
+          "runtime_stuck"
+        ],
+        "unsupported_claims": []
+      },
+      "id": "transcript-late-correction"
+    },
+    {
+      "delegated": {
+        "answer_quality": "fail_tool_call_as_answer",
+        "calls": 1,
+        "citation_review": "The retained answer is a malformed tool-call fence, not an answer or source evidence.",
+        "core_facts_covered": 0,
+        "estimated_cost_usd": 0.001362,
+        "expected_core_facts": 4,
+        "method_failure": "Malformed JSON in the returned spawn_subagent fence was not executed; no read or child occurred.",
+        "named_worker_exercised": false,
+        "runtime_status": "non_delegating",
+        "status_reasons": [
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "unsupported_claims": []
+      },
+      "direct": {
+        "answer_quality": "needs_minor_correction",
+        "calls": 3,
+        "citation_review": "All quoted passages and line references match archive-review.txt:1-4 and archive-addendum.txt:1. The answer correctly withholds a vendor and price.",
+        "core_facts_covered": 4,
+        "estimated_cost_usd": 0.00321,
+        "expected_core_facts": 4,
+        "named_worker_exercised": false,
+        "runtime_status": "completed",
+        "status_reasons": [],
+        "unsupported_claims": [
+          "The closing claim that proposals were gathered is stronger than the recorded plan to collect proposals; the core deferral/absence claims are supported."
+        ]
+      },
+      "id": "transcript-absent-answer"
+    }
+  ],
+  "corpus_sha256": "994ea96487bba0866ae1b6432fe130177b4cdf0cb4d44e9e4f342b771f3178dd",
+  "decision": "Do not adopt automatic delegation. Named-reader invocation is unreliable in this fenced-tool experiment; worker quality and savings remain unestablished.",
+  "estimated_combined_spend_usd": 0.144963,
+  "estimated_run_spend_usd": 0.055944,
+  "estimated_totals_usd": {
+    "delegated": 0.02497,
+    "direct": 0.030974
+  },
+  "human_validated": false,
+  "initial_model_calls": {
+    "glm-5.3": 35,
+    "glm-5.3-flash": 6
+  },
+  "limitations": [
+    "Four synthetic cases and one fixed direct-then-delegated order; not a statistical evaluation.",
+    "The repeat followed an earlier run, so provider cache warmth and transient latency may differ.",
+    "Both the main and worker use the configured default reasoning behavior within the existing 2048-output-token, eight-model-call-per-arm caps.",
+    "All repeat calls used the main model; no quality/cost conclusion about the cheaper worker can be drawn.",
+    "Rates are published-price estimates from reported usage, not an account invoice; the Flash promotion expires on 2026-09-09 at 16:00 UTC.",
+    "Original machine reports remain immutable with their pending quality-review field; this sidecar contains the assistant source review."
+  ],
+  "malformed_final_tool_json": {
+    "message": "Extra data",
+    "position": 700
+  },
+  "method": "Manual inspection of every retained answer against the pinned source files and expected facts; core fact counts are descriptive, not a calibrated model score.",
+  "repeat_model_calls": {
+    "glm-5.3": 35
+  },
+  "report_sha256": "ae17588348eaba7855f459112c9ae97f8e0821decd0b912a915413525de7dc86",
+  "status": "completed_by_assistant"
+}

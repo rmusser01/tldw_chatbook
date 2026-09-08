@@ -1,0 +1,1527 @@
+{
+  "cases": [
+    {
+      "category": "repository",
+      "delegated": {
+        "answer": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.```tool_call\n{\"name\": \"spawn_subagent\", \"arguments\": {\"agent\": \"bulk-reader\", \"task\": \"In this workspace, read the following files completely (do not assume contents):\\n1. repo/leases.py\\n2. repo/lease-notes.md\\n\\nQuestion to answer with quoted evidence: What TTL (time-to-live) applies to (a) ordinary projects, (b) Atlas, and (c) renewal requests? Cite the exact implementation (file, line numbers, and quoted code/constants), and explain the renewal exception described in the notes and/or code.\\n\\nReturn:\\n- The TTL values/constants for ordinary projects, Atlas, and renewal requests, each with a direct quote of the implementing code or note text plus file path and line numbers.\\n- Any quoted passage explaining why renewals get an exception (e.g., rationale, special-case logic, conditions under which it applies).\\n- A concise summary answering the question.\"}}}",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 21238,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 379,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1001
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "unknown",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "03c5911fc5f647299128388d514840a0",
+        "runtime_status": "done",
+        "status": "non_delegating",
+        "status_reasons": [
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "tool_reads": [],
+        "total_cost_usd": null,
+        "worker_output": ""
+      },
+      "direct": {
+        "answer": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returne",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 3432,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 61,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 821
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 3849,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 77,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 270
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 31213,
+            "model": "glm-5.3",
+            "output_truncated": true,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1024,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 804,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 397
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "unknown",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "225d5d5fb91347cab19b86f7c8f162ca",
+        "runtime_status": "done",
+        "status": "incomplete",
+        "status_reasons": [
+          "retained_output_limit"
+        ],
+        "tool_reads": [
+          {
+            "path": "repo/leases.py",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/lease-notes.md",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          }
+        ],
+        "total_cost_usd": null,
+        "worker_output": ""
+      },
+      "expected_facts": [
+        "Ordinary initial leases use 900 seconds.",
+        "Atlas initial leases use 1800 seconds.",
+        "Renewals are capped at 600 seconds for both ordinary projects and Atlas.",
+        "The 1200-second note is a rejected proposal, not the current policy."
+      ],
+      "id": "repo-ttl-exceptions",
+      "question": "What TTL applies to ordinary projects, Atlas, and renewal requests? Cite the implementation and explain the renewal exception.",
+      "sources": [
+        {
+          "bytes": 351,
+          "lines": 10,
+          "path": "repo/leases.py",
+          "sha256": "14f7de8e4aaee90b7d0066a3e8615e1a2d6721a56e6f1ba17eaccf490f1d71a4"
+        },
+        {
+          "bytes": 209,
+          "lines": 4,
+          "path": "repo/lease-notes.md",
+          "sha256": "4751f8fd23cf816fc7267b11594b8a01dde072fb0dc50b9a1b8aeef10bb16c2b"
+        }
+      ]
+    },
+    {
+      "category": "repository",
+      "delegated": {
+        "answer": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returne",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 15276,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 535,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1003
+            }
+          },
+          {
+            "agent_role": "worker",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 4620,
+            "model": "glm-5.3-flash",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3-flash",
+              "output": 84,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1145
+            }
+          },
+          {
+            "agent_role": "worker",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 4668,
+            "model": "glm-5.3-flash",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3-flash",
+              "output": 120,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1372
+            }
+          },
+          {
+            "agent_role": "worker",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "length",
+            "index": 4,
+            "latency_ms": 25361,
+            "model": "glm-5.3-flash",
+            "output_truncated": true,
+            "provider": "ZAI",
+            "provider_output_limited": true,
+            "status": "incomplete",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3-flash",
+              "output": 2048,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1961
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 5,
+            "latency_ms": 4620,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 122,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 2224
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 6,
+            "latency_ms": 3692,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 3136,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 41,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 657
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 7,
+            "latency_ms": 5561,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 3776,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 53,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 192
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 8,
+            "latency_ms": 30767,
+            "model": "glm-5.3",
+            "output_truncated": true,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 3904,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 1311,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 142
+            }
+          }
+        ],
+        "child_runs": [
+          {
+            "agent_definition": "bulk-reader",
+            "result": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returne",
+            "run_id": "b975b21c499a46b7becd17da5b22c072",
+            "status": "done"
+          }
+        ],
+        "cost_status": "unknown",
+        "delegation_occurred": true,
+        "primary_error": null,
+        "run_id": "7ba7f6efc87941459150745d4ed9b2a6",
+        "runtime_status": "done",
+        "status": "incomplete",
+        "status_reasons": [
+          "retained_output_limit",
+          "provider_output_token_limit"
+        ],
+        "tool_reads": [
+          {
+            "path": "repo/profiles.py",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/store.py",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/notes.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/profiles.py",
+            "run_kind": "subagent",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/store.py",
+            "run_kind": "subagent",
+            "tool": "fs_read"
+          }
+        ],
+        "total_cost_usd": null,
+        "worker_output": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returne"
+      },
+      "direct": {
+        "answer": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.## Answer\n\n**Ordering in `save_profile` (repo/profiles.py:2-6):**\n\n1. `store.write(profile)` \u2014 line 3\n2. `store.commit()` \u2014 line 4\n3. `cache.pop(profile.id, None)` \u2014 line 5\n\nSo the cache is invalidated **only after both the write and a successful commit**, as the last step of the function: `\"store.write(profile)\"` \u2192 `\"store.commit()\"` \u2192 `\"cache.pop(profile.id, None)\"` (repo/profiles.py:3-5).\n\n**Does a failed commit clear the cache? No.**\n\n`store.commit()` is documented to `\"Return on success; raise CommitFailed on failure. No hidden retries.\"` (repo/store.py:7), and it indeed does `raise CommitFailed(\"commit failed\")` when `self.fail_commit` is set (repo/store.py:9). Because there is no try/except around the commit in `save_profile`, the `CommitFailed` exception propagates out of the function at line 4, and `cache.pop(profile.id, None)` on line 5 is never executed. A failed commit therefore leaves the stale cache entry intact.\n\n**Consequence:** on the next read, `load_profile` short-circuits on the cache \u2014 `\"if profile_id not in cache: cache[profile_id] = store.read(profile_id)\"` then `\"return cache[profile_id]\"` (repo/profiles.py:9-11) \u2014 so callers keep getting the cached (pre-write) value until some later successful `save_profile` pops the key.\n\n**On the notes file:** repo/notes.txt:1 mentions only that `\"A future background cache invalidator was discussed. It has not been implemented.\"` \u2014 so there is no other mechanism that would clear the cache in the failed-commit case.\n\n**Note on the invalidation mechanism itself:** `cache.pop(profile.id, None)` removes the key lazily rather than proactively updating it; correctness depends entirely on this line running, which it does not on the commit-failure path.",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 6625,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 704,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 30,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 119
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 2828,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 50,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 134
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 4532,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 896,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 90,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 205
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 4,
+            "latency_ms": 17284,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1088,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 45,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 521
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 5,
+            "latency_ms": 2769,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 32,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1839
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 6,
+            "latency_ms": 16694,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1792,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 622,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 135
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "unknown",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "9a7a640398f34c43abced1cd7d3b68ea",
+        "runtime_status": "done",
+        "status": "completed",
+        "status_reasons": [],
+        "tool_reads": [
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/profiles.py",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/store.py",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/notes.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          }
+        ],
+        "total_cost_usd": null,
+        "worker_output": ""
+      },
+      "expected_facts": [
+        "save_profile writes, commits, then removes only the entry for profile.id.",
+        "A raised commit failure prevents execution reaching cache.pop.",
+        "The exception propagates from this function.",
+        "No implemented background invalidator is established by these files."
+      ],
+      "id": "repo-cache-order",
+      "question": "When is the cache invalidated by save_profile? Does a failed database commit clear it? Give the ordering and evidence.",
+      "sources": [
+        {
+          "bytes": 341,
+          "lines": 11,
+          "path": "repo/profiles.py",
+          "sha256": "83c9aa5c3ba99a673419e2b4d5267289b9081980bf5ff51bbae7d8ef383c367c"
+        },
+        {
+          "bytes": 323,
+          "lines": 10,
+          "path": "repo/store.py",
+          "sha256": "d832244a8d94be7c1689ef63001e0d7956e64d63e710b301c77e8c643abf0b20"
+        },
+        {
+          "bytes": 82,
+          "lines": 1,
+          "path": "repo/notes.txt",
+          "sha256": "11b60e894f169e6c912116c09a46dd6a74a64a8916cdcf55a775121b7b9df22d"
+        }
+      ]
+    },
+    {
+      "category": "transcript",
+      "delegated": {
+        "answer": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returne",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 12759,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 896,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 438,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 107
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 3520,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 91,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1338
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 5803,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 2240,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 149,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 401
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 4,
+            "latency_ms": 2435,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 2624,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 19,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 624
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 5,
+            "latency_ms": 28063,
+            "model": "glm-5.3",
+            "output_truncated": true,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 3200,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 826,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 80
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "unknown",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "aa109f2094854413a21268358e8a600d",
+        "runtime_status": "done",
+        "status": "non_delegating",
+        "status_reasons": [
+          "retained_output_limit",
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "tool_reads": [
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_list"
+          }
+        ],
+        "total_cost_usd": null,
+        "worker_output": ""
+      },
+      "direct": {
+        "answer": "",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 3638,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 704,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 35,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 119
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 4403,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 93,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 148
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 4574,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 896,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 73,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 407
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 4,
+            "latency_ms": 4367,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1280,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 90,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 304
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 5,
+            "latency_ms": 5602,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1536,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 116,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 457
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 6,
+            "latency_ms": 3947,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1984,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 94,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 559
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 7,
+            "latency_ms": 6140,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 2496,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 208,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 3986
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 8,
+            "latency_ms": 12426,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 6464,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 600,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 4392
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "unknown",
+        "delegation_occurred": false,
+        "primary_error": "step budget exhausted",
+        "run_id": "db14c8745f7c4fc5b97622544a097a43",
+        "runtime_status": "stuck",
+        "status": "incomplete",
+        "status_reasons": [
+          "runtime_stuck"
+        ],
+        "tool_reads": [
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_list"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_glob"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_glob"
+          },
+          {
+            "path": "meetings/falcon-review.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_grep"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_grep"
+          }
+        ],
+        "total_cost_usd": null,
+        "worker_output": ""
+      },
+      "expected_facts": [
+        "Monday 21 September at 09:00 UTC replaces Friday 18 September.",
+        "Initial audience is 20 internal accounts.",
+        "Ravi owns the rollout.",
+        "The 45,000-dollar cap replaces the 80,000-dollar proposal.",
+        "Security signoff is pending; launch is conditional, not approved.",
+        "The quoted adversarial test string is not an instruction or approval."
+      ],
+      "id": "transcript-late-correction",
+      "question": "What is the latest Falcon rollout plan: schedule, audience, owner, budget and approval status? Identify which opening statements were superseded and cite exact evidence.",
+      "sources": [
+        {
+          "bytes": 80096,
+          "lines": 659,
+          "path": "meetings/falcon-review.txt",
+          "sha256": "d4a8a0f60dd3e111a65f32cd2163d01e56db507cd69ac72044e248f882a90a79"
+        }
+      ]
+    },
+    {
+      "category": "transcript",
+      "delegated": {
+        "answer": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.## Answer\n\n**The provided record establishes that no vendor was selected and no contract price was approved.** The question cannot be answered with a specific vendor or dollar figure because the decision was explicitly deferred, and no subsequent record of the deferred decision exists in the workspace.\n\n### What the record shows\n\n**`meetings/archive-review.txt`** \u2014 the meeting ended with no decision:\n\n- Line 1: `[10:00] Nia: We will collect proposals from Cedar and Birch.` \u2014 Cedar and Birch were the two candidate vendors, but this only establishes proposal collection, not selection.\n- Line 2: `[10:05] Omar: The estimates are not comparable; Cedar excluded support.` \u2014 the bids could not be compared (Cedar's estimate omitted support).\n- Line 3: `[10:10] Nia: Defer both vendor selection and budget approval until the next meeting.` \u2014 both the vendor choice and any price approval were explicitly postponed.\n- Line 4: `[10:12] Omar: Agreed. No decision today.` \u2014 the meeting itself confirms no decision was made.\n\n**`meetings/archive-addendum.txt`** \u2014 no record of the deferred decision:\n\n- Line 1: `This addendum lists the agenda only: vendor proposals, migration timing and support coverage. No subsequent decision is recorded here.` \u2014 the addendum is agenda-only and expressly states that no subsequent decision is recorded.\n\n### Conclusion\n\n- **Selected vendor:** None established. Cedar and Birch were the vendors under consideration, but selection was deferred to a future meeting that is not documented in the provided record.\n- **Approved contract price:** None established. Budget approval was explicitly deferred, and no price figure or approval appears in either file.\n\nAny claim of a specific selected vendor or an approved contract amount would go beyond what the record supports.",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 10414,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 896,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 322,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 104
+            }
+          },
+          {
+            "agent_role": "worker",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 4167,
+            "model": "glm-5.3-flash",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3-flash",
+              "output": 77,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1061
+            }
+          },
+          {
+            "agent_role": "worker",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 7202,
+            "model": "glm-5.3-flash",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3-flash",
+              "output": 265,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1340
+            }
+          },
+          {
+            "agent_role": "worker",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 4,
+            "latency_ms": 17778,
+            "model": "glm-5.3-flash",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 0,
+              "cache_write": 0,
+              "model": "glm-5.3-flash",
+              "output": 837,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 2694
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 5,
+            "latency_ms": 4280,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 121,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 1363
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 6,
+            "latency_ms": 2820,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 2304,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 37,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 601
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 7,
+            "latency_ms": 16620,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 2880,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 625,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 142
+            }
+          }
+        ],
+        "child_runs": [
+          {
+            "agent_definition": "bulk-reader",
+            "result": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Both files were read completely (no truncation). Findings:\n\n## meetings/archive-review.txt (4 lines, read in full)\n\n- **Vendors mentioned:** Only as proposal submitters, NOT as selected:\n  - Line 1: `[10:00] Nia: \"We will collect proposals from Cedar and Birch.\"`\n- **Selection/decision status \u2014 explicitly deferred, no decision made:**\n  - Line 3: `[10:10] Nia: \"Defer both vendor selection and budget approval until the next meeting.\"`\n  - Line 4: `[10:12] Omar: \"Agreed. No decision today.\"`\n- **Contract price/budget:** No dollar amount or budget figure appears anywhere in the file. The only budget-related text is the deferral at line 3. Additionally, line 2 notes estimates are unusable for comparison: `[10:05] Omar: \"The estimates are not comparable; Cedar excluded support.\"`\n- **Absent record:** Line 3 defers both decisions to \"the next meeting,\" whose transcript/minutes are **not among these two files**. That next-meeting record is the only place the selection and budget could have been approved.\n\n## meetings/archive-addendum.txt (1 line, read in full)\n\n- Line 1: `\"This addendum lists the agenda only: vendor proposals, migration timing and support coverage. No subsequent decision is recorded here.\"`\n- **Vendor names:** None mentioned.\n- **Price/budget:** None mentioned.\n- **Self-declared limitation:** The file explicitly states it records **no decision** \u2014 it is agenda-only.\n- **Absent record:** It implicitly presupposes a later decision point (\"subsequent decision\") but explicitly does not record one, and references no other document by name.\n\n## Answer to the question\n\n**Neither file establishes a vendor selection or an approved contract price.** Based solely on these two records:\n- No vendor was selected \u2014 selection was explicitly deferred (\"Defer both vendor selection and budget approval until the next meeting\", archive-review.txt:3) with \"No decision today\" (line 4).\n- No contract price was approved \u2014 no amount appears in either file; budget approval was deferred identically.\n- Cedar and Birch are named only as prospective proposal submitters (archive-review.txt:1); nothing ranks or chooses between them. Line 2 even flags the estimates as non-comparable.\n- The deciding record would be the \"next meeting\" referenced in archive-review.txt:3, which is absent from the provided workspace files. If a selection exists, it must be established from that missing record, not from these two files.\n\n**Unresolved:** Whether any other file in the workspace (e.g., a next-meeting transcript) records the outcome \u2014 the two specified files do not.",
+            "run_id": "77f8a24fd78b4234999a2ca17fcf8ce0",
+            "status": "done"
+          }
+        ],
+        "cost_status": "unknown",
+        "delegation_occurred": true,
+        "primary_error": null,
+        "run_id": "feb1eeef69c244b7ad2dd7226def37ba",
+        "runtime_status": "done",
+        "status": "completed",
+        "status_reasons": [],
+        "tool_reads": [
+          {
+            "path": "meetings/archive-review.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "meetings/archive-addendum.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "meetings/archive-review.txt",
+            "run_kind": "subagent",
+            "tool": "fs_read"
+          },
+          {
+            "path": "meetings/archive-addendum.txt",
+            "run_kind": "subagent",
+            "tool": "fs_read"
+          }
+        ],
+        "total_cost_usd": null,
+        "worker_output": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Both files were read completely (no truncation). Findings:\n\n## meetings/archive-review.txt (4 lines, read in full)\n\n- **Vendors mentioned:** Only as proposal submitters, NOT as selected:\n  - Line 1: `[10:00] Nia: \"We will collect proposals from Cedar and Birch.\"`\n- **Selection/decision status \u2014 explicitly deferred, no decision made:**\n  - Line 3: `[10:10] Nia: \"Defer both vendor selection and budget approval until the next meeting.\"`\n  - Line 4: `[10:12] Omar: \"Agreed. No decision today.\"`\n- **Contract price/budget:** No dollar amount or budget figure appears anywhere in the file. The only budget-related text is the deferral at line 3. Additionally, line 2 notes estimates are unusable for comparison: `[10:05] Omar: \"The estimates are not comparable; Cedar excluded support.\"`\n- **Absent record:** Line 3 defers both decisions to \"the next meeting,\" whose transcript/minutes are **not among these two files**. That next-meeting record is the only place the selection and budget could have been approved.\n\n## meetings/archive-addendum.txt (1 line, read in full)\n\n- Line 1: `\"This addendum lists the agenda only: vendor proposals, migration timing and support coverage. No subsequent decision is recorded here.\"`\n- **Vendor names:** None mentioned.\n- **Price/budget:** None mentioned.\n- **Self-declared limitation:** The file explicitly states it records **no decision** \u2014 it is agenda-only.\n- **Absent record:** It implicitly presupposes a later decision point (\"subsequent decision\") but explicitly does not record one, and references no other document by name.\n\n## Answer to the question\n\n**Neither file establishes a vendor selection or an approved contract price.** Based solely on these two records:\n- No vendor was selected \u2014 selection was explicitly deferred (\"Defer both vendor selection and budget approval until the next meeting\", archive-review.txt:3) with \"No decision today\" (line 4).\n- No contract price was approved \u2014 no amount appears in either file; budget approval was deferred identically.\n- Cedar and Birch are named only as prospective proposal submitters (archive-review.txt:1); nothing ranks or chooses between them. Line 2 even flags the estimates as non-comparable.\n- The deciding record would be the \"next meeting\" referenced in archive-review.txt:3, which is absent from the provided workspace files. If a selection exists, it must be established from that missing record, not from these two files.\n\n**Unresolved:** Whether any other file in the workspace (e.g., a next-meeting transcript) records the outcome \u2014 the two specified files do not."
+      },
+      "direct": {
+        "answer": "Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.Provider returned an unsupported response shape.The provided record does not establish either fact. No vendor was selected and no contract price was approved \u2014 the decision was expressly deferred.\n\n- Proposals were to be collected from two vendors: \"We will collect proposals from Cedar and Birch.\" (`meetings/archive-review.txt:1`)\n- Estimates were deemed incomparable: \"The estimates are not comparable; Cedar excluded support.\" (`meetings/archive-review.txt:2`)\n- The decision was deferred: \"Defer both vendor selection and budget approval until the next meeting.\" (`meetings/archive-review.txt:3`)\n- This was confirmed: \"Agreed. No decision today.\" (`meetings/archive-review.txt:4`)\n- The addendum contains no subsequent decision: \"This addendum lists the agenda only: vendor proposals, migration timing and support coverage. No subsequent decision is recorded here.\" (`meetings/archive-addendum.txt:1`)\n\nIn short, the record establishes that vendor selection and budget/contract-price approval were postponed to a future meeting, and the addendum documents no follow-up decision. Any specific vendor or price would be unsupported by these documents.",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 3933,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 704,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 60,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 116
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 3311,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 37,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 364
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": null,
+            "cost_status": "unknown",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 7958,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1088,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 276,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 161
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "unknown",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "f0981b14324842c0bfa00d8e2ddc32df",
+        "runtime_status": "done",
+        "status": "completed",
+        "status_reasons": [],
+        "tool_reads": [
+          {
+            "path": "meetings/archive-review.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "meetings/archive-addendum.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          }
+        ],
+        "total_cost_usd": null,
+        "worker_output": ""
+      },
+      "expected_facts": [
+        "No vendor selection is recorded in the supplied sources.",
+        "No contract price is approved or stated.",
+        "Selection and budget approval were deferred.",
+        "Do not fabricate a vendor, price or later-meeting outcome."
+      ],
+      "id": "transcript-absent-answer",
+      "question": "Which vendor was selected for the archive migration, and what contract price was approved? State what the provided record establishes.",
+      "sources": [
+        {
+          "bytes": 259,
+          "lines": 4,
+          "path": "meetings/archive-review.txt",
+          "sha256": "600012995490a748597377212b24cf3771c717d22d2c350ae189541f54e4e654"
+        },
+        {
+          "bytes": 135,
+          "lines": 1,
+          "path": "meetings/archive-addendum.txt",
+          "sha256": "c00ec0323d0fadc0a964dcc23fd67684372084b3375b2f66eff40920403fc911"
+        }
+      ]
+    }
+  ],
+  "corpus": {
+    "id": "bulk-reader-pilot-v1",
+    "schema_version": 1,
+    "sha256": "994ea96487bba0866ae1b6432fe130177b4cdf0cb4d44e9e4f342b771f3178dd"
+  },
+  "execution_order": [
+    "direct",
+    "delegated"
+  ],
+  "experiment": "bulk-reader-direct-vs-delegated",
+  "generated_at_utc": "2026-09-08T06:49:08.953967+00:00",
+  "limits": {
+    "max_output_tokens_per_call": 2048,
+    "max_provider_calls_per_arm": 8,
+    "max_recorded_output_chars": 16000,
+    "max_tool_call_seconds": 30.0,
+    "max_total_tokens_per_arm": 100000,
+    "max_wall_seconds_per_arm": 120.0,
+    "provider_request_retries": 0,
+    "provider_request_timeout_seconds": 60.0,
+    "supported_live_providers": [
+      "Moonshot",
+      "ZAI"
+    ]
+  },
+  "models": {
+    "main": "glm-5.3",
+    "worker": "glm-5.3-flash"
+  },
+  "provider": {
+    "base_url": "https://api.z.ai/api/paas/v4",
+    "execution_key": "zai",
+    "requested": "ZAI",
+    "resolved": "ZAI",
+    "transport_policy": {
+      "request_retries": 0,
+      "request_retry_delay_seconds": 0.0,
+      "request_timeout_seconds": 60.0
+    }
+  },
+  "quality_review": {
+    "rubric": {
+      "citation_accuracy": "Check quotations and cited line ranges against the materialized source.",
+      "decision": "Adopt only after both arms are reviewed; one small pilot is not a general savings or quality claim.",
+      "factual_coverage": "Record which expected facts are present and correct.",
+      "qualifications": "Retain exceptions, corrections and uncertainty.",
+      "unsupported_claims": "List factual claims not supported by the submitted files."
+    },
+    "status": "pending"
+  },
+  "schema_version": 1,
+  "status": "incomplete"
+}

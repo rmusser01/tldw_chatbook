@@ -103,3 +103,11 @@ and transient latency can favor the second arm, so the output is not a
 statistical comparison. There is no proven quality or cost saving until a live
 report for an explicitly selected model pair has been manually reviewed, and a
 small synthetic pilot cannot establish a general routing policy.
+
+## Recorded trial
+
+The [2026-09-08 ZAI trial](../../../../backlog/docs/bulk-reader-zai-live-2026-09-08.md)
+used GLM-5.3 and GLM-5.3-Flash. Live verification fixed a pricing-config lookup
+and ZAI stream-control issue. In the corrected repeat, all four delegated arms
+failed to run the named reader, so the pilot does not establish reader quality
+or savings. Keep failures and their spend when interpreting the reports.

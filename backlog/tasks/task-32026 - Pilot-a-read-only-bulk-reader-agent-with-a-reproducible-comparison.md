@@ -1,11 +1,11 @@
 ---
 id: TASK-32026
 title: Pilot a read-only bulk-reader agent with a reproducible comparison
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 04:45'
-updated_date: '2026-09-08 06:37'
+updated_date: '2026-09-08 07:12'
 labels: []
 dependencies: []
 ---
@@ -22,13 +22,13 @@ Evaluate whether a cheaper named reader can reduce the total cost of answering r
 - [x] #2 The preset permits only workspace file discovery and reads and requests quoted findings with explicit gaps; its selected model reaches the Console provider boundary.
 - [x] #3 A reproducible comparison exercises the existing reader runtime on nonsensitive repository and transcript fixtures, records both worker and main requests, and leaves missing usage or price unknown.
 - [x] #4 Targeted runtime, UI, and comparison checks pass and documentation distinguishes a runnable experiment from measured model-quality or cost results.
-- [ ] #5 A user-selected supported model pair has a recorded live comparison and manual assessment of evidence, quality, and total cost; failed or unavailable measurements remain explicit.
+- [x] #5 A user-selected supported model pair has a recorded live comparison and manual assessment of evidence, quality, and total cost; failed or unavailable measurements remain explicit.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Add an editable read-only bulk-reader preset and verify real named-agent model/tool behavior. 2. Add a scratch-corpus direct/delegated comparison with per-call accounting and manual quality review. 3. Run targeted checks and the chosen live model comparison. ADR required: no. ADR path: N/A. Reason: reuse existing named-agent/provider contracts. Plan: Docs/superpowers/plans/2026-09-07-bulk-reader-pilot.md; spec: Docs/superpowers/specs/2026-09-07-bulk-reader-pilot-design.md.
+1. Add an editable read-only bulk-reader preset and verify real named-agent model/tool behavior. 2. Add a scratch-corpus direct/delegated comparison with per-call accounting and manual quality review. 3. Run targeted checks and the chosen live model comparison. ADR required: no. ADR path: N/A. Reason: reuse existing named-agent/provider contracts. Plan: Docs/superpowers/plans/2026-09-07-bulk-reader-pilot.md; spec: Docs/superpowers/specs/2026-09-07-bulk-reader-pilot-design.md. Live continuation: reproduce the normalized-config pricing loss with a real load_settings profile, add a regression through the live entry point, repair only pricing lookup, retain the original live report and separately calculate corrected estimates from recorded provider usage. The first live trace also exposed synthetic fallback text for ZAI reasoning/control deltas. Reproduce through the real ZAI stream and Console normalizer, normalize provider-local empty visible content without changing native tool deltas or terminal metadata, verify targeted regressions, then repeat the comparison with the corrected runtime.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -44,5 +44,11 @@ Worktree evidence: 19 focused preset/UI/adapter/regression tests passed, includi
 
 ADR required: no. ADR path: N/A. Existing named-agent/provider contracts are reused; no schema, dependency or automatic routing is introduced. Added an incident-based testing lesson about verifying model selection at the provider boundary.
 
-Live validation remains pending after the user delegated model selection on 2026-09-08. Selected ZAI glm-5.3 (main) and glm-5.3-flash (worker), using the existing same-provider route. The official model pages document function calling and compatible text parameters. The CLI preflight against an isolated copy of the relevant configured settings exited 2 with "zai is not ready: Missing API key. Set ZAI_API_KEY or add api_key under [api_settings.zai]." Neither supported provider had a configured or session-environment credential. No model request was made, no comparison report was written, and the original config remained byte-identical. Model quality, account access and savings remain unmeasured. Acceptance criterion 5 stays open and status remains In Progress. The selected pair, dated prices and preflight evidence are recorded in backlog/docs/bulk-reader-zai-preflight-2026-09-08.md.
+Live comparison completed on 2026-09-08 after the user delegated model choice and supplied a temporary credential. Used ZAI glm-5.3 (main) / glm-5.3-flash (reader); no key was saved to config or artifacts, and both runs verified the original config remained unchanged. The first 41-call run exposed two defects: normalized load_settings pricing was ignored, and stripped ZAI reasoning/control chunks generated synthetic fallback text. Added real configuration/stream regressions, repaired the live pricing lookup and provider-local empty-content representation, and retained the initial raw report plus a separate $0.089019 pricing correction.
+
+The corrected 35-call repeat delivered core requested facts in three of four direct cases (one minor unsupported closing claim). All four delegated arms failed to run the named reader: one used a direct-reading fallback, two stalled on repeated spawn calls, and one returned malformed tool-call JSON. No worker-model call occurred in the repeat, so its $0.055944 total does not establish reader savings or quality. Estimated total spend across both attempts was $0.144963. All failed arms and spend remain included. The decision is to keep the explicit preset and defer automatic delegation pending reliable named-reader invocation. Full assistant source review, immutable raw reports and limitations: backlog/docs/bulk-reader-zai-live-2026-09-08.md.
+
+Live-fix verification: 72 targeted checks passed; 11 native-tool loopback checks passed after allowing the local HTTP server; 21 evaluator/ZAI regression checks passed in the integrated checkout. Scoped four-file review approved without Critical/Important findings. Existing ZAI lint findings were compared with baseline and are unchanged. One unrelated provider-contract test still omits required native_tools; its test bytes and the adapter constructor signature are unchanged by the fixes. No full suite was run. ADR required: no; these repairs preserve existing provider/configuration boundaries.
+
+Acceptance criterion 5 is satisfied by the recorded comparison and explicit assessment of failed/unavailable measurements. This pilot produced a negative adoption decision, not a measured savings claim.
 <!-- SECTION:NOTES:END -->

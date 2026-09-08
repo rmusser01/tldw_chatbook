@@ -12316,3 +12316,23 @@ the selection at the final dispatch boundary as well as at the runtime callback.
 If parent and child share an adapter, include concurrent calls and continuation
 ownership in that check. Configuration persistence alone cannot demonstrate
 that a cheaper worker was used or that its usage was priced correctly.
+
+## Exercise real config and typed streams in a reader pilot (TASK-32026, 2026-09-08)
+
+**Incident.** The first live bulk-reader comparison made 41 calls after the
+focused offline checks were green. Every cost was unknown despite complete
+provider usage and configured prices: real `load_settings()` kept pricing
+under `COMPREHENSIVE_CONFIG_RAW`, while the evaluator read only the top level.
+Separately, ZAI stripped private reasoning from chunks into empty deltas; the
+Console's generic mapping parser rendered an unsupported-shape message for each
+one. Those locally generated strings polluted agent history and consumed output
+limits. The fake provider streams had not exercised this sanitized frame shape.
+
+**What worked.** A real-loader regression failed for normalized config while
+its raw-config control passed. A typed ZAI stream through the real Console
+normalizer reproduced three diagnostic chunks around one valid text chunk.
+Provider-local empty visible content removed the noise while native-tool
+loopback tests preserved fragments and private continuation metadata. Keep raw
+live captures immutable and put repricing/review in separate artifacts. The
+corrected repeat still failed to invoke the reader in all four delegated arms;
+fixing the harness did not establish a model-quality or savings benefit.
