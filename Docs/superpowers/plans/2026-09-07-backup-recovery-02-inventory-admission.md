@@ -319,7 +319,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-5"></a>
 ## Task 5: Fence all supported startup routes before storage bootstrap
 
-**Backlog:** [TASK-31988](../../../backlog/tasks/task-31988%20-%20Fence-all-supported-startup-routes-before-storage-bootstrap.md) — To Do.
+**Backlog:** [TASK-31988](../../../backlog/tasks/task-31988%20-%20Fence-all-supported-startup-routes-before-storage-bootstrap.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -348,7 +348,7 @@ def register_pending(bootstrap_root: Path, operation_id: str,
                      selectors: tuple[Path, ...]) -> None: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_bootstrap.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_bootstrap.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -363,19 +363,19 @@ def test_custom_root_pending_operation_blocks_startup(tmp_path):
     assert reason == "recovery_pending"
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_bootstrap.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_bootstrap.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Store versioned private admission associations in the fixed default bootstrap directory, with locally verified selectors/namespaces and custom control roots. Reject overlap with replacement targets; archives cannot supply these records. Register durably before publication.
+- [x] **Step 3:** Store versioned private admission associations in the fixed default bootstrap directory, with locally verified selectors/namespaces and custom control roots. Reject overlap with replacement targets; archives cannot supply these records. Register durably before publication.
 
-- [ ] **Step 4:** Move the minimal check ahead of app/config imports for console script and python -m, and ahead of config reads for direct app, web-server, MCP, and headless persistence launchers. Inventory actual supported routes with AST/import subprocess tests, including multiprocessing spawn behavior. Refuse uncertain scope rather than guessing disjointness.
+- [x] **Step 4:** Move the minimal check ahead of app/config imports for console script and python -m, and ahead of config reads for direct app, web-server, MCP, and headless persistence launchers. Inventory actual supported routes with AST/import subprocess tests, including multiprocessing spawn behavior. Refuse uncertain scope rather than guessing disjointness.
 
-- [ ] **Step 5:** Add the same admission contract at the registered private SQLite open seam and owned file entry boundaries so a missed high-level launcher cannot advertise full protection. Memory-only/foreign read-only sources retain their classified exemptions; ordinary admitted opens must be released on shutdown.
+- [x] **Step 5:** Add the same admission contract at the registered private SQLite open seam and owned file entry boundaries so a missed high-level launcher cannot advertise full protection. Memory-only/foreign read-only sources retain their classified exemptions; ordinary admitted opens must be released on shutdown.
 
-- [ ] **Step 6:** A pending or corrupt scope returns a recovery-required result without migrations, cleanup, default config creation, process spawning, or network activity. At this stage print a bounded recovery-required message; the recovery UI arrives in its own task. Plain unrelated profile startup is allowed only with positively verified disjoint mappings.
+- [x] **Step 6:** A pending or corrupt scope returns a recovery-required result without migrations, cleanup, default config creation, process spawning, or network activity. At this stage print a bounded recovery-required message; the recovery UI arrives in its own task. Plain unrelated profile startup is allowed only with positively verified disjoint mappings.
 
-- [ ] **Step 7:** Test custom-root disappearance, corrupt fixed records, catalog loss, interrupted registration, config replacement, and raw direct-app launch with import-time sentinels. Preserve unknown records. Clearing fences will be wired only through the later journal commit API.
+- [x] **Step 7:** Test custom-root disappearance, corrupt fixed records, catalog loss, interrupted registration, config replacement, and raw direct-app launch with import-time sentinels. Preserve unknown records. Clearing fences will be wired only through the later journal commit API.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -387,7 +387,7 @@ if not allowed:
 # Ordinary application loading follows only on the admitted branch.
 ```
 
-- [ ] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 8:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -397,11 +397,11 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 python -m pytest Tests/ProductionApp/test_service_composition_lifecycle.py -q
 ```
 
-- [ ] **Step 9:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 9:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 10:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): fence all supported startup routes before storage bootstrap`. Recheck task-ID collisions
   before merge and preserve unrelated work.
