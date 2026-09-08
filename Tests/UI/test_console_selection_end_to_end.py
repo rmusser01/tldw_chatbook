@@ -40,6 +40,7 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, Input
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_left_rail import make_console_pilot
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -497,7 +498,7 @@ class _StubRunStatusScreen(Screen):
         return self._run_status
 
 
-class _FeedbackTranscriptApp(App[None]):
+class _FeedbackTranscriptApp(ConsolidatedCSSApp):
     """Drag -> menu harness with app-level capture of feedback requests.
 
     The default screen is a plain ``Screen`` (no
