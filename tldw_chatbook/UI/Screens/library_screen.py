@@ -11569,11 +11569,28 @@ class LibraryScreen(BaseAppScreen):
             return None
 
     def _library_entry_canvas_owner(self) -> Widget | None:
-        """Return the active route child without treating recovery chrome as one."""
+        """Return the active route child without treating recovery chrome as one.
+
+        task-32065: "without treating recovery chrome as one" used to rest on
+        that chrome being hidden -- the ordinary ``LibraryEmergencyReturn``
+        normally is. A VISIBLE return control (this task's Media "‹ Library",
+        and the ordinary bar below 64 columns) then became the route owner,
+        which is neither a route nor a focus-restore target. Both are skipped
+        by identity now, so the answer is the same whether or not they show.
+        """
         host = self._library_entry_canvas_host()
         if host is None:
             return None
-        return next((child for child in host.children if child.display), None)
+        return next(
+            (
+                child
+                for child in host.children
+                if child.display
+                and not isinstance(child, LibraryEmergencyReturn)
+                and child.id != "library-media-rail-return"
+            ),
+            None,
+        )
 
     def _capture_library_entry_focus(self) -> LibraryEntryFocusIdentity | None:
         """Capture a focused canvas descendant by stable control or row identity."""
@@ -34946,6 +34963,15 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.editing_analysis = False
             self._close_library_media_find()
             self._media_state.content_mode = "raw"
+            # task-32065: the row path reclaims the Reader's width the moment
+            # the view flips (see ``_restore_library_media_reader_width_on_open``
+            # in the selection seam), and this branch claims to mirror that
+            # state-set exactly -- it did not. With task-31979 the gap cost a
+            # few columns; below the single-stage floor it costs the whole
+            # stage, leaving a deep-linked item in an 18-cell Reader beside the
+            # list it was opened from. After the refresh, because the surface
+            # this width belongs to is composed by the callers below.
+            self.call_after_refresh(self._restore_library_media_reader_width_on_open)
             self.run_worker(
                 self._refresh_library_media_detail(
                     record_id,
