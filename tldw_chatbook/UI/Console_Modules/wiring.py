@@ -2302,6 +2302,8 @@ def build_console_controllers(
         active_native_console_session=(
             lambda: screen._session._active_native_console_session()
         ),
+        global_chat_display_name=lambda: screen._global_chat_display_name(),
+        console_transcript_style=lambda: screen._console_transcript_style(),
         current_console_conversation_id=(
             lambda: screen._session._current_console_conversation_id()
         ),

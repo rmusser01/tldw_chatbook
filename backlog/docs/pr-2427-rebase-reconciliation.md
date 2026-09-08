@@ -485,13 +485,48 @@ treated NewTaskChoice/provider buttons as three rows, whereas app overrides
 make them one row. The corrected full-tier paired controls now pin this
 incumbent behavior. Both independent reviews and scoped static checks pass.
 
-Complete affected non-Scheduling files pass289tests. The Scheduling batch
-passes331/333, exposing an old overflow viewport invalidated by TASK-31712's
+Complete affected non-Scheduling files pass 289 tests. The Scheduling batch
+passes 331/333, exposing an old overflow viewport invalidated by TASK-31712's
 intentional padding reduction and its tooltip's internal reminder noun.
 Separate reconciliation is underway under TASK-31932 plan15. Widget
-consolidation passes32/33; four DEFAULT_CSS declarations already present at
+consolidation passes 32/33; four DEFAULT_CSS declarations already present at
 `c27723b623` remain outside its allowlist (LibraryCharacterRepairDialog,
 RoleplayDraftNavigationDialog, RoleplayDraftRecoveryDialog,
 ConsoleAppearancePickerModal). No allowlist or cap was relaxed. Watchlists
 stylesheet deferral, this consolidation debt, and screen-size gates remain
 open; this checkpoint does not make the PR merge-ready.
+
+## Approved owner paydown: message presentation
+
+The active-session presentation/context bodies now live in the existing
+ConsoleMessageController. The existing live session/store ports and two
+named global-name/transcript-style callables preserve current values without
+reaching through the controller's screen handle. Screen appearance refresh
+and transcript rendering hooks remain screen-owned. The new regression
+fails before extraction and passes afterward while replacing app, session,
+and style dependencies after construction and making the controller's
+framework screen handle unusable.
+
+Exact private test seams and required constructor fixtures were retargeted.
+The first complete group exposed fifteen generation-fixture failures because
+its now-used active-session port had been deliberately unwired. Wiring that
+port and the two new ports to their actual existing sources restores the
+complete 40-test file, without swallowing errors or adding defaults.
+
+Two independent native-transcript assertions also predated TASK-31759's
+summary/transcript note actions. The plain transcript harness does not use
+ChatScreen presentation; its menu, transcript and action-service production
+sources are unchanged by this move. Both failures were reproduced separately.
+The exact ordered-label assertion now includes all six actions, and keyboard
+coverage explicitly visits all six and wraps in both directions. Captured
+message, menu-dismissal and selection checks remain intact.
+
+Final complete seven-file group: **435 passed** in 150.17 seconds. Complete
+native Console file: **351 passed** in 503.58 seconds. Independent spec and
+correctness reviews, changed-range formatting, scoped Ruff and diff checks
+pass. Evidence: `/private/tmp/pr2427-presentation-complete-final.log`,
+`/private/tmp/pr2427-presentation-native.log`,
+`/private/tmp/pr2427-presentation-owner-{red,green}.log`, and
+`/private/tmp/pr2427-more-menu-baseline.log`. The final screen measures
+17,489 lines / 517 methods; the unchanged 16,811 / 505 limits still require
+the remaining approved durability and handoff owner moves.

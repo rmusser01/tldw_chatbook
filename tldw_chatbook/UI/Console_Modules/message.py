@@ -141,7 +141,12 @@ from ...Chat.console_command_grammar import (
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
 )
-from ...Chat.console_roleplay_identity import ConsoleMessagePresentation
+from ...Chat.console_roleplay_identity import (
+    ConsoleMessagePresentation,
+    ConsolePresentationContext,
+    ConsoleTranscriptStyle,
+    resolve_console_message_presentation,
+)
 from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from ...Chat.console_message_actions import (
@@ -244,6 +249,8 @@ class ConsoleMessageController:
         sync_native_console_chat_ui: Callable[[], Any],
         active_session_is_ephemeral: Callable[[], bool],
         active_native_console_session: Callable[[], Any],
+        global_chat_display_name: Callable[[], str],
+        console_transcript_style: Callable[[], ConsoleTranscriptStyle],
         current_console_conversation_id: Callable[[], Any],
         active_console_provider_model_display: Callable[[], tuple],
         console_initial_session_title_for_workspace: Callable[[str | None], str],
@@ -330,8 +337,11 @@ class ConsoleMessageController:
                 suite also monkeypatches it at that name (4 sites in
                 `test_console_native_chat_flow.py`).
             active_native_console_session: `ConsoleSessionController._active_
-                native_console_session`, same seam, used only by
-                `_console_save_source_title`.
+                native_console_session`, same seam, used by save-source title
+                and active-session message presentation.
+            global_chat_display_name: Live global identity label, resolved
+                through the owning settings callable at use time.
+            console_transcript_style: Live screen-owned transcript preference.
             current_console_conversation_id: `ConsoleSessionController.
                 _current_console_conversation_id`, same seam, used only by
                 `_save_console_message_as_chatbook`.
@@ -388,6 +398,8 @@ class ConsoleMessageController:
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._active_session_is_ephemeral_fn = active_session_is_ephemeral
         self._active_native_console_session_fn = active_native_console_session
+        self._global_chat_display_name = global_chat_display_name
+        self._console_transcript_style = console_transcript_style
         self._current_console_conversation_id_fn = current_console_conversation_id
         self._active_console_provider_model_display_fn = (
             active_console_provider_model_display
@@ -1802,7 +1814,7 @@ class ConsoleMessageController:
         try:
             speech_snapshot = store.issue_tts_message_speech_snapshot(
                 message_id,
-                presentation_context=self._screen._console_presentation_context(),
+                presentation_context=self._console_presentation_context(),
             )
         except ConsoleSpeechSnapshotRejected as error:
             self.app_instance.notify(str(error), severity="warning")
@@ -1819,7 +1831,7 @@ class ConsoleMessageController:
         def validate_speech_snapshot(snapshot):
             return store.validate_tts_message_speech_snapshot(
                 snapshot,
-                presentation_context=self._screen._console_presentation_context(),
+                presentation_context=self._console_presentation_context(),
             )
 
         prior_message_id = self._console_speaking_message_id
@@ -2590,8 +2602,24 @@ class ConsoleMessageController:
     def _console_message_presentation(
         self, message: ConsoleChatMessage
     ) -> ConsoleMessagePresentation:
-        """Delegate to the screen-owned active-session presentation resolver."""
-        return self._screen._console_message_presentation(message)
+        """Resolve one active-session message for every visible action surface."""
+        return resolve_console_message_presentation(
+            message, self._console_presentation_context()
+        )
+
+    def _console_presentation_context(self) -> ConsolePresentationContext:
+        """Return the active Console session's live roleplay context."""
+        session = self._active_native_console_session()
+        if session is None:
+            return ConsolePresentationContext(
+                user_name=self._global_chat_display_name(),
+                transcript_style=self._console_transcript_style(),
+            )
+        store = self._ensure_console_chat_store()
+        return replace(
+            store.presentation_context(session.id, self._global_chat_display_name()),
+            transcript_style=self._console_transcript_style(),
+        )
 
     def _console_message_role_label(self, message: ConsoleChatMessage) -> str:
         """Return a user-facing role label for a Console transcript message."""

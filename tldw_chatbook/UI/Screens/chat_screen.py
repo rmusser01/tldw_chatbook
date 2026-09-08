@@ -175,12 +175,9 @@ from ...Chat.console_settings_defaults import (
 )
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
-    ConsoleMessagePresentation,
-    ConsolePresentationContext,
     ConsoleTranscriptStyle,
     normalize_chat_display_name,
     normalize_console_transcript_style,
-    resolve_console_message_presentation,
 )
 from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
@@ -2678,28 +2675,6 @@ class ChatScreen(BaseAppScreen):
         )
         return raw if type(raw) is bool else True
 
-    def _console_message_presentation(
-        self, message: ConsoleChatMessage
-    ) -> ConsoleMessagePresentation:
-        """Resolve one active-session message for every visible action surface."""
-        return resolve_console_message_presentation(
-            message, self._console_presentation_context()
-        )
-
-    def _console_presentation_context(self) -> ConsolePresentationContext:
-        """Return the active Console session's live roleplay context."""
-        session = self._session._active_native_console_session()
-        if session is None:
-            return ConsolePresentationContext(
-                user_name=self._global_chat_display_name(),
-                transcript_style=self._console_transcript_style(),
-            )
-        store = self._ensure_console_chat_store()
-        return replace(
-            store.presentation_context(session.id, self._global_chat_display_name()),
-            transcript_style=self._console_transcript_style(),
-        )
-
     def _sync_console_identity_surfaces(self) -> None:
         """Refresh mounted surfaces derived from active chat presentation."""
         self._sync_console_chat_core_state()
@@ -3192,7 +3167,7 @@ class ChatScreen(BaseAppScreen):
                 # transcript context avoids queueing behind the much broader
                 # Console sync worker during a busy mount or active turn.
                 transcript.set_presentation_context(
-                    self._console_presentation_context(),
+                    self._message._console_presentation_context(),
                     force=True,
                 )
                 transcript.set_model_thinking_visible(self._show_model_thinking())
@@ -13139,7 +13114,7 @@ class ChatScreen(BaseAppScreen):
     ) -> tuple[Any, ...]:
         """Return a lightweight signature for native transcript refresh skipping."""
         store = self._ensure_console_chat_store()
-        presentation_context = self._console_presentation_context()
+        presentation_context = self._message._console_presentation_context()
         presentation_signature = (
             presentation_context.user_name,
             presentation_context.assistant_kind,
@@ -13247,7 +13222,9 @@ class ChatScreen(BaseAppScreen):
             selected_id, selected_fork_eligibility = (
                 self._message.sync_selected_fork_eligibility(transcript)
             )
-            transcript.set_presentation_context(self._console_presentation_context())
+            transcript.set_presentation_context(
+                self._message._console_presentation_context()
+            )
             # Turn file card spec: keeps the mounted transcript's provider
             # factory current every tick -- late-bound so a session switch
             # or a bridge becoming available never needs a fresh instance.

@@ -47,6 +47,7 @@ from tldw_chatbook.Canvas.gateway import CanvasGatewayScope
 from tldw_chatbook.Canvas.models import CanvasCompatibilityIssue
 from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_roleplay_identity import ConsoleTranscriptStyle
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
@@ -251,7 +252,7 @@ async def test_roleplay_character_greeting_actions_use_live_presentation():
     )
     session.user_display_name_override = "Captain Rowan"
 
-    presentation = screen._console_message_presentation(greeting)
+    presentation = screen._message._console_message_presentation(greeting)
     assert presentation.content == "Hello Captain Rowan."
     assert presentation.speaker_label == "Alraune"
 
@@ -340,6 +341,33 @@ async def test_production_message_controller_resolves_canvas_source_only_at_open
     result = screen._message._last_console_action
     assert result.target_content is None
     assert "secret" not in repr(result)
+
+
+def test_message_presentation_owner_reads_replaced_dependencies_without_screen_backdoor():
+    screen = ChatScreen(_build_test_app())
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(title="Presentation")
+    session.user_display_name_override = "Session Name"
+    owner = screen._message
+
+    # The wiring must resolve these dependencies at call time, not capture
+    # their old objects or reach through the controller's framework handle.
+    owner._screen = object()
+    screen.app_instance = SimpleNamespace(
+        app_config={"chat_defaults": {"user_display_name": "Live Global"}}
+    )
+    screen._session = SimpleNamespace(_active_native_console_session=lambda: None)
+    screen._console_transcript_style = lambda: ConsoleTranscriptStyle.NEUTRAL
+
+    context = owner._console_presentation_context()
+    assert context.user_name == "Live Global"
+    assert context.transcript_style is ConsoleTranscriptStyle.NEUTRAL
+
+    screen._session = SimpleNamespace(_active_native_console_session=lambda: session)
+    screen._console_transcript_style = lambda: ConsoleTranscriptStyle.ROLE_ACCENTS
+    context = owner._console_presentation_context()
+    assert context.user_name == "Session Name"
+    assert context.transcript_style is ConsoleTranscriptStyle.ROLE_ACCENTS
 
 
 def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():

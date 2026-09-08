@@ -240,6 +240,8 @@ class TestSaveImageToastEscaping:
             sync_native_console_chat_ui=_unreached,
             active_session_is_ephemeral=_unreached,
             active_native_console_session=_unreached,
+            global_chat_display_name=_unreached,
+            console_transcript_style=_unreached,
             current_console_conversation_id=_unreached,
             active_console_provider_model_display=_unreached,
             console_initial_session_title_for_workspace=_unreached,

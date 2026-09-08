@@ -1064,7 +1064,7 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
         None,
     )
     screen._current_console_run_status_value = lambda: "idle"
-    screen._console_presentation_context = lambda: None
+    screen._message._console_presentation_context = lambda: None
     screen._image._build_console_image_specs = lambda _messages: {}
     screen._image._build_generation_card_specs = lambda _messages: {}
     screen._ensure_console_image_view = lambda: (
