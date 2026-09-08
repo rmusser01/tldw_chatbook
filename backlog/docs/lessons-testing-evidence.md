@@ -13960,3 +13960,16 @@ thread, and preserves borrowed connection identity (including detecting a
 replacement for an invalid borrowed handle). All 52 worker/smoke/cleanup controls
 pass without retained SQLite descriptors. Do not use wrapper cancellation as
 proof that a database owner can be safely finalized.
+
+## A network read limit is not a promise to read the complete JSON request
+
+**TASK-31932, 2026-09-07 Canvas bridge review.** An intermittent real-browser
+confirmation failure advertised 16,487 bytes but `StreamReader.read(limit + 1)`
+returned only its first 16,384 bytes. The truncated cancellation failed JSON
+decoding, leaving a pending confirmation to block the next action. Bounded
+`readexactly(limit + 1)` with the EOF partial result preserves the byte ceiling
+while waiting for complete input. Real split-stream controls also reject a valid
+JSON prefix followed by invalid content, oversized chunked bodies without EOF,
+and malformed UTF-8; cancellation still propagates. All 83 gateway controls and
+65 complete native/served browser cases pass. Do not replace this with an
+unbounded body read or a larger browser timeout.

@@ -33,6 +33,7 @@ from textual.widgets import Input
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_RUN_MARKER_GLYPHS,
     ConsoleMessageRole,
+    ConsoleProviderSelection,
     ConsoleRunMarker,
     ConsoleWorkspaceContext,
 )
@@ -3758,7 +3759,22 @@ def _atomic_resume_controller(
         switch_session=store.switch_session,
         activity_for=lambda _session_id: SimpleNamespace(queued_count=0),
     )
+    screen = _NoMountScreen()
+
+    def provider_selection(session_id):
+        # Keep real token preparation, including its target-session snapshot
+        # and post-await checks, on this deliberately unmounted resume fixture.
+        settings = store.effective_session_settings(session_id)
+        assert settings is not None
+        return ConsoleProviderSelection(
+            provider=settings.provider, explicit_model=settings.model
+        )
+
+    screen._provider_selection = SimpleNamespace(
+        _build_console_provider_selection=provider_selection
+    )
     controller = _workspace_controller(
+        screen=screen,
         app_instance=app,
         chat_store_accessor=lambda: store,
         current_chat_store_accessor=lambda: store,
@@ -3913,13 +3929,17 @@ def test_resume_match_prefers_active_then_creation_order():
 @pytest.mark.asyncio
 async def test_id_only_public_opener_keeps_active_matching_duplicate():
     """ID-only navigation must not inherit grouped-browser dedupe order."""
-    controller, store, _prior, _settings, _durable, _notifications = (
+    controller, store, _prior, settings, _durable, _notifications = (
         _atomic_resume_controller()
     )
-    first = store.create_session(title="First matching session")
+    first = store.create_session(
+        title="First matching session", settings=replace(settings, model="first")
+    )
     first.persisted_conversation_id = "shared-conversation"
     store.set_session_draft(first.id, "first draft")
-    active = store.create_session(title="Active matching session")
+    active = store.create_session(
+        title="Active matching session", settings=replace(settings, model="active")
+    )
     active.persisted_conversation_id = "shared-conversation"
     store.set_session_draft(active.id, "active draft")
     deduped_first_row = ConsoleConversationBrowserRow(

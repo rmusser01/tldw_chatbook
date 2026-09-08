@@ -2402,7 +2402,10 @@ class CanvasGateway:
         )
 
     async def _read_json(self, request: web.Request) -> object:
-        body = await request.content.read(self._max_request_bytes + 1)
+        try:
+            body = await request.content.readexactly(self._max_request_bytes + 1)
+        except asyncio.IncompleteReadError as exc:
+            body = exc.partial
         if len(body) > self._max_request_bytes:
             raise web.HTTPRequestEntityTooLarge(
                 max_size=self._max_request_bytes, actual_size=len(body)
