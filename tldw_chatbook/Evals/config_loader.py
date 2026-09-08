@@ -25,9 +25,9 @@ class EvalConfigLoader:
             config_path: Optional path to configuration file
         """
         if config_path is None:
-            # Default to config directory relative to this file
-            config_dir = Path(__file__).parent / "config"
-            config_path = config_dir / "eval_config.yaml"
+            from . import _default_config_path
+
+            config_path = _default_config_path()
 
         self.config_path = Path(config_path)
         self._config = None
@@ -226,11 +226,13 @@ class EvalConfigLoader:
         save_path = Path(path) if path else self.config_path
 
         try:
-            # Ensure directory exists
-            save_path.parent.mkdir(parents=True, exist_ok=True)
+            from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
-            with open(save_path, "w") as f:
-                yaml.dump(self._config, f, default_flow_style=False, sort_keys=False)
+            with acquire_storage(save_path):
+                # Hold ordinary admission for the entire durable mutation.
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(save_path, "w") as f:
+                    yaml.dump(self._config, f, default_flow_style=False, sort_keys=False)
 
             logger.info(f"Saved configuration to {save_path}")
         except Exception as e:

@@ -75,6 +75,11 @@ Classifications have these meanings:
 | C54 | tldw_chatbook/DB/recovery_core | _CoreAdapter.validate / _CoreAdapter.validate_dependencies | recovery.core.library_collections | private_file, read_only_uri | exact current staged core schema/reference validation | Migrated via `connect_private_sqlite`. Frozen installed owner dispatch; source reads and private staging opens require directional fixed-authority capture scope during maintenance. |
 | C55 | tldw_chatbook/DB/recovery_core | _CoreAdapter.validate / _CoreAdapter.validate_dependencies | recovery.core.library_ingest_jobs | private_file, read_only_uri | exact current staged core schema/reference validation | Migrated via `connect_private_sqlite`. Frozen installed owner dispatch; source reads and private staging opens require directional fixed-authority capture scope during maintenance. |
 
+| C56 | tldw_chatbook/Research_Interop/recovery | _Adapter.validate | recovery.domain.research | private_file, read_only_uri | exact schema/domain validation | Migrated via `connect_private_sqlite`. Installed literal authority; no runtime constructor or migration. |
+| C57 | tldw_chatbook/Writing_Interop/recovery | _Adapter.validate | recovery.domain.writing | private_file, read_only_uri | exact schema/domain validation | Migrated via `connect_private_sqlite`. Installed literal authority; no runtime constructor or migration. |
+| C58 | tldw_chatbook/Evals/recovery | _Adapter.validate / _Adapter.validate_dependencies | recovery.domain.evals | private_file, read_only_uri | exact schema/domain validation | Migrated via `connect_private_sqlite`. Installed literal authority; no runtime constructor or migration. |
+| C59 | tldw_chatbook/Study_Interop/recovery | _SharedAdapter.validate | recovery.domain.study | read_only_uri | exact schema/domain validation | Migrated via `connect_private_sqlite`. Installed literal authority; no runtime constructor or migration. |
+
 ## SQLite backup and restore inventory
 
 | ID | Module | Symbol | Owner ID | Classification | Operation | Migration disposition |
@@ -112,6 +117,10 @@ readers/writers fail promptly without a success notification. A previously
 queried idle WAL connection can also prevent SQLite from proving exclusivity;
 that case fails closed and reports that live restore is unavailable rather
 than replacing the database file.
+
+| B23 | tldw_chatbook/Research_Interop/recovery | _Adapter.capture | recovery.domain.research | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Native maintenance scope; default SQLite factory and full committed database only. |
+| B24 | tldw_chatbook/Writing_Interop/recovery | _Adapter.capture | recovery.domain.writing | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Native maintenance scope; default SQLite factory and full committed database only. |
+| B25 | tldw_chatbook/Evals/recovery | _Adapter.capture | recovery.domain.evals | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Native maintenance scope; default SQLite factory and full committed database only. |
 
 ## Database parent creator inventory
 

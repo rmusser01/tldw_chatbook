@@ -432,3 +432,187 @@ def _acquire_capture_storage(path: Path, *, owner_id: str, read_only: bool):
         ):
             raise bootstrap.RecoveryRequired("capture_target_alias")
     return _CaptureLease(scope)
+
+
+class _CaptureFileDescriptors:
+    """Operation-private FDs with conservative unresolved-close quarantine."""
+
+    def __init__(self, scope):
+        self.scope = scope
+        self.fds = []
+        self.close_failed = False
+        if scope is not None:
+            scope.resources.append(self)
+
+    def retire(self):
+        if self.close_failed:
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired")
+        while self.fds:
+            fd = self.fds[-1]
+            try:
+                os.close(fd)
+            except OSError:
+                # close may have an ambiguous native outcome. Never retry an FD
+                # number that could already identify another resource.
+                self.close_failed = True
+                raise bootstrap.RecoveryRequired(
+                    "capture_resources_not_retired"
+                ) from None
+            self.fds.pop()
+        if self.scope is not None and self in self.scope.resources:
+            self.scope.resources.remove(self)
+
+
+def _check_capture_file_identity(scope, selected, info, *, source_only=False):
+    scope.check()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise bootstrap.RecoveryRequired("capture_file_not_regular")
+    source_identity = any(
+        (info.st_dev, info.st_ino) == (dev, ino) for _, dev, ino in scope.sources
+    )
+    if scope.staging in selected.parents and not source_only:
+        if source_identity:
+            raise bootstrap.RecoveryRequired("capture_target_alias")
+        return
+    if not source_identity:
+        raise bootstrap.RecoveryRequired("capture_source_outside_scope")
+
+
+def _read_recovery_file(owner_id: str, candidate: Path, *, max_bytes: int) -> bytes:
+    """Return bounded definition bytes after native reader retirement."""
+    if owner_id != "eval.definitions":
+        raise bootstrap.RecoveryRequired("capture_owner_not_registered")
+    if type(max_bytes) is not int or max_bytes <= 0 or max_bytes > 16 * 1024**2:
+        raise ValueError("invalid_capture_byte_limit")
+    selected = lexical_path(candidate)
+    scope = getattr(_local, "capture_scope", None)
+    lease = acquire_storage(selected) if scope is None else None
+    resources = _CaptureFileDescriptors(scope)
+    try:
+        if scope is not None:
+            scope.check()
+        with bootstrap.pinned_directory(selected.parent) as parent:
+            fd = os.open(
+                selected.name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=parent,
+            )
+            resources.fds.append(fd)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise bootstrap.RecoveryRequired("capture_file_not_regular")
+            if scope is not None:
+                _check_capture_file_identity(scope, selected, info)
+            chunks = []
+            total = 0
+            while True:
+                chunk = os.read(fd, min(1024**2, max_bytes - total + 1))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError("definition_byte_limit")
+                chunks.append(chunk)
+            if scope is not None:
+                _check_capture_file_identity(scope, selected, os.fstat(fd))
+                current_parent = selected.parent.stat()
+                held_parent = os.fstat(parent)
+                if (current_parent.st_dev, current_parent.st_ino) != (
+                    held_parent.st_dev,
+                    held_parent.st_ino,
+                ):
+                    raise bootstrap.RecoveryRequired("capture_target_changed")
+            return b"".join(chunks)
+    finally:
+        # If native retirement fails, ordinary admission is retained too. Never
+        # release a lease around a potentially live descriptor.
+        resources.retire()
+        if lease is not None:
+            lease.close()
+
+
+def copy_capture_file(
+    owner_id: str,
+    source: Path,
+    destination: Path,
+    cancel: threading.Event,
+    *,
+    max_bytes: int,
+) -> None:
+    """Copy one enrolled regular file into private staging without exposed handles.
+
+    The fixed native maintenance scope grants authority; the installed owner ID
+    alone never does. Every acquired descriptor is retired before return, or its
+    unresolved resource retains native exclusion through the existing quarantine.
+    """
+    if owner_id != "eval.definitions":
+        raise bootstrap.RecoveryRequired("capture_owner_not_registered")
+    if type(max_bytes) is not int or max_bytes <= 0 or max_bytes > 1024**4:
+        raise ValueError("invalid_capture_byte_limit")
+    scope = getattr(_local, "capture_scope", None)
+    if scope is None:
+        raise bootstrap.RecoveryRequired("capture_requires_maintenance")
+    scope.check()
+    source = lexical_path(source)
+    destination = lexical_path(destination)
+    if scope.staging not in destination.parents:
+        raise bootstrap.RecoveryRequired("capture_path_outside_scope")
+    if cancel.is_set():
+        raise InterruptedError("cancelled")
+    resources = _CaptureFileDescriptors(scope)
+    try:
+        # Pinned no-follow parent traversal follows the established private-path
+        # boundary. Native data descriptors stay tracked across every exception.
+        with bootstrap.pinned_directory(source.parent) as parent:
+            fd = os.open(
+                source.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+            )
+            resources.fds.append(fd)
+            info = os.fstat(fd)
+            _check_capture_file_identity(scope, source, info, source_only=True)
+        with bootstrap.pinned_directory(destination.parent) as parent:
+            destination_parent_identity = os.fstat(parent)
+            scope.check()
+            out = os.open(
+                destination.name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=parent,
+            )
+            resources.fds.append(out)
+            if not stat.S_ISREG(os.fstat(out).st_mode):
+                raise bootstrap.RecoveryRequired("capture_target_alias")
+        total = 0
+        while True:
+            scope.check()
+            if cancel.is_set():
+                raise InterruptedError("cancelled")
+            chunk = os.read(fd, min(1024**2, max_bytes - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError("capture_byte_limit")
+            view = memoryview(chunk)
+            while view:
+                count = os.write(out, view)
+                if count <= 0:
+                    raise OSError("capture_write_unavailable")
+                view = view[count:]
+        os.fsync(out)
+        scope.check()
+        current_parent = destination.parent.stat()
+        if (current_parent.st_dev, current_parent.st_ino) != (
+            destination_parent_identity.st_dev,
+            destination_parent_identity.st_ino,
+        ):
+            raise bootstrap.RecoveryRequired("capture_target_changed")
+        current_target = destination.stat(follow_symlinks=False)
+        held_target = os.fstat(out)
+        if (current_target.st_dev, current_target.st_ino) != (
+            held_target.st_dev,
+            held_target.st_ino,
+        ):
+            raise bootstrap.RecoveryRequired("capture_target_changed")
+    finally:
+        resources.retire()

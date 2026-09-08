@@ -5655,3 +5655,21 @@ process. A low-level disjoint-lock test does not cover constructor/registration
 work preceding admission. Distinguish initial registration from read-only reuse;
 lost/corrupt/replaced authority must refuse rather than be reconstructed to make
 the fast path work.
+
+## SQLite operation contexts do not retire native file handles (TASK-31990)
+
+During domain-recovery qualification on 2026-09-08, the writing round-trip preserved
+all SQL records but intermittently changed the source main-file header between its
+pre-capture and post-capture byte checks (byte 27 changed from 1 to 2). Both local
+research and writing opened a fresh SQLite connection per operation and used
+`with connection:`. That context committed or rolled back without closing; their
+service `close()` retired only the persistent memory connection. Deferred garbage
+collection could therefore checkpoint an old file connection later.
+
+The fix gives file operations a context-exit that commits/rolls back and then
+closes the actual native handle, retaining normal private-SQLite admission and
+leaving memory lifetime unchanged. Focused tests prove escaped file connections
+are unusable after success and exceptions, and retained committed-WAL observers
+prove both source main/WAL bytes and main mtime survive recovery capture unchanged.
+When proving a storage drain, check native handle lifetime explicitly; a transaction
+context or a service method named `close` is not evidence by itself.

@@ -410,10 +410,64 @@ def discover(config_paths: tuple[Path, ...]) -> Inventory:
             )
             for index in indexes:
                 items[index] = replace(items[index], shared_group=group)
+    items, cohort_issues = _merge_chachanotes_cohort(tuple(items))
     result = classify_entries(tuple(items))
-    issues = set(result.issues)
+    issues = set(result.issues) | set(cohort_issues)
     if any(item.logical_id.endswith(":parse_failure") for item in items):
         issues.add("config_parse_failure")
     if any(item.logical_id.endswith(":discovery_failure") for item in items):
         issues.add("config_discovery_failure")
-    return replace(result, issues=tuple(sorted(issues)))
+    return replace(
+        result, complete=result.complete and not issues, issues=tuple(sorted(issues))
+    )
+
+
+def _merge_chachanotes_cohort(
+    items: tuple[StorageItem, ...],
+) -> tuple[tuple[StorageItem, ...], tuple[str, ...]]:
+    """Merge only installed shared declarations after checking original groups.
+
+    Stable final logical IDs name each group. Physical identity is fresh proof,
+    never part of the durable scope label. A mismatching original declaration is
+    refused before any rewrite can hide it by splitting into different groups.
+    """
+    owners = {"db.chachanotes.primary", "study.local", "quiz.local"}
+    original = {}
+    physical = {}
+    try:
+        for item in items:
+            if item.shared_group and item.path is not None:
+                original.setdefault(item.shared_group, set()).add(_identity(item.path))
+        if any(len(identities) != 1 for identities in original.values()):
+            return items, ("shared_identity_mismatch",)
+        for index, item in enumerate(items):
+            if item.owner not in owners or item.status != "included":
+                continue
+            if item.owner == "db.chachanotes.primary" and item.shared_group is None:
+                # Unqualified default census rows are not installed declarations.
+                continue
+            parts = item.logical_id.split(":")
+            if (
+                len(parts) != 3
+                or parts[0] != "profile"
+                or parts[2] != item.owner
+                or not parts[1]
+            ):
+                return items, ("invalid_shared_declaration",)
+            expected = "shared:chachanotes:profile:" + parts[1]
+            if item.shared_group != expected or item.path is None:
+                return items, ("invalid_shared_declaration",)
+            physical.setdefault(_identity(item.path), []).append(index)
+    except (OSError, RuntimeError):
+        return items, ("shared_identity_unavailable",)
+    result = list(items)
+    for indexes in physical.values():
+        label = (
+            "shared:chachanotes:"
+            + hashlib.sha256(
+                "\0".join(sorted(items[i].logical_id for i in indexes)).encode()
+            ).hexdigest()[:24]
+        )
+        for index in indexes:
+            result[index] = replace(items[index], shared_group=label)
+    return tuple(result), ()

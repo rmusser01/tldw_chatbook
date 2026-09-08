@@ -44,6 +44,11 @@ class _CoreAdapter:
                     )
                     for owner in ("config",) + self.dependent_owners
                 ),
+                shared_group=(
+                    "shared:chachanotes:profile:" + context.profile_id
+                    if self.owner_id == "db.chachanotes.primary" and status == "included"
+                    else None
+                ),
             ),
         )
 

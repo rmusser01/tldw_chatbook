@@ -151,6 +151,29 @@ _SQLITE_OWNER_POLICIES = {
         "ensure_site_configs_schema declares site_configs on a caller-supplied "
         "path without opening the whole SubscriptionsDB.",
     ),
+    "recovery.domain.study": SQLiteOwnerPolicy(
+        "tldw_chatbook/Study_Interop/recovery", _READ_ONLY_URI,
+        "Semantic study/quiz validation of the core-owned shared physical payload.",
+        preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+    ),
+    "recovery.domain.research": SQLiteOwnerPolicy(
+        "tldw_chatbook/Research_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "Fixed native-held lossless domain recovery; ordinary exports unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.domain.writing": SQLiteOwnerPolicy(
+        "tldw_chatbook/Writing_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "Fixed native-held lossless domain recovery; ordinary exports unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.domain.evals": SQLiteOwnerPolicy(
+        "tldw_chatbook/Evals/recovery", _PRIVATE_AND_READ_ONLY,
+        "Fixed native-held lossless domain recovery; ordinary exports unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
     "recovery.core.chachanotes": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",

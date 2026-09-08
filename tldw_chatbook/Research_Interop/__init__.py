@@ -1,15 +1,17 @@
-"""Research session/run interoperability services."""
+"""Public service exports, resolved lazily for dependency-light recovery."""
 
-from .local_research_service import LocalResearchService
-from .local_research_search_service import LocalResearchSearchService
-from .research_scope_service import ResearchBackend, ResearchScopeService
-from .research_search_scope_service import (
-    ResearchSearchBackend,
-    ResearchSearchScopeService,
-)
-from .server_research_service import ServerResearchService
-from .server_research_search_service import ServerResearchSearchService
+from importlib import import_module
 
+_EXPORTS = {
+    "LocalResearchService": "local_research_service",
+    "LocalResearchSearchService": "local_research_search_service",
+    "ResearchBackend": "research_scope_service",
+    "ResearchScopeService": "research_scope_service",
+    "ResearchSearchBackend": "research_search_scope_service",
+    "ResearchSearchScopeService": "research_search_scope_service",
+    "ServerResearchService": "server_research_service",
+    "ServerResearchSearchService": "server_research_search_service",
+}
 __all__ = [
     "LocalResearchService",
     "LocalResearchSearchService",
@@ -20,3 +22,16 @@ __all__ = [
     "ServerResearchService",
     "ServerResearchSearchService",
 ]
+
+
+def __getattr__(name):
+    module = _EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module("." + module, __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

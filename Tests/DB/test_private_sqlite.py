@@ -53,6 +53,9 @@ CONNECTION_BACKUP_OWNER_IDS = (
     "tts.profile_recovery",
 )
 COPY_BACKUP_OWNER_IDS = (
+    "recovery.domain.research",
+    "recovery.domain.writing",
+    "recovery.domain.evals",
     "recovery.core.chachanotes",
     "recovery.core.media",
     "recovery.core.prompts",

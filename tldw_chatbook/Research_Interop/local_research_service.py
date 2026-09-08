@@ -58,6 +58,16 @@ class LeaseBudgetExhausted(Exception):
         self.max_attempts = max_attempts
 
 
+class _OperationConnection(sqlite3.Connection):
+    """Retire each file operation's native handle after commit or rollback."""
+
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 class LocalResearchService:
     """Local-first persistence for research sessions, runs, events, and artifacts."""
 
@@ -111,7 +121,9 @@ class LocalResearchService:
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        conn = connect_private_sqlite("research.local", self.db_path)
+        conn = connect_private_sqlite(
+            "research.local", self.db_path, factory=_OperationConnection
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL")
         # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can

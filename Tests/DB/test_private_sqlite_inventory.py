@@ -639,10 +639,10 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 56)
+        for number in range(1, 60)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 23)
+        f"B{number:02d}" for number in range(1, 26)
     ]
 
 
@@ -1078,7 +1078,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 1,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 13,
+            "copy_private_sqlite": 16,
             "migrate_profile_store_to_candidate": 1,
             "restore_private_sqlite": 2,
         }
@@ -1114,6 +1114,9 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
     expected_calls = Counter(
         {
             ("tldw_chatbook/DB/recovery_core", "_CoreAdapter.capture", "copy_private_sqlite"): 1,
+            ("tldw_chatbook/Research_Interop/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
+            ("tldw_chatbook/Writing_Interop/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
+            ("tldw_chatbook/Evals/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
             (
                 "tldw_chatbook/DB/ChaChaNotes_DB",
                 "CharactersRAGDB.backup_database",
@@ -1400,6 +1403,18 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
     adapters = core_adapters()
     assert {a.owner_id for a in adapters} == _CORE_RECOVERY_OWNERS
     assert all(a.__dataclass_params__.frozen for a in adapters)
-    assert {a.backup_owner_id for a in adapters} == {
+    installed_domain_authority = {
+        "recovery.domain.research", "recovery.domain.writing",
+        "recovery.domain.evals", "recovery.domain.study",
+    }
+    assert {a.backup_owner_id for a in adapters} | installed_domain_authority == {
         name for name, policy in SQLITE_OWNER_REGISTRY.items() if policy.recovery_capture_allowed
     }
+    from tldw_chatbook.Research_Interop.recovery import recovery_adapters as research
+    from tldw_chatbook.Writing_Interop.recovery import recovery_adapters as writing
+    from tldw_chatbook.Evals.recovery import recovery_adapters as evals
+    from tldw_chatbook.Study_Interop.recovery import recovery_adapters as study
+    assert {a.owner_id for factory in (research, writing, evals, study) for a in factory()} == {
+        "research.local", "writing.local", "db.evals", "eval.definitions", "study.local", "quiz.local",
+    }
+    assert all(a.__dataclass_params__.frozen for factory in (research, writing, evals, study) for a in factory())

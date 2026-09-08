@@ -155,7 +155,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 | sqlite:db.subscriptions.site_configs | tldw_chatbook/DB/Subscriptions_DB | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.chachanotes.backup | tldw_chatbook/DB/ChaChaNotes_DB | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.chachanotes.primary | tldw_chatbook/DB/ChaChaNotes_DB | _PRIVATE_OR_MEMORY | sqlite/unsupported |
-| sqlite:db.evals | tldw_chatbook/DB/Evals_DB | _PRIVATE_OR_MEMORY | sqlite/unsupported |
+| sqlite:db.evals | tldw_chatbook/DB/Evals_DB | _PRIVATE_OR_MEMORY | sqlite/domain-recovery-qualified |
 | sqlite:db.library_ingest_jobs | tldw_chatbook/DB/Library_Ingest_Jobs_DB | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:db.media.backup | tldw_chatbook/DB/Client_Media_DB_v2 | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.media.integrity | tldw_chatbook/DB/Client_Media_DB_v2 | _READ_ONLY_URI | sqlite/unsupported |
@@ -172,7 +172,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 | sqlite:notifications.event_state | tldw_chatbook/Notifications/event_state_repository | _MEMORY | sqlite/unsupported |
 | sqlite:rag.chachanotes_keyword_leg | tldw_chatbook/RAG_Search/simplified/rag_service | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:rag.prompts_keyword_leg | tldw_chatbook/RAG_Search/simplified/rag_service | _READ_ONLY_URI | sqlite/unsupported |
-| sqlite:research.local | tldw_chatbook/Research_Interop/local_research_service | _PRIVATE_OR_MEMORY | sqlite/unsupported |
+| sqlite:research.local | tldw_chatbook/Research_Interop/local_research_service | _PRIVATE_OR_MEMORY | sqlite/domain-recovery-qualified |
 | sqlite:runtime.server_parity_parent | tldw_chatbook/runtime_policy/server_parity_state | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:settings.bulk_backup | tldw_chatbook/UI/Tools_Settings_Window | _PRIVATE_AND_READ_ONLY | sqlite/unsupported |
 | sqlite:settings.integrity | tldw_chatbook/UI/Tools_Settings_Window | _READ_ONLY_URI | sqlite/unsupported |
@@ -201,7 +201,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 | sqlite:tamagotchi.sqlite | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:utils.legacy_user_database_path | tldw_chatbook/Utils/paths | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:utils.project_databases_directory | tldw_chatbook/Utils/paths | _PRIVATE_FILE | sqlite/unsupported |
-| sqlite:writing.local | tldw_chatbook/Writing_Interop/local_writing_service | _PRIVATE_OR_MEMORY | sqlite/unsupported |
+| sqlite:writing.local | tldw_chatbook/Writing_Interop/local_writing_service | _PRIVATE_OR_MEMORY | sqlite/domain-recovery-qualified |
 
 ## Exact persistence producer symbols
 
@@ -371,44 +371,44 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/DB/Subscriptions_DB.py | ensure_site_configs_schema | connect_private_sqlite | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/Workspace_DB.py | WorkspaceDB | inherits:BaseDB | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/base_db.py | BaseDB._get_connection | connect_private_sqlite | 1 | unsupported | sqlite |
-| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader._load_config | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | dump | 1 | unsupported | evals |
-| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | mkdir | 1 | unsupported | evals |
-| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_csv_dataset | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_json_dataset | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/dataset_validator.py | DatasetValidator._load_dataset | open | 3 | unsupported | evals |
-| tldw_chatbook/Evals/eval_orchestrator.py | EvaluationOrchestrator.create_task_from_template | mkdir | 1 | unsupported | evals |
-| tldw_chatbook/Evals/eval_orchestrator.py | EvaluationOrchestrator.export_results | dump | 1 | unsupported | evals |
-| tldw_chatbook/Evals/eval_orchestrator.py | EvaluationOrchestrator.export_results | open | 2 | unsupported | evals |
-| tldw_chatbook/Evals/eval_orchestrator.py | quick_eval | mkdir | 1 | unsupported | evals |
-| tldw_chatbook/Evals/eval_runner.py | DatasetLoader._load_csv_dataset | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/eval_runner.py | DatasetLoader._load_json_dataset | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.create_sample_dataset | dump | 1 | unsupported | evals |
-| tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.create_sample_dataset | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.export_template_as_file | dump | 2 | unsupported | evals |
-| tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.export_template_as_file | open | 2 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_csv | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_json | dump | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_json | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_latex | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_latex | write | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_markdown | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_markdown | write | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_csv | open | 2 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_json | dump | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_json | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_markdown | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_markdown | write | 1 | unsupported | evals |
-| tldw_chatbook/Evals/specialized_runners.py | CodeExecutionRunner._execute_code | write_text | 1 | unsupported | evals |
-| tldw_chatbook/Evals/task_loader.py | TaskLoader._detect_file_format | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/task_loader.py | TaskLoader._detect_format | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_csv_task | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_custom_task | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_eleuther_task | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_huggingface_task | open | 1 | unsupported | evals |
-| tldw_chatbook/Evals/task_loader.py | TaskLoader.export_task | dump | 4 | unsupported | evals |
-| tldw_chatbook/Evals/task_loader.py | TaskLoader.export_task | open | 3 | unsupported | evals |
+| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader._load_config | open | 1 | generic_boundary | evals |
+| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | dump | 1 | generic_boundary | evals |
+| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | mkdir | 1 | generic_boundary | evals |
+| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | open | 1 | generic_boundary | evals |
+| tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_csv_dataset | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_json_dataset | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/dataset_validator.py | DatasetValidator._load_dataset | open | 3 | external_input | evals |
+| tldw_chatbook/Evals/eval_orchestrator.py | EvaluationOrchestrator.create_task_from_template | mkdir | 1 | external_input | evals |
+| tldw_chatbook/Evals/eval_orchestrator.py | EvaluationOrchestrator.export_results | dump | 1 | external_input | evals |
+| tldw_chatbook/Evals/eval_orchestrator.py | EvaluationOrchestrator.export_results | open | 2 | external_input | evals |
+| tldw_chatbook/Evals/eval_orchestrator.py | quick_eval | mkdir | 1 | external_input | evals |
+| tldw_chatbook/Evals/eval_runner.py | DatasetLoader._load_csv_dataset | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/eval_runner.py | DatasetLoader._load_json_dataset | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.create_sample_dataset | dump | 1 | external_input | evals |
+| tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.create_sample_dataset | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.export_template_as_file | dump | 2 | external_input | evals |
+| tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.export_template_as_file | open | 2 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_csv | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_json | dump | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_json | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_latex | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_latex | write | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_markdown | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_ab_test_markdown | write | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_csv | open | 2 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_json | dump | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_json | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_markdown | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_markdown | write | 1 | external_input | evals |
+| tldw_chatbook/Evals/specialized_runners.py | CodeExecutionRunner._execute_code | write_text | 1 | process_artifact | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._detect_file_format | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._detect_format | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_csv_task | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_custom_task | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_eleuther_task | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader._load_huggingface_task | open | 1 | external_input | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader.export_task | dump | 4 | external_input | evals |
+| tldw_chatbook/Evals/task_loader.py | TaskLoader.export_task | open | 3 | external_input | evals |
 | tldw_chatbook/Event_Handlers/Chat_Events/chat_image_events.py | ChatImageHandler.get_image_info | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/Chat_Events/chat_image_events.py | ChatImageHandler.prepare_image_payload | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/Chat_Events/chat_image_events.py | ChatImageHandler.validate_image_data | open | 1 | unsupported | miscellaneous |
@@ -595,9 +595,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._verify_payload | open | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService.import_local_gguf | open | 2 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService.import_local_gguf | write | 1 | unsupported | models |
-| tldw_chatbook/Models/evaluation_state.py | EvaluationState.load_from_file | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | dump | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Models/evaluation_state.py | EvaluationState.load_from_file | open | 1 | external_input | evals |
+| tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | dump | 1 | external_input | evals |
+| tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | open | 1 | external_input | evals |
 | tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.directory | mkdir | 1 | unsupported | notes |
 | tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.file | open | 1 | unsupported | notes |
 | tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.file | write | 1 | unsupported | notes |
@@ -1342,3 +1342,115 @@ operational activation stay explicit dependencies. See [core qualification](back
 | tldw_chatbook/DB/private_sqlite.py | migrate_profile_store_to_candidate | connect_private_sqlite_descriptor | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | open_canonical_profile_migration_destination | secure_private_directory | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | open_profile_migration_boundary_destination | secure_private_directory | 1 | generic_boundary | generic |
+
+## Domain recovery capture/validation census (TASK-31990)
+
+| tldw_chatbook/Research_Interop/recovery.py | _Adapter.validate | connect_private_sqlite | 1 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Research_Interop/recovery.py | _Adapter.capture | copy_private_sqlite | 1 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Writing_Interop/recovery.py | _Adapter.validate | connect_private_sqlite | 1 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Writing_Interop/recovery.py | _Adapter.capture | copy_private_sqlite | 1 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Study_Interop/recovery.py | _SharedAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-domain-recovery |
+| sqlite:recovery.domain.research | tldw_chatbook/Research_Interop/recovery | _PRIVATE_AND_READ_ONLY | sqlite/domain-recovery-qualified |
+| sqlite:recovery.domain.writing | tldw_chatbook/Writing_Interop/recovery | _PRIVATE_AND_READ_ONLY | sqlite/domain-recovery-qualified |
+| sqlite:recovery.domain.evals | tldw_chatbook/Evals/recovery | _PRIVATE_AND_READ_ONLY | sqlite/domain-recovery-qualified |
+| sqlite:recovery.domain.study | tldw_chatbook/Study_Interop/recovery | _READ_ONLY_URI | sqlite/domain-recovery-qualified |
+| tldw_chatbook/Evals/recovery.py | _Adapter.validate | connect_private_sqlite | 1 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Evals/recovery.py | _Adapter.capture | copy_private_sqlite | 1 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Evals/recovery.py | _Adapter.validate_dependencies | connect_private_sqlite | 2 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _read_recovery_file | open | 1 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | copy_capture_file | open | 2 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | copy_capture_file | write | 1 | generic_boundary | native-domain-recovery |
+
+## Local research, writing, study and evaluation qualification
+
+TASK-31990 implements [ADR-126](../decisions/126-complete-local-backup-and-recovery.md).
+The four `recovery_adapters()` factories are import-light installed declarations;
+executor composition registers them with `owner_registry.register`. They neither
+instantiate stores nor start servers, engines, evaluations or models. The package
+public exports retain their identities through lazy resolution. Existing feature
+flags never suppress a discovered durable store, and custom database selectors use
+`profile_paths.database_path` without fallback creation.
+
+| Logical owner | Actual source and capture | Qualified schema / references |
+| --- | --- | --- |
+| research.local | Canonical research_db_path; full SQLite snapshot, including sessions, runs, events, checkpoints, artifacts, soft deletions and lease columns | Exact current PRAGMA user_version 1; genuine pre-lease v0 SQL from b6ba7d013^; declared installed ALTER transition 0→1; FK/integrity validation |
+| writing.local | Canonical writing_db_path; full SQLite snapshot of projects, hierarchy, characters, world information, relationships, analyses, citations, versions and trash | Exact installed unversioned layout (PRAGMA user_version 0); no invented historical schema/version; FK/integrity validation |
+| study.local / quiz.local | One shared db.chachanotes.primary physical payload, never separate selective exports | Core exact v42 schema, BLOB size/reference checks including deleted rows, study session references and historical quiz snapshot/answer identities |
+| db.evals | Canonical evals_db_path; EvalsDB also owns word benches and character probes, datasets, models, run groups, snapshots, outputs, metrics, annotations, review state and AB comparisons | Exact installed v5; SQLite FK/integrity checks; selected-profile current character/model references; historical run snapshots retained independently |
+| eval.definitions | Exact installed `Evals/config/eval_config.yaml`, including local edits made by EvalConfigLoader.save with its default path | Bounded 16 MiB safe portable YAML mapping; unsafe tags, recursive aliases and nonportable/deep structures refuse; bytes retained exactly, new file mode 0600 |
+
+The frozen SQL catalogs are in each corresponding recovery module and were generated
+from real constructors under Tests isolation at task 6 base 8ea52cfc0. All tables,
+indexes, triggers and FTS/shadow-table SQL are included in sorted type/name order.
+The old research fixture contains all five research tables, lacks lease columns,
+and is independent of the current constructor. Only its declared installed
+migration SQL is executed in the migration test; backup itself never migrates.
+Other historical/physical schema variants remain explicitly unsupported. Research
+artifacts and writing bodies are stored inside SQLite, not in an inferred asset
+folder. Flashcard assets use `flashcard-asset://` UUIDs and stored BLOB bytes; moving
+the physical database preserves those locators. Arbitrary prose, citations, dataset
+source paths and URL strings are not rewritten or activated as managed paths.
+
+Core/study/quiz declarations initially name one stable group per selected profile.
+Inventory validates every original declared group's physical identity **before**
+merging the exact installed cohort across profiles. Same-file/hardlink aliases merge
+using a hash of final logical IDs, distinct files remain separate, and mismatches or
+forged labels refuse. Inodes are proof only and never enter the stable scope digest.
+The capture executor must deduplicate each physical group and supply the same staged
+candidate identity for its logical members. A second independently copied database
+cannot satisfy the shared semantic dependency check.
+
+### Exact evaluation producer dispositions
+
+The executable source rows above classify each concrete open/write site. Their
+owner/path interpretation is as follows; external selections can be included through
+the later explicit external-root option, and never justify a recursive home scan.
+
+| Producer(s) | Path authority and durable result |
+| --- | --- |
+| EvalConfigLoader._load_config / save | No-argument path is the installed config file above and is baseline owned data. Explicit constructor/save path arguments identify external selected files; the application has no separate persisted custom-loader selector. Save holds ordinary admission through its complete write. |
+| EvaluationOrchestrator._initialize_database | Uses get_evals_db_path or an explicit caller database argument; the application's wired instance uses the canonical selector. eval.orchestrator_parent is a historical parent-boundary declaration, not a second database payload. |
+| EvaluationOrchestrator.create_task_from_template | Stores the task in EvalsDB. Writes a sample dataset only when output_dir is explicitly supplied; those bytes are external selected output. |
+| EvaluationOrchestrator.export_results / quick_eval | export_results requires output_path; quick_eval writes only for an explicit output_dir. Durable original results already live in EvalsDB. |
+| EvalTemplateManager.export_template_as_file / create_sample_dataset | Both require explicit output_path. No hidden default output folder. |
+| TaskLoader.export_task | Explicit path argument; generated template dictionaries otherwise remain in memory or are persisted in EvalsDB by the orchestrator. |
+| EvaluationExporter._export_ab_test_csv / _json / _latex / _markdown and _export_run_csv / _json / _markdown | All receive the explicit output_path from EvaluationExporter.export; none select an application data directory. |
+| DatasetLoader._load_csv_dataset / _load_json_dataset in dataset_loader.py and eval_runner.py; DatasetValidator._load_dataset | Read explicit task/dataset sources; inline samples and their durable metadata are retained in EvalsDB. External source files/Hugging Face datasets retain inert references. |
+| TaskLoader._detect_file_format / _detect_format / _load_csv_task / _load_custom_task / _load_eleuther_task / _load_huggingface_task | Read caller-selected task/config files; no owned durable output at these sites. |
+| CodeExecutionRunner._execute_code | Writes code in its temporary execution directory; process artifact, not durable evaluation history. Capture never imports or runs it. |
+| EvaluationState.save_to_file / load_from_file | Explicit filepath argument; no current production caller chooses a hidden fixed destination. Caller-selected state files are external outputs/inputs. |
+| word_bench.storage and character_probe.storage | Use the supplied EvalsDB persistence API. Real recovery fixtures retain bench definitions, character run snapshots, replies, annotations and explicit review state. |
+| ServerEvaluationsService / server research/writing/study/quiz services | Server-owned recovery boundary; no server fetch, engine startup, or mirror mistaken for local authority. Local stores remain baseline even when server mode is selected. |
+
+### Admission, file scope and activation boundaries
+
+All SQLite copies retain the reviewed fixed native authority, intact local binding,
+selected namespaces plus `bootstrap.unbound`, exact sources and private staging.
+Capture uses only the default SQLite factory. Ordinary research/writing file
+operations now close their actual handles after commit/rollback instead of relying
+on garbage collection; their persistent in-memory connection behavior is unchanged.
+Every production `_connect()` call consumes rows/scalars inside its operation context.
+
+Only `eval.definitions` is registered for the operation-private raw helpers
+`copy_capture_file` and `_read_recovery_file`. No streams escape. They pin no-follow
+parents, verify regular nonaliased files and exact native scope identity, enforce
+actual streamed-byte limits, refuse overwrite and retire tracked FDs before returning.
+The copy is cancellable and fsynced; interrupted candidates remain private executor
+cleanup artifacts. The reader uses ordinary admission outside capture and never
+opens arbitrary out-of-scope files during capture. Neither helper widens enrollment.
+The default package config file therefore must be included in ordinary inventory
+and namespace enrollment before capture. Only portable content is restored by this
+owner; source executable permissions or ACLs are not granted by recovered YAML.
+Directory/archive metadata qualification remains the container owner's responsibility.
+
+Owner activation remains required: preserved lease/run state, model definitions,
+provider configuration and execution snapshots are data, not permission to resume.
+Task 14 must inspect evaluation configuration/provider mappings and DB model/config
+JSON for managed credential locations before portable redaction or encrypted inclusion;
+this task does not claim secret-free captures or perform credential sanitization.
+Task 13 still owns sealed candidate/schema budgets and migration execution safeguards;
+the 16 MiB YAML bound is an owner refusal boundary, not the global archive budget.
+Hard OS FD-close failure is conservatively latched and retains native exclusion but
+was not runtime fault-induced here; this remains explicit release qualification, as
+with the task 6 native-close limit. No Complete backup/publication/replacement UI is
+qualified by this cohort alone.
