@@ -425,6 +425,7 @@ def _sync_library_canvas(
     note_work: LibraryNoteWorkPane | None = None
     note_work_kwargs: dict[str, Any] = {}
     note_work_surface_changed = False
+    notes_editor_owned = False
     prompt_work: LibraryPromptWorkPane | None = None
     prompt_work_kwargs: dict[str, Any] = {}
     skill_work: LibrarySkillWorkPane | None = None
@@ -488,6 +489,17 @@ def _sync_library_canvas(
                 note_work_kwargs = screen._library_note_work_pane_kwargs()
                 note_work_surface_changed = (
                     note_work_kwargs.get("mode") != note_work.mode
+                )
+                # task-32062 fix round 2: the reader's own title/body keeps
+                # this pane's children (``sync_state`` skips the rebuild), so
+                # the focus restore below has nothing to repair -- and queuing
+                # it anyway left it pending until some LATER recompose, which
+                # then dragged focus back out of the field the reader had
+                # moved to. Same lateness for ``EditorReady``, posted from
+                # ``_after_recompose``, whose handler re-lands an untouched
+                # create on the title.
+                notes_editor_owned = (
+                    not note_work_surface_changed and note_work.editor_has_focus()
                 )
                 note_work.sync_state(**note_work_kwargs)
             screen._sync_library_notes_reader_layout_from_shell()
@@ -582,6 +594,7 @@ def _sync_library_canvas(
         if (
             kind == "notes"
             and not note_work_surface_changed
+            and not notes_editor_owned
             and sync_kwargs.get("mode") == getattr(canvas, "mode", None)
         ):
             # ...and only for an IN-SURFACE sync. On a surface TRANSITION
@@ -658,7 +671,11 @@ def _sync_library_canvas(
         if kind == "landing":
             canvas.set_deferred_sync_guard(deferred_guard)
         follow_up_canvas = canvas
-        if note_work is not None and note_work_kwargs.get("mode") != "list":
+        if (
+            note_work is not None
+            and not notes_editor_owned
+            and note_work_kwargs.get("mode") != "list"
+        ):
             # Notes keeps its navigator mounted in Items while editor/load
             # children recompose in the retained Work pane. Follow-ups that
             # arm or focus those children must ride the widget doing that

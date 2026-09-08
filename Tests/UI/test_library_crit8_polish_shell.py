@@ -12,6 +12,7 @@ from textual.widgets import Button, Input, Static, TextArea
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
+from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import LibraryLandingCanvas
 from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
@@ -428,11 +429,15 @@ async def test_a_notes_refresh_never_rebuilds_the_editor_the_reader_is_typing_in
             await pilot.pause()
             await _type(pilot, "My first note")
 
-            # Exactly what `_sync_library_canvas(screen, "notes")` performs.
-            work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
-            work.sync_state(**screen._library_note_work_pane_kwargs())
+            # The real seam every Notes refresh routes through -- driving the
+            # work pane's `sync_state` directly skips the follow-up this sync
+            # queues, which is where the fix round's own regression hid.
+            title_widget = title
+            _sync_library_canvas(screen, "notes")
             await pilot.pause()
             await pilot.pause()
+            title = screen.query_one("#library-note-title", Input)
+            assert title is title_widget
 
             assert screen.query_one("#library-note-title", Input) is title, (
                 "the focused editor must not be rebuilt under the reader"
@@ -450,6 +455,83 @@ async def test_a_notes_refresh_never_rebuilds_the_editor_the_reader_is_typing_in
                 "My first note"
             )
             assert screen.query_one("#library-note-body", TextArea).text == "hello"
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_a_notes_sync_while_typing_leaves_focus_where_the_reader_moved_it():
+    """Fix-round regression: the skipped refresh must strand no follow-up.
+
+    `_sync_library_canvas(screen, "notes")` queues the Notes focus restore on
+    the work pane. When the work pane declines to recompose (the reader is
+    typing in it), that callback used to sit there until the NEXT recompose
+    and then restore the identity captured before the sync -- yanking focus
+    back into the editor the reader had deliberately left.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            screen.query_one("#library-note-title", Input).focus()
+            await pilot.pause()
+            await _type(pilot, "My first note")
+
+            _sync_library_canvas(screen, "notes")
+            await pilot.pause()
+
+            keywords = screen.query_one("#library-note-keywords", Input)
+            keywords.focus()
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert screen.focused is keywords, (
+                f"the sync's stale restore pulled focus back to {screen.focused!r}"
+            )
+            assert screen.query_one("#library-note-title", Input).value == (
+                "My first note"
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_a_notes_sync_in_an_untouched_new_note_does_not_re_land_on_the_title():
+    """The same lateness for `EditorReady`, which re-focuses an untouched title.
+
+    It is posted from the work pane's `_after_recompose`, so a refresh held
+    open while the editor has focus would fire it long after the reader chose
+    another field.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            assert screen._library_note_session.untouched_create_token is not None
+            screen.query_one("#library-note-title", Input).focus()
+            await pilot.pause()
+
+            _sync_library_canvas(screen, "notes")
+            await pilot.pause()
+
+            keywords = screen.query_one("#library-note-keywords", Input)
+            keywords.focus()
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert screen.focused is keywords, (
+                f"a late EditorReady re-landed focus on {screen.focused!r}"
+            )
     finally:
         gates.release_all()
 
@@ -499,8 +581,14 @@ async def test_a_stale_snapshot_never_rewrites_the_field_that_has_focus():
 
 
 @pytest.mark.asyncio
-async def test_a_deferred_notes_recompose_runs_once_the_editor_loses_focus():
-    """The refresh is deferred, not dropped: leaving the editor applies it."""
+async def test_a_notes_refresh_from_outside_the_editor_still_recomposes():
+    """The skip is scoped to the reader's hands, not permanent.
+
+    Fix round 2: the skipped rebuild is NOT re-applied at blur -- doing that
+    stranded the sync's focus-restore callback, which then fired against the
+    field the reader had moved to. The next refresh that arrives with focus
+    outside the title/body paints the stored state instead.
+    """
     gates = _first_note_gates()
     app = _new_fresh_profile_app(gates)
     host = LibraryHarness(app)
@@ -514,20 +602,22 @@ async def test_a_deferred_notes_recompose_runs_once_the_editor_loses_focus():
             await pilot.pause()
             await _type(pilot, "My first note")
 
-            work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
-            work.sync_state(**screen._library_note_work_pane_kwargs())
+            _sync_library_canvas(screen, "notes")
             await pilot.pause()
             assert screen.query_one("#library-note-title", Input) is title
 
             screen.query_one("#library-note-back", Button).focus()
             await pilot.pause()
+            _sync_library_canvas(screen, "notes")
+            await pilot.pause()
             await pilot.pause()
 
             assert screen.query_one("#library-note-title", Input) is not title, (
-                "the deferred refresh must run once the editor no longer has focus"
+                "a refresh with the reader's hands off the field must rebuild"
             )
     finally:
         gates.release_all()
+
 
 # --- task-32063: one status line, one header, one toast ------------------
 

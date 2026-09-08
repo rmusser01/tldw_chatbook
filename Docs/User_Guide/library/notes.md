@@ -325,9 +325,10 @@ pick **Overwrite** or **Reload**.
 
 While the title or body has keyboard focus, nothing repaints the editor
 underneath you: a refresh that arrives mid-sentence — a save landing, the
-first note reaching the list, the Library graduating to its full rail — waits
-until you leave the field, so keystrokes never land in the wrong box and
-focus never jumps away as you type.
+first note reaching the list, the Library graduating to its full rail — leaves
+the editor alone, so keystrokes never land in the wrong box and focus never
+jumps away as you type or after you move to another field. The next refresh
+that arrives once your hands are off the field paints normally.
 
 Notes does not use **Ctrl+S**, and there is no replacement Notes save
 shortcut. Use the visible **Save** button when you want an immediate Database
@@ -634,8 +635,8 @@ Library notes.") instead of a run-on stacked under three more. task-32061:
 Escape from the editor leaves the Notes list at the visibility it had.)*
 
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32062: a
-Notes refresh that arrives while the title or body has focus is deferred until
-focus leaves, and a snapshot that is a keystroke behind no longer rewrites the
+Notes refresh that arrives while the title or body has focus leaves the editor
+alone, and a snapshot that is a keystroke behind no longer rewrites the
 focused field — measured live, a title and body typed within ~0.4 s used to be
 stored as one scrambled title with an empty body. task-32061 re-checked on a
 fresh profile: the list pane survives the first note's Escape.)*

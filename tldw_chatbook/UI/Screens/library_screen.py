@@ -6574,28 +6574,7 @@ class LibraryScreen(BaseAppScreen):
         if rail.display != rail_display:
             rail.display = rail_display
         if canvas.display != canvas_display:
-            stranded = (
-                self.focused
-                if not canvas_display
-                and rail_display
-                and self.focused is not None
-                and canvas in self.focused.ancestors_with_self
-                else None
-            )
             canvas.display = canvas_display
-            if stranded is not None:
-                # task-32066: `display = False` writes the style and nothing
-                # else -- Textual only resets focus on removal -- so a landing
-                # control that had focus when the terminal shrank kept it and
-                # swallowed Enter while invisible. library.md already promises
-                # the hand-off; the landing's own controls carry the row they
-                # lead to (`row_id`), which is that "matching rail destination".
-                row_id = str(
-                    getattr(stranded, "row_id", "") or self._library_selected_row_id
-                )
-                self._focus_library_rail_action(
-                    f"#library-row-{row_id}" if row_id else "#library-search-input"
-                )
         try:
             collapse = rail.query_one("#library-rail-collapse", Button)
         except (NoMatches, QueryError):
