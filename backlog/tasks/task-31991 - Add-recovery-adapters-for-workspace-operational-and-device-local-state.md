@@ -80,4 +80,3 @@ ADR required: yes
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 
 Reason: direct implementation of the approved recovery ownership, archive, and lifecycle contract; reuse ADR-126.
-
