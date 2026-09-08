@@ -946,9 +946,6 @@ def build_console_settings_controllers(screen: Any) -> None:
         _sync_native_console_chat_ui=lambda *args, **kwargs: (
             screen._sync_native_console_chat_ui(*args, **kwargs)
         ),
-        _test_console_connection=lambda *args, **kwargs: (
-            screen._test_console_connection(*args, **kwargs)
-        ),
         call_after_refresh=lambda *args, **kwargs: screen.call_after_refresh(
             *args, **kwargs
         ),

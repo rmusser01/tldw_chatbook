@@ -269,10 +269,6 @@ from ...Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
-from ...Chat.provider_test_evidence import (
-    ProviderDraftIdentity,
-    ProviderProbeResult,
-)
 from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_live_work import (
     ACP_READINESS_ROW_ID,
@@ -2544,24 +2540,6 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(
             self._retrieval._console_worldbook_detach_worker(), group="console-io"
         )
-
-    @staticmethod
-    async def _test_console_connection(
-        identity: ProviderDraftIdentity,
-    ) -> ProviderProbeResult:
-        """Run the existing bounded model-catalog probe for one exact draft."""
-        from .settings_endpoint_probe import (
-            SettingsEndpointProbePurpose,
-            probe_settings_endpoint,
-            provider_probe_result_from_settings_outcome,
-        )
-
-        outcome = await probe_settings_endpoint(
-            identity.connection_identity[1],
-            provider=identity.provider_key,
-            purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
-        )
-        return provider_probe_result_from_settings_outcome(outcome)
 
     def _owns_console_screen_stack(self) -> bool:
         """Return whether this exact Console instance owns the active stack top."""

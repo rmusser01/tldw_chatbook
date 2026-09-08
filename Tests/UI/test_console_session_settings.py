@@ -1429,8 +1429,10 @@ def test_resident_console_screen_is_not_active_stack_owner(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("replace_connection_tester", [False, True])
 async def test_open_console_settings_real_callback_stages_typed_credential_route(
     monkeypatch,
+    replace_connection_tester: bool,
 ) -> None:
     """Production modal opening supplies the callback that stages its typed result."""
     settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
@@ -1498,8 +1500,19 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
     screen._provider_selection._providers_models_for_console_settings = provider_models
     screen.post_message = posted.append
 
+    if replace_connection_tester:
+
+        async def connection_tester(_identity):
+            return ProviderProbeResult("reachable", ("replacement-model",))
+
+        screen._settings_navigation._test_console_connection = connection_tester
+
     assert await screen._settings_navigation._open_console_settings() is True
     assert mount_awaited is True
+    assert (
+        staged_modal[0]._connection_tester
+        is screen._settings_navigation._test_console_connection
+    )
     callback = staged_modal[1]
     callback(ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5"))
 
@@ -11797,7 +11810,9 @@ async def test_console_connection_tester_uses_chat_catalog_and_returns_typed_res
         draft_generation=7,
     )
 
-    result = await ChatScreen._test_console_connection(identity)
+    result = await settings_navigation_module.ConsoleSettingsNavigationController._test_console_connection(
+        identity
+    )
 
     assert result == ProviderProbeResult("reachable", ("served-model",))
     assert calls == [

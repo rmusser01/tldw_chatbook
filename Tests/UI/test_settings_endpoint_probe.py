@@ -705,7 +705,9 @@ async def test_console_connection_seam_reaches_real_models_endpoint() -> None:
         ProviderDraftIdentity,
         ProviderProbeResult,
     )
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.settings_navigation import (
+        ConsoleSettingsNavigationController,
+    )
 
     requested_paths: list[str] = []
     payload = json.dumps(
@@ -740,7 +742,9 @@ async def test_console_connection_seam_reaches_real_models_endpoint() -> None:
             draft_generation=7,
         )
 
-        result = await ChatScreen._test_console_connection(identity)
+        result = await ConsoleSettingsNavigationController._test_console_connection(
+            identity
+        )
     finally:
         server.shutdown()
         server.server_close()
