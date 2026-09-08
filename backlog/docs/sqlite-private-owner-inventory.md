@@ -71,6 +71,8 @@ Classifications have these meanings:
 | C52 | tldw_chatbook/Personal_Context/repository | PersonalContextRepository._connect | personal_context.repository | private_file | encrypted profile read/write | Migrated via `connect_private_sqlite`. The dedicated profile store contains encrypted canonical objects and peer-local encrypted policy, binding, and outbox bodies directly below the secured user data directory; it is excluded from centralized backup. |
 | C53 | tldw_chatbook/Personal_Context/interview_draft_repository | InterviewDraftRepository._connect | personal_context.interview_drafts | private_file | encrypted local interview draft read/write | Migrated via `connect_private_sqlite`. The dedicated draft store contains only short-lived encrypted interview state under per-session protector keys, is local-only, and is excluded from centralized backup. |
 | C54 | tldw_chatbook/DB/Chunking_Lab_DB | CheckpointStore._connection | db.chunking_lab | private_file | profile-local experiment recovery | Migrated via `connect_private_sqlite`. One lazily opened worker-owned connection publishes checkpoint/blob references with WAL and synchronous FULL, epoch/generation CAS, and current/previous/undo retention. Clear commits a content-free tombstone; private storage and deletion are not encryption or secure erasure. Excluded from centralized backup. |
+| C55 | tldw_chatbook/Chat/console_trace_maintenance | PhysicalTraceCompactor._open_maintenance_connection | chat.trace_maintenance | private_file | same-file maintenance write | Migrated via `connect_private_sqlite`. Registered under its actual module owner. Reopens the existing conversation database with `must_exist=True` for leased physical maintenance, preserving path hardening, connection options and PRAGMAs. Memory compaction remains deferred; no centralized backup permission. |
+| C56 | tldw_chatbook/Library/collections_legacy_recovery | LegacyCollectionsRecovery._read_transaction | library.legacy_recovery | read_only_uri | schema-independent legacy recovery read | Migrated via `connect_private_sqlite`. Existing-file, read-only access without schema initialization or mode changes; namespace checks fail closed. No centralized backup authority. SQLite may maintain WAL/SHM sidecars while reading committed WAL frames. |
 
 ## SQLite backup and restore inventory
 
@@ -235,7 +237,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains 52 classified connection sites and fourteen
+The migrated boundary retains 54 classified connection sites and fourteen
 classified backup/restore operations. The centralized filesystem seam owns
 three raw `sqlite3.connect` calls inside `DB/private_sqlite.py`. One separate
 raw call in `TTS/profile_sqlite_policy.require_native_close_policy_support` is
@@ -244,6 +246,15 @@ contain exactly `sqlite3.connect(":memory:")`, with no keywords, forwarded
 input, file, URI, or variable target. That probe creates no filesystem owner
 and therefore has no `C` row or registry entry. The child-only immutable proof
 call is separately admitted by the exact pinned-descriptor AST guard described
-above, not by a general raw-connection exemption. The boundary retains one
-direct `Connection.backup()` site inside `DB/private_sqlite.py`; Settings has
-no SQLite database `shutil.copy2()` site.
+above, not by a general raw-connection exemption.
+
+Both direct `Connection.backup()` calls are qualified by exact module, symbol,
+receiver and multiplicity. `DB/private_sqlite._backup_pages` invokes
+`source.backup()` for the existing centralized operations. When that source is
+the quiescent ChaChaNotes connection, virtual dispatch reaches
+`DB/base_db._QuiescentSQLiteConnection.backup`, whose `super().backup()` holds a
+use reservation for the same operation and releases it in `finally`. The wrapper
+does not open a destination or grant another owner backup authority. Negative
+scanner controls reject extra, duplicate, moved, receiver-changed and
+other-module calls; real SQLite tests cover reservation release after success
+and callback failure. Settings has no SQLite database `shutil.copy2()` site.
