@@ -7744,6 +7744,35 @@ class LibraryScreen(BaseAppScreen):
                 severity="warning",
             )
 
+    def _restore_library_media_reader_width_on_open(self) -> None:
+        """Reclaim the Reader's width when an item opens (task-31979).
+
+        Selecting an item flips the view to the viewer, so the list-view
+        widening -- which hands the empty Reader's columns to the Items list --
+        must be undone. Patched straight onto the shell so it does NOT advance
+        the presentation epoch or re-arm return settlement: the full resolver
+        sync (``_sync_library_media_reader_layout_from_shell``) does both, and
+        doing either mid-open corrupts the media-return settlement fence.
+        """
+        try:
+            shell = self.query_one(
+                "#library-media-reader-shell", LibraryMediaReaderShell
+            )
+        except (NoMatches, QueryError):
+            return
+        if not self._library_adaptive_reader_allocation_is_current(shell):
+            return
+        layout = resolve_media_reader_layout(
+            shell.region.width,
+            self._library_media_reader_preferences,
+            previous=self._library_media_reader_layout,
+            reader_has_item=self._library_media_view == _MEDIA_VIEW_VIEWER,
+        )
+        if layout == self._library_media_reader_layout:
+            return
+        shell.sync_layout(layout)
+        self._library_media_reader_layout = layout
+
     def _sync_library_media_reader_layout_from_shell(
         self,
         priority: Literal["library", "items"] | None = None,
@@ -7795,6 +7824,10 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_reader_preferences,
             previous=previous,
             priority=priority,
+            # task-31979: only the viewer shows a real document; in the list
+            # and trash views the Reader holds just its placeholder, so its
+            # width goes to the Items list to stop long titles truncating.
+            reader_has_item=self._library_media_view == _MEDIA_VIEW_VIEWER,
         )
         layout_changed = layout != self._library_media_reader_layout
         focused = self.focused
@@ -16023,10 +16056,20 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _library_media_layout_signature(self) -> tuple[object, ...]:
-        """Return terminal allocation plus pure effective Media pane layout."""
-        reader_width = self._library_media_reader_layout.reader_width
+        """Return terminal allocation plus pure effective Media pane layout.
+
+        task-31979: derived from the canonical item-open reader width, not the
+        live tracker's, so the empty-reader list widening -- a deterministic,
+        reversible list-view state that hands the empty Reader's columns to the
+        Items list -- never reads as a layout change that would deny an exact
+        return across the list<->viewer transition.
+        """
+        canonical = resolve_media_reader_layout(
+            int(self.size.width),
+            self._library_media_reader_preferences,
+        )
         pure_layout = resolve_media_reader_layout(
-            reader_width,
+            canonical.reader_width,
             self._library_media_reader_preferences,
         )
         return (
@@ -16640,6 +16683,11 @@ class LibraryScreen(BaseAppScreen):
             if not self.query("#library-media-canvas"):
                 self._sync_library_media_browse_state(None)
             self._sync_library_media_viewer_or_recompose()
+        # task-31979: selecting flips the view to "viewer", so the Reader now
+        # holds a document (or its loading banner) and must reclaim the width
+        # the list-view widening handed to the Items list. The in-place viewer
+        # patch above does not re-run the resolver.
+        self._restore_library_media_reader_width_on_open()
         if immediate:
             self._dispatch_library_media_detail_request(
                 pending.generation, pending.requested_id, canonical_id

@@ -68,12 +68,25 @@ list uses the width that frees up:
   comfortable the surplus is split between them, up to a 56-cell ceiling, so
   a 98-character title paints 46 characters at 235 columns (it painted 31
   before, in a fixed 40-cell column).
+- **With no item open, Items takes the empty Reader's width.** When the
+  Reader is only showing "Select a media item to read it here.", the columns
+  it would give a document go to the Items list instead — so on a wide
+  terminal a long title reads in full rather than truncating beside empty
+  space. Opening an item restores the Reader's width, and closing back to the
+  list widens Items again.
 - **Each item is two rows** — its title, then its type and age — with no
   blank row between items, so a 52-row terminal lists 15 items rather than
   11.
 - **The navigation rail joins Media at 112 columns.** Below that the screen
   shows Items and the Reader only, and the Items pane itself collapses below
   88 columns.
+
+*Verified against fix/media-crit6-layout — 2026-09-07 (task-31979: the
+empty-reader widening. Pinned in tests at 235x52 and 100x30 — with no item
+open the Items list absorbs the empty Reader's columns and paints a
+98-character title's tail past column 56; opening an item restores the split;
+the 100x30 layout is unchanged. Confirmed against the resolver and the shell
+paint, not re-verified live.)*
 
 While another row is loading, Items distinguishes a **Loading ·** row
 prefix from the settled **Loaded ·** one. Reader may keep the prior item visible,
