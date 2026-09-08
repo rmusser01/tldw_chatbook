@@ -311,11 +311,13 @@ the RED tuple"):
     ``library_screen.py``, whatever expression encloses it.** That form is
     exhaustive by construction -- it cannot be defeated by ``partial``, by a
     variable assignment, by a list literal or by whatever wrapper the next
-    refactor introduces. Run that way over the parent tree it returns **26
-    targets**, of which 23 are notes candidates and exactly one was a mover:
-    this name. Both figures belong in the record -- the direct-call-argument
-    census found 20 of the 21 notes targets, and the one it missed was the
-    only one that mattered.
+    refactor introduces. Run that way over the parent tree -- the WHOLE
+    module, not only the class body -- it returns **27 targets**, of which 22
+    are notes candidates and exactly one was a mover: this name. Both figures
+    belong in the record: the direct-call-argument census found **20 of the
+    22**, and the two it missed were ``_focus_library_notes_tree_after_page``
+    (already excluded as a monkeypatch, so its miss was harmless and
+    over-determined) and this one, which was not.
 
 11. **1 callback-identity exclusion** -- recipe SS3's TENTH bypass shape,
     the media series' Form E, where the method to exclude is the CALLER and
