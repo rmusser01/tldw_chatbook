@@ -182,14 +182,27 @@ def _place(eng, tmp_path, key="titanet_small"):
     (tmp_path / eng.EMBEDDERS[key].file_name).write_bytes(b"x")
 
 
-def test_live_threshold_manifest_covers_every_embedder(fake_sherpa, tmp_path):
-    """Task 8 (31827): the live clusterer threshold is per-engine, and the ONNX
-    engine carries one per embedder so the bake-off can pin a tuned value
-    without touching the worker."""
+def test_thresholds_are_the_bakeoff_measured_values(fake_sherpa, tmp_path):
+    """Task 9 (31827): both threshold dicts carry the MEASURED optima.
+
+    Pinned per key, not merely "covers every embedder" (task 8's version of
+    this test asserted the flat 0.25 default): these are the whole product of
+    a 188-minute bake-off, and a silent revert to 0.5/0.25 costs live
+    labelling -- 0.25 on titanet_small minted S1..S8 inside 30 s. See
+    `Docs/STT_Evaluation/task-31827/report.md` and spec §10.
+    """
     from tldw_chatbook.Audio import diarizer_engine_onnx as eng
 
-    assert set(eng.LIVE_THRESHOLD) == set(eng.EMBEDDERS)
-    assert set(eng.LIVE_THRESHOLD.values()) == {0.25}      # the pre-bake-off default
+    assert eng.CLUSTER_THRESHOLD == {
+        "titanet_small": 0.95, "eres2net_en": 0.90, "wespeaker_resnet34": 0.60, "campplus_en": 0.80,
+    }
+    assert eng.LIVE_THRESHOLD == {
+        "titanet_small": 0.45, "eres2net_en": 0.45, "wespeaker_resnet34": 0.10, "campplus_en": 0.15,
+    }
+    # A new manifest entry must bring its own measured pair, not inherit one.
+    assert set(eng.LIVE_THRESHOLD) == set(eng.CLUSTER_THRESHOLD) == set(eng.EMBEDDERS)
+    # The bake-off kept titanet_small: best DER/purity/RTF/latency of the four.
+    assert eng.DEFAULT_EMBEDDER == "titanet_small"
 
 
 def test_load_reports_the_embedders_live_threshold(fake_sherpa, tmp_path):

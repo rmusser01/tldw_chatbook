@@ -101,18 +101,35 @@ EMBEDDERS: dict[str, ModelAsset] = {
     ),
 }
 
-DEFAULT_EMBEDDER = "titanet_small"  # Task 9 (bake-off) may change it
+#: Kept by the bake-off (task 9: 31827): the best of the four candidates on
+#: every measured axis but one (DER 0.143, live purity 1.000, the lowest RTF
+#: and embed latency). It is NOT the default ENGINE -- no candidate passed the
+#: self-match separation gate, so `meeting_owner.AUTO_ORDER` stays
+#: SpeechBrain-first; see spec §10 and `Docs/STT_Evaluation/task-31827/`.
+DEFAULT_EMBEDDER = "titanet_small"
 
-#: Cosine-distance clustering threshold per embedder (spec §5). Starting
-#: point for every candidate; the bake-off (spec §7) tunes these.
-CLUSTER_THRESHOLD: dict[str, float] = {key: 0.5 for key in EMBEDDERS}
+#: Cosine-distance clustering threshold for the Stop pass, per embedder (spec
+#: §5). MEASURED (task 9: 31827, `Docs/STT_Evaluation/task-31827/report.md`) --
+#: the pre-bake-off 0.5-for-everything starting point was wrong for all four.
+CLUSTER_THRESHOLD: dict[str, float] = {
+    "titanet_small": 0.95,
+    "eres2net_en": 0.90,
+    "wespeaker_resnet34": 0.60,
+    "campplus_en": 0.80,
+}
 
 #: Cosine-distance threshold for the LIVE `OnlineClusterer` per embedder
-#: (task 8: 31827). 0.25 -- the value hard-coded for ECAPA before this
-#: existed -- is the starting point for every candidate; the bake-off (spec
-#: §7) tunes these. `load()` hands the chosen one to `diarizer_worker.main()`
-#: through `LoadedEngine.live_threshold`.
-LIVE_THRESHOLD: dict[str, float] = {key: 0.25 for key in EMBEDDERS}
+#: (task 8: 31827), from the same measured run. 0.25 -- ECAPA's value, and the
+#: starting point here -- over-splits every ONNX embedder: on titanet_small it
+#: minted S1..S8 inside 30 s, and the bake-off measures a mean live
+#: cluster-count error of +4.67 at 0.25 against +0.54 at 0.45. `load()` hands
+#: the chosen one to `diarizer_worker.main()` via `LoadedEngine.live_threshold`.
+LIVE_THRESHOLD: dict[str, float] = {
+    "titanet_small": 0.45,
+    "eres2net_en": 0.45,
+    "wespeaker_resnet34": 0.10,
+    "campplus_en": 0.15,
+}
 
 #: Env overrides for both thresholds, read by `load()` (task 8: 31827). They
 #: exist so the bake-off harness can sweep a 5x5 grid over four embedders

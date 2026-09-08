@@ -49,10 +49,13 @@ ENGINE_MODULES: dict[str, tuple[str, ...]] = {
     "onnx": ("sherpa_onnx", "numpy"),
     "speechbrain": DIARIZATION_MODULES,
 }
-#: The order `diarizer_backend = "auto"` tries engines in. Task 9 (the
-#: bake-off, spec §7) may flip this to ONNX-first; until it does, an install
-#: that already has the torch extra keeps the engine its voiceprint was
-#: enrolled with.
+#: The order `diarizer_backend = "auto"` tries engines in. SpeechBrain-first
+#: is the bake-off's recorded outcome (task 9: 31827, spec §10): ONNX won DER,
+#: purity, RTF and latency but no candidate met the self-match separation gate
+#: (best titanet_small 0.640 against ECAPA's 0.734, allowance 0.05), so an
+#: install that has the torch extra keeps the engine its voiceprint was
+#: enrolled with. Flipping this to `("onnx", "speechbrain")` is a one-line
+#: change here plus the matching passage in `Docs/User_Guide/meetings.md`.
 AUTO_ORDER: tuple[str, ...] = ("speechbrain", "onnx")
 #: Accepted `[meetings] diarizer_backend` values. "local" is the pre-31827
 #: spelling and maps to "auto"; "server" is reserved (spec §4).

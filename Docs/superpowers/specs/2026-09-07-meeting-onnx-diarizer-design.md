@@ -237,7 +237,54 @@ library — a step for TASK-31747, not settled by the wheel alone.
 
 ## 10. Recorded deviations and outcomes
 
-- Bake-off outcome: *(filled in by the bake-off task: embedder, gates, `AUTO_ORDER`)*.
+### Bake-off outcome — FAIL; ONNX ships as the fallback, not the default
+
+Measured on an Apple M5 Max (18 cores, macOS 26.5.2, Python 3.12.11, sherpa-onnx 1.13.7)
+over 24 files / 188 minutes (20 VoxConverse dev + 4 AMI dev), 0.25 s collar, 3 s live
+window, `max_speakers` 8. Full report and raw `results.json`:
+`Docs/STT_Evaluation/task-31827/report.md`.
+
+Baseline (SpeechBrain/ECAPA, same harness): DER 0.371, live purity 0.941, RTF 0.015, embed
+latency 27.6 ms, self-match separation 0.734. The §7 gates therefore are: DER ≤ 0.391,
+purity ≥ 0.911, RTF ≤ 0.15, latency ≤ 150 ms (this machine), separation ≥ 0.684.
+
+| embedder | DER | live purity | RTF | embed latency | separation | verdict |
+|---|---|---|---|---|---|---|
+| titanet_small | 0.143 ✓ | 1.000 ✓ | 0.038 ✓ | 11.8 ms ✓ | **0.640 ✗** | FAIL (separation) |
+| eres2net_en | 0.125 ✓ | 1.000 ✓ | 0.082 ✓ | 36.7 ms ✓ | **0.631 ✗** | FAIL (separation) |
+| wespeaker_resnet34 | 0.205 ✓ | **0.888 ✗** | 0.085 ✓ | 36.9 ms ✓ | **0.241 ✗** | FAIL (purity, separation) |
+| campplus_en | 0.371 ✓ | **0.847 ✗** | 0.043 ✓ | 12.9 ms ✓ | **0.515 ✗** | FAIL (purity, separation) |
+
+**The failed gate is self-match separation, for every candidate** — the best, titanet_small
+at cluster 0.95, is 0.094 short against a 0.05 allowance. Live purity additionally fails for
+`wespeaker_resnet34` and `campplus_en`. DER, RTF and latency pass everywhere, three of them
+by a wide margin (ONNX's best DER is 3× better than ECAPA's).
+
+Result, per §7's fail branch: **`AUTO_ORDER` stays `("speechbrain", "onnx")`** — ONNX is the
+base-install engine when the torch extra is absent, and the alternative when it is present.
+`DEFAULT_EMBEDDER` stays `titanet_small` (best overall of the four). The measured thresholds
+are pinned anyway, since an explicit `diarizer_backend = "onnx"` should run at them:
+`CLUSTER_THRESHOLD` = titanet_small 0.95 / eres2net_en 0.90 / wespeaker_resnet34 0.60 /
+campplus_en 0.80; `LIVE_THRESHOLD` = 0.45 / 0.45 / 0.10 / 0.15. The shipped 0.5 / 0.25 were
+wrong for all four (0.25 live on titanet_small minted 8 clusters inside 30 s; mean live
+cluster-count error +4.67 at 0.25 against +0.54 at 0.45).
+
+One qualification, which does not change the verdict as the gate is written: separation
+compares an *absolute* cosine margin across two different embedding spaces. titanet_small's
+self-similarity is higher than ECAPA's (0.933 vs 0.847); its margin is narrower only because
+its other-speaker similarities also sit higher (0.303 vs 0.107), which is why the harness
+reports a per-embedder recommended `voice_match_threshold` (0.377 for titanet_small, 0.526
+for ECAPA) instead of one constant. A reviewer who decides an absolute cross-space margin is
+the wrong test can flip the default with a **one-line change** to `AUTO_ORDER` in
+`meeting_owner.py` plus the corresponding passage in `Docs/User_Guide/meetings.md`; nothing
+else in the code branches on it.
+
+Not measured: the x86 runner half. The `workflow_dispatch` job is landed but **was not
+dispatched for this PR**, so "RTF ≤ 0.15 on both machines" and the 300 ms runner latency
+ceiling are unverified. Both pass on the M-series with 2–4× of headroom, and the two gates
+that actually fail are machine-independent. int8 segmentation was measured separately and is
+worse-or-equal on DER and slower on all four embedders, so it stays out of `model_paths`.
+
 - Library ingest diarization remains torch-based (follow-up to file).
 - CUDA providers for sherpa-onnx are not wired (CPU only in this design).
 
