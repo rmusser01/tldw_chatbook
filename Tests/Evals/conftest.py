@@ -35,14 +35,16 @@ def temp_db_path(tmp_path):
 def in_memory_db():
     """Create an in-memory EvalsDB instance."""
     db = EvalsDB(db_path=":memory:", client_id="test_client")
-    return db
+    yield db
+    db.close()
 
 
 @pytest.fixture
 def temp_db(temp_db_path):
     """Create a temporary file-based EvalsDB instance."""
     db = EvalsDB(db_path=temp_db_path, client_id="test_client")
-    return db
+    yield db
+    db.close()
 
 
 # --- Sample Data Fixtures ---

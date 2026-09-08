@@ -4,7 +4,9 @@ from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 
 @pytest.fixture
 def db(tmp_path):
-    return SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    owner = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    yield owner
+    owner.close()
 
 
 def test_watchlists_columns_exist(db):
@@ -405,7 +407,7 @@ def test_deleting_subscription_cascades_to_its_items(db):
     assert orphans == 0
 
 
-def test_legacy_orphaned_filter_survives_action_check_widening(tmp_path):
+def test_legacy_orphaned_filter_survives_action_check_widening(request, tmp_path):
     """Regression for Task 1a fix round 1.
 
     Enabling FK enforcement made the pre-existing subscription_filters
@@ -491,6 +493,7 @@ def test_legacy_orphaned_filter_survives_action_check_widening(tmp_path):
 
     # Must not raise: this migration runs on every open via _initialize_schema.
     migrated = SubscriptionsDB(str(path), client_id="test")
+    request.addfinalizer(migrated.close)
 
     row = migrated.conn.execute(
         "SELECT subscription_id, action FROM subscription_filters"
@@ -505,7 +508,7 @@ def test_legacy_orphaned_filter_survives_action_check_widening(tmp_path):
     assert "'include'" in check_sql
 
 
-def test_rebuild_recovers_from_stray_subscription_filters_new_table(tmp_path):
+def test_rebuild_recovers_from_stray_subscription_filters_new_table(request, tmp_path):
     """Regression for Finding 2 (final review).
 
     Python's sqlite3 module only opens an implicit transaction for DML --
@@ -592,6 +595,7 @@ def test_rebuild_recovers_from_stray_subscription_filters_new_table(tmp_path):
 
     # Must not raise "table subscription_filters_new already exists".
     migrated = SubscriptionsDB(str(path), client_id="test")
+    request.addfinalizer(migrated.close)
 
     check_sql = migrated.conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"
@@ -612,7 +616,7 @@ def test_rebuild_recovers_from_stray_subscription_filters_new_table(tmp_path):
     assert "subscription_filters_new" not in tables
 
 
-def test_in_memory_db_has_usable_schema():
+def test_in_memory_db_has_usable_schema(request, ):
     """Regression for task-689. Before the fix, ``_initialize_schema`` built
     the schema on a connection from ``with closing(self._get_connection())``
     that was closed immediately after, while the ``.conn`` property used by
@@ -621,6 +625,7 @@ def test_in_memory_db_has_usable_schema():
     had zero tables and any write raised ``OperationalError: no such table``.
     """
     db = SubscriptionsDB(":memory:", client_id="probe")
+    request.addfinalizer(db.close)
     tables = {
         row[0]
         for row in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -634,12 +639,14 @@ def test_in_memory_db_has_usable_schema():
     assert db.get_subscription(source_id)["name"] == "ArXiv"
 
 
-def test_in_memory_db_instances_stay_isolated():
+def test_in_memory_db_instances_stay_isolated(request, ):
     """Two separate ``:memory:`` instances must not see each other's data --
     each opens its own private SQLite database, and nothing here shares a
     cache or file between them."""
     db_a = SubscriptionsDB(":memory:", client_id="a")
+    request.addfinalizer(db_a.close)
     db_b = SubscriptionsDB(":memory:", client_id="b")
+    request.addfinalizer(db_b.close)
 
     db_a.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
 
@@ -647,12 +654,13 @@ def test_in_memory_db_instances_stay_isolated():
     assert db_b.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 0
 
 
-def test_ensure_watchlists_schema_idempotent_on_in_memory_db():
+def test_ensure_watchlists_schema_idempotent_on_in_memory_db(request, ):
     """The ``conn=None`` standalone-call path (used directly by
     test_schema_migration_is_idempotent's file-backed counterpart) must also
     stay correct against an in-memory instance rather than silently
     operating on a throwaway, discarded connection."""
     db = SubscriptionsDB(":memory:", client_id="probe")
+    request.addfinalizer(db.close)
     db._ensure_watchlists_schema()
     db._ensure_watchlists_schema()
     tables = {

@@ -29,19 +29,31 @@ REQUIRED_KANBAN_TABLES = {
 _FTS5_PROBE_TABLE = "__tldw_kanban_fts5_probe"
 
 
-def open_connection(db_path: str | Path) -> sqlite3.Connection:
+def open_connection(db_path: str | Path, *, _source=None) -> sqlite3.Connection:
     conn = connect_private_sqlite("kanban.local", db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    if str(db_path) != ":memory:":
-        conn.execute("PRAGMA journal_mode = WAL")
-    # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-    # lose the last commit, acceptable for this local Kanban-parity cache)
-    # and avoids an fsync per commit. This DB opens a fresh connection per
-    # operation (`LocalKanbanService.connect`/`transaction`), so synchronous
-    # must be re-applied on every open, not just the first (task-15465).
-    conn.execute("PRAGMA synchronous = NORMAL")
-    return conn
+    try:
+        if _source is not None:
+            from tldw_chatbook.Backup_Recovery.participants import (
+                _core_access,
+                _register_core_connection,
+            )
+
+            _register_core_connection(_source, conn)
+            _core_access(_source)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        if str(db_path) != ":memory:":
+            conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local Kanban-parity cache)
+        # and avoids an fsync per commit. This DB opens a fresh connection per
+        # operation (`LocalKanbanService.connect`/`transaction`), so synchronous
+        # must be re-applied on every open, not just the first (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
+        return conn
+    except BaseException:
+        conn.close()
+        raise
 
 
 def initialize_schema(conn: sqlite3.Connection) -> None:

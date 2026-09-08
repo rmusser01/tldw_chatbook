@@ -63,6 +63,8 @@ class _Operation:
             self not in _operations
             or self.participant not in _installed_repositories
             or self.participant.repository() is None
+            or self.participant.read_only
+            != getattr(self.participant.repository(), "_read_only", False)
             or self.participant.repository()._maintenance_participant
             is not self.participant
             or self.pid != os.getpid()

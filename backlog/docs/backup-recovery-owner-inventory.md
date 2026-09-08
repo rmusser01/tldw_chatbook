@@ -450,33 +450,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Image_Generation/adapters/image_format_utils.py | maybe_convert_format | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Image_Generation/request_validation.py | _validate_reference_image_content | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Kanban_Interop/local_kanban_db.py | open_connection | connect_private_sqlite | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.__init__ | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService._search_cards_raw | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService._search_result_for_card | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.copy_card_with_checklists | connect | 2 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.export_board | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_board | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_card | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_card_link_counts | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_checklist | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_checklist_item | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_comment | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_label | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_list | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_storage_status | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_board_activities | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_boards | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_card_activities | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_card_labels | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_card_links | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_cards | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_cards_by_linked_content | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_checklist_items | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_checklists | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_comments | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_labels | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_lists | connect | 1 | qualified | kanban.local |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.transaction | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.connection | connect | 1 | generic_boundary | phase6 exact service scope; native borrowers retained |
 | tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py | save_summary_to_file | makedirs | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py | save_summary_to_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py | save_summary_to_file | write | 1 | unsupported | miscellaneous |
@@ -612,8 +586,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.create_directory | mkdir | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
 | tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.create_file | open | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
 | tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.create_file | write | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
-| tldw_chatbook/Notes/file_notes_replica.py | FileNotesReplica.__init__ | connect_private_sqlite | 1 | qualified | notes.file_notes |
-| tldw_chatbook/Notes/file_notes_replica.py | FileNotesReplica.__init__ | mkdir | 1 | qualified | notes.file_notes |
+| tldw_chatbook/Notes/file_notes_replica.py | FileNotesReplica._get_connection | connect_private_sqlite | 1 | qualified | notes.file_notes |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.create_file | open | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.create_file | write | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | open | 1 | external_input | external-notes-workspace-or-export |
@@ -2003,3 +1976,83 @@ responder, Complete backup or replacement exposure. The phase2 clean-BASE
 combined-order app callback/bootstrap issue remains Task10 app/lifecycle work.
 The separately baselined malformed Media historical-schema fixture remains Task13
 schema/migration qualification, without a schema-stamp workaround here.
+
+### Task10 phase6 — remaining local SQLite source lifetimes
+
+The exact loaded production EvalsDB, SubscriptionsDB, FileNotesReplica,
+NoteImportReceiptRepository and LocalKanbanService types now use the installed
+repository/native identity protocol. These five and SiteConfigManager are looked
+up only in their fixed, already loaded production modules; generic getters do not
+import these additional source modules or the manager's config/encryption stack.
+This is narrow lazy dispatch, not optional-dependency or runtime-coverage proof.
+
+| Source scope | Semantic participant | Native policy and actual retirement |
+| --- | --- | --- |
+| EvalsDB lexical schema/CRUD/read `connection()` | db.evals | db.evals; retained `_local.connection` closes explicitly on its creating thread after managed work. |
+| SubscriptionsDB schema, transaction, direct reads | db.subscriptions | db.base for writes; db.subscriptions.agent_read only for fixed read-only mode, revalidated on every association/use. Retained `_local.conn` requires positive source-thread retirement. |
+| FileNotesReplica locked schema/read/transaction | notes.file_notes | notes.file_notes_replica; retained shared `_connection` refuses foreign-thread close and all active managed borrowers. RLock/check_same_thread=False does not revoke escaped native users. |
+| NoteImportReceiptRepository transaction | notes.sync_state | notes.sync_state; existing BEGIN/schema/commit-or-rollback/finally.close retained. `_database_path` binds once, exposed read-only as db_path. Memory stays rejected by the existing file-only policy. |
+| LocalKanbanService connection/transaction/schema | kanban.local | kanban.local; actual service owns each lexical native scope through its original finally.close. Public `local_kanban_db.open_connection`/schema/transaction helpers stay ordinarily fenced without source authority from a path. |
+| SiteConfigManager initial table setup only | db.subscriptions.site_configs | db.subscriptions.site_configs; native setup closes before its independent CharactersRAGDB construction/use. Same-path source identities never share or reassign native lease authority. Standalone ensure_site_configs_schema stays ordinary. |
+
+FileNotes directory construction is two independent safe stages. Its file selector
+is bound before the constructor-only raw directory route admits the fixed database
+path and actually missing parent targets. Existing ancestor identity is checked and
+pinned before descriptor-relative mkdir; portable ordinary behavior remains
+unqualified. Positive directory-resource retirement precedes a fresh repository
+admission. Pause before creation has no directory effect; pause during admitted
+mkdir may leave only those successfully admitted directories, then refuses before
+SQLite. Retargeting between stages refuses. Directory close uncertainty retains
+actual resources/leases and blocks maintenance; no cleanup removes existing dirs.
+The raw constructor's internal notes.file_notes_replica policy identity is not a
+second semantic coverage claim or a transfer of authority into the SQLite stage.
+
+All new allocations register before source setup and recheck admission before raw
+return. The actual Kanban service passes its exact source to the native helper;
+standalone helper calls retain only ordinary native accounting. A real DELETE-to-WAL
+mutation after source pause exposed and verified this pre-PRAGMA gate boundary. Failed setup closes exactly that unpublished native allocation, or retains
+uncertain evidence. Cached live errors preserve references; only positive native
+retirement allows file-cache reuse. Native cursors/connections retain their existing
+contracts; Evals/Subscriptions managed exit does not close escaped cached users.
+FileNotes closes its cursor at its existing transaction exit; memory retains its
+original closed-handle behavior. Receipts/Kanban commit/rollback/close boundaries
+are unchanged. Source scopes are not whole job or cross-store publication scopes.
+Subscriptions reads an omitted default threshold before its DB operation, preserving
+cold-config values and explicit overrides; a subsequent pause still refuses the
+fresh DB mutation. Exact pre-existing plain/joined SQL literal payloads are retained,
+including SQLite's stored DDL bytes; no catalog/migration exceptions were added.
+
+Concrete remaining caller handoffs (required later Task10 work):
+
+- `Evals/eval_orchestrator.py::_initialize_database` and actual run execution retain
+  EvalsDB; `Event_Handlers/eval_db_operations.py::EvalDBOperations` and its
+  `get_eval_db_ops` singleton retain another source. Their actual workers, result/
+  asset publication and snapshots must finish/materialize native consumers and
+  positively close each creating-thread cache before idle.
+- `Widgets/Library/library_file_notes_workspace.py::_build_runtime` constructs and
+  retains FileNotesReplica even when its awaiting mount is cancelled. Its
+  `shutdown` dispatches `_close_owned_replica` with `asyncio.to_thread`; this need
+  not be the native creating thread. `_close_owned_replica` currently clears the
+  workspace reference after service/replica close without proof of native retirement.
+  Integrate these actual source workers and FileNotesService/session/file/Git/autosave
+  boundaries, dirty draft/save-discard state and root commit before retiring startup.
+  A foreign close now truthfully leaves registered native evidence blocking drain.
+- `Notes/note_import_executor.py::NoteImportExecutor.execute/retry_failed` receives
+  the exact receipt repository and composes its ledger with target note/folder/
+  membership effects. Per-transaction retirement does not reconcile unfinished
+  effects or qualify import/sync job coherence.
+- `Subscriptions/site_config_manager.py::get_site_config_manager` retains a hybrid
+  manager used by `Subscriptions/web_scraping_pipelines.py`. Real subscription,
+  briefing/audio/asset, agent-read and scraping jobs need whole-job drainage and
+  native source-thread close. Its setup-only participant never stands for the whole
+  Subscriptions/core42 hybrid payload or replaces either real native source.
+- `app.py` creates the installed LocalKanbanService. Its `copy_card` and other
+  methods can compose multiple separately committed SQLite scopes/awaits. Actual
+  app/policy/service jobs must own complete work; direct native helper users remain
+  blockers until positive close rather than receiving path-derived authority.
+
+Final composition must aggregate these concrete source routes and shared semantic
+payloads. Full runtime census coverage, startup retirement/reacquisition, responders,
+Complete/replacement exposure and independent whole-Task10 review remain unavailable.
+Earlier phase2 app/bootstrap ordering and other named caller cohorts remain required;
+this phase does not convert pending declarations into runtime coverage.

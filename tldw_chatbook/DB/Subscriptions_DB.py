@@ -28,13 +28,23 @@ import time
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Sequence, Union
+from typing import Iterator, List, Dict, Any, Optional, Sequence, Union
 from urllib.parse import urlparse, urlunparse
 
 # Third-Party Libraries
 from loguru import logger
 
 # Local Imports
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_operation,
+    _core_transaction,
+    _register_core_connection,
+)
+
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
 from .sql_validation import validate_identifier
@@ -149,7 +159,7 @@ SITE_CONFIGS_DDL = """
 """
 
 
-def ensure_site_configs_schema(db_path) -> None:
+def ensure_site_configs_schema(db_path, *, _source=None) -> None:
     """Create `site_configs` on `db_path`, and nothing else.
 
     `SiteConfigManager` accepts a caller-supplied path. Opening a full
@@ -168,6 +178,9 @@ def ensure_site_configs_schema(db_path) -> None:
     with closing(
         connect_private_sqlite("db.subscriptions.site_configs", db_path)
     ) as conn:
+        if _source is not None:
+            _register_core_connection(_source, conn)
+            _core_access(_source)
         if str(db_path) != ":memory:":
             conn.execute("PRAGMA journal_mode = WAL")
         # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
@@ -272,57 +285,34 @@ class SubscriptionsDB(BaseDB):
                 self.close()
                 raise SubscriptionsDBUnavailableError() from None
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
-        """Return a connection with foreign-key enforcement enabled.
-
-        ``PRAGMA foreign_keys`` is per-connection and defaults to OFF, and
-        ``BaseDB._get_connection`` sets only ``row_factory``. Without this
-        override every ``ON DELETE CASCADE`` in this schema is inert, which
-        silently orphaned ``subscription_items`` whenever a subscription was
-        deleted. Matches ``ChaChaNotes_DB`` and ``Client_Media_DB_v2``, which
-        each enable it per connection.
-        """
+        """Open/register the exact writable or existing read-only native route."""
+        _core_access(self)
         if self._read_only:
             conn = connect_private_sqlite(
-                "db.subscriptions.agent_read",
-                self.db_path_str,
-                read_only=True,
-                must_exist=True,
+                "db.subscriptions.agent_read", self.db_path_str,
+                read_only=True, must_exist=True,
             )
+        else:
+            conn = super()._get_connection()
+        try:
+            _register_core_connection(self, conn)
+            _core_access(self)
             conn.row_factory = sqlite3.Row
-            try:
-                conn.create_function(
-                    "unicode_casefold",
-                    1,
-                    _sqlite_unicode_casefold,
-                    deterministic=True,
-                )
-                conn.execute("PRAGMA foreign_keys = ON;")
+            conn.create_function("unicode_casefold", 1, _sqlite_unicode_casefold, deterministic=True)
+            conn.execute("PRAGMA foreign_keys = ON;")
+            if self._read_only:
                 conn.execute("PRAGMA query_only = ON;")
-            except Exception:
-                conn.close()
-                raise
+            else:
+                if not self.is_memory_db:
+                    conn.execute("PRAGMA journal_mode = WAL;")
+                conn.execute("PRAGMA synchronous = NORMAL;")
+            _core_access(self)
             return conn
-
-        conn = super()._get_connection()
-        conn.create_function(
-            "unicode_casefold",
-            1,
-            _sqlite_unicode_casefold,
-            deterministic=True,
-        )
-        conn.execute("PRAGMA foreign_keys = ON;")
-        if not self.is_memory_db:
-            conn.execute("PRAGMA journal_mode = WAL;")
-        # NORMAL is safe under WAL (SQLite-documented pairing: app-crash-safe,
-        # only an OS/power crash can lose the last commit or two -- acceptable
-        # for this local watchlist/feed cache) and avoids an fsync on every
-        # commit; DELETE mode's default FULL previously made every writer
-        # exclusive-lock readers too, a multi-second-stall candidate on slow
-        # disks (task-15465). Unconditional: synchronous is per-connection,
-        # so every connection this DB opens needs it, not just the first.
-        conn.execute("PRAGMA synchronous = NORMAL;")
-        return conn
+        except BaseException:
+            conn.close()
+            raise
 
     def assert_agent_read_ready(self) -> None:
         """Require the exact core schema used by Watchlists agent reads.
@@ -338,18 +328,19 @@ class SubscriptionsDB(BaseDB):
             SubscriptionsDBReadError: If the readiness read fails operationally.
                 The fixed message contains no underlying exception payload.
         """
-        try:
-            conn = self.conn
-            for table, required_columns in self._AGENT_READ_REQUIRED_COLUMNS.items():
-                columns = {
-                    row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")
-                }
-                if not required_columns <= columns:
-                    raise SubscriptionsDBUnavailableError()
-        except SubscriptionsDBUnavailableError:
-            raise
-        except (sqlite3.Error, OSError):
-            raise SubscriptionsDBReadError() from None
+        with _core_operation(self):
+            try:
+                conn = self.conn
+                for table, required_columns in self._AGENT_READ_REQUIRED_COLUMNS.items():
+                    columns = {
+                        row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")
+                    }
+                    if not required_columns <= columns:
+                        raise SubscriptionsDBUnavailableError()
+            except SubscriptionsDBUnavailableError:
+                raise
+            except (sqlite3.Error, OSError):
+                raise SubscriptionsDBReadError() from None
 
     def _initialize_schema(self):
         """Initialize the database schema.
@@ -380,8 +371,9 @@ class SubscriptionsDB(BaseDB):
         fix (e.g. a shared-cache ``file::memory:?cache=shared`` URI plus a
         dedicated keepalive connection).
         """
-        with self.transaction() as conn:
-            conn.executescript("""
+        with _core_operation(self):
+            with self.transaction() as conn:
+                conn.executescript("""
             PRAGMA foreign_keys = ON;
             
             -- Schema version tracking
@@ -652,93 +644,94 @@ class SubscriptionsDB(BaseDB):
                 UPDATE subscription_templates SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END;
             """)
-        conn.executescript(SITE_CONFIGS_DDL)
-        self._ensure_watchlists_schema(conn)
+            conn.executescript(SITE_CONFIGS_DDL)
+            self._ensure_watchlists_schema(conn)
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
-        if conn is None:
-            # Same in-memory-safe reasoning as _initialize_schema above: reuse
-            # the thread-local connection rather than opening-and-closing a
-            # throwaway one, so this is also correct when called standalone
-            # (e.g. from a test) against an in-memory instance.
-            conn = self.conn
+        with _core_operation(self):
+            if conn is None:
+                # Same in-memory-safe reasoning as _initialize_schema above: reuse
+                # the thread-local connection rather than opening-and-closing a
+                # throwaway one, so this is also correct when called standalone
+                # (e.g. from a test) against an in-memory instance.
+                conn = self.conn
 
-        cursor = conn.cursor()
+            cursor = conn.cursor()
 
-        # Add columns to subscription_items
-        items_cols = {
-            row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")
-        }
-        if "queued_for_briefing" not in items_cols:
-            cursor.execute(
-                "ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0"
-            )
-        if "run_id" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
-        if "alert_matches" not in items_cols:
-            cursor.execute(
-                "ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT"
-            )
-
-        # Add columns to subscription_filters
-        filters_cols = {
-            row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")
-        }
-        if "priority" not in filters_cols:
-            cursor.execute(
-                "ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0"
-            )
-        if "is_include_required" not in filters_cols:
-            cursor.execute(
-                "ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0"
-            )
-
-        # Widen CHECK constraint on subscription_filters.action.
-        # Must check for the literal action value 'include' rather than the
-        # bare substring, because the new column `is_include_required` would
-        # otherwise make the substring match and skip the migration.
-        existing_check = None
-        for row in cursor.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"
-        ):
-            existing_check = row[0]
-        if existing_check and "'include'" not in existing_check:
-            # This rebuild predates FK enforcement (Task 1a) and may run
-            # against a real database that already has a subscription_filters
-            # row whose subscription_id no longer exists -- the orphan
-            # condition Task 1a exists to stop *creating*, not to clean up
-            # retroactively (cleanup is out of scope; already-orphaned rows
-            # must survive). Copying such a row into subscription_filters_new,
-            # which declares the FK, would raise IntegrityError now that
-            # enforcement is on. Disable enforcement for this rebuild only,
-            # then restore it -- this is the documented SQLite procedure for
-            # a table rebuild that must tolerate pre-existing violations.
-            #
-            # PRAGMA foreign_keys is a no-op while a transaction is pending,
-            # so commit immediately before toggling it off, and again after
-            # the rebuild before toggling it back on. Read the pragma back
-            # rather than assuming the toggle took effect.
-            conn.commit()
-            cursor.execute("PRAGMA foreign_keys = OFF;")
-            if cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
-                raise RuntimeError(
-                    "Could not disable foreign_keys enforcement for the "
-                    "subscription_filters rebuild; refusing to risk a "
-                    "silent partial migration."
+            # Add columns to subscription_items
+            items_cols = {
+                row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")
+            }
+            if "queued_for_briefing" not in items_cols:
+                cursor.execute(
+                    "ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0"
                 )
-            try:
-                # CREATE TABLE runs in autocommit in Python's sqlite3 module
-                # (only DML gets an implicit transaction), so the
-                # conn.rollback() in the except below cannot undo it. If a
-                # previous run of this rebuild died after creating this table
-                # but before the rename below, `_new` survives indefinitely
-                # and every later open hits "table subscription_filters_new
-                # already exists" here -- permanently. Drop it first so a
-                # stray table from an earlier failed attempt never blocks a
-                # fresh one.
-                cursor.execute("DROP TABLE IF EXISTS subscription_filters_new")
-                cursor.execute("""
+            if "run_id" not in items_cols:
+                cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
+            if "alert_matches" not in items_cols:
+                cursor.execute(
+                    "ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT"
+                )
+
+            # Add columns to subscription_filters
+            filters_cols = {
+                row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")
+            }
+            if "priority" not in filters_cols:
+                cursor.execute(
+                    "ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0"
+                )
+            if "is_include_required" not in filters_cols:
+                cursor.execute(
+                    "ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0"
+                )
+
+            # Widen CHECK constraint on subscription_filters.action.
+            # Must check for the literal action value 'include' rather than the
+            # bare substring, because the new column `is_include_required` would
+            # otherwise make the substring match and skip the migration.
+            existing_check = None
+            for row in cursor.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"
+            ):
+                existing_check = row[0]
+            if existing_check and "'include'" not in existing_check:
+                # This rebuild predates FK enforcement (Task 1a) and may run
+                # against a real database that already has a subscription_filters
+                # row whose subscription_id no longer exists -- the orphan
+                # condition Task 1a exists to stop *creating*, not to clean up
+                # retroactively (cleanup is out of scope; already-orphaned rows
+                # must survive). Copying such a row into subscription_filters_new,
+                # which declares the FK, would raise IntegrityError now that
+                # enforcement is on. Disable enforcement for this rebuild only,
+                # then restore it -- this is the documented SQLite procedure for
+                # a table rebuild that must tolerate pre-existing violations.
+                #
+                # PRAGMA foreign_keys is a no-op while a transaction is pending,
+                # so commit immediately before toggling it off, and again after
+                # the rebuild before toggling it back on. Read the pragma back
+                # rather than assuming the toggle took effect.
+                conn.commit()
+                cursor.execute("PRAGMA foreign_keys = OFF;")
+                if cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
+                    raise RuntimeError(
+                        "Could not disable foreign_keys enforcement for the "
+                        "subscription_filters rebuild; refusing to risk a "
+                        "silent partial migration."
+                    )
+                try:
+                    # CREATE TABLE runs in autocommit in Python's sqlite3 module
+                    # (only DML gets an implicit transaction), so the
+                    # conn.rollback() in the except below cannot undo it. If a
+                    # previous run of this rebuild died after creating this table
+                    # but before the rename below, `_new` survives indefinitely
+                    # and every later open hits "table subscription_filters_new
+                    # already exists" here -- permanently. Drop it first so a
+                    # stray table from an earlier failed attempt never blocks a
+                    # fresh one.
+                    cursor.execute("DROP TABLE IF EXISTS subscription_filters_new")
+                    cursor.execute("""
                     CREATE TABLE subscription_filters_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         subscription_id INTEGER,
@@ -754,228 +747,228 @@ class SubscriptionsDB(BaseDB):
                         FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
                     )
                 """)
-                cursor.execute("""
+                    cursor.execute("""
                     INSERT INTO subscription_filters_new
                         (id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at)
                     SELECT id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at
                     FROM subscription_filters
                 """)
-                cursor.execute("DROP TABLE subscription_filters")
-                cursor.execute(
-                    "ALTER TABLE subscription_filters_new RENAME TO subscription_filters"
-                )
-                cursor.execute("""
+                    cursor.execute("DROP TABLE subscription_filters")
+                    cursor.execute(
+                        "ALTER TABLE subscription_filters_new RENAME TO subscription_filters"
+                    )
+                    cursor.execute("""
                     CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
                     AFTER UPDATE ON subscription_filters
                     BEGIN
                         UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
                     END
                 """)
-                conn.commit()
-            except Exception:
-                # Roll back any partial rebuild so no pending transaction
-                # remains -- otherwise the PRAGMA restore below would be a
-                # silent no-op and leave enforcement off for the rest of
-                # this connection's life, reintroducing the bug Task 1a
-                # fixed.
-                conn.rollback()
-                # conn.rollback() does not remove subscription_filters_new
-                # itself (CREATE TABLE is autocommit -- see the comment
-                # above), so this attempt's own partially-built table would
-                # otherwise become the exact stray table the DROP above
-                # exists to guard against, for the next open.
-                cursor.execute("DROP TABLE IF EXISTS subscription_filters_new")
-                raise
-            finally:
-                cursor.execute("PRAGMA foreign_keys = ON;")
-                if cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-                    logger.error(
-                        "Failed to re-enable foreign_keys enforcement after "
-                        "the subscription_filters rebuild."
+                    conn.commit()
+                except Exception:
+                    # Roll back any partial rebuild so no pending transaction
+                    # remains -- otherwise the PRAGMA restore below would be a
+                    # silent no-op and leave enforcement off for the rest of
+                    # this connection's life, reintroducing the bug Task 1a
+                    # fixed.
+                    conn.rollback()
+                    # conn.rollback() does not remove subscription_filters_new
+                    # itself (CREATE TABLE is autocommit -- see the comment
+                    # above), so this attempt's own partially-built table would
+                    # otherwise become the exact stray table the DROP above
+                    # exists to guard against, for the next open.
+                    cursor.execute("DROP TABLE IF EXISTS subscription_filters_new")
+                    raise
+                finally:
+                    cursor.execute("PRAGMA foreign_keys = ON;")
+                    if cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                        logger.error(
+                            "Failed to re-enable foreign_keys enforcement after "
+                            "the subscription_filters rebuild."
+                        )
+
+            # Indexes
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)"
+            )
+
+            # Reader/body columns. `content` holds the renderable body: article text
+            # for feed items, diff text for site changes. `url_snapshots` remains the
+            # authority for full-page and previous-snapshot views.
+            if "content" not in items_cols:
+                cursor.execute("ALTER TABLE subscription_items ADD COLUMN content TEXT")
+            if "content_format" not in items_cols:
+                cursor.execute(
+                    "ALTER TABLE subscription_items ADD COLUMN content_format TEXT"
+                )
+            if "content_kind" not in items_cols:
+                cursor.execute(
+                    "ALTER TABLE subscription_items ADD COLUMN content_kind TEXT"
+                )
+            # Flag is a separate boolean, not a status: the status CHECK has no
+            # 'flagged' value, and an item can be flagged *and* reviewed at once.
+            if "is_flagged" not in items_cols:
+                cursor.execute(
+                    "ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0"
+                )
+
+            # TASK-15464: a stored, indexed effective-date column, replacing the
+            # per-row `COALESCE(datetime(published_date), datetime(created_at))`
+            # expression `get_new_items` used to ORDER BY -- unindexable, so
+            # every Items-pane refresh sorted the WHOLE table before its LIMIT
+            # ever applied.
+            #
+            # `GENERATED ALWAYS AS (...) VIRTUAL`, not a plain column maintained
+            # by a trigger or by application code: it is auto-computed for every
+            # existing row (no separate backfill UPDATE -- SQLite evaluates the
+            # expression on demand, and materializes it into the index below at
+            # index-build time, over however many legacy rows already exist) and
+            # auto-maintained on every INSERT/UPDATE of `published_date` or
+            # `created_at`, through every write path there is or ever will be --
+            # unlike a trigger, which only covers paths someone remembered to
+            # keep it in sync with, and unlike the current single write path
+            # (`persist_subscription_item`), which would otherwise be the one
+            # place a future column-writer would have to remember to update too.
+            # `STORED` was tried first and rejected: SQLite's `ALTER TABLE ADD
+            # COLUMN` refuses it outright ("cannot add a STORED column") --
+            # only `VIRTUAL` can be added to an existing table after the fact;
+            # probe-verified (task-15464) before deciding.
+            #
+            # The expression is deliberately byte-for-byte the same one
+            # `get_new_items`'s ORDER BY and `since` predicate used to spell out
+            # inline, and probe-verified (task-15464) against real SQLite
+            # (3.49.1) before this was written:
+            #   - NULL, `''`, or an unparseable `published_date` (`datetime()`
+            #     returns NULL for all three) falls back to `created_at`,
+            #     identically to the old expression -- because it IS the old
+            #     expression, just stored instead of recomputed per row per
+            #     query.
+            #   - A mixed-format `created_at` (space-separated
+            #     `CURRENT_TIMESTAMP` vs. ingest's ISO `T`+offset) normalizes
+            #     through the same `datetime()` call either way.
+            #   - Ties (equal effective date) sort by ascending `id` today, with
+            #     or without this index -- SQLite appends the rowid as a
+            #     non-unique index's own implicit final key, so an index scan
+            #     produces the identical tie order a full-table sort already
+            #     does. The ORDER BY clauses below make this explicit
+            #     (`, i.id ASC`) rather than leaning on that implicit behaviour.
+            #
+            # TRAP, found by the same probe: `PRAGMA table_info` does NOT list a
+            # virtual generated column at all -- SQLite reports it only through
+            # `PRAGMA table_xinfo` (in that pragma's `hidden` field). The
+            # idempotency guard below therefore reads `table_xinfo`, not the
+            # `table_info`-sourced `items_cols` every other guard in this method
+            # uses: guarding on `items_cols` here would find "effective_date"
+            # absent FOREVER (it can never appear in `table_info`'s output) and
+            # re-run the ALTER on every single schema init after the first,
+            # crashing with "duplicate column name: effective_date" the very
+            # next time this method runs.
+            #
+            # No `BEGIN IMMEDIATE` wrapper (contrast the `extraction_fingerprint`
+            # migration above): that one needs atomicity because a DDL statement
+            # autocommits immediately under Python's sqlite3 implicit-BEGIN
+            # policy, and a crash between ITS ALTER and its follow-up UPDATEs
+            # would leave the one-time gate spent with the data half-migrated.
+            # There are no follow-up DML statements here to strand -- the ALTER
+            # and the CREATE INDEX are each independently atomic DDL, and a
+            # generated column cannot be written to directly (confirmed by the
+            # same probe: an explicit INSERT/UPDATE naming it raises), so there
+            # is no data-migration step for a crash to catch mid-way at all.
+            items_xcols = {
+                row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")
+            }
+            if "effective_date" not in items_xcols:
+                cursor.execute(
+                    "ALTER TABLE subscription_items ADD COLUMN effective_date TEXT "
+                    "GENERATED ALWAYS AS "
+                    "(COALESCE(datetime(published_date), datetime(created_at))) VIRTUAL"
+                )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_subscription_items_effective_date "
+                "ON subscription_items(effective_date DESC)"
+            )
+
+            # Snapshot extraction fingerprint + one-time TASK-1362 "noise, not
+            # volume" data migration (spec:
+            # Docs/superpowers/specs/2026-07-29-watchlists-noise-not-volume-design.md
+            # -- see .superpowers/sdd/2026-07-29-watchlists-noise-not-volume).
+            # The column's absence IS the one-time gate: a database that already
+            # has `extraction_fingerprint` has already had its url-family
+            # thresholds/selectors migrated (or was created fresh, after the
+            # CREATE TABLE above already declared the column and the 0.0
+            # default), so the data migration below can never re-run and clobber
+            # a user's subsequent edits.
+            #
+            # The ALTER and the two UPDATEs are wrapped in one EXPLICIT
+            # transaction below -- they do NOT get this for free. Python's
+            # sqlite3 module (default isolation_level, no override anywhere in
+            # BaseDB/connect_private_sqlite) opens an implicit transaction only
+            # before DML (INSERT/UPDATE/DELETE/REPLACE), never before DDL, so a
+            # bare `cursor.execute("ALTER TABLE ...")` autocommits immediately --
+            # it is not protected by whatever transaction the caller thinks it
+            # is in. Verified empirically: without an explicit BEGIN here, an
+            # exception between the ALTER and the second UPDATE (e.g. from
+            # default_ignore_selectors_text() below) leaves the column present
+            # -- the one-time gate durably spent -- with change_threshold moved
+            # but ignore_selectors permanently NULL, and *unrepairable*: a clean
+            # re-run sees the column already there and skips entirely. SQLite's
+            # DDL is itself fully transactional; only the sqlite3 module's
+            # implicit-BEGIN policy is not. Wrapping the ALTER and both UPDATEs
+            # in one explicit BEGIN IMMEDIATE / COMMIT (rolled back together on
+            # any exception) restores atomicity, so the write structurally
+            # gates the marker instead of merely being re-runnable until it
+            # eventually completes.
+            #
+            # Which is why this block deliberately does NOT use the shared
+            # `transaction()` helper, in knowing exemption from the repo-wide
+            # compliance rule that every write goes through
+            # `with db.transaction() as cursor:` (CLAUDE.md/AGENTS.md, "Key
+            # Patterns -> Database Operations", restated as gotcha 5 "Thread
+            # safety"): the helper can only ask the sqlite3 driver for a
+            # transaction, and the driver autocommits DDL under its implicit-BEGIN
+            # policy regardless, so `transaction()` cannot make ALTER + UPDATE
+            # atomic here -- proven by probe during the whole-branch review, and
+            # adopting it would reintroduce exactly the unrepairable half-migration
+            # described above (a crash between the ALTER and the UPDATEs spends the
+            # one-time gate with the data unmigrated and no way back). The explicit
+            # BEGIN IMMEDIATE exists precisely for that. The exemption is
+            # deliberate, not ignorance of the rule; pinned by
+            # `test_migration_rolls_back_atomically_on_mid_migration_failure`.
+            snapshot_cols = {
+                row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")
+            }
+            if "extraction_fingerprint" not in snapshot_cols:
+                from ..Subscriptions.noise_defaults import default_ignore_selectors_text
+
+                if conn.in_transaction:
+                    conn.commit()
+                cursor.execute("BEGIN IMMEDIATE")
+                try:
+                    cursor.execute(
+                        "ALTER TABLE url_snapshots ADD COLUMN extraction_fingerprint TEXT"
                     )
+                    cursor.execute(
+                        "UPDATE subscriptions SET change_threshold = 0.0"
+                        " WHERE type IN ('url','url_list','sitemap')"
+                    )
+                    cursor.execute(
+                        "UPDATE subscriptions SET ignore_selectors = ?"
+                        " WHERE type IN ('url','url_list','sitemap')"
+                        "   AND (ignore_selectors IS NULL OR TRIM(ignore_selectors) = '')",
+                        (default_ignore_selectors_text(),),
+                    )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
 
-        # Indexes
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)"
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)"
-        )
-
-        # Reader/body columns. `content` holds the renderable body: article text
-        # for feed items, diff text for site changes. `url_snapshots` remains the
-        # authority for full-page and previous-snapshot views.
-        if "content" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content TEXT")
-        if "content_format" not in items_cols:
-            cursor.execute(
-                "ALTER TABLE subscription_items ADD COLUMN content_format TEXT"
-            )
-        if "content_kind" not in items_cols:
-            cursor.execute(
-                "ALTER TABLE subscription_items ADD COLUMN content_kind TEXT"
-            )
-        # Flag is a separate boolean, not a status: the status CHECK has no
-        # 'flagged' value, and an item can be flagged *and* reviewed at once.
-        if "is_flagged" not in items_cols:
-            cursor.execute(
-                "ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0"
-            )
-
-        # TASK-15464: a stored, indexed effective-date column, replacing the
-        # per-row `COALESCE(datetime(published_date), datetime(created_at))`
-        # expression `get_new_items` used to ORDER BY -- unindexable, so
-        # every Items-pane refresh sorted the WHOLE table before its LIMIT
-        # ever applied.
-        #
-        # `GENERATED ALWAYS AS (...) VIRTUAL`, not a plain column maintained
-        # by a trigger or by application code: it is auto-computed for every
-        # existing row (no separate backfill UPDATE -- SQLite evaluates the
-        # expression on demand, and materializes it into the index below at
-        # index-build time, over however many legacy rows already exist) and
-        # auto-maintained on every INSERT/UPDATE of `published_date` or
-        # `created_at`, through every write path there is or ever will be --
-        # unlike a trigger, which only covers paths someone remembered to
-        # keep it in sync with, and unlike the current single write path
-        # (`persist_subscription_item`), which would otherwise be the one
-        # place a future column-writer would have to remember to update too.
-        # `STORED` was tried first and rejected: SQLite's `ALTER TABLE ADD
-        # COLUMN` refuses it outright ("cannot add a STORED column") --
-        # only `VIRTUAL` can be added to an existing table after the fact;
-        # probe-verified (task-15464) before deciding.
-        #
-        # The expression is deliberately byte-for-byte the same one
-        # `get_new_items`'s ORDER BY and `since` predicate used to spell out
-        # inline, and probe-verified (task-15464) against real SQLite
-        # (3.49.1) before this was written:
-        #   - NULL, `''`, or an unparseable `published_date` (`datetime()`
-        #     returns NULL for all three) falls back to `created_at`,
-        #     identically to the old expression -- because it IS the old
-        #     expression, just stored instead of recomputed per row per
-        #     query.
-        #   - A mixed-format `created_at` (space-separated
-        #     `CURRENT_TIMESTAMP` vs. ingest's ISO `T`+offset) normalizes
-        #     through the same `datetime()` call either way.
-        #   - Ties (equal effective date) sort by ascending `id` today, with
-        #     or without this index -- SQLite appends the rowid as a
-        #     non-unique index's own implicit final key, so an index scan
-        #     produces the identical tie order a full-table sort already
-        #     does. The ORDER BY clauses below make this explicit
-        #     (`, i.id ASC`) rather than leaning on that implicit behaviour.
-        #
-        # TRAP, found by the same probe: `PRAGMA table_info` does NOT list a
-        # virtual generated column at all -- SQLite reports it only through
-        # `PRAGMA table_xinfo` (in that pragma's `hidden` field). The
-        # idempotency guard below therefore reads `table_xinfo`, not the
-        # `table_info`-sourced `items_cols` every other guard in this method
-        # uses: guarding on `items_cols` here would find "effective_date"
-        # absent FOREVER (it can never appear in `table_info`'s output) and
-        # re-run the ALTER on every single schema init after the first,
-        # crashing with "duplicate column name: effective_date" the very
-        # next time this method runs.
-        #
-        # No `BEGIN IMMEDIATE` wrapper (contrast the `extraction_fingerprint`
-        # migration above): that one needs atomicity because a DDL statement
-        # autocommits immediately under Python's sqlite3 implicit-BEGIN
-        # policy, and a crash between ITS ALTER and its follow-up UPDATEs
-        # would leave the one-time gate spent with the data half-migrated.
-        # There are no follow-up DML statements here to strand -- the ALTER
-        # and the CREATE INDEX are each independently atomic DDL, and a
-        # generated column cannot be written to directly (confirmed by the
-        # same probe: an explicit INSERT/UPDATE naming it raises), so there
-        # is no data-migration step for a crash to catch mid-way at all.
-        items_xcols = {
-            row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")
-        }
-        if "effective_date" not in items_xcols:
-            cursor.execute(
-                "ALTER TABLE subscription_items ADD COLUMN effective_date TEXT "
-                "GENERATED ALWAYS AS "
-                "(COALESCE(datetime(published_date), datetime(created_at))) VIRTUAL"
-            )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_subscription_items_effective_date "
-            "ON subscription_items(effective_date DESC)"
-        )
-
-        # Snapshot extraction fingerprint + one-time TASK-1362 "noise, not
-        # volume" data migration (spec:
-        # Docs/superpowers/specs/2026-07-29-watchlists-noise-not-volume-design.md
-        # -- see .superpowers/sdd/2026-07-29-watchlists-noise-not-volume).
-        # The column's absence IS the one-time gate: a database that already
-        # has `extraction_fingerprint` has already had its url-family
-        # thresholds/selectors migrated (or was created fresh, after the
-        # CREATE TABLE above already declared the column and the 0.0
-        # default), so the data migration below can never re-run and clobber
-        # a user's subsequent edits.
-        #
-        # The ALTER and the two UPDATEs are wrapped in one EXPLICIT
-        # transaction below -- they do NOT get this for free. Python's
-        # sqlite3 module (default isolation_level, no override anywhere in
-        # BaseDB/connect_private_sqlite) opens an implicit transaction only
-        # before DML (INSERT/UPDATE/DELETE/REPLACE), never before DDL, so a
-        # bare `cursor.execute("ALTER TABLE ...")` autocommits immediately --
-        # it is not protected by whatever transaction the caller thinks it
-        # is in. Verified empirically: without an explicit BEGIN here, an
-        # exception between the ALTER and the second UPDATE (e.g. from
-        # default_ignore_selectors_text() below) leaves the column present
-        # -- the one-time gate durably spent -- with change_threshold moved
-        # but ignore_selectors permanently NULL, and *unrepairable*: a clean
-        # re-run sees the column already there and skips entirely. SQLite's
-        # DDL is itself fully transactional; only the sqlite3 module's
-        # implicit-BEGIN policy is not. Wrapping the ALTER and both UPDATEs
-        # in one explicit BEGIN IMMEDIATE / COMMIT (rolled back together on
-        # any exception) restores atomicity, so the write structurally
-        # gates the marker instead of merely being re-runnable until it
-        # eventually completes.
-        #
-        # Which is why this block deliberately does NOT use the shared
-        # `transaction()` helper, in knowing exemption from the repo-wide
-        # compliance rule that every write goes through
-        # `with db.transaction() as cursor:` (CLAUDE.md/AGENTS.md, "Key
-        # Patterns -> Database Operations", restated as gotcha 5 "Thread
-        # safety"): the helper can only ask the sqlite3 driver for a
-        # transaction, and the driver autocommits DDL under its implicit-BEGIN
-        # policy regardless, so `transaction()` cannot make ALTER + UPDATE
-        # atomic here -- proven by probe during the whole-branch review, and
-        # adopting it would reintroduce exactly the unrepairable half-migration
-        # described above (a crash between the ALTER and the UPDATEs spends the
-        # one-time gate with the data unmigrated and no way back). The explicit
-        # BEGIN IMMEDIATE exists precisely for that. The exemption is
-        # deliberate, not ignorance of the rule; pinned by
-        # `test_migration_rolls_back_atomically_on_mid_migration_failure`.
-        snapshot_cols = {
-            row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")
-        }
-        if "extraction_fingerprint" not in snapshot_cols:
-            from ..Subscriptions.noise_defaults import default_ignore_selectors_text
-
-            if conn.in_transaction:
-                conn.commit()
-            cursor.execute("BEGIN IMMEDIATE")
-            try:
-                cursor.execute(
-                    "ALTER TABLE url_snapshots ADD COLUMN extraction_fingerprint TEXT"
-                )
-                cursor.execute(
-                    "UPDATE subscriptions SET change_threshold = 0.0"
-                    " WHERE type IN ('url','url_list','sitemap')"
-                )
-                cursor.execute(
-                    "UPDATE subscriptions SET ignore_selectors = ?"
-                    " WHERE type IN ('url','url_list','sitemap')"
-                    "   AND (ignore_selectors IS NULL OR TRIM(ignore_selectors) = '')",
-                    (default_ignore_selectors_text(),),
-                )
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-
-        # Watchlist bundle entity. `name` is intentionally not UNIQUE — uniqueness
-        # is enforced case-insensitively in WatchlistBundleService with
-        # auto-suffixing, because a SQL constraint would raise mid-migration.
-        cursor.execute("""
+            # Watchlist bundle entity. `name` is intentionally not UNIQUE — uniqueness
+            # is enforced case-insensitively in WatchlistBundleService with
+            # auto-suffixing, because a SQL constraint would raise mid-migration.
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS watchlists (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -987,31 +980,31 @@ class SubscriptionsDB(BaseDB):
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Briefings (spec #2 phase 1): per-watchlist selection mode + optional
-        # default preset. Column-presence idiom, same pattern as content_kind
-        # above -- additive only, no data migration (nothing to migrate; see
-        # Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md).
-        wcols = {row[1] for row in cursor.execute("PRAGMA table_info(watchlists)")}
-        if "briefing_selection_mode" not in wcols:
-            cursor.execute(
-                "ALTER TABLE watchlists ADD COLUMN briefing_selection_mode "
-                "TEXT DEFAULT 'auto_featured'"
-            )
-        if "default_briefing_preset_id" not in wcols:
-            cursor.execute(
-                "ALTER TABLE watchlists ADD COLUMN default_briefing_preset_id INTEGER"
-            )
-        # Briefings phase 4: per-watchlist scheduled-generation cadence.
-        # NULL means never -- scheduled briefings are opt-in per watchlist
-        # (Locked Decision 4, Docs/superpowers/plans/2026-08-01-watchlists-
-        # briefings-phase-4.md), so a watchlist with no explicit cadence
-        # must never surface from `list_briefing_schedules`. Same additive
-        # column-presence idiom as the two columns above.
-        if "briefing_cadence_seconds" not in wcols:
-            cursor.execute(
-                "ALTER TABLE watchlists ADD COLUMN briefing_cadence_seconds INTEGER"
-            )
-        cursor.execute("""
+            # Briefings (spec #2 phase 1): per-watchlist selection mode + optional
+            # default preset. Column-presence idiom, same pattern as content_kind
+            # above -- additive only, no data migration (nothing to migrate; see
+            # Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md).
+            wcols = {row[1] for row in cursor.execute("PRAGMA table_info(watchlists)")}
+            if "briefing_selection_mode" not in wcols:
+                cursor.execute(
+                    "ALTER TABLE watchlists ADD COLUMN briefing_selection_mode "
+                    "TEXT DEFAULT 'auto_featured'"
+                )
+            if "default_briefing_preset_id" not in wcols:
+                cursor.execute(
+                    "ALTER TABLE watchlists ADD COLUMN default_briefing_preset_id INTEGER"
+                )
+            # Briefings phase 4: per-watchlist scheduled-generation cadence.
+            # NULL means never -- scheduled briefings are opt-in per watchlist
+            # (Locked Decision 4, Docs/superpowers/plans/2026-08-01-watchlists-
+            # briefings-phase-4.md), so a watchlist with no explicit cadence
+            # must never surface from `list_briefing_schedules`. Same additive
+            # column-presence idiom as the two columns above.
+            if "briefing_cadence_seconds" not in wcols:
+                cursor.execute(
+                    "ALTER TABLE watchlists ADD COLUMN briefing_cadence_seconds INTEGER"
+                )
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS watchlist_sources (
                 watchlist_id    INTEGER NOT NULL REFERENCES watchlists(id)     ON DELETE CASCADE,
                 subscription_id INTEGER NOT NULL REFERENCES subscriptions(id)  ON DELETE CASCADE,
@@ -1019,15 +1012,15 @@ class SubscriptionsDB(BaseDB):
                 PRIMARY KEY (watchlist_id, subscription_id)
             )
         """)
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_watchlist_sources_subscription "
-            "ON watchlist_sources(subscription_id)"
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_subscription_items_flagged "
-            "ON subscription_items(is_flagged, status)"
-        )
-        cursor.execute("""
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_watchlist_sources_subscription "
+                "ON watchlist_sources(subscription_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_subscription_items_flagged "
+                "ON subscription_items(is_flagged, status)"
+            )
+            cursor.execute("""
             CREATE TRIGGER IF NOT EXISTS update_watchlists_timestamp
             AFTER UPDATE ON watchlists
             BEGIN
@@ -1035,13 +1028,13 @@ class SubscriptionsDB(BaseDB):
             END
         """)
 
-        # Briefings (spec #2 phase 1): the on-demand text digest for a
-        # watchlist, and the items it covered. Additive CREATE TABLE IF NOT
-        # EXISTS -- no data migration exists in this design, so the
-        # TASK-1362 BEGIN IMMEDIATE machinery above is deliberately not
-        # cargo-culted in here (see
-        # Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md).
-        cursor.execute("""
+            # Briefings (spec #2 phase 1): the on-demand text digest for a
+            # watchlist, and the items it covered. Additive CREATE TABLE IF NOT
+            # EXISTS -- no data migration exists in this design, so the
+            # TASK-1362 BEGIN IMMEDIATE machinery above is deliberately not
+            # cargo-culted in here (see
+            # Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md).
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS briefings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 watchlist_id INTEGER NOT NULL REFERENCES watchlists(id) ON DELETE CASCADE,
@@ -1060,7 +1053,7 @@ class SubscriptionsDB(BaseDB):
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        cursor.execute("""
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS briefing_items (
                 briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
                 item_id     INTEGER NOT NULL REFERENCES subscription_items(id) ON DELETE CASCADE,
@@ -1068,31 +1061,31 @@ class SubscriptionsDB(BaseDB):
                 PRIMARY KEY (briefing_id, item_id)
             )
         """)
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_briefings_watchlist_status "
-            "ON briefings(watchlist_id, status)"
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_briefing_items_item "
-            "ON briefing_items(item_id)"
-        )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_briefings_watchlist_status "
+                "ON briefings(watchlist_id, status)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_briefing_items_item "
+                "ON briefing_items(item_id)"
+            )
 
-        # Briefing presets + scripts (spec #2 phase 2a): a preset is a named,
-        # reusable N-speaker roster (plus optional style notes and a
-        # provider/model override); a script is one cast run of a specific
-        # `briefings` row. Scripts snapshot the roster and preset name at
-        # cast time (`roster_snapshot_json`, `preset_name`) rather than
-        # joining back to `briefing_presets` live -- editing or deleting a
-        # preset later must never change the meaning of a script someone
-        # already cast, so `preset_id` here is deliberately NOT a foreign
-        # key: it is a best-effort back-reference only, and outliving its
-        # target is expected, not an error. `briefing_id`, in contrast, IS a
-        # real FK with `ON DELETE CASCADE` -- a script has no meaning once
-        # the briefing it narrates is gone. Additive `CREATE TABLE IF NOT
-        # EXISTS`, no data migration, so the `BEGIN IMMEDIATE` machinery used
-        # for other rebuilds in this file is deliberately not cargo-culted in
-        # here (see Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md).
-        cursor.execute("""
+            # Briefing presets + scripts (spec #2 phase 2a): a preset is a named,
+            # reusable N-speaker roster (plus optional style notes and a
+            # provider/model override); a script is one cast run of a specific
+            # `briefings` row. Scripts snapshot the roster and preset name at
+            # cast time (`roster_snapshot_json`, `preset_name`) rather than
+            # joining back to `briefing_presets` live -- editing or deleting a
+            # preset later must never change the meaning of a script someone
+            # already cast, so `preset_id` here is deliberately NOT a foreign
+            # key: it is a best-effort back-reference only, and outliving its
+            # target is expected, not an error. `briefing_id`, in contrast, IS a
+            # real FK with `ON DELETE CASCADE` -- a script has no meaning once
+            # the briefing it narrates is gone. Additive `CREATE TABLE IF NOT
+            # EXISTS`, no data migration, so the `BEGIN IMMEDIATE` machinery used
+            # for other rebuilds in this file is deliberately not cargo-culted in
+            # here (see Docs/superpowers/specs/2026-07-30-watchlists-briefings-design.md).
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS briefing_presets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -1104,7 +1097,7 @@ class SubscriptionsDB(BaseDB):
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        cursor.execute("""
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS briefing_scripts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
@@ -1119,24 +1112,24 @@ class SubscriptionsDB(BaseDB):
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_briefing_scripts_briefing "
-            "ON briefing_scripts(briefing_id, status)"
-        )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_briefing_scripts_briefing "
+                "ON briefing_scripts(briefing_id, status)"
+            )
 
-        # Briefing audio (spec #2 phase 2b): one row per audio-synthesis run
-        # of a specific `briefing_scripts` row, turning that cast script into
-        # a playable recording. `voice_snapshot_json` freezes the voice
-        # assignment used for this render -- exactly like `roster_snapshot_
-        # json` above, it is deliberately NOT in `update_briefing_audio`'s
-        # allowlist (see that method's docstring): a synthesized artifact's
-        # provenance must never be revisable after the fact. `script_id` IS a
-        # real FK with `ON DELETE CASCADE` -- audio has no meaning once the
-        # script it narrates is gone. Additive `CREATE TABLE IF NOT EXISTS`,
-        # no data migration, so (matching `briefing_scripts` above) the
-        # `BEGIN IMMEDIATE` rebuild machinery used elsewhere in this file is
-        # deliberately not cargo-culted in here.
-        cursor.execute("""
+            # Briefing audio (spec #2 phase 2b): one row per audio-synthesis run
+            # of a specific `briefing_scripts` row, turning that cast script into
+            # a playable recording. `voice_snapshot_json` freezes the voice
+            # assignment used for this render -- exactly like `roster_snapshot_
+            # json` above, it is deliberately NOT in `update_briefing_audio`'s
+            # allowlist (see that method's docstring): a synthesized artifact's
+            # provenance must never be revisable after the fact. `script_id` IS a
+            # real FK with `ON DELETE CASCADE` -- audio has no meaning once the
+            # script it narrates is gone. Additive `CREATE TABLE IF NOT EXISTS`,
+            # no data migration, so (matching `briefing_scripts` above) the
+            # `BEGIN IMMEDIATE` rebuild machinery used elsewhere in this file is
+            # deliberately not cargo-culted in here.
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS briefing_audio (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 script_id INTEGER NOT NULL REFERENCES briefing_scripts(id) ON DELETE CASCADE,
@@ -1150,34 +1143,34 @@ class SubscriptionsDB(BaseDB):
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_briefing_audio_script "
-            "ON briefing_audio(script_id, status)"
-        )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_briefing_audio_script "
+                "ON briefing_audio(script_id, status)"
+            )
 
-        # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
-        # _initialize_schema (base_db.py:76), which creates it and then calls
-        # this method. Only the column needs checking, for databases created
-        # before batch_id existed.
-        run_cols = {
-            row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")
-        }
-        if "batch_id" not in run_cols:
-            cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_local_watchlist_runs_batch "
-            "ON local_watchlist_runs(batch_id)"
-        )
+            # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
+            # _initialize_schema (base_db.py:76), which creates it and then calls
+            # this method. Only the column needs checking, for databases created
+            # before batch_id existed.
+            run_cols = {
+                row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")
+            }
+            if "batch_id" not in run_cols:
+                cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_local_watchlist_runs_batch "
+                "ON local_watchlist_runs(batch_id)"
+            )
 
-        # External-content FTS over items, matching the pattern used by
-        # character_cards_fts / conversations_fts / media_fts. Triggers rather
-        # than explicit index writes, so every INSERT path stays indexed.
-        #
-        # Do NOT add `columnsize=0` to the fts5 options below: that option
-        # removes the `_docsize` shadow table, which both the guarded delete
-        # legs below and `backfill_items_fts()` depend on to answer "has this
-        # rowid actually been written into the FTS index yet".
-        cursor.execute("""
+            # External-content FTS over items, matching the pattern used by
+            # character_cards_fts / conversations_fts / media_fts. Triggers rather
+            # than explicit index writes, so every INSERT path stays indexed.
+            #
+            # Do NOT add `columnsize=0` to the fts5 options below: that option
+            # removes the `_docsize` shadow table, which both the guarded delete
+            # legs below and `backfill_items_fts()` depend on to answer "has this
+            # rowid actually been written into the FTS index yet".
+            cursor.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS subscription_items_fts USING fts5(
                 title,
                 content,
@@ -1186,41 +1179,41 @@ class SubscriptionsDB(BaseDB):
                 content_rowid='id'
             )
         """)
-        cursor.execute("""
+            cursor.execute("""
             CREATE TRIGGER IF NOT EXISTS subscription_items_fts_ai
             AFTER INSERT ON subscription_items BEGIN
                 INSERT INTO subscription_items_fts(rowid, title, content, author)
                 VALUES (new.id, new.title, new.content, new.author);
             END
         """)
-        # subscription_items_fts is an external-content FTS5 table: its
-        # 'delete' command is only legal for a rowid that is actually present
-        # in the index (has a row in the `_docsize` shadow table). This
-        # migration creates the index over a `subscription_items` table that
-        # may already hold rows from before this branch existed, so without a
-        # guard the very first UPDATE/DELETE of a pre-existing, never-indexed
-        # item would fire 'delete' against a rowid FTS5 has never seen --
-        # FTS5 rejects the whole statement, and it surfaces to the caller as
-        # "database disk image is malformed" even though nothing is actually
-        # corrupt. Guard the delete legs on index membership so an unindexed
-        # row is skipped instead of fatal. `_au`'s insert leg stays
-        # unconditional, so a skipped/unindexed row simply becomes indexed on
-        # its next update.
-        #
-        # These two triggers are dropped and recreated unconditionally
-        # (rather than `CREATE ... IF NOT EXISTS`) so that a database that
-        # already ran the previous, unguarded versions of these triggers on
-        # this branch picks up the fix too -- `IF NOT EXISTS` would otherwise
-        # silently keep the old, unguarded trigger bodies in place. This is
-        # idempotent: re-running it just drops-and-recreates the same guarded
-        # triggers again.
-        #
-        # Do not split `_au` into two separate triggers (one delete, one
-        # insert): SQLite does not guarantee firing order between multiple
-        # triggers on the same event, and an insert-then-guarded-delete
-        # ordering would corrupt the index.
-        cursor.execute("DROP TRIGGER IF EXISTS subscription_items_fts_ad")
-        cursor.execute("""
+            # subscription_items_fts is an external-content FTS5 table: its
+            # 'delete' command is only legal for a rowid that is actually present
+            # in the index (has a row in the `_docsize` shadow table). This
+            # migration creates the index over a `subscription_items` table that
+            # may already hold rows from before this branch existed, so without a
+            # guard the very first UPDATE/DELETE of a pre-existing, never-indexed
+            # item would fire 'delete' against a rowid FTS5 has never seen --
+            # FTS5 rejects the whole statement, and it surfaces to the caller as
+            # "database disk image is malformed" even though nothing is actually
+            # corrupt. Guard the delete legs on index membership so an unindexed
+            # row is skipped instead of fatal. `_au`'s insert leg stays
+            # unconditional, so a skipped/unindexed row simply becomes indexed on
+            # its next update.
+            #
+            # These two triggers are dropped and recreated unconditionally
+            # (rather than `CREATE ... IF NOT EXISTS`) so that a database that
+            # already ran the previous, unguarded versions of these triggers on
+            # this branch picks up the fix too -- `IF NOT EXISTS` would otherwise
+            # silently keep the old, unguarded trigger bodies in place. This is
+            # idempotent: re-running it just drops-and-recreates the same guarded
+            # triggers again.
+            #
+            # Do not split `_au` into two separate triggers (one delete, one
+            # insert): SQLite does not guarantee firing order between multiple
+            # triggers on the same event, and an insert-then-guarded-delete
+            # ordering would corrupt the index.
+            cursor.execute("DROP TRIGGER IF EXISTS subscription_items_fts_ad")
+            cursor.execute("""
             CREATE TRIGGER subscription_items_fts_ad
             AFTER DELETE ON subscription_items BEGIN
                 INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
@@ -1228,8 +1221,8 @@ class SubscriptionsDB(BaseDB):
                 WHERE EXISTS (SELECT 1 FROM subscription_items_fts_docsize WHERE id = old.id);
             END
         """)
-        cursor.execute("DROP TRIGGER IF EXISTS subscription_items_fts_au")
-        cursor.execute("""
+            cursor.execute("DROP TRIGGER IF EXISTS subscription_items_fts_au")
+            cursor.execute("""
             CREATE TRIGGER subscription_items_fts_au
             AFTER UPDATE ON subscription_items BEGIN
                 INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
@@ -1240,7 +1233,7 @@ class SubscriptionsDB(BaseDB):
             END
         """)
 
-        conn.commit()
+            conn.commit()
 
     def backfill_items_fts(self, chunk_size: int = 500) -> int:
         """Index one chunk of items that are missing from the FTS table.
@@ -1384,12 +1377,22 @@ class SubscriptionsDB(BaseDB):
         return {row[0]: {"total": row[1] or 0, "unread": row[2] or 0} for row in rows}
 
     @property
+    @_core_getter
     def conn(self):
         """Thread-local database connection."""
-        if not hasattr(self._local, "conn") or self._local.conn is None:
+        _core_access(self)
+        cached = _core_cached_connection(self, getattr(self._local, "conn", None))
+        if cached is None:
             self._local.conn = self._get_connection()
         return self._local.conn
 
+    @_core_transaction
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """Count a read without adding commit/rollback semantics."""
+        yield self.conn
+
+    @_core_transaction
     @contextmanager
     def transaction(self):
         """Context manager for database transactions."""
@@ -1431,6 +1434,15 @@ class SubscriptionsDB(BaseDB):
             ID of the created subscription
         """
         start_time = time.time()
+
+        _core_access(self)
+        # A cold settings load owns startup/config admission independently.
+        # Freeze this input before the database operation; its fresh admission
+        # still refuses a pause that arrives after the settings read.
+        default_threshold = (
+            _default_auto_pause_threshold()
+            if "auto_pause_threshold" not in kwargs else None
+        )
 
         with self.transaction() as conn:
             cursor = conn.cursor()
@@ -1482,7 +1494,7 @@ class SubscriptionsDB(BaseDB):
             # always wins; this only fires when the field never made it
             # into `fields` at all.
             if "auto_pause_threshold" not in fields:
-                fields["auto_pause_threshold"] = _default_auto_pause_threshold()
+                fields["auto_pause_threshold"] = default_threshold
 
             # Build insert query
             columns = ", ".join(fields.keys())
@@ -1529,31 +1541,32 @@ class SubscriptionsDB(BaseDB):
         """Get a subscription by ID."""
         start_time = time.time()
 
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM subscriptions WHERE id = ?", (subscription_id,))
-        row = cursor.fetchone()
-        result = dict(row) if row else None
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM subscriptions WHERE id = ?", (subscription_id,))
+            row = cursor.fetchone()
+            result = dict(row) if row else None
 
-        # Log metrics
-        duration = time.time() - start_time
-        log_histogram(
-            "subscriptions_db_operation_duration",
-            duration,
-            labels={
-                "operation": "get_subscription",
-                "found": "true" if result else "false",
-            },
-        )
-        log_counter(
-            "subscriptions_db_operation_count",
-            labels={
-                "operation": "get_subscription",
-                "status": "success",
-                "found": "true" if result else "false",
-            },
-        )
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram(
+                "subscriptions_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_subscription",
+                    "found": "true" if result else "false",
+                },
+            )
+            log_counter(
+                "subscriptions_db_operation_count",
+                labels={
+                    "operation": "get_subscription",
+                    "status": "success",
+                    "found": "true" if result else "false",
+                },
+            )
 
-        return result
+            return result
 
     def update_subscription(self, subscription_id: int, **kwargs) -> bool:
         """Update subscription fields."""
@@ -1682,16 +1695,17 @@ class SubscriptionsDB(BaseDB):
         """
         start_time = time.time()
 
-        cursor = self.conn.cursor()
+        with self.connection() as conn:
+            cursor = conn.cursor()
 
-        order_clause = (
-            "ORDER BY priority DESC, last_checked ASC"
-            if priority_order
-            else "ORDER BY last_checked ASC"
-        )
+            order_clause = (
+                "ORDER BY priority DESC, last_checked ASC"
+                if priority_order
+                else "ORDER BY last_checked ASC"
+            )
 
-        cursor.execute(
-            f"""
+            cursor.execute(
+                f"""
             SELECT * FROM subscriptions
             WHERE is_active = 1 
             AND is_paused = 0
@@ -1702,33 +1716,33 @@ class SubscriptionsDB(BaseDB):
             {order_clause}
             LIMIT ?
         """,
-            (limit,),
-        )
+                (limit,),
+            )
 
-        results = [dict(row) for row in cursor.fetchall()]
+            results = [dict(row) for row in cursor.fetchall()]
 
-        # Log metrics
-        duration = time.time() - start_time
-        log_histogram(
-            "subscriptions_db_operation_duration",
-            duration,
-            labels={
-                "operation": "get_pending_checks",
-                "limit": str(limit),
-                "result_count": str(len(results)),
-            },
-        )
-        log_counter(
-            "subscriptions_db_operation_count",
-            labels={
-                "operation": "get_pending_checks",
-                "status": "success",
-                "result_count": str(len(results)),
-                "priority_order": str(priority_order),
-            },
-        )
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram(
+                "subscriptions_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_pending_checks",
+                    "limit": str(limit),
+                    "result_count": str(len(results)),
+                },
+            )
+            log_counter(
+                "subscriptions_db_operation_count",
+                labels={
+                    "operation": "get_pending_checks",
+                    "status": "success",
+                    "result_count": str(len(results)),
+                    "priority_order": str(priority_order),
+                },
+            )
 
-        return results
+            return results
 
     def get_subscriptions_by_tag(
         self, tag: str, limit: int = 100, offset: int = 0
@@ -1744,18 +1758,19 @@ class SubscriptionsDB(BaseDB):
         Returns:
             List of subscription dictionaries
         """
-        cursor = self.conn.cursor()
-        cursor.execute(
-            """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
             SELECT * FROM subscriptions
             WHERE is_active = 1 AND tags LIKE ?
             ORDER BY name
             LIMIT ? OFFSET ?
         """,
-            (f"%{tag}%", limit, offset),
-        )
+                (f"%{tag}%", limit, offset),
+            )
 
-        return [dict(row) for row in cursor.fetchall()]
+            return [dict(row) for row in cursor.fetchall()]
 
     def get_subscriptions_by_folder(
         self, folder: str, limit: int = 100, offset: int = 0
@@ -1771,18 +1786,19 @@ class SubscriptionsDB(BaseDB):
         Returns:
             List of subscription dictionaries
         """
-        cursor = self.conn.cursor()
-        cursor.execute(
-            """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
             SELECT * FROM subscriptions
             WHERE is_active = 1 AND folder = ?
             ORDER BY priority DESC, name
             LIMIT ? OFFSET ?
         """,
-            (folder, limit, offset),
-        )
+                (folder, limit, offset),
+            )
 
-        return [dict(row) for row in cursor.fetchall()]
+            return [dict(row) for row in cursor.fetchall()]
 
     # --- Check Results and Error Handling ---
 
@@ -4023,22 +4039,23 @@ class SubscriptionsDB(BaseDB):
         self, item_url: str, item_hash: str
     ) -> List[Dict[str, Any]]:
         """Check for existing duplicates."""
-        cursor = self.conn.cursor()
+        with self.connection() as conn:
+            cursor = conn.cursor()
 
-        # Canonicalize URL for comparison
-        canonical_url = self._canonicalize_url(item_url)
+            # Canonicalize URL for comparison
+            canonical_url = self._canonicalize_url(item_url)
 
-        cursor.execute(
-            """
+            cursor.execute(
+                """
             SELECT * FROM subscription_items
             WHERE (canonical_url = ? OR content_hash = ?)
             AND status != 'ignored'
             ORDER BY created_at DESC
         """,
-            (canonical_url, item_hash),
-        )
+                (canonical_url, item_hash),
+            )
 
-        return [dict(row) for row in cursor.fetchall()]
+            return [dict(row) for row in cursor.fetchall()]
 
     def bulk_update_items(self, item_ids: List[int], status: str) -> int:
         """Efficient bulk status updates."""
@@ -4103,11 +4120,12 @@ class SubscriptionsDB(BaseDB):
     ) -> Dict[str, Any]:
         """Get health metrics for dashboard."""
         start_time = time.time()
-        cursor = self.conn.cursor()
+        with self.connection() as conn:
+            cursor = conn.cursor()
 
-        # Get recent stats
-        cursor.execute(
-            """
+            # Get recent stats
+            cursor.execute(
+                """
             SELECT 
                 SUM(checks_performed) as total_checks,
                 SUM(successful_checks) as successful_checks,
@@ -4120,64 +4138,65 @@ class SubscriptionsDB(BaseDB):
             WHERE subscription_id = ?
             AND date >= date('now', '-' || ? || ' days')
         """,
-            (subscription_id, days),
-        )
+                (subscription_id, days),
+            )
 
-        stats = dict(cursor.fetchone() or {})
+            stats = dict(cursor.fetchone() or {})
 
-        # Calculate health score (0-100)
-        if stats.get("total_checks", 0) > 0:
-            success_rate = stats.get("successful_checks", 0) / stats["total_checks"]
-            stats["health_score"] = int(success_rate * 100)
-        else:
-            stats["health_score"] = 0
+            # Calculate health score (0-100)
+            if stats.get("total_checks", 0) > 0:
+                success_rate = stats.get("successful_checks", 0) / stats["total_checks"]
+                stats["health_score"] = int(success_rate * 100)
+            else:
+                stats["health_score"] = 0
 
-        # Get current subscription status
-        cursor.execute(
-            """
+            # Get current subscription status
+            cursor.execute(
+                """
             SELECT consecutive_failures, last_error, is_paused
             FROM subscriptions WHERE id = ?
         """,
-            (subscription_id,),
-        )
+                (subscription_id,),
+            )
 
-        current = cursor.fetchone()
-        if current:
-            stats.update(dict(current))
+            current = cursor.fetchone()
+            if current:
+                stats.update(dict(current))
 
-        # Log metrics
-        duration = time.time() - start_time
-        log_histogram(
-            "subscriptions_db_operation_duration",
-            duration,
-            labels={"operation": "get_subscription_health", "days": str(days)},
-        )
-        log_counter(
-            "subscriptions_db_operation_count",
-            labels={
-                "operation": "get_subscription_health",
-                "status": "success",
-                "health_score": str(stats.get("health_score", 0)),
-            },
-        )
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram(
+                "subscriptions_db_operation_duration",
+                duration,
+                labels={"operation": "get_subscription_health", "days": str(days)},
+            )
+            log_counter(
+                "subscriptions_db_operation_count",
+                labels={
+                    "operation": "get_subscription_health",
+                    "status": "success",
+                    "health_score": str(stats.get("health_score", 0)),
+                },
+            )
 
-        return stats
+            return stats
 
     def get_failing_subscriptions(self, threshold: int = 5) -> List[Dict[str, Any]]:
         """Find subscriptions needing attention."""
-        cursor = self.conn.cursor()
+        with self.connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
+            cursor.execute(
+                """
             SELECT * FROM subscriptions
             WHERE consecutive_failures >= ?
             OR (error_count > 0 AND last_successful_check < datetime('now', '-7 days'))
             ORDER BY consecutive_failures DESC, error_count DESC
         """,
-            (threshold,),
-        )
+                (threshold,),
+            )
 
-        return [dict(row) for row in cursor.fetchall()]
+            return [dict(row) for row in cursor.fetchall()]
 
     # --- Filters and Templates ---
 
@@ -4224,37 +4243,38 @@ class SubscriptionsDB(BaseDB):
         Returns:
             List of filter dictionaries
         """
-        cursor = self.conn.cursor()
+        with self.connection() as conn:
+            cursor = conn.cursor()
 
-        if subscription_id is not None:
-            cursor.execute(
-                """
+            if subscription_id is not None:
+                cursor.execute(
+                    """
                 SELECT * FROM subscription_filters
                 WHERE is_active = 1 AND (subscription_id = ? OR subscription_id IS NULL)
                 ORDER BY subscription_id DESC
                 LIMIT ? OFFSET ?
             """,
-                (subscription_id, limit, offset),
-            )
-        else:
-            cursor.execute(
-                """
+                    (subscription_id, limit, offset),
+                )
+            else:
+                cursor.execute(
+                    """
                 SELECT * FROM subscription_filters
                 WHERE is_active = 1 AND subscription_id IS NULL
                 LIMIT ? OFFSET ?
             """,
-                (limit, offset),
-            )
+                    (limit, offset),
+                )
 
-        filters = []
-        for row in cursor.fetchall():
-            filter_dict = dict(row)
-            filter_dict["conditions"] = json.loads(filter_dict["conditions"])
-            if filter_dict["action_params"]:
-                filter_dict["action_params"] = json.loads(filter_dict["action_params"])
-            filters.append(filter_dict)
+            filters = []
+            for row in cursor.fetchall():
+                filter_dict = dict(row)
+                filter_dict["conditions"] = json.loads(filter_dict["conditions"])
+                if filter_dict["action_params"]:
+                    filter_dict["action_params"] = json.loads(filter_dict["action_params"])
+                filters.append(filter_dict)
 
-        return filters
+            return filters
 
     def save_template(
         self, name: str, config: Dict[str, Any], category: Optional[str] = None
@@ -4305,42 +4325,43 @@ class SubscriptionsDB(BaseDB):
         Returns:
             List of template dictionaries
         """
-        cursor = self.conn.cursor()
+        with self.connection() as conn:
+            cursor = conn.cursor()
 
-        if category:
-            cursor.execute(
-                """
+            if category:
+                cursor.execute(
+                    """
                 SELECT * FROM subscription_templates
                 WHERE category = ?
                 ORDER BY usage_count DESC, name
                 LIMIT ? OFFSET ?
             """,
-                (category, limit, offset),
-            )
-        else:
-            cursor.execute(
-                """
+                    (category, limit, offset),
+                )
+            else:
+                cursor.execute(
+                    """
                 SELECT * FROM subscription_templates
                 ORDER BY usage_count DESC, name
                 LIMIT ? OFFSET ?
             """,
-                (limit, offset),
-            )
+                    (limit, offset),
+                )
 
-        templates = []
-        for row in cursor.fetchall():
-            template = dict(row)
-            # Parse JSON fields
-            for field in [
-                "extraction_rules",
-                "processing_options",
-                "auth_config_template",
-            ]:
-                if template.get(field):
-                    template[field] = json.loads(template[field])
-            templates.append(template)
+            templates = []
+            for row in cursor.fetchall():
+                template = dict(row)
+                # Parse JSON fields
+                for field in [
+                    "extraction_rules",
+                    "processing_options",
+                    "auth_config_template",
+                ]:
+                    if template.get(field):
+                        template[field] = json.loads(template[field])
+                templates.append(template)
 
-        return templates
+            return templates
 
     # --- Helper Methods ---
 
@@ -4444,88 +4465,93 @@ class SubscriptionsDB(BaseDB):
         """
         start_time = time.time()
 
-        cursor = self.conn.cursor()
+        with self.connection() as conn:
+            cursor = conn.cursor()
 
-        if include_inactive:
-            cursor.execute(
-                "SELECT * FROM subscriptions ORDER BY name LIMIT ? OFFSET ?",
-                (limit, offset),
+            if include_inactive:
+                cursor.execute(
+                    "SELECT * FROM subscriptions ORDER BY name LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM subscriptions WHERE is_active = 1 ORDER BY name LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+
+            results = [dict(row) for row in cursor.fetchall()]
+
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram(
+                "subscriptions_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_all_subscriptions",
+                    "include_inactive": str(include_inactive),
+                    "result_count": str(len(results)),
+                },
             )
-        else:
-            cursor.execute(
-                "SELECT * FROM subscriptions WHERE is_active = 1 ORDER BY name LIMIT ? OFFSET ?",
-                (limit, offset),
+            log_counter(
+                "subscriptions_db_operation_count",
+                labels={
+                    "operation": "get_all_subscriptions",
+                    "status": "success",
+                    "result_count": str(len(results)),
+                },
             )
 
-        results = [dict(row) for row in cursor.fetchall()]
-
-        # Log metrics
-        duration = time.time() - start_time
-        log_histogram(
-            "subscriptions_db_operation_duration",
-            duration,
-            labels={
-                "operation": "get_all_subscriptions",
-                "include_inactive": str(include_inactive),
-                "result_count": str(len(results)),
-            },
-        )
-        log_counter(
-            "subscriptions_db_operation_count",
-            labels={
-                "operation": "get_all_subscriptions",
-                "status": "success",
-                "result_count": str(len(results)),
-            },
-        )
-
-        return results
+            return results
 
     def get_subscription_count(self, active_only: bool = True) -> Dict[str, int]:
         """Get count of subscriptions by type."""
         start_time = time.time()
 
-        cursor = self.conn.cursor()
+        with self.connection() as conn:
+            cursor = conn.cursor()
 
-        where_clause = "WHERE is_active = 1" if active_only else ""
+            where_clause = "WHERE is_active = 1" if active_only else ""
 
-        cursor.execute(f"""
+            cursor.execute(f"""
             SELECT type, COUNT(*) as count
             FROM subscriptions
             {where_clause}
             GROUP BY type
         """)
 
-        results = {row["type"]: row["count"] for row in cursor.fetchall()}
+            results = {row["type"]: row["count"] for row in cursor.fetchall()}
 
-        # Log metrics
-        duration = time.time() - start_time
-        total_count = sum(results.values())
-        log_histogram(
-            "subscriptions_db_operation_duration",
-            duration,
-            labels={
-                "operation": "get_subscription_count",
-                "active_only": str(active_only),
-            },
-        )
-        log_counter(
-            "subscriptions_db_operation_count",
-            labels={
-                "operation": "get_subscription_count",
-                "status": "success",
-                "total_count": str(total_count),
-                "type_count": str(len(results)),
-            },
-        )
+            # Log metrics
+            duration = time.time() - start_time
+            total_count = sum(results.values())
+            log_histogram(
+                "subscriptions_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_subscription_count",
+                    "active_only": str(active_only),
+                },
+            )
+            log_counter(
+                "subscriptions_db_operation_count",
+                labels={
+                    "operation": "get_subscription_count",
+                    "status": "success",
+                    "total_count": str(total_count),
+                    "type_count": str(len(results)),
+                },
+            )
 
-        return results
+            return results
 
     def close(self):
         """Close database connections."""
         if hasattr(self._local, "conn") and self._local.conn:
-            self._local.conn.close()
-            self._local.conn = None
+            conn = self._local.conn
+            with _core_closing(self, conn) as allowed:
+                if allowed:
+                    conn.close()
+                    self._local.conn = None
 
 
 # End of Subscriptions_DB.py

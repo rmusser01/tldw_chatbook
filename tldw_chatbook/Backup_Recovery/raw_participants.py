@@ -79,6 +79,8 @@ def _participant_state(participant):
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     if _source_participants.get(source) is not participant:
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+    if state.owner == "notes.file_notes_replica" and source.db_path != state.selected:
+        raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     return state
 
 
@@ -112,9 +114,12 @@ def _raw_participant(source):
     if not _pinned_io_available():
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     from ..Widgets import emoji_picker
+    from ..Notes.file_notes_replica import FileNotesReplica
 
     types = _types()
-    if source is emoji_picker:
+    if type(source) is FileNotesReplica:
+        owner, selected = "notes.file_notes_replica", source.db_path
+    elif source is emoji_picker:
         owner, selected = "ui.emoji_recents", emoji_picker._recent_emojis_path()
     elif type(source) in types:
         owner = types[type(source)]
@@ -254,6 +259,12 @@ def _retire(state):
 
 
 def _selection(source, route, template, user_template, selected_read):
+    if route == "file_notes_directory":
+        from ..Notes.file_notes_replica import FileNotesReplica
+
+        if not isinstance(source, FileNotesReplica) or source.is_memory_db:
+            raise bootstrap.RecoveryRequired("raw_source_not_supported")
+        return lexical_path(source.db_path), type(source) is FileNotesReplica, False
     types = _types()
     owner = types.get(type(source))
     installed = owner is not None

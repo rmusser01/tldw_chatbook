@@ -20,6 +20,14 @@ from types import MappingProxyType
 from uuid import uuid4
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
+from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
+
 from tldw_chatbook.Notes.note_import_execution_models import (
     MAX_RECEIPT_LEDGER_ROWS,
     ApprovedNoteImportPlan,
@@ -604,16 +612,31 @@ class NoteImportReceiptRepository:
     """Own the profile-local schema-v1 import receipt ledger."""
 
     def __init__(self, database_path: str | Path) -> None:
-        self._database_path = Path(database_path)
+        self.is_memory_db = str(database_path) == ":memory:"
+        self._database_path = Path(":memory:") if self.is_memory_db else lexical_path(database_path)
+
+    @property
+    def db_path(self) -> Path:
+        return self._database_path
 
     def __repr__(self) -> str:
         return "NoteImportReceiptRepository(<private>)"
 
+    @_core_getter
     def _connect(self) -> sqlite3.Connection:
+        _core_access(self)
         connection = connect_private_sqlite("notes.sync_state", self._database_path)
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        try:
+            _register_core_connection(self, connection)
+            _core_access(self)
+            connection.execute("PRAGMA foreign_keys = ON")
+            _core_access(self)
+            return connection
+        except BaseException:
+            connection.close()
+            raise
 
+    @_core_transaction
     @contextmanager
     def transaction(
         self,

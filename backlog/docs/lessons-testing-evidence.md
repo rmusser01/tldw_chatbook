@@ -5768,3 +5768,19 @@ preserved the native assertions; the affected 97-case cleanup rerun passed witho
 that threshold warning. This is not a zero-descriptor-growth measurement, and it
 does not qualify production worker-pool retirement. Keep source job lifecycle gaps
 separate from missing test-fixture cleanup, and retire actual handles in both.
+
+## Lexical scope indentation can change SQLite's exact stored schema (TASK-31993)
+
+**Incident.** Phase6 wrapped SubscriptionsDB schema/read operations in lexical
+maintenance scopes. CRUD tests passed, but four exact recovery checks failed:
+actual-constructor catalog equality, subscription history capture, SiteConfigManager
+hybrid capture and complete-audio dependency validation. Indenting Python triple
+quoted SQL had changed the literal bytes SQLite retained in sqlite_schema, despite
+unchanged SQL meaning. Restoring every affected original plain and joined-string
+payload made all four checks pass without changing a schema catalog or migration.
+
+**What to do.** For lexical scope edits around multiline SQL, compare actual string
+payloads and native schema bytes as well as whitespace-insensitive code diffs.
+An AST comparison that normalizes string whitespace cannot certify preservation
+of an exact schema contract; this incident also used exact payload/control-flow
+comparison and the original capture validators.

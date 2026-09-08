@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from functools import wraps
 import sqlite3
+import sys
 import threading
 import time
 import weakref
@@ -110,7 +111,39 @@ def _repository_types():
     )
     from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
 
+    # These source modules are discovered only after their own caller loads
+    # them. Native getter lookup must not import configuration/encryption or
+    # optional runtime stacks just to compare an unrelated source's exact type.
+    optional = {}
+    for module_name, class_name, owner_id in (
+        ("tldw_chatbook.DB.Evals_DB", "EvalsDB", "db.evals"),
+        ("tldw_chatbook.DB.Subscriptions_DB", "SubscriptionsDB", "db.subscriptions"),
+        (
+            "tldw_chatbook.Notes.file_notes_replica",
+            "FileNotesReplica",
+            "notes.file_notes",
+        ),
+        (
+            "tldw_chatbook.Notes.note_import_receipts",
+            "NoteImportReceiptRepository",
+            "notes.sync_state",
+        ),
+        (
+            "tldw_chatbook.Kanban_Interop.local_kanban_service",
+            "LocalKanbanService",
+            "kanban.local",
+        ),
+        (
+            "tldw_chatbook.Subscriptions.site_config_manager",
+            "SiteConfigManager",
+            "db.subscriptions.site_configs",
+        ),
+    ):
+        source_type = getattr(sys.modules.get(module_name), class_name, None)
+        if source_type is not None:
+            optional[source_type] = owner_id
     return {
+        **optional,
         WorkspaceDB: "db.workspaces",
         AgentRunsDB: "db.agent_runs",
         ClientNotificationsDB: "notifications.client",
@@ -145,6 +178,7 @@ def _repository_participant(repository):
             participant.repository = weakref.ref(repository)
             participant.owner_id = types[type(repository)]
             participant.path = repository.db_path
+            participant.read_only = getattr(repository, "_read_only", False)
             participant.closed = False
             participant.connections = {}
             participant.retiring_threads = set()
@@ -154,6 +188,7 @@ def _repository_participant(repository):
             participant not in _installed_repositories
             or participant.repository() is not repository
             or participant.path != repository.db_path
+            or participant.read_only != getattr(repository, "_read_only", False)
         ):
             raise ValueError("repository_participant_not_installed")
         return participant
@@ -213,7 +248,7 @@ def _check_core_retirement(participant):
     from .bootstrap import RecoveryRequired
 
     if threading.current_thread() in participant.retiring_threads or (
-        participant.owner_id == "db.library_ingest_jobs"
+        participant.owner_id in {"db.library_ingest_jobs", "notes.file_notes"}
         and participant.retiring_threads
     ):
         raise RecoveryRequired("core_connection_retiring")
@@ -242,7 +277,8 @@ def _core_closing(repository, connection):
             or any(
                 operation.participant is participant
                 and (
-                    participant.owner_id == "db.library_ingest_jobs"
+                    participant.owner_id
+                    in {"db.library_ingest_jobs", "notes.file_notes"}
                     or lease is None
                     or operation.thread is lease.resource_thread
                 )
@@ -300,6 +336,12 @@ def _register_core_connection(repository, connection):
             }
             else participant.owner_id
         )
+        if participant.owner_id == "notes.file_notes":
+            policy_id = "notes.file_notes_replica"
+        if participant.owner_id == "db.subscriptions":
+            policy_id = (
+                "db.subscriptions.agent_read" if participant.read_only else "db.base"
+            )
         if (
             lease is None
             or lease not in storage._live_leases

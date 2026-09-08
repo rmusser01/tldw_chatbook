@@ -12,6 +12,16 @@ from threading import RLock
 from typing import NamedTuple
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_operation,
+    _register_core_connection,
+)
+from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
+
 
 
 class ReplicaFileInfo(NamedTuple):
@@ -33,35 +43,62 @@ class FileNotesReplica:
             db_path: SQLite database path, or ``":memory:"`` for a transient
                 replica.
         """
-        path = os.fspath(db_path)
-        is_memory_db = path == ":memory:"
-        if not is_memory_db:
-            path = os.fspath(Path(path).expanduser())
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.is_memory_db = os.fspath(db_path) == ":memory:"
+        self.db_path = ":memory:" if self.is_memory_db else lexical_path(Path(db_path).expanduser())
         self._lock = RLock()
-        with self._lock:
-            self._connection = connect_private_sqlite(
-                "notes.file_notes_replica",
-                path,
-                isolation_level=None,
-                check_same_thread=False,
+        self._connection = None
+        _core_access(self)  # Bind the file selector before either constructor stage.
+        if not self.is_memory_db:
+            from tldw_chatbook.Backup_Recovery.raw_participants import _scope, _mkdirs
+
+            # Directory effects retire before independent SQLite admission.
+            with _scope(self, "file_notes_directory", writing=True) as operation:
+                _mkdirs(operation)
+        try:
+            self._initialize_schema()
+        except BaseException:
+            self.close()
+            raise
+
+    @_core_getter
+    def _get_connection(self) -> sqlite3.Connection:
+        _core_access(self)
+        conn = _core_cached_connection(self, self._connection)
+        if conn is None:
+            conn = connect_private_sqlite(
+                "notes.file_notes_replica", self.db_path,
+                isolation_level=None, check_same_thread=False,
             )
-            self._connection.row_factory = sqlite3.Row
-            if not is_memory_db:
-                self._connection.execute("PRAGMA journal_mode = WAL")
-            # NORMAL is safe under WAL (app-crash-safe; only an OS/power
-            # crash can lose the last commit, acceptable for this local File
-            # Notes replica/recovery cache -- the notes' file-authority copy
-            # is the source of truth) and avoids an fsync per commit. Held
-            # for the lifetime of this instance, so this is the only site
-            # that needs it (task-15465).
-            self._connection.execute("PRAGMA synchronous = NORMAL")
-        self._initialize_schema()
+            try:
+                _register_core_connection(self, conn)
+                _core_access(self)
+                conn.row_factory = sqlite3.Row
+                if not self.is_memory_db:
+                    conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA synchronous = NORMAL")
+                _core_access(self)
+            except BaseException:
+                conn.close()
+                raise
+            self._connection = conn
+        return conn
+
+    @contextmanager
+    def _locked_connection(self) -> Iterator[None]:
+        with _core_operation(self), self._lock:
+            self._get_connection()
+            yield
 
     def close(self) -> None:
-        """Close the persistent SQLite connection."""
-        with self._lock:
-            self._connection.close()
+        """Retire only on its creating thread after managed borrowers finish."""
+        conn = self._connection
+        if conn is not None:
+            with _core_closing(self, conn) as allowed:
+                if allowed:
+                    with self._lock:
+                        conn.close()
+                        if not self.is_memory_db:
+                            self._connection = None
 
     def upsert_file(
         self,
@@ -107,7 +144,7 @@ class FileNotesReplica:
         Returns:
             Stored bytes, or ``None`` when the path is not replicated.
         """
-        with self._lock:
+        with self._locked_connection():
             row = self._connection.execute(
                 """
                 SELECT raw_bytes
@@ -127,7 +164,7 @@ class FileNotesReplica:
         Returns:
             Active files ordered by relative path.
         """
-        with self._lock:
+        with self._locked_connection():
             rows = self._connection.execute(
                 """
                 SELECT relative_path, content_hash, size, mtime_ns
@@ -164,7 +201,7 @@ class FileNotesReplica:
         escaped_query = query.replace('"', '""')
         literal_query = f'"{escaped_query}"'
         try:
-            with self._lock:
+            with self._locked_connection():
                 rows = self._connection.execute(
                     """
                     SELECT files.relative_path
@@ -315,7 +352,7 @@ class FileNotesReplica:
         Returns:
             Tombstoned relative paths, newest deletion first.
         """
-        with self._lock:
+        with self._locked_connection():
             rows = self._connection.execute(
                 """
                 SELECT relative_path
@@ -337,7 +374,7 @@ class FileNotesReplica:
         Returns:
             Restorable bytes, or ``None`` when no tombstone exists.
         """
-        with self._lock:
+        with self._locked_connection():
             row = self._connection.execute(
                 """
                 SELECT raw_bytes
@@ -417,7 +454,7 @@ class FileNotesReplica:
         Returns:
             ``True`` when an exact entry or folder prefix protects the path.
         """
-        with self._lock:
+        with self._locked_connection():
             row = self._connection.execute(
                 """
                 SELECT 1
@@ -563,7 +600,7 @@ class FileNotesReplica:
             self._delete_fts(cursor, root, relative_path)
 
     def _initialize_schema(self) -> None:
-        with self._lock:
+        with self._locked_connection():
             self._connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS files (
@@ -607,7 +644,7 @@ class FileNotesReplica:
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Cursor]:
-        with self._lock:
+        with self._locked_connection():
             cursor = self._connection.cursor()
             try:
                 cursor.execute("BEGIN IMMEDIATE")

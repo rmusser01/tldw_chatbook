@@ -302,3 +302,73 @@ service and Home notification pool jobs, notification/scheduler/research executi
 and cross-store followups, multi-scope Writing jobs, remaining storage cohorts,
 app/headless lifecycle and one independent whole-task review. The clean-BASE app
 callback/bootstrap issue remains Task10; Media historical-fixture debt stays Task13.
+
+### Phase6 implementation plan (before code)
+
+1. Establish behavioral RED for actual Evals/Subscriptions/FileNotes cached reads and safe close, constructor directory pause, Receipts and installed Kanban source scopes.
+2. Extend exact source declarations and native association only; bind Subscriptions read-only mode on every use and preserve different native write/read policies. Count existing lexical CRUD/schema/read/transaction bodies without changing borrowed native commit or cursor semantics.
+3. Integrate FileNotes constructor as two independent safe stages: exact constructor-only fixed directory admission and positive raw resource retirement, then fresh SQLite repository admission. Pause between stages may leave admitted directories but refuses SQLite creation. Preserve unsupported-platform ordinary behavior; no compound authority transfer.
+4. Count SiteConfigManager setup only through its actual lazily available exact source, retaining standalone helper ordinary status and separate CharactersRAGDB hybrid connections. Register exact allocation before setup, recheck gates, positively close failures or retain uncertain resources.
+5. Verify real SQLite/native process observers, active/foreign-thread refusal, pause/allocation/setup/selector races, native close failures/reopen, memory/relative/read-only/hybrid compatibility, and fresh per-operation close semantics. Run affected targeted domain/lifetime/private-SQLite/census guards, static checks and self-review.
+6. Update source inventory and exact caller handoffs, append evidence, scoped commit. Task31993 stays In Progress with three unchecked ACs; no startup retirement, responder, runtime coverage or Complete capability.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved persistence lifetime contract; controller approved exact source strategy and two-stage directory boundary, preserving ADR-004/036.
+
+### Phase6 implementation notes
+
+Under ADR-126 and controller-approved exact source strategy, Evals/Subscriptions/
+FileNotes/receipt/Kanban native scopes now use installed path/policy/Thread/Task
+associations and positive source-owned retirement. SiteConfigManager initial schema
+setup has a distinct exact source; hybrid core handles retain separate ownership.
+Lazy production-module lookup avoids eagerly loading these added sources. New
+cached/raw access is gated; fixed admitted scopes can finish; failed native close
+or live errors preserve references. FileNotes shared cache refuses foreign/active
+close, maps semantic notes.file_notes to native notes.file_notes_replica and keeps
+original memory-close behavior. Receipt/Kanban commit/rollback/finally.close and
+all pre-existing literal/schema payloads remain intact.
+
+FileNotes directory construction uses fixed ordinary raw admission and native pins,
+then positively retires before fresh SQLite admission. Pause may leave successfully
+admitted directories but refuses SQLite creation; path retarget and uncertain
+native directory retirement remain blockers. No composite raw-to-SQLite authority,
+new schema/migration, coverage promotion or startup retirement was introduced.
+Subscriptions resolves only an omitted config default before its DB operation so
+cold config values survive; explicit overrides win and intervening pause refuses
+mutation. Its entire actual schema tail remains in the original admitted scope.
+
+Evidence: final source run167 passed including83 focused cases; earlier combined
+source/domain302 passed. Shared earlier lifetimes/privateSQLite/census637 passed,
+with1 existing Windows posture skip. Exact Evals capture10 passed; the4 Subs
+catalog/capture/audio checks initially failed from changed SQL indentation and now
+pass after original plain/joined literal restoration. The incident is recorded in
+lessons-testing-evidence.md. Final FileNotes/new-lifetime94 passed before the last
+config/semantic tests. Counts overlap, never additive. Fatal lint, new/participant
+format checks and diff checks pass. No full suite ran.
+
+Retained test corrections include the unsafe initial native trace-callback close
+(exit139, not rerun or claimed OS evidence), intermediate Evals SyntaxError, wrong
+mkdir/policy/memory/nested-writer assumptions and one malformed census row. True
+retarget/schema-tail/memory/cold-config/semantic regressions have behavioral
+RED/GREEN. Explicit fixture/source-thread cleanup removed the initial+246 descriptor
+threshold warning in scoped reruns; this is not production worker qualification.
+Self-review used full/whitespace-insensitive diffs plus exact AST literal/control-flow
+comparison and real native/capture evidence. No schema allowlist was widened.
+
+Files: participants/raw_participants/storage_admission, actual five sources plus
+Kanban native helper and SiteConfigManager, focused tests, exact source fixture
+cleanup, owner inventory and evidence lesson. Full commands/results/source handoffs
+are in task-10-phase6-report.md. File Notes workspace shutdown currently may invoke
+close on a different executor thread then clear its reference; actual caller jobs
+must positively retire those handles. Evals/Subscriptions/Site jobs, Notes import/
+file/Git/sync/dirty editors and Kanban multi-scope methods remain later Task10 work,
+along with prior cohorts and app/headless responder/startup aggregation. Task31993
+stays In Progress with all3 ACs unchecked; no claim of Task10 completion.
+
+Final phase6 boundary review also reproduced a real Kanban DELETE-to-WAL setup
+mutation after exact source admission closed. The native helper now registers and
+checks only the supplied actual service before PRAGMAs; standalone calls retain
+ordinary semantics. The focused source rerun passed12 cases and the final Kanban/
+private-interop/mutation checks passed36; final source census passed11. Full exact
+late RED/GREEN commands and the corrected report boundary are recorded in the phase
+report. No additional runtime coverage or Task10 completion is claimed.

@@ -26,15 +26,17 @@ from tldw_chatbook.DB.Evals_DB import EvalsDB, EvalsDBError, InputError
 class TestEvalsDBInitialization:
     """Test database initialization and schema creation."""
 
-    def test_memory_db_initialization(self):
+    def test_memory_db_initialization(self, request):
         """Test in-memory database initialization."""
         db = EvalsDB(db_path=":memory:", client_id="test")
+        request.addfinalizer(db.close)
         assert db.db_path == ":memory:"
         assert db.client_id == "test"
 
-    def test_file_db_initialization(self, temp_db_path):
+    def test_file_db_initialization(self, request, temp_db_path):
         """Test file-based database initialization."""
         db = EvalsDB(db_path=temp_db_path, client_id="test")
+        request.addfinalizer(db.close)
         # db_path is a Path object for file-based databases
         assert str(db.db_path) == temp_db_path
         assert Path(temp_db_path).exists()
@@ -972,6 +974,8 @@ class TestThreadSafety:
                 task_ids.append(task_id)
             except Exception as e:
                 errors.append(e)
+            finally:
+                temp_db.close()
 
         # Create multiple threads
         threads = []
@@ -1014,14 +1018,17 @@ class TestThreadSafety:
             # Multiple reads from different connections
             for i in range(3):
                 read_db = EvalsDB(db_path=temp_db.db_path, client_id=f"reader_{i}")
-                for task_id in task_ids:
-                    try:
-                        task = read_db.get_task(task_id)
-                        read_results.append(task is not None)
-                    except Exception as e:
-                        read_results.append(False)
-                        logger.warning(f"Read error: {e}")
-                time.sleep(0.01)
+                try:
+                    for task_id in task_ids:
+                        try:
+                            task = read_db.get_task(task_id)
+                            read_results.append(task is not None)
+                        except Exception as e:
+                            read_results.append(False)
+                            logger.warning(f"Read error: {e}")
+                    time.sleep(0.01)
+                finally:
+                    read_db.close()
 
         def write_single_task():
             # Single write operation
@@ -1034,6 +1041,8 @@ class TestThreadSafety:
             except Exception as e:
                 logger.warning(f"Write error: {e}")
                 write_success = False
+            finally:
+                temp_db.close()
 
         # Start multiple read threads
         read_threads = []
