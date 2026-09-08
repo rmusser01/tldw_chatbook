@@ -15,38 +15,38 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal
 
+from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
+from tldw_chatbook.Agents.agent_runtime import split_visible_text_and_tool_call
+from tldw_chatbook.Chat.attachment_core import image_url_part
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_PER_IMAGE_TOKENS,
     DEFAULT_RESPONSE_RESERVATION,
     count_console_messages_tokens,
     count_provider_continuation_tokens,
 )
-from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_thinking_history import (
     EffectiveThinkingHistoryPolicy,
     ThinkingOwnerGroup,
     serialize_start_anchored_thinking,
 )
-from tldw_chatbook.Chat.thinking_blocks import ThinkingHistoryPolicy
-from tldw_chatbook.Chat.attachment_core import image_url_part
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy
 from tldw_chatbook.Chat.console_trace_provenance import (
-    ConsoleTraceCaptureMode,
     ConsoleRequestProvenance,
+    ConsoleTraceCaptureMode,
     ConsoleUnitProvenance,
     DerivedTraceProvenance,
+    ProviderArtifactTraceProvenance,
     ProviderRequestProvenance,
     SavedRevisionTraceProvenance,
     TraceProvenance,
     TraceProvenanceAlignmentError,
-    TraceTransformKind,
-    ProviderArtifactTraceProvenance,
     TraceProvenanceSource,
+    TraceTransformKind,
     frozen_policy_from_provenance,
 )
-from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy
-from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
-from tldw_chatbook.Agents.agent_runtime import split_visible_text_and_tool_call
-
+from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
+from tldw_chatbook.Chat.thinking_blocks import ThinkingHistoryPolicy
 
 MINIMUM_SAFETY_MARGIN_TOKENS = 512
 MEMORY_OPEN_TAG = "<chatbook_conversation_memory>"
@@ -139,6 +139,15 @@ def _freeze_messages(
 def _is_fenced_tool_result(row: Mapping[str, Any]) -> bool:
     return row.get("role") == "user" and str(row.get("content") or "").startswith(
         FENCE_TOOL_RESULT_PREFIX
+    )
+
+
+def _starts_user_turn(row: Mapping[str, Any]) -> bool:
+    """Keep automatic project context in the turn that requested it."""
+    return (
+        row.get("role") == "user"
+        and not _is_fenced_tool_result(row)
+        and row.get(EPHEMERAL_ORIGIN_KEY) != "project_instructions"
     )
 
 
@@ -880,11 +889,7 @@ def build_console_request(
     if not history:
         raise ValueError("A Console provider request requires an active request.")
 
-    starts = [
-        index
-        for index, row in enumerate(history)
-        if row.get("role") == "user" and not _is_fenced_tool_result(row)
-    ]
+    starts = [index for index, row in enumerate(history) if _starts_user_turn(row)]
     active_start = starts[-1] if starts else 0
     compactable_rows = history[:active_start]
     active = history[active_start:]
@@ -915,7 +920,7 @@ def build_console_request(
     current_descriptors: list[TraceProvenance] = []
     for index, row in enumerate(compactable_rows):
         descriptor = compactable_descriptors[index] if capture_on else None
-        if row.get("role") == "user" and not _is_fenced_tool_result(row) and current:
+        if _starts_user_turn(row) and current:
             units.append(
                 ConsoleConversationUnit(
                     tuple(current),

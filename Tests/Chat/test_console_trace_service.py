@@ -1268,6 +1268,8 @@ def _completed_run_compound_preparation(
     *,
     tool_count: int = 2,
     duplicate_append: bool = False,
+    artifact_source: str = "tool_result",
+    terminal_outcome: TraceCallState = TraceCallState.COMPLETE,
 ):
     """Construct durable evidence directly, without provider overlay size limits."""
     owner_id, segment_id = _owned_segment(db, repository)
@@ -1318,7 +1320,7 @@ def _completed_run_compound_preparation(
             event("call_boundary", call_id=call.call_id)
             return call
 
-        def complete(call, node, route):
+        def complete(call, node, route, outcome=TraceCallState.COMPLETE):
             header = repository.create_or_reuse_request_header(
                 cursor,
                 provider_name="openai",
@@ -1343,7 +1345,7 @@ def _completed_run_compound_preparation(
             for target in (
                 TraceCallState.DISPATCH_STARTED,
                 TraceCallState.RESPONSE_STARTED,
-                TraceCallState.COMPLETE,
+                outcome,
             ):
                 repository.advance_call_state(
                     cursor,
@@ -1381,8 +1383,8 @@ def _completed_run_compound_preparation(
                 segment_id=segment_id,
                 sequence=sequence,
                 predecessor_node_id=head.node_id,
-                component_kind="tool_result",
-                reference=TraceContentRef(artifact.artifact_id, "tool_result"),
+                component_kind=artifact_source,
+                reference=TraceContentRef(artifact.artifact_id, artifact_source),
             )
             tool_nodes.append(head)
             # The defect is constructed at insertion time: two real events
@@ -1390,17 +1392,14 @@ def _completed_run_compound_preparation(
             event_count = (2 if sequence == 1 else 0) if duplicate_append else 1
             for _ in range(event_count):
                 event("surface_append", surface_node_id=head.node_id)
-        complete(terminal, head, ConsoleRequestRoute.TOOL_LOOP)
+        complete(terminal, head, ConsoleRequestRoute.TOOL_LOOP, terminal_outcome)
         repository.store_response_link(
             cursor,
             call_id=terminal.call_id,
             response=SemanticRevisionRef(answer.revision_id),
         )
         assert repository.get_run_origin(cursor, run_id).call_id == origin.call_id
-        assert (
-            repository.get_call(cursor, terminal.call_id).state
-            is TraceCallState.COMPLETE
-        )
+        assert repository.get_call(cursor, terminal.call_id).state is terminal_outcome
         assert (
             repository.get_latest_call_boundary(cursor, segment_id).call_id
             == terminal.call_id

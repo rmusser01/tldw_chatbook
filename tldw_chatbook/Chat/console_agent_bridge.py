@@ -2534,6 +2534,8 @@ def _activation_event(
 def _agent_artifact_source(message: Mapping[str, Any]) -> TraceProvenanceSource:
     """Classify one agent-owned provider row without retaining its value."""
 
+    if message.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions":
+        return TraceProvenanceSource.PROJECT_INSTRUCTION
     role = message.get("role")
     content = str(message.get("content") or "")
     if role == "system":
@@ -2575,6 +2577,7 @@ def _agent_can_reuse_descriptor(
         }
     return source in {
         TraceProvenanceSource.ACTIVE_REQUEST,
+        TraceProvenanceSource.PROJECT_INSTRUCTION,
         TraceProvenanceSource.PREFILL,
         TraceProvenanceSource.TOOL_CALL,
         TraceProvenanceSource.TOOL_RESULT,

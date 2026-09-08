@@ -222,6 +222,29 @@ project-instruction bodies never enter default durable capture.
     chunk-row encoding are deferred to [TASK-24206](../tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
     and are not required by the forthcoming ADR-097 implementation umbrella.
 
+### Clarification recorded 2026-09-07: automatic project context
+
+TASK-31976.1 applies decisions 6 and 8 to automatic `AGENTS.md` context: Capture
+On retains the actual provider-visible context as a `project_instruction`
+artifact under the frozen credential/PII policy. The owner explicitly requested
+this trajectory fidelity, superseding ADR-069's earlier durable-capture
+exclusion; its other ephemerality and authority rules remain in force. Capture
+Off retains no such trace artifact. Context rows remain attached to their user
+turn for windowing and cannot replace the admitted saved message as call owner.
+
+When a completed turn is followed by another send, its bounded project/tool
+suffix may be replaced by the saved assistant, new saved user and current project
+context. This requires a witnessed terminal response link, unchanged prefix,
+same disclosure policy and durable attribution of every removed artifact to
+that completed run; it is revalidated when binding and works from durable
+references after a restart. A matching context suffix is still renewed with the
+new turn. Prior call reconstruction remains unchanged. Other replacement shapes
+remain rejected. A completed llama.cpp fallback can witness that response only
+when it immediately follows the failed streaming call with the same owner,
+turn, disclosure policy, surface, provider and model; removed artifacts must
+still belong to the verified source stream run. Artifact equality compares the frozen credential/PII projection
+without modifying the actual provider input.
+
 ### Clarification recorded 2026-09-05: retained soft-delete envelopes
 
 The accepted design's mutation-boundary section and TASK-23113.2 AC8 specify
