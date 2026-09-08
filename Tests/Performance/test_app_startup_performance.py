@@ -820,16 +820,90 @@ async def test_tts_profile_open_keeps_helper_startup_off_the_ui_loop(
     monkeypatch.setattr(TTSProfileRepository, "_worker_open", blocked_worker_open)
     repository = TTSProfileRepository(tmp_path / "profiles.sqlite3")
     open_task = asyncio.create_task(repository.open())
+    primary_error: BaseException | None = None
     try:
         assert await asyncio.to_thread(worker_started.wait, 3)
         await asyncio.sleep(0)
         assert open_task.done() is False
         assert len(worker_threads) == 1
         assert worker_threads[0] != threading.get_ident()
+    except BaseException as error:  # noqa: BLE001 - settle test ownership before redelivering the primary signal
+        primary_error = error
     finally:
         release_worker.set()
-    await open_task
-    await repository.close()
+        try:
+            try:
+                await open_task
+            except BaseException as error:  # noqa: BLE001 - opening failure must not skip repository cleanup
+                if primary_error is None:
+                    primary_error = error
+        finally:
+            try:
+                await repository.close()
+            except BaseException:
+                if primary_error is None:
+                    raise
+    if primary_error is not None:
+        raise primary_error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["assertion", "open", "assertion_and_open"])
+async def test_tts_ui_loop_guard_settles_owner_when_its_checks_fail(
+    monkeypatch, tmp_path, failure_phase
+):
+    """Exercise the guard's own failure path with its real executor owner."""
+    from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+
+    assertion_error = AssertionError("injected scheduling assertion")
+    open_error = RuntimeError("injected open failure")
+    close_error = RuntimeError("injected close diagnostic")
+    test_task = asyncio.current_task()
+    real_sleep = asyncio.sleep
+    real_open, real_close = TTSProfileRepository.open, TTSProfileRepository.close
+    owners, open_tasks, closed = [], [], []
+
+    async def observed_open(repository):
+        owners.append(repository)
+        open_tasks.append(asyncio.current_task())
+        await real_open(repository)
+        if failure_phase in {"open", "assertion_and_open"}:
+            raise open_error
+
+    async def observed_close(repository):
+        try:
+            await real_close(repository)
+        finally:
+            closed.append(repository)
+        raise close_error
+
+    async def fail_assertion(delay):
+        if asyncio.current_task() is test_task and failure_phase != "open":
+            raise assertion_error
+        await real_sleep(delay)
+
+    monkeypatch.setattr(TTSProfileRepository, "open", observed_open)
+    monkeypatch.setattr(TTSProfileRepository, "close", observed_close)
+    monkeypatch.setattr(asyncio, "sleep", fail_assertion)
+    try:
+        with pytest.raises(BaseException) as caught:
+            await test_tts_profile_open_keeps_helper_startup_off_the_ui_loop(
+                monkeypatch, tmp_path
+            )
+        expected = open_error if failure_phase == "open" else assertion_error
+        assert caught.value is expected
+        assert len(owners) == 1 and closed == owners
+        assert all(task.done() for task in open_tasks)
+        assert owners[0]._executor is None and owners[0]._executor_shutdown
+    finally:
+        # Even the expected RED against the old guard settles its test owner.
+        for task in open_tasks:
+            try:
+                await task
+            except BaseException:  # noqa: BLE001, S110 - consume injected test failure before owner teardown
+                pass
+        for owner in owners:
+            await real_close(owner)
 
 
 @pytest.mark.asyncio

@@ -289,6 +289,35 @@ class ExactProfileStoreCleanupError(ProfileRepositoryError):
         self.connection = connection
 
 
+def _exact_profile_store_cleanup_error(
+    error: BaseException,
+) -> ExactProfileStoreCleanupError | None:
+    """Read only this live-open attempt's owner, bypassing signal hooks."""
+    if isinstance(error, ExactProfileStoreCleanupError):
+        return error
+    metadata = BaseException.__dict__["__dict__"].__get__(error, BaseException)
+    cleanup = metadata.get("_profile_exact_cleanup_error")
+    return cleanup if isinstance(cleanup, ExactProfileStoreCleanupError) else None
+
+
+def _carry_exact_profile_cleanup(
+    error: BaseException, cleanup: ExactProfileStoreCleanupError | None
+) -> None:
+    """Keep prior live owners reachable without transferring them again."""
+    metadata = BaseException.__dict__["__dict__"].__get__(error, BaseException)
+    previous = _exact_profile_store_cleanup_error(error)
+    if previous is not None and previous is not cleanup:
+        history = metadata.get("_profile_exact_cleanup_history", ())
+        if all(previous is not retained for retained in history):
+            history = (*history, previous)
+        metadata["_profile_exact_cleanup_history"] = history
+    else:
+        metadata.setdefault("_profile_exact_cleanup_history", ())
+    # None is intentional: a reused signal may now leave before acquiring a
+    # live handle, or after healthy close. Earlier owners are history only.
+    metadata["_profile_exact_cleanup_error"] = cleanup
+
+
 class ExactProfileStoreNotCurrentError(ProfileRepositoryError):
     """Signal that shared proof must yield to exclusive initialization."""
 
@@ -849,137 +878,148 @@ def open_exact_current_profile_store(
     deadline: OperationDeadline | None = None,
 ) -> sqlite3.Connection:
     """Admit current live SQLite with remote proof and one reserved envelope."""
-    if not isinstance(path, Path) or not path.is_absolute():
-        raise _repository_error("operation_failed")
+    cleanup_error: ExactProfileStoreCleanupError | None = None
     try:
-        path.lstat()
-    except FileNotFoundError:
-        raise ExactProfileStoreNotCurrentError() from None
-    deadline = deadline or OperationDeadline(time.monotonic() + 30.0)
-    parent_fd = -1
-    owned: _ExactCurrentProfileConnection | None = None
-    body_error: BaseException | None = None
-    with HELPER_ADMISSION.reserve(
-        transient=1, retained=1, deadline=deadline
-    ) as reservation:
-        helper = HelperLease.start(
-            PrepareRequest(str(path), False, False, False),
-            operation="tts_exact_current",
-            reservation=reservation,
-            deadline=deadline,
-        )
+        if not isinstance(path, Path) or not path.is_absolute():
+            raise _repository_error("operation_failed")
         try:
-            response = helper.initial_response
-            if response["status"] != "ok":
-                if response.get("reason") == "exact_not_current":
-                    raise ExactProfileStoreNotCurrentError()
-                raise _repository_error(response.get("reason", "operation_failed"))
-            identity = validate_tts_identity(response["identity"])
-            parent_fd, _leaf = private_paths._open_verified_parent(
-                path, missing_leaf_allowed=False
+            path.lstat()
+        except FileNotFoundError:
+            raise ExactProfileStoreNotCurrentError() from None
+        deadline = deadline or OperationDeadline(time.monotonic() + 30.0)
+        parent_fd = -1
+        owned: _ExactCurrentProfileConnection | None = None
+        body_error: BaseException | None = None
+        with HELPER_ADMISSION.reserve(
+            transient=1, retained=1, deadline=deadline
+        ) as reservation:
+            helper = HelperLease.start(
+                PrepareRequest(str(path), False, False, False),
+                operation="tts_exact_current",
+                reservation=reservation,
+                deadline=deadline,
             )
-            expected = expected_post_init_authority
-            main = FileIdentity.from_payload(identity["main"])
-            parent = FileIdentity.from_payload(identity["parent"])
-            if expected is not None:
-                expected_main = FileIdentity.from_stat(expected.file_identity)
-                expected_parent = FileIdentity.from_stat(expected.parent_identity)
+            try:
+                response = helper.initial_response
+                if response["status"] != "ok":
+                    if response.get("reason") == "exact_not_current":
+                        raise ExactProfileStoreNotCurrentError()
+                    raise _repository_error(response.get("reason", "operation_failed"))
+                identity = validate_tts_identity(response["identity"])
+                parent_fd, _leaf = private_paths._open_verified_parent(
+                    path, missing_leaf_allowed=False
+                )
+                expected = expected_post_init_authority
+                main = FileIdentity.from_payload(identity["main"])
+                parent = FileIdentity.from_payload(identity["parent"])
+                if expected is not None:
+                    expected_main = FileIdentity.from_stat(expected.file_identity)
+                    expected_parent = FileIdentity.from_stat(expected.parent_identity)
+                    if (
+                        not main.same_inode(expected_main)
+                        or main.size != expected_main.size
+                        or (parent.dev, parent.ino, parent.mode, parent.uid, parent.gid)
+                        != (
+                            expected_parent.dev,
+                            expected_parent.ino,
+                            expected_parent.mode,
+                            expected_parent.uid,
+                            expected_parent.gid,
+                        )
+                    ):
+                        raise ExactProfileStoreAuthorityError()
+                live = _connect_registered_sqlite(
+                    "tts.profile_store",
+                    path,
+                    must_exist=True,
+                    expected_identity=main,
+                    isolation_level=None,
+                    operation_deadline=deadline.expires_at,
+                    reservation=reservation,
+                )
+                # Ownership exists before even policy configuration can fail.
+                owned = _ExactCurrentProfileConnection(
+                    live,
+                    selected=path,
+                    parent_fd=parent_fd,
+                    helper=helper,
+                    identity=identity,
+                )
+                parent_fd = -1
+                configure_native_close_policy(live)
+                owned._revalidate(deadline)
+                live.execute("PRAGMA query_only = ON")
+                if live.execute("PRAGMA query_only").fetchone()[0] != 1:
+                    raise _repository_error("schema_corrupt")
+                live.execute("PRAGMA user_version").fetchone()
+                if live.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                    raise ExactProfileStoreNotCurrentError()
+                owned._wal_acquired = True
+                owned._revalidate(deadline)
+                _configure_connection(cast(sqlite3.Connection, owned))
                 if (
-                    not main.same_inode(expected_main)
-                    or main.size != expected_main.size
-                    or (parent.dev, parent.ino, parent.mode, parent.uid, parent.gid)
-                    != (
-                        expected_parent.dev,
-                        expected_parent.ino,
-                        expected_parent.mode,
-                        expected_parent.uid,
-                        expected_parent.gid,
-                    )
+                    owned.execute("PRAGMA user_version").fetchone()[0]
+                    != CURRENT_PROFILE_SCHEMA_VERSION
+                ):
+                    raise _repository_error("schema_partial")
+                check = lambda: deadline.remaining(30.0)
+                _validate_schema(cast(sqlite3.Connection, owned), check_deadline=check)
+                validate_profile_store_rows(
+                    cast(sqlite3.Connection, owned), check_deadline=check
+                )
+                owned.execute("BEGIN")
+                _run_with_deadline_progress(
+                    cast(sqlite3.Connection, owned),
+                    check,
+                    lambda: _stream_exact_store_metadata_evidence(
+                        cast(sqlite3.Connection, owned)
+                    ),
+                )
+                owned._revalidate(deadline)
+                if (
+                    expected is not None
+                    and owned._file_identity.size != expected.file_identity.st_size
                 ):
                     raise ExactProfileStoreAuthorityError()
-            live = _connect_registered_sqlite(
-                "tts.profile_store",
-                path,
-                must_exist=True,
-                expected_identity=main,
-                isolation_level=None,
-                operation_deadline=deadline.expires_at,
-                reservation=reservation,
-            )
-            # Ownership exists before even policy configuration can fail.
-            owned = _ExactCurrentProfileConnection(
-                live,
-                selected=path,
-                parent_fd=parent_fd,
-                helper=helper,
-                identity=identity,
-            )
-            parent_fd = -1
-            configure_native_close_policy(live)
-            owned._revalidate(deadline)
-            live.execute("PRAGMA query_only = ON")
-            if live.execute("PRAGMA query_only").fetchone()[0] != 1:
-                raise _repository_error("schema_corrupt")
-            live.execute("PRAGMA user_version").fetchone()
-            if live.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
-                raise ExactProfileStoreNotCurrentError()
-            owned._wal_acquired = True
-            owned._revalidate(deadline)
-            _configure_connection(cast(sqlite3.Connection, owned))
-            if (
-                owned.execute("PRAGMA user_version").fetchone()[0]
-                != CURRENT_PROFILE_SCHEMA_VERSION
-            ):
-                raise _repository_error("schema_partial")
-            check = lambda: deadline.remaining(30.0)
-            _validate_schema(cast(sqlite3.Connection, owned), check_deadline=check)
-            validate_profile_store_rows(
-                cast(sqlite3.Connection, owned), check_deadline=check
-            )
-            owned.execute("BEGIN")
-            _run_with_deadline_progress(
-                cast(sqlite3.Connection, owned),
-                check,
-                lambda: _stream_exact_store_metadata_evidence(
-                    cast(sqlite3.Connection, owned)
-                ),
-            )
-            owned._revalidate(deadline)
-            if (
-                expected is not None
-                and owned._file_identity.size != expected.file_identity.st_size
-            ):
-                raise ExactProfileStoreAuthorityError()
-            owned.rollback()
-            owned._revalidate(deadline)
-            owned.execute("PRAGMA query_only = OFF")
-            if owned.execute("PRAGMA query_only").fetchone()[0] != 0:
-                raise _repository_error("schema_corrupt")
-            owned._revalidate(deadline)
-        except BaseException as error:  # noqa: BLE001 - settle complete ownership before redelivering control flow
-            body_error = error
-        if body_error is not None and owned is not None:
-            try:
-                owned.close()
-            except ExactProfileStoreProofLostError as error:
+                owned.rollback()
+                owned._revalidate(deadline)
+                owned.execute("PRAGMA query_only = OFF")
+                if owned.execute("PRAGMA query_only").fetchone()[0] != 0:
+                    raise _repository_error("schema_corrupt")
+                owned._revalidate(deadline)
+            except BaseException as error:  # noqa: BLE001 - settle complete ownership before redelivering control flow
                 body_error = error
-            except BaseException:
-                body_error = ExactProfileStoreCleanupError(owned)
-        if owned is not None and not owned._sqlite_closed and not owned._proof_lost:
-            # Settle the transient child before transferring this complete owner.
-            # Do not raise inside the reservation: its exceptional exit would
-            # otherwise reap healthy retained proof needed for close retry.
-            reservation.handoff_retained(helper)
-        if parent_fd >= 0:
-            os.close(parent_fd)
-    if body_error is not None:
-        if not isinstance(body_error, Exception) or isinstance(
-            body_error, ProfileRepositoryError
-        ):
-            raise body_error
-        raise _repository_error("schema_corrupt") from None
-    assert owned is not None
-    return cast(sqlite3.Connection, owned)
+            if body_error is not None and owned is not None:
+                try:
+                    owned.close()
+                except BaseException as error:  # noqa: BLE001 - preserve the earliest control signal and live owner
+                    cleanup_error = ExactProfileStoreCleanupError(owned)
+                    if isinstance(body_error, Exception):
+                        body_error = (
+                            error
+                            if not isinstance(error, Exception)
+                            or isinstance(error, ExactProfileStoreProofLostError)
+                            else cleanup_error
+                        )
+            if owned is not None and not owned._sqlite_closed and not owned._proof_lost:
+                # Settle the transient child before transferring this complete owner.
+                # Do not raise inside the reservation: its exceptional exit would
+                # otherwise reap healthy retained proof needed for close retry.
+                reservation.handoff_retained(helper)
+            if parent_fd >= 0:
+                os.close(parent_fd)
+        if body_error is not None:
+            if not isinstance(body_error, Exception) or isinstance(
+                body_error, ProfileRepositoryError
+            ):
+                raise body_error
+            raise _repository_error("schema_corrupt") from None
+        assert owned is not None
+        return cast(sqlite3.Connection, owned)
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            _carry_exact_profile_cleanup(error, cleanup_error)
+        raise
 
 
 def open_profile_store(

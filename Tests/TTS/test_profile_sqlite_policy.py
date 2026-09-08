@@ -116,14 +116,39 @@ def test_borrowed_connection_missing_method_is_refused_without_close(
 ) -> None:
     methods = {
         name: lambda *_args, **_kwargs: True
-        for name in {"setconfig", "getconfig", "close"} - {missing_method}
+        for name in {"setconfig", "getconfig"} - {missing_method}
     }
+
+    def close(connection):
+        connection.close_calls += 1
+
+    methods["close"] = close
     connection = type("MissingCapabilityConnection", (), methods)()
+    connection.close_calls = 0
 
     with pytest.raises(ProfileRepositoryError) as failure:
         policy.configure_native_close_policy(connection)  # type: ignore[arg-type]
     _assert_runtime_unsupported(failure.value)
-    assert getattr(connection, "close_calls", 0) == 0
+    assert connection.close_calls == 0
+
+
+@pytest.mark.parametrize("missing_method", ("setconfig", "getconfig"))
+def test_missing_method_ownership_assertion_detects_borrowed_close(
+    monkeypatch, missing_method
+):
+    configure = policy.configure_native_close_policy
+
+    def incorrectly_close(connection):
+        try:
+            configure(connection)
+        finally:
+            connection.close()
+
+    monkeypatch.setattr(policy, "configure_native_close_policy", incorrectly_close)
+    with pytest.raises(AssertionError):
+        test_borrowed_connection_missing_method_is_refused_without_close(
+            monkeypatch, missing_method
+        )
 
 
 @pytest.mark.parametrize("phase", ("set", "get"))
