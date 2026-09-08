@@ -42,7 +42,9 @@ _TRACE_FAILURE_CATEGORIES = frozenset(
 @dataclass
 class SendDiagnostic:
     monitor: UIResponsivenessMonitor
-    attempt_token: str = field(default_factory=lambda: uuid4().hex)
+    # A random correlation ID, never a credential or stored conversation ID.
+    # A *_token log label makes the live-view redactor remove the whole tail.
+    attempt_id: str = field(default_factory=lambda: uuid4().hex)
     started: float = field(default_factory=time.monotonic)
     phase: str = "controller_submit"
     outcome: str = "completed"
@@ -87,7 +89,7 @@ class SendDiagnostic:
             "console_send_stage",
             phase=phase,
             status=status,
-            attempt_token=self.attempt_token,
+            attempt_id=self.attempt_id,
             level=logging.ERROR if status == "failed" else logging.INFO,
             duration_ms=int((time.monotonic() - self.started) * 1000),
             **fields,

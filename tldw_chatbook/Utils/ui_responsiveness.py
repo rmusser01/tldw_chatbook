@@ -97,7 +97,7 @@ class UIResponsivenessMonitor:
             if event == "console_send_stage":
                 self._last_send_diagnostic = {
                     name: fields[name]
-                    for name in ("attempt_token", "phase", "status")
+                    for name in ("attempt_id", "phase", "status")
                     if name in fields
                 }
             try:
