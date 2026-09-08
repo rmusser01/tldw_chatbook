@@ -948,7 +948,8 @@ async def test_not_ready_provider_still_echoes_the_user_message():
 
 
 @pytest.mark.asyncio
-async def test_probe_exception_after_optimistic_echo_marks_row_blocked():
+@pytest.mark.parametrize("switch_session", [False, True])
+async def test_probe_exception_after_optimistic_echo_marks_row_blocked(switch_session):
     """TASK-457(a) (Qodo #777 review): if the readiness probe raises (or is
     cancelled) after the optimistic USER echo, the echoed row must still be
     failed so a never-sent message cannot leak into the next send's provider
@@ -957,14 +958,85 @@ async def test_probe_exception_after_optimistic_echo_marks_row_blocked():
     controller = ConsoleChatController(
         store=store, provider_gateway=RaisingProbeGateway()
     )
+    session = store.ensure_session()
+    other = store.create_session(title="Other") if switch_session else None
+    if other is not None:
+        store.active_session_id = other.id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."),
+            session_id=other.id,
+        )
 
     with pytest.raises(RuntimeError):
-        await controller.submit_draft("hello")
+        await controller.submit_draft("hello", session_id=session.id)
 
-    messages = store.messages_for_session(store.active_session_id)
+    messages = store.messages_for_session(session.id)
     assert [message.role.value for message in messages] == ["user"]
     assert messages[0].content == "hello"
     assert messages[0].status == "failed"
+    assert controller.run_state_for(session.id).is_send_allowed
+    assert controller.in_flight_run_count() == int(switch_session)
+    if other is not None:
+        assert controller.run_state.status is ConsoleRunStatus.STREAMING
+
+    payloads = []
+
+    class RetryGateway(StreamingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            payloads.extend(messages)
+            yield "Recovered"
+
+    controller.provider_gateway = RetryGateway()
+    retried = await controller.submit_draft("retry", session_id=session.id)
+    assert retried.accepted
+    assert [row["content"] for row in payloads if row["role"] == "user"] == ["retry"]
+    if other is not None:
+        assert controller.run_state.status is ConsoleRunStatus.STREAMING
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["cancel", "close", "shutdown"])
+async def test_interrupted_validation_releases_only_its_session(interruption):
+    started = asyncio.Event()
+
+    class WaitingProbeGateway:
+        async def resolve_for_send(self, selection):
+            started.set()
+            await asyncio.Event().wait()
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=WaitingProbeGateway()
+    )
+    session = store.ensure_session()
+    task = asyncio.create_task(controller.submit_draft("hello", session_id=session.id))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    other = store.create_session(title="Other")
+    store.active_session_id = other.id
+    try:
+        if interruption == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        elif interruption == "close":
+            controller.close_session(session.id)
+            closed_state = controller.run_state_for(session.id)
+            result = await asyncio.wait_for(task, timeout=1)
+            assert result.session_closed
+            assert all(item.id != session.id for item in store.sessions())
+            assert controller.run_state_for(session.id) == closed_state
+        else:
+            await asyncio.wait_for(controller.shutdown(), timeout=1)
+            result = await asyncio.wait_for(task, timeout=1)
+            assert not result.accepted
+        assert controller.in_flight_run_count() == 0
+        if interruption != "close":
+            assert controller.run_state_for(session.id).is_send_allowed
+        assert controller.run_state.status is ConsoleRunStatus.IDLE
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

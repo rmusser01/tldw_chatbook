@@ -10,6 +10,7 @@ import pytest
 from Tests.Chat.test_console_send_diagnostics import assert_export, sinks  # noqa: F401
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_native_chat_flow import _persist_console_provider_config
+from Tests.UI.test_console_rail_refresh_scope import count_compositor_updates
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -20,15 +21,24 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 @pytest.mark.parametrize("failure", ["resolution", "trace", None])
+@pytest.mark.parametrize(
+    "entrypoint,size",
+    [("direct", (80, 24)), ("enter", (80, 24)), ("enter", (160, 45))],
+)
 async def test_mounted_send_has_diagnostic_evidence_before_provider_entry(
     monkeypatch,
     tmp_path,
     sinks,  # noqa: F811 - imported shared pytest fixture
     failure,
+    entrypoint,
+    size,
 ):
     app = _build_test_app()
     database = CharactersRAGDB(tmp_path / "chat.sqlite", "send-diagnostic")
     app.chachanotes_db = database
+    # A new conversation in an existing profile, as in the reported incident.
+    for index in range(4):
+        assert database.add_conversation({"title": f"Existing conversation {index}"})
     _persist_console_provider_config(
         app,
         provider="openai",
@@ -46,7 +56,7 @@ async def test_mounted_send_has_diagnostic_evidence_before_provider_entry(
         monkeypatch.setattr(ConsoleTraceBoundaryFactory, "__call__", fail_factory)
     console = None
     try:
-        async with host.run_test(size=(80, 24)) as pilot:
+        async with host.run_test(size=size) as pilot:
             console = host.screen_stack[-1]
             await _wait_for_selector(console, pilot, "#console-native-composer")
             controller = console._ensure_console_chat_controller()
@@ -66,13 +76,30 @@ async def test_mounted_send_has_diagnostic_evidence_before_provider_entry(
 
             monkeypatch.setattr(gateway, "_chat_api_call_fn", adapter)
             controller.store.ensure_session()
-            console._console_composer_or_none().load_draft("PRIVATE-DRAFT-31977")
-            await asyncio.wait_for(
-                console._send_console_message_from_visible_action(),
-                10,
-            )
+            composer = console._console_composer_or_none()
+            composer.load_draft("PRIVATE-DRAFT-31977")
+            if entrypoint == "enter":
+                composer.focus()
+                await pilot.pause()
+                await pilot.press("enter")
+            else:
+                await asyncio.wait_for(
+                    console._send_console_message_from_visible_action(),
+                    10,
+                )
             await asyncio.wait_for(host.workers.wait_for_complete(), 10)
             await pilot.pause(0.3)
+            # Count the compositor's actual output, including redraws caused by
+            # focus or child layout; screen-recompose counts alone miss those.
+            updates = {"full": 0, "partial": 0}
+            with count_compositor_updates(updates):
+                await pilot.pause(1.2)
+            assert updates["full"] == 0, updates
+            assert console._console_pending_send_stash is None
+            assert console._console_transcript_sync_timer is None
+            if failure == "resolution":
+                assert composer.draft_text() == "PRIVATE-DRAFT-31977"
+                assert controller.run_state.is_send_allowed
             await asyncio.to_thread(app.ui_responsiveness_monitor.close)
             assert len(calls) == (0 if failure else 1)
             expected_phase = (
