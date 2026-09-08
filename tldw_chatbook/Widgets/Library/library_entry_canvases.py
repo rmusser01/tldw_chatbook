@@ -72,6 +72,10 @@ class LibraryLandingCanvasState:
     lifecycle_status: str = ""
     show_retry: bool = False
     show_explore: bool = False
+    # task-32072: the Get started steps are live controls that unlock in
+    # sequence, so the canvas needs the two facts that gate them.
+    has_any_content: bool = False
+    search_has_results: bool = False
 
 
 @dataclass(frozen=True)
@@ -271,14 +275,7 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
             "library-hub-lifecycle-status",
         )
         if get_started:
-            orientation = Static(
-                "1 Add · 2 Find · 3 Use",
-                id="library-hub-orientation",
-                classes="library-hub-meta",
-                markup=False,
-            )
-            orientation.display = self.state.lifecycle is LibraryLifecycle.STARTER
-            yield orientation
+            yield from self._compose_get_started_steps()
         else:
             yield Static(
                 self.state.counts_line,
@@ -370,6 +367,56 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         if self.state.show_retry:
             yield Button("Retry source check", id="library-hub-retry-evidence")
 
+    #: task-32072: "1 Add · 2 Find · 3 Use" named three steps and gave a
+    #: control for only the first, so a first-timer had no path from "I
+    #: imported something" to "find it" and "use it in Console". Each step is
+    #: a control now, and each one that is not usable yet says why and what
+    #: to do first -- the same line, never colour alone.
+    _GET_STARTED_STEPS = (
+        ("import", "Import a file", "Add files, links, and transcripts."),
+        ("find", "Find it", "Search everything you have added."),
+        ("use", "Use it in Console", "Send a search result to Console as evidence."),
+    )
+
+    def _get_started_step_block(self, step: str) -> str:
+        """Return why a step cannot run yet, and the step that unlocks it."""
+        if step == "find" and not self.state.has_any_content:
+            return "Find it needs something to search — Import a file first."
+        if step == "use" and not self.state.search_has_results:
+            if not self.state.has_any_content:
+                return "Use it in Console needs a search result — Import a file first."
+            return "Use it in Console needs a search result — run Find it first."
+        return ""
+
+    def _compose_get_started_steps(self) -> ComposeResult:
+        """Compose the three sequenced Get started controls and one reason."""
+        strip = Horizontal(id="library-hub-steps", classes="ds-toolbar")
+        strip.styles.height = "auto"
+        blocks: list[str] = []
+        with strip:
+            for step, label, tooltip in self._GET_STARTED_STEPS:
+                block = self._get_started_step_block(step)
+                if block:
+                    blocks.append(block)
+                button = Button(
+                    label,
+                    id=f"library-hub-step-{step}",
+                    classes="library-hub-action console-action-subdued",
+                    compact=True,
+                    tooltip=block or tooltip,
+                )
+                # TASK-716: a disabled Button never emits Pressed, so the
+                # explanation would be unreachable. Keep it pressable and let
+                # the handler say the same thing the hint below says.
+                button.set_class(bool(block), "library-source-action-blocked")
+                yield button
+        yield Static(
+            blocks[0] if blocks else "",
+            id="library-hub-steps-hint",
+            classes="library-hub-meta",
+            markup=False,
+        )
+
     def _sync_load_failure(self, failure: DestinationRecoveryState) -> None:
         """Patch the one load-failure callout's copy and tint in place."""
         sync_load_failure_callout(
@@ -392,8 +439,17 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         if state.load_failure is not None:
             self._sync_load_failure(state.load_failure)
         if self._is_get_started(state):
-            orientation = self.query_one("#library-hub-orientation", Static)
-            orientation.display = state.lifecycle is LibraryLifecycle.STARTER
+            blocks: list[str] = []
+            for step, _label, tooltip in self._GET_STARTED_STEPS:
+                block = self._get_started_step_block(step)
+                if block:
+                    blocks.append(block)
+                button = self.query_one(f"#library-hub-step-{step}", Button)
+                button.set_class(bool(block), "library-source-action-blocked")
+                button.tooltip = block or tooltip
+            self.query_one("#library-hub-steps-hint", Static).update(
+                blocks[0] if blocks else ""
+            )
             self._complete_targeted_sync()
             return
         self.query_one("#library-hub-counts", Static).update(state.counts_line)

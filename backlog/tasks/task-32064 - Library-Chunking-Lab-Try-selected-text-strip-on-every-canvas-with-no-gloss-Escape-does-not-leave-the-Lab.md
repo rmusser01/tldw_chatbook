@@ -3,9 +3,10 @@ id: TASK-32064
 title: >-
   Library: 'Chunking Lab / Try selected text' strip on every canvas with no
   gloss; Escape does not leave the Lab
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-08 18:25'
+updated_date: '2026-09-08 19:41'
 labels:
   - library
   - chunking-lab
@@ -26,3 +27,11 @@ The strip is the first interactive row under the header on every Library canvas;
 - [ ] #1 The strip is either moved under Details ▸ Actions (or the Media reader's More strip) or carries a one-line gloss
 - [ ] #2 Escape from the Chunking Lab returns to the Library canvas it was opened from
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Failing tests: the strip sits above every canvas; the Lab has no escape binding.
+2. Move the pair into the existing Details > Actions group with a one-line gloss.
+3. Add an escape binding to ChunkingLabScreen routed at its own lab-back action, text fields excluded.
+<!-- SECTION:PLAN:END -->

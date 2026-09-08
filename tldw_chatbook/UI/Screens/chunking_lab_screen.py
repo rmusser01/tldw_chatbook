@@ -211,6 +211,10 @@ class ChunkingLabScreen(BaseAppScreen):
     """Compose native sample, authoring and captured-result regions."""
 
     BINDINGS: ClassVar = [
+        # task-32064: the Lab is opened from Library and had no way back but
+        # its own Back button -- Escape, the exit every other Library surface
+        # answers to, did nothing.
+        Binding("escape", "lab_back", "Back to Library"),
         Binding("r", "lab_run", "Run B", show=False),
         Binding("p", "lab_pin", "Pin A", show=False),
         Binding("s", "lab_save", "Save B", show=False),
@@ -685,6 +689,19 @@ class ChunkingLabScreen(BaseAppScreen):
         ):
             return False
         return super().check_action(action, parameters)
+
+    def action_lab_back(self) -> None:
+        """Leave the Lab for the Library canvas that opened it.
+
+        A focused text field keeps Escape for itself (clearing/committing its
+        own edit); only the screen-level press navigates.
+        """
+        from textual.widgets import Input, TextArea
+
+        focused = self.focused
+        if isinstance(focused, (Input, TextArea)):
+            return
+        self.run_worker(self._safe(self._action("lab-back")), exit_on_error=False)
 
     def action_lab_run(self) -> None:
         self.run_worker(self._safe(self.run_candidates()), exit_on_error=False)

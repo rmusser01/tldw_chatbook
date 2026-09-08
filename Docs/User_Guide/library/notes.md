@@ -619,3 +619,10 @@ foreground approval, subagent draft boundary, credential refusal, and
 untrusted-retrieval contract added for TASK-24309 — 2026-08-30. See
 [ADR-105](../../../backlog/decisions/105-portable-notes-organization-and-agent-lessons.md)
 and [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md).*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32063: the
+work pane no longer restates the list pane's "Library notes · Library
+database …" authority sentence, a "Next:" clause only appears when it names a
+control on screen, and the Add-from-files header is one sentence ("Add files to
+Library notes.") instead of a run-on stacked under three more. task-32061:
+Escape from the editor leaves the Notes list at the visibility it had.)*

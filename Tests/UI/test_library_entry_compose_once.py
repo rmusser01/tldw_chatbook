@@ -564,7 +564,12 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
+        # task-32063: the announcement is raised only by a real
+        # STARTER -> GRADUATED transition now, so drive that transition
+        # rather than assigning the end state.
+        screen._set_library_lifecycle(LibraryLifecycle.STARTER)
         screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
         focus = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
@@ -639,7 +644,12 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
+        # task-32063: the announcement is raised only by a real
+        # STARTER -> GRADUATED transition now, so drive that transition
+        # rather than assigning the end state.
+        screen._set_library_lifecycle(LibraryLifecycle.STARTER)
         screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
         row = await _wait_for_selector(screen, pilot, "#library-notes-row-0")

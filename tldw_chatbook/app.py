@@ -16064,6 +16064,17 @@ class TldwCli(
                 type(exit_context) is not dict or exit_context
             ):
                 return
+        elif exit_route == TAB_LIBRARY:
+            # task-32072: the wizard's "Add your first document" exit. The
+            # route always means Import -- the destination is fixed here
+            # rather than trusted from the wizard's payload.
+            if completed is not True:
+                return
+            if exit_context is not None and (
+                type(exit_context) is not dict or exit_context
+            ):
+                return
+            screen_context = {LIBRARY_NAV_CONTEXT_INGEST: True}
         else:
             return
 

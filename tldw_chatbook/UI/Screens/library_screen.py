@@ -1370,8 +1370,8 @@ class LibraryScreen(BaseAppScreen):
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
     BUNDLED_CSS = """
-    LibraryScreen #library-chunking-tools { height: 1; }
-    LibraryScreen #library-open-chunking-lab, LibraryScreen #library-chunking-selected { height: 1; min-height: 1; width: auto; min-width: 15; margin: 0 1; }
+    LibraryScreen #library-open-chunking-lab, LibraryScreen #library-chunking-selected { height: 1; min-height: 1; width: auto; min-width: 15; }
+    LibraryScreen #library-details-chunking-gloss { height: auto; }
     /* Standalone fallback chrome: the app bundle overrides these ID/class
        rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
        screen must render its workbench borders when mounted outside TldwCli
@@ -12022,7 +12022,7 @@ class LibraryScreen(BaseAppScreen):
                 rail.sync_state(
                     shell,
                     self._library_rail_preferences(),
-                    query=self._rag_search_state.query,
+                    query=self._library_rail_search_value(),
                     lifecycle=self._library_lifecycle,
                     onboarding_all_empty=self._library_onboarding_all_empty,
                 )
@@ -12393,7 +12393,7 @@ class LibraryScreen(BaseAppScreen):
             rail.sync_state(
                 shell,
                 self._library_rail_preferences(),
-                query=self._rag_search_state.query,
+                query=self._library_rail_search_value(),
                 lifecycle=self._library_lifecycle,
                 onboarding_all_empty=self._library_onboarding_all_empty,
             )
@@ -13638,6 +13638,9 @@ class LibraryScreen(BaseAppScreen):
                 is LibraryEvidenceStatus.PARTIAL_FAILURE
             ),
             show_explore=get_started and self._library_rail_collapsed,
+            # task-32072: the two facts the Get started steps unlock on.
+            has_any_content=self._has_local_sources(),
+            search_has_results=bool(self._rag_search_state.results),
             continue_action=(
                 self._library_landing_continue_action() if not get_started else None
             ),
@@ -14255,6 +14258,33 @@ class LibraryScreen(BaseAppScreen):
                 classes="library-rail-empty-copy",
             )
         )
+        # task-32064: the Chunking Lab pair used to be the first interactive
+        # row under the header on EVERY Library canvas, unglossed -- a
+        # first-time reviewer pressed it and landed in a full-screen A/B tool
+        # with no idea what it was for. It is a tool you go looking for, so
+        # it joins the other Details actions and says what it does.
+        widgets.extend(
+            (
+                Static(
+                    "Chunking Lab — compare how text is split for search",
+                    id="library-details-chunking-gloss",
+                    classes="library-details-row",
+                    markup=False,
+                ),
+                Button(
+                    "Chunking Lab",
+                    id="library-open-chunking-lab",
+                    classes="library-source-action",
+                    tooltip="Open the Chunking Lab to compare split settings.",
+                ),
+                Button(
+                    "Try selected text",
+                    id="library-chunking-selected",
+                    classes="library-source-action",
+                    tooltip="Open the Chunking Lab on the text you have selected.",
+                ),
+            )
+        )
         return tuple(widgets)
 
     def _compose_library_rail_top_action(self) -> list[Widget]:
@@ -14385,9 +14415,6 @@ class LibraryScreen(BaseAppScreen):
             id="library-header-line",
             classes="destination-status-row",
         )
-        with Horizontal(id="library-chunking-tools"):
-            yield Button("Chunking Lab", id="library-open-chunking-lab", compact=True)
-            yield Button("Try selected text", id="library-chunking-selected", compact=True)
         lifecycle_status_copy = self._library_lifecycle_status_copy()
         lifecycle_status = Static(
             lifecycle_status_copy,
@@ -14481,7 +14508,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._rag_search_state.query,
+                query=self._library_rail_search_value(),
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14535,7 +14562,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._rag_search_state.query,
+                query=self._library_rail_search_value(),
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14578,7 +14605,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._rag_search_state.query,
+                query=self._library_rail_search_value(),
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14630,7 +14657,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._rag_search_state.query,
+                query=self._library_rail_search_value(),
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14676,7 +14703,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._rag_search_state.query,
+                query=self._library_rail_search_value(),
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14727,7 +14754,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._rag_search_state.query,
+                query=self._library_rail_search_value(),
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14795,7 +14822,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._rag_search_state.query,
+                query=self._library_rail_search_value(),
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14831,7 +14858,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._rag_search_state.query,
+                query=self._library_rail_search_value(),
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -21042,7 +21069,7 @@ class LibraryScreen(BaseAppScreen):
         rail.sync_state(
             rail.shell,
             rail.preferences,
-            query=self._rag_search_state.query,
+            query=self._library_rail_search_value(),
             lifecycle=self._library_lifecycle,
             onboarding_all_empty=self._library_onboarding_all_empty,
         )
@@ -21253,6 +21280,9 @@ class LibraryScreen(BaseAppScreen):
             self._library_onboarding_all_empty = False
             self._library_onboarding_status = LibraryEvidenceStatus.PARTIAL_FAILURE
         self._sync_library_onboarding_status_copy()
+        # Before the presentation legs below: they paint the announcement
+        # carrier, so the decision has to be made first.
+        self._apply_graduation_notice(previous_lifecycle)
         current_back_admitted = (
             self._library_lifecycle is LibraryLifecycle.EXPANDED
             and self._library_onboarding_all_empty
@@ -21264,16 +21294,30 @@ class LibraryScreen(BaseAppScreen):
             self._sync_library_rail_lifecycle_presentation()
         elif self.is_mounted and self._library_onboarding_status is not previous_status:
             self._sync_library_landing_lifecycle_presentation()
+
+    def _apply_graduation_notice(self, previous_lifecycle: LibraryLifecycle) -> None:
+        """Announce graduation only when the compact rail actually gave way.
+
+        task-32063: this fired on ANY transition into GRADUATED, including the
+        first source read of a returning, already-populated profile (which
+        settles to EXPANDED and graduates immediately). Nothing became
+        available there, so the toast was noise. STARTER is the one settled,
+        user-visible state whose tools were genuinely hidden -- UNKNOWN is the
+        transient pre-evidence state nobody reads, and EXPANDED already shows
+        every tool.
+        """
         if (
-            previous_lifecycle is not LibraryLifecycle.GRADUATED
-            and self._library_lifecycle is LibraryLifecycle.GRADUATED
+            previous_lifecycle is not LibraryLifecycle.STARTER
+            or self._library_lifecycle is not LibraryLifecycle.GRADUATED
         ):
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Library tools are now available.",
-                    severity="information",
-                )
+            return
+        self._library_graduation_announcement_visible = True
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                "Library tools are now available.",
+                severity="information",
+            )
 
     def _mirror_library_lifecycle(self, lifecycle: LibraryLifecycle) -> None:
         app_config = self.app_instance.app_config
@@ -21294,11 +21338,6 @@ class LibraryScreen(BaseAppScreen):
             and lifecycle is self._library_lifecycle_last_persisted
         ):
             return
-        if (
-            self._library_lifecycle is not LibraryLifecycle.GRADUATED
-            and lifecycle is LibraryLifecycle.GRADUATED
-        ):
-            self._library_graduation_announcement_visible = True
         self._library_lifecycle = lifecycle
         self._queue_library_lifecycle_persistence(lifecycle)
 
@@ -21757,7 +21796,7 @@ class LibraryScreen(BaseAppScreen):
                     library_pane=LibraryRail(
                         shell_state,
                         self._library_rail_preferences(),
-                        query=self._rag_search_state.query,
+                        query=self._library_rail_search_value(),
                         search_placeholder=self._library_rail_search_placeholder(),
                         workspaces_body_factory=self._compose_workspaces_rail_body,
                         top_action_factory=self._compose_library_rail_top_action,
@@ -34270,6 +34309,77 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_rail_search_placeholder(self) -> str:
         return self._rag_search_controller._library_rail_search_placeholder()
+
+    def _library_rail_search_value(self) -> str:
+        """Return what the rail search box should show for the current route.
+
+        task-32069: the box was always seeded from the Search/RAG query, so a
+        query typed once followed the reader onto every other canvas with no
+        way to clear it -- a stale filter that filtered nothing. Only the
+        Search/RAG canvas, which the query actually drives, still shows it.
+        The query itself is untouched, so returning to Search/RAG restores
+        both the box and its results.
+        """
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            return self._rag_search_state.query
+        return ""
+
+    @on(Button.Pressed, "#library-hub-step-import")
+    def handle_library_get_started_import(self, event: Button.Pressed) -> None:
+        """Step 1 of Get started: open Import (task-32072)."""
+        event.stop()
+        self.run_worker(
+            self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA),
+            group="library_get_started_step",
+        )
+
+    @on(Button.Pressed, "#library-hub-step-find")
+    def handle_library_get_started_find(self, event: Button.Pressed) -> None:
+        """Step 2 of Get started: open Search/RAG once anything is importable."""
+        event.stop()
+        if not self._has_local_sources():
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    "Find it needs something to search — Import a file first.",
+                    severity="warning",
+                )
+            return
+        self.run_worker(
+            self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH),
+            group="library_get_started_step",
+        )
+
+    @on(Button.Pressed, "#library-hub-step-use")
+    def handle_library_get_started_use(self, event: Button.Pressed) -> None:
+        """Step 3 of Get started: stage the selected search result in Console."""
+        event.stop()
+        if not self._rag_search_state.results:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    (
+                        "Use it in Console needs a search result — "
+                        "Import a file first."
+                        if not self._has_local_sources()
+                        else "Use it in Console needs a search result — "
+                        "run Find it first."
+                    ),
+                    severity="warning",
+                )
+            return
+        self._rag_search_controller._stage_library_rag_result_in_console()
+
+    @on(Button.Pressed, "#library-search-clear")
+    def handle_library_search_clear(self, event: Button.Pressed) -> None:
+        """Empty the rail search box from its own visible affordance."""
+        event.stop()
+        try:
+            search = self.query_one("#library-search-input", Input)
+        except (NoMatches, QueryError):
+            return
+        search.value = ""
+        search.focus()
 
     @on(Input.Submitted, "#library-conversations-filter")
     def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:

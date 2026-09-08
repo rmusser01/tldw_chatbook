@@ -3,9 +3,10 @@ id: TASK-32069
 title: >-
   Library rail: stale search query persists across canvases; six Study rows for
   three destinations; 20 simultaneous choices
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-08 18:25'
+updated_date: '2026-09-08 19:41'
 labels:
   - library
   - rail
@@ -27,3 +28,13 @@ The rail search box keeps the last query when switching canvases with no clear a
 - [ ] #2 The Study section uses three rows, with the carry-over hint in the staging canvas
 - [ ] #3 A recorded decision on rail density (which rows show when a source is empty)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Failing tests: no clear affordance, the query follows the reader across canvases, six Study rows.
+2. Add an 'x' button beside the rail search Input.
+3. Seed the box from the RAG query only on the Search/RAG canvas.
+4. Drop the handoff rows' second meta line and state the promise on the staging canvas.
+5. Record the rail-density decision.
+<!-- SECTION:PLAN:END -->

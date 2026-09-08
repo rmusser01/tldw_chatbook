@@ -1257,12 +1257,23 @@ class _FailOnceOnboardingCreateNotesService(StaticLibraryNotesScopeService):
         return await super().save_note(**kwargs)
 
 
-def _new_library_onboarding_app(gates: _LibraryEvidenceGates):
+def _new_library_onboarding_app(gates: _LibraryEvidenceGates, *, starter: bool = False):
+    """Build an app whose Library has not settled a lifecycle yet.
+
+    ``starter=True`` seeds the settled COMPACT rail instead. task-32063: the
+    graduation notice now fires only for STARTER -> GRADUATED (the transition
+    where hidden tools actually appear); a test that is ABOUT the notice has
+    to start from the state a real user would be in when it fires.
+    """
     app = _build_test_app()
     app.library_new_profile_admission = True
     library = app.app_config.setdefault("library", {})
     rail_state = library.setdefault("rail_state", {})
-    rail_state.pop("lifecycle", None)
+    if starter:
+        app.library_new_profile_admission = False
+        rail_state["lifecycle"] = "starter"
+    else:
+        rail_state.pop("lifecycle", None)
     gates.install(app)
     return app
 
@@ -2192,7 +2203,7 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
-    app = _new_library_onboarding_app(gates)
+    app = _new_library_onboarding_app(gates, starter=True)
     app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
     host = LibraryHarness(app)
 
@@ -2290,7 +2301,7 @@ async def test_library_graduation_announcement_clears_on_notes_files_switch() ->
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
-    app = _new_library_onboarding_app(gates)
+    app = _new_library_onboarding_app(gates, starter=True)
     screen = LibraryScreen(app)
     host = LibraryHarness(app, screen=screen)
 
@@ -2334,7 +2345,7 @@ async def test_library_graduation_announcement_clears_on_direct_item_open() -> N
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
-    app = _new_library_onboarding_app(gates)
+    app = _new_library_onboarding_app(gates, starter=True)
     screen = LibraryScreen(app)
     host = LibraryHarness(app, screen=screen)
 
@@ -2396,7 +2407,7 @@ async def test_library_graduation_announcement_survives_cancelled_source_switch(
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
-    app = _new_library_onboarding_app(gates)
+    app = _new_library_onboarding_app(gates, starter=True)
     screen = LibraryScreen(app)
     host = LibraryHarness(app, screen=screen)
 

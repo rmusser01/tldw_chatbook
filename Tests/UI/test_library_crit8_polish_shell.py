@@ -7,7 +7,7 @@ and 32072 -- the polish-shell group of the critique-8 fix wave.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
@@ -238,3 +238,251 @@ async def test_escape_does_not_reopen_a_notes_list_the_user_collapsed():
         await pilot.pause()
 
         assert screen._library_notes_reader_preferences.items_open is False
+
+
+# --- task-32063: one status line, one header, one toast ------------------
+
+
+@pytest.mark.asyncio
+async def test_notes_work_pane_does_not_repeat_the_list_pane_status_line():
+    """task-32063: both Notes panes painted `Library notes · Library database`.
+
+    Live at 235x52 the list pane read "Library notes · Library database · Ready
+    · Next: Create a note or add from files." while the work pane restated the
+    same authority in its own header.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+
+        list_line = str(
+            screen.query_one("#library-notes-authority", Static).renderable
+        )
+        work_line = str(
+            screen.query_one("#library-note-work-authority", Static).renderable
+        )
+
+        assert list_line.startswith("Library notes · Library database")
+        assert not work_line.startswith("Library notes · Library database"), (
+            "the work pane must not restate the list pane's authority sentence"
+        )
+        assert work_line
+
+
+@pytest.mark.asyncio
+async def test_add_from_files_paints_one_header_not_four():
+    """task-32063: the surface stacked a 140-character run-on over three more.
+
+    Live capture `05-add-from-files-four-headers-before.txt`: the work pane's
+    authority line, the canvas's own header, its status line and the phase
+    purpose all restated the same thing.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        screen.query_one("#library-notes-add-from-files", Button).press()
+        await _wait_for_selector(screen, pilot, "#notes-sync-authority")
+
+        header = str(screen.query_one("#notes-sync-authority", Static).renderable)
+        assert len(header) < 80, header
+        assert "·" not in header, "the header must be one sentence, not a run-on"
+        assert not screen.query("#library-note-work-authority"), (
+            "a child canvas that paints its own header must not get a second one"
+        )
+
+
+def _graduation_notifications(app) -> list:
+    sent: list = []
+    app.notify = lambda message, **kwargs: sent.append((message, kwargs))
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_graduation_notice_is_silent_on_a_populated_profiles_first_visit():
+    """task-32063: the notice fired on any transition into GRADUATED.
+
+    A returning, already-populated profile has no stored lifecycle, settles to
+    EXPANDED, and graduates on the first source read -- nothing became
+    available, so nothing should announce it. Seen live on the seeded profile.
+    """
+    app = _build_test_app()
+    sent = _graduation_notifications(app)
+    screen = LibraryScreen(app)
+    assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
+
+    screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+    screen._apply_graduation_notice(LibraryLifecycle.EXPANDED)
+
+    assert screen._library_graduation_announcement_visible is False
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_graduation_notice_fires_when_the_compact_rail_gives_way():
+    """The transition it exists for: the Get started rail becomes the full one."""
+    app = _build_test_app()
+    sent = _graduation_notifications(app)
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "lifecycle"
+    ] = "starter"
+    screen = LibraryScreen(app)
+    assert screen._library_lifecycle is LibraryLifecycle.STARTER
+
+    screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+    screen._apply_graduation_notice(LibraryLifecycle.STARTER)
+
+    assert sent == [
+        ("Library tools are now available.", {"severity": "information"})
+    ]
+
+
+# --- task-32064: the Chunking Lab strip and its exit --------------------
+
+
+@pytest.mark.asyncio
+async def test_chunking_lab_strip_lives_under_details_actions_with_a_gloss():
+    """task-32064: the strip was the first interactive row on every canvas.
+
+    A first-time reviewer pressed it and landed in a full-screen A/B tool with
+    no explanation. It now sits under Details ▸ Actions and says what it does.
+    """
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert not screen.query("#library-chunking-tools"), (
+            "the Chunking Lab strip must not sit above the canvas"
+        )
+        lab = screen.query_one("#library-open-chunking-lab", Button)
+        details_body = screen.query_one("#library-rail-section-body-details")
+        assert details_body in lab.ancestors
+        gloss = str(
+            screen.query_one("#library-details-chunking-gloss", Static).renderable
+        )
+        assert gloss == "Chunking Lab — compare how text is split for search"
+
+
+def test_chunking_lab_escape_returns_to_the_library_canvas() -> None:
+    """task-32064: only the Lab's own Back left the screen; Escape did nothing."""
+    from tldw_chatbook.UI.Screens.chunking_lab_screen import ChunkingLabScreen
+
+    keys = {
+        binding[0] if isinstance(binding, tuple) else binding.key
+        for binding in ChunkingLabScreen.BINDINGS
+    }
+    assert "escape" in keys
+
+
+# --- task-32069: rail search clear, and three Study rows ----------------
+
+
+@pytest.mark.asyncio
+async def test_rail_search_box_clears_and_does_not_carry_a_query_across_canvases():
+    """task-32069: the box kept the last query with no way to clear it."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        search = screen.query_one("#library-search-input", Input)
+        search.value = "retro"
+        await pilot.pause()
+
+        clear = screen.query_one("#library-search-clear", Button)
+        clear.press()
+        await pilot.pause()
+        assert screen.query_one("#library-search-input", Input).value == ""
+
+        screen.query_one("#library-search-input", Input).value = "retro"
+        screen._rag_search_state.query = "retro"
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-tree-note-1")
+
+        assert screen.query_one("#library-search-input", Input).value == "", (
+            "a stale query must not follow the reader onto another canvas"
+        )
+        assert screen._rag_search_state.query == "retro", (
+            "clearing the rail box must not discard the Search/RAG query itself"
+        )
+
+
+@pytest.mark.asyncio
+async def test_study_section_renders_three_rows_not_six():
+    """task-32069: three destinations spent six rail rows on a repeated hint."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        body = screen.query_one("#library-rail-section-body-study")
+        rows = [child for child in body.children if isinstance(child, Button)]
+
+        assert len(rows) == 3
+        for row in rows:
+            assert "see what carries over" not in str(row.label)
+            assert row.styles.height.value == 1
+
+
+# --- task-32072: first-run hand-off to Library ---------------------------
+
+
+def test_wizard_summary_offers_a_route_into_library_import() -> None:
+    """task-32072: the Summary offered "Explore Home" and never said where
+    content lives, so a finished setup handed the user nowhere to put a file."""
+    import inspect
+
+    from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+
+    source = inspect.getsource(wizard_module)
+    assert '"Add your first document", id="setup-exit-library"' in source
+    assert '@on(Button.Pressed, "#setup-exit-library")' in source
+
+
+@pytest.mark.asyncio
+async def test_get_started_steps_are_live_controls_that_unlock_in_sequence():
+    """task-32072: "1 Add · 2 Find · 3 Use" named steps with no controls."""
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "lifecycle"
+    ] = "starter"
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-step-import")
+
+        assert not screen.query("#library-hub-orientation")
+        steps = [
+            screen.query_one(f"#library-hub-step-{name}", Button)
+            for name in ("import", "find", "use")
+        ]
+        assert [str(step.label) for step in steps] == [
+            "Import a file",
+            "Find it",
+            "Use it in Console",
+        ]
+        assert not steps[0].has_class("library-source-action-blocked")
+        assert steps[1].has_class("library-source-action-blocked")
+        assert steps[2].has_class("library-source-action-blocked")
+
+        hint = str(screen.query_one("#library-hub-steps-hint", Static).renderable)
+        assert "Import a file" in hint and hint.endswith(".")
