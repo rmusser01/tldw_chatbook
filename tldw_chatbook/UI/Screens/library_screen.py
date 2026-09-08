@@ -6569,13 +6569,23 @@ class LibraryScreen(BaseAppScreen):
             if wide_focused_task
             else (not compact_single_stage or self._library_notes_stage == "notes")
         )
-        if self._library_notes_compact and self.query("#library-landing-canvas"):
+        if (
+            self._library_notes_compact
+            and rail_display
+            and self.query("#library-landing-canvas")
+        ):
             # task-32066: library.md's compact contract -- "the landing canvas
             # is hidden and the rail remains the navigation owner". The landing
             # is the only canvas whose whole job the rail already does, so
             # below the breakpoint it yields its columns to the rail (the
             # RAIL_ONLY presentation `_sync_library_ordinary_rail_width_contract`
             # resolves from `canvas.display` at the end of this method).
+            #
+            # `rail_display` is the load-bearing half of that sentence: with the
+            # rail manually collapsed there is no navigation owner to hand the
+            # columns to, and hiding the canvas as well left the whole screen
+            # blank at 64 columns (caught by
+            # test_emergency_width_preserves_manual_collapse_and_notes_adaptive_owner).
             canvas_display = False
         handle_display = manually_collapsed
         if rail_handle is not None and rail_handle.display != handle_display:

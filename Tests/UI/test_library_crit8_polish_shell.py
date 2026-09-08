@@ -486,3 +486,25 @@ async def test_get_started_steps_are_live_controls_that_unlock_in_sequence():
 
         hint = str(screen.query_one("#library-hub-steps-hint", Static).renderable)
         assert "Import a file" in hint and hint.endswith(".")
+
+
+@pytest.mark.asyncio
+async def test_compact_landing_stays_visible_when_the_rail_is_collapsed():
+    """task-32066 regression: hiding the landing needs a navigation owner.
+
+    With the rail manually collapsed there is nothing to hand the columns to,
+    and hiding the canvas as well left the whole screen blank at 64 columns.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen._library_rail_collapsed = True
+        screen._apply_library_notes_stage_visibility()
+        await pilot.pause()
+
+        assert screen.query_one("#library-rail").display is False
+        assert screen.query_one("#library-canvas").display is True
