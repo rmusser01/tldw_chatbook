@@ -236,7 +236,8 @@ def resolve_adaptive_reader_layout(
         Current effective pane geometry.
 
     Raises:
-        TypeError: If ``preferences`` or ``profile`` has the wrong type.
+        TypeError: If ``preferences`` or ``profile`` has the wrong type, or
+            ``reader_has_item`` is not a boolean.
         ValueError: If ``width`` is not a non-negative integer or ``priority``
             is unsupported.
     """
@@ -246,6 +247,8 @@ def resolve_adaptive_reader_layout(
         raise TypeError("preferences must be AdaptiveReaderLayoutPreferences.")
     if not isinstance(profile, AdaptiveReaderLayoutProfile):
         raise TypeError("profile must be AdaptiveReaderLayoutProfile.")
+    if type(reader_has_item) is not bool:
+        raise TypeError("reader_has_item must be a boolean.")
     if priority not in {None, "library", "items"}:
         raise ValueError("priority must be library, items, or None.")
     if width == 0:
