@@ -577,13 +577,13 @@ Task6/7 obligations. Whole TASK-31942 remains In Progress; V2 stays disabled.
 
 ### Task 6: Correct exclusive descriptor-view finalizers
 
-**Files:** Modify `DB/private_sqlite.py`, `TTS/profile_migration_publication.py`, `profile_migration_recovery.py`, `profile_errors.py`, `profile_repository.py` for the required retained-owner propagation, and affected namespace ownership code; extend `Tests/DB/test_private_sqlite.py`, `Tests/DB/test_private_sqlite_inventory.py`, `Tests/TTS/test_profile_migration_publication.py`, `test_profile_migration_recovery.py`, `test_profile_repository_lifecycle.py`. Update `backlog/docs/sqlite-private-owner-inventory.md` for the required descriptor/raw-close census; unrelated owner repairs remain out of scope.
+**Files:** Modify `DB/private_sqlite.py`, `TTS/profile_migration_publication.py`, `profile_migration_recovery.py`, `profile_errors.py`, `profile_repository.py`, `profile_migration_candidate.py` and `profile_schema.py` for the required retained-owner propagation and schema raw-close ordering, and affected namespace ownership code; extend `Tests/DB/test_private_sqlite.py`, `Tests/DB/test_private_sqlite_inventory.py`, `Tests/TTS/test_profile_migration_publication.py`, `test_profile_migration_recovery.py`, `test_profile_repository_lifecycle.py` and `test_profile_schema.py`. Update `backlog/docs/sqlite-private-owner-inventory.md` for the required descriptor/raw-close census; unrelated owner repairs remain out of scope.
 
 **Interfaces:** Preserve `connect_private_sqlite_descriptor(owner_id, descriptor_fd, **kwargs)` for the remaining registered exclusive owners. Borrow the verified FD during SQLite open; no `os.dup`/immediate raw close. Remove only the obsolete live `tts.profile_store_descriptor` owner after Task5b no longer uses it. Public caller-owned descriptors remain borrowed.
 
 Add `ProfileMigrationCleanupError` in `profile_errors.py`, carrying a source-free retained `owner` whose `close() -> None` retries teardown only. Propagate that owner through existing migration/recovery callers to the repository; no broad error mapper may discard it. This is a specific operation owner, not a connection registry or permission to resume failed publication.
 
-- [ ] Add close-failure tests at publication `_immutable_validate` and recovery `_validate_authoritative_targets`, observing actual raw-close attempts with their existing owned temporary artifacts. Inject a SQLite proxy whose first close raises and whose retry closes the real connection. Assert the wrapper retains the exact SQLite connection, file and parent FDs, and no raw close/hash/rename proceeds after the failed close.
+- [x] Add close-failure tests at publication `_immutable_validate` and recovery `_validate_authoritative_targets`, observing actual raw-close attempts with their existing owned temporary artifacts. Inject a SQLite proxy whose first close raises and whose retry closes the real connection. Assert the wrapper retains the exact SQLite connection, file and parent FDs, and no raw close/hash/rename proceeds after the failed close.
 
 ```python
 class CloseOnceFailure:
@@ -647,10 +647,32 @@ def test_immutable_validation_retains_pins_when_sqlite_close_fails(tmp_path, mon
 
 On the existing implementation the fstat assertion fails with a closed FD after the injected SQL close failure. Once the ownership API exists, narrow the exception assertion to `ProfileMigrationCleanupError` and assert its retry closes exactly once; fixture fallback cleanup is not product ownership evidence.
 
-- [ ] Run the new exact failure nodes and record RED. Use the existing `_close_profile_migration_destination` retained-owner pattern to settle SQL before raw pins. Each caller must retain cleanup authority in its existing operation/repository owner or a typed cleanup exception carrying that owner; a local variable lost on exception is not retention. Preserve control-flow exception precedence.
-- [ ] Borrow the original descriptor in the exclusive immutable opener, and update inventory tests. Audit every raw original-inode close in private_sqlite and TTS schema/publication/recovery/namespace/repository. Record a concrete helper-owned or tested closed/exclusive lifetime for each; an owner string, `immutable=1`, `_RECOVERY_LOCK` or absent sidecars alone does not prove exclusivity.
-- [ ] Verify actual repository entry points hold EXCLUSIVE ownership and have settled live handles before low-level migration/recovery publication. Test shared-sibling refusal and callbacks that fail/try to escape handles. Keep exact tombstone/content checks and refuse an unproven live consumer; do not expand helper RPC to hashing/publication or add a global connection registry.
-- [ ] Run the listed DB/publication/recovery/lifecycle selections; commit with message `fix(db): retain exclusive SQLite artifacts after close failure`; independent review checks the completed descriptor census and failure paths.
+- [x] Run the new exact failure nodes and record RED. Use the existing `_close_profile_migration_destination` retained-owner pattern to settle SQL before raw pins. Each caller must retain cleanup authority in its existing operation/repository owner or a typed cleanup exception carrying that owner; a local variable lost on exception is not retention. Preserve control-flow exception precedence.
+- [x] Borrow the original descriptor in the exclusive immutable opener, and update inventory tests. Audit every raw original-inode close in private_sqlite and TTS schema/publication/recovery/namespace/repository. Record a concrete helper-owned or tested closed/exclusive lifetime for each; an owner string, `immutable=1`, `_RECOVERY_LOCK` or absent sidecars alone does not prove exclusivity.
+- [x] Verify actual repository entry points hold EXCLUSIVE ownership and have settled live handles before low-level migration/recovery publication. Test shared-sibling refusal and callbacks that fail/try to escape handles. Keep exact tombstone/content checks and refuse an unproven live consumer; do not expand helper RPC to hashing/publication or add a global connection registry.
+- [x] Run the listed DB/publication/recovery/lifecycle selections; commit with message `fix(db): retain exclusive SQLite artifacts after close failure`; independent review checks the completed descriptor census and failure paths.
+
+Task6 reviewed checkpoint: implementation `21f19e743` and fix-round1 `39cd13ba7`
+passed independent task-scoped review. The original review found two Important
+publication defects: rollback could continue after failed native close and lose
+its owner; the direct handoff could discard earlier deferred cancellation.
+Both are addressed, with no new blocking fix findings. Four durable behavioral
+regressions failed before the fix and passed after it, including real multi-slot
+repository initialization retaining EXCLUSIVE lease and worker until teardown.
+Final fix coverage: publication/lifecycle278passed, one existing warning,88.73s;
+controller fresh committed confirmation4passed, one warning,1.40s. Before the fix,
+the five-file752-pass run preceded the last callback amendment; final covering
+DB265passes and schema/entry164passes qualify that amendment separately.
+The complete raw-close census and actual closed/exclusive entry checks are reviewed.
+The file-list reconciliation includes candidate/schema mappers already required
+by the all-owner propagation and raw-close audit; no new helper-copy API or source
+semantics were added. Exact control-flow identity uses the existing private
+cleanup handoff; ordinary indeterminate rollback policy is unchanged.
+Strict inventory remains29passed/3known unrelated failures; inherited Ruff debt,
+Windows/live skips and earlier11SemLock-blocked cases remain open qualification
+limits. Changed-line lint, format and immutable diff checks pass. Task7 now owns
+the final installed-wheel, affected-selection, performance and Canvas gates;
+whole TASK-31942 remains In Progress, all final ACs unchecked, V2 disabled.
 
 ### Task 7: Qualify installed isolation, storage behavior and actual Canvas children
 
@@ -740,4 +762,4 @@ Preserve the existing source-free child fault/lifecycle captures. Do not reinter
 | Exclusive descriptor finalizers and complete consumer inventory | 6 |
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a and Task5b implementation have passed independent review; do not restart them. Task6 continues the user's selected subagent-driven workflow before Task7 final qualification. Runtime admission, live ownership and the macOS actual-app shutdown gates have passing scoped evidence; the full correction remains unqualified. Preserve the known semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for host cleanup/unrelated repairs.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 continues the user's selected subagent-driven workflow for final qualification. Runtime admission, live ownership and the macOS actual-app shutdown gates have passing scoped evidence; the full correction remains unqualified. Preserve the known semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for host cleanup/unrelated repairs.
