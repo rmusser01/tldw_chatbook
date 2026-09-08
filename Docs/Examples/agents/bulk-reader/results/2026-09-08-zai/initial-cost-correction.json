@@ -1,0 +1,802 @@
+{
+  "cases": [
+    {
+      "delegated": {
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.001401,
+              "output_cost": 0.001668,
+              "total": 0.003069,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 1,
+            "model": "glm-5.3"
+          }
+        ],
+        "cost_status": "known",
+        "estimated_total_cost_usd": 0.003069,
+        "original_status": "non_delegating",
+        "synthetic_fallback_occurrences_in_answer": 179
+      },
+      "direct": {
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.001149,
+              "output_cost": 0.000268,
+              "total": 0.001417,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 1,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000378,
+              "output_cost": 0.000339,
+              "total": 0.000917,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 2,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000266,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000556,
+              "output_cost": 0.003538,
+              "total": 0.00436,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 3,
+            "model": "glm-5.3"
+          }
+        ],
+        "cost_status": "known",
+        "estimated_total_cost_usd": 0.006694,
+        "original_status": "incomplete",
+        "synthetic_fallback_occurrences_in_answer": 333
+      },
+      "id": "repo-ttl-exceptions"
+    },
+    {
+      "delegated": {
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.001404,
+              "output_cost": 0.002354,
+              "total": 0.003758,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 1,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "worker",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 8.6e-05,
+              "output_cost": 2.1e-05,
+              "total": 0.000107,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 2,
+            "model": "glm-5.3-flash"
+          },
+          {
+            "agent_role": "worker",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000103,
+              "output_cost": 3e-05,
+              "total": 0.000133,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 3,
+            "model": "glm-5.3-flash"
+          },
+          {
+            "agent_role": "worker",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000147,
+              "output_cost": 0.000512,
+              "total": 0.000659,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 4,
+            "model": "glm-5.3-flash"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.003114,
+              "output_cost": 0.000537,
+              "total": 0.003901,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 5,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000815,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.00092,
+              "output_cost": 0.00018,
+              "total": 0.001915,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 6,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000982,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000269,
+              "output_cost": 0.000233,
+              "total": 0.001484,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 7,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.001015,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000199,
+              "output_cost": 0.005768,
+              "total": 0.006982,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 8,
+            "model": "glm-5.3"
+          }
+        ],
+        "cost_status": "known",
+        "estimated_total_cost_usd": 0.018939,
+        "original_status": "incomplete",
+        "synthetic_fallback_occurrences_in_answer": 333
+      },
+      "direct": {
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000183,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000167,
+              "output_cost": 0.000132,
+              "total": 0.000482,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 1,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000188,
+              "output_cost": 0.00022,
+              "total": 0.000608,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 2,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000233,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000287,
+              "output_cost": 0.000396,
+              "total": 0.000916,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 3,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000283,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000729,
+              "output_cost": 0.000198,
+              "total": 0.00121,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 4,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.002575,
+              "output_cost": 0.000141,
+              "total": 0.002716,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 5,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000466,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000189,
+              "output_cost": 0.002737,
+              "total": 0.003392,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 6,
+            "model": "glm-5.3"
+          }
+        ],
+        "cost_status": "known",
+        "estimated_total_cost_usd": 0.009324,
+        "original_status": "completed",
+        "synthetic_fallback_occurrences_in_answer": 192
+      },
+      "id": "repo-cache-order"
+    },
+    {
+      "delegated": {
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000233,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.00015,
+              "output_cost": 0.001927,
+              "total": 0.00231,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 1,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.001873,
+              "output_cost": 0.0004,
+              "total": 0.002523,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 2,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000582,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000561,
+              "output_cost": 0.000656,
+              "total": 0.001799,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 3,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000682,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000874,
+              "output_cost": 8.4e-05,
+              "total": 0.00164,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 4,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000832,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000112,
+              "output_cost": 0.003634,
+              "total": 0.004578,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 5,
+            "model": "glm-5.3"
+          }
+        ],
+        "cost_status": "known",
+        "estimated_total_cost_usd": 0.01285,
+        "original_status": "non_delegating",
+        "synthetic_fallback_occurrences_in_answer": 333
+      },
+      "direct": {
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000183,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000167,
+              "output_cost": 0.000154,
+              "total": 0.000504,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 1,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000207,
+              "output_cost": 0.000409,
+              "total": 0.000816,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 2,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000233,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.00057,
+              "output_cost": 0.000321,
+              "total": 0.001124,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 3,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000333,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000426,
+              "output_cost": 0.000396,
+              "total": 0.001155,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 4,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000399,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.00064,
+              "output_cost": 0.00051,
+              "total": 0.001549,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 5,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000516,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000783,
+              "output_cost": 0.000414,
+              "total": 0.001713,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 6,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000649,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.00558,
+              "output_cost": 0.000915,
+              "total": 0.007144,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 7,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.001681,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.006149,
+              "output_cost": 0.00264,
+              "total": 0.01047,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 8,
+            "model": "glm-5.3"
+          }
+        ],
+        "cost_status": "known",
+        "estimated_total_cost_usd": 0.024475,
+        "original_status": "incomplete",
+        "synthetic_fallback_occurrences_in_answer": 0
+      },
+      "id": "transcript-late-correction"
+    },
+    {
+      "delegated": {
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000233,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000146,
+              "output_cost": 0.001417,
+              "total": 0.001796,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 1,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "worker",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 8e-05,
+              "output_cost": 1.9e-05,
+              "total": 9.9e-05,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 2,
+            "model": "glm-5.3-flash"
+          },
+          {
+            "agent_role": "worker",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000101,
+              "output_cost": 6.6e-05,
+              "total": 0.000167,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 3,
+            "model": "glm-5.3-flash"
+          },
+          {
+            "agent_role": "worker",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000202,
+              "output_cost": 0.000209,
+              "total": 0.000411,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 4,
+            "model": "glm-5.3-flash"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.001908,
+              "output_cost": 0.000532,
+              "total": 0.00269,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 5,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000599,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000841,
+              "output_cost": 0.000163,
+              "total": 0.001603,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 6,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000749,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000199,
+              "output_cost": 0.00275,
+              "total": 0.003698,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 7,
+            "model": "glm-5.3"
+          }
+        ],
+        "cost_status": "known",
+        "estimated_total_cost_usd": 0.010464,
+        "original_status": "completed",
+        "synthetic_fallback_occurrences_in_answer": 252
+      },
+      "direct": {
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000183,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000162,
+              "output_cost": 0.000264,
+              "total": 0.000609,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 1,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.00051,
+              "output_cost": 0.000163,
+              "total": 0.000873,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 2,
+            "model": "glm-5.3"
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000283,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000225,
+              "output_cost": 0.001214,
+              "total": 0.001722,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "index": 3,
+            "model": "glm-5.3"
+          }
+        ],
+        "cost_status": "known",
+        "estimated_total_cost_usd": 0.003204,
+        "original_status": "completed",
+        "synthetic_fallback_occurrences_in_answer": 51
+      },
+      "id": "transcript-absent-answer"
+    }
+  ],
+  "estimated_total_spend_usd": 0.089019,
+  "estimated_totals_usd": {
+    "delegated": 0.045322,
+    "direct": 0.043697
+  },
+  "method": "Reprice unchanged recorded ProviderUsage with the run manifest rates through existing PricingCatalog; preserve unknown/partial usage rules. Original report is unchanged.",
+  "original_report_sha256": "be420dfcdf6ad755dd5b157ba4ae64c1d5d44c3cae60d319f9e1b7128d9e2661",
+  "pricing_source": "https://docs.z.ai/guides/overview/pricing",
+  "quality_status": "invalid_for_model_quality_comparison_due_to_synthetic_fallback_pollution",
+  "rates": {
+    "models": {
+      "zai:glm-5.3": {
+        "as_of": "2026-09-08",
+        "cache_read_per_mtok": 0.26,
+        "input_per_mtok": 1.4,
+        "output_per_mtok": 4.4
+      },
+      "zai:glm-5.3-flash": {
+        "as_of": "2026-09-08",
+        "cache_read_per_mtok": 0.015,
+        "input_per_mtok": 0.075,
+        "output_per_mtok": 0.25
+      }
+    }
+  }
+}
