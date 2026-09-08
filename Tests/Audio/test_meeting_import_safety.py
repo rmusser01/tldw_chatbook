@@ -38,39 +38,30 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-_BLOCK_NUMPY = textwrap.dedent("""
-    import sys
-    import importlib.abc
+def _block(*top_level: str) -> str:
+    """Probe prologue: a meta-path finder that makes `top_level` (and their
+    submodules) raise `ImportError`, so a regression that imports one fails
+    the probe by RAISING rather than only by showing up in `sys.modules` on
+    some other machine -- a real negative control on a host where the package
+    is not installed anyway (this one, for torch)."""
+    return textwrap.dedent(f"""
+        import sys
+        import importlib.abc
 
 
-    class _NoNumpyFinder(importlib.abc.MetaPathFinder):
-        def find_spec(self, name, path, target=None):
-            if name == "numpy" or name.startswith("numpy."):
-                raise ImportError("No module named numpy")
-            return None
+        class _Blocker(importlib.abc.MetaPathFinder):
+            def find_spec(self, name, path, target=None):
+                if name.split(".")[0] in {top_level!r}:
+                    raise ImportError(f"No module named {{name}}")
+                return None
 
 
-    sys.meta_path.insert(0, _NoNumpyFinder())
-""")
-
-#: The same trick for torch, so the ONNX probe below has a real negative
-#: control on a machine where torch simply is not installed (this one): a
-#: regression that imports it fails the probe by RAISING, not only by showing
-#: up in `sys.modules` on some other machine.
-_BLOCK_TORCH = textwrap.dedent("""
-    import sys
-    import importlib.abc
+        sys.meta_path.insert(0, _Blocker())
+    """)
 
 
-    class _NoTorchFinder(importlib.abc.MetaPathFinder):
-        def find_spec(self, name, path, target=None):
-            if name.split(".")[0] in ("torch", "torchaudio", "speechbrain"):
-                raise ImportError(f"No module named {name}")
-            return None
-
-
-    sys.meta_path.insert(0, _NoTorchFinder())
-""")
+_BLOCK_NUMPY = _block("numpy")
+_BLOCK_TORCH = _block("torch", "torchaudio", "speechbrain")
 
 
 def _run_probe(script: str) -> subprocess.CompletedProcess:

@@ -262,14 +262,17 @@ records normally and picks up speaker ids when the engine is ready.
 **Which engine is better?** They were measured against each other over 188
 minutes of labelled conversation (VoxConverse + AMI) — see
 [the bake-off report](../STT_Evaluation/task-31827/report.md). ONNX wins the
-after-the-meeting accuracy (best diarization error 0.125 against SpeechBrain's
-0.371), the live-labelling purity (1.000 against 0.941) and the per-window
-latency (11.8 ms against 27.6 ms), and it needs no torch at all. What it does
+after-the-meeting accuracy: `titanet_small`, the default embedder, scores a
+diarization error of 0.143 against SpeechBrain's 0.371, and `eres2net_en` is
+the best of the four at 0.125. It also wins the live-labelling purity (1.000
+for `titanet_small`, against 0.941) and the per-window latency (11.8 ms for
+`titanet_small`, against 27.6 ms), and it needs no torch at all. What it does
 *not* win is voice-match separation — how far your enrolled voice sits from
 everyone else's — where SpeechBrain's margin is 0.734 and the best ONNX
-embedder's is 0.640. That is the one number "Remember my voice" depends on, so
-`auto` still prefers SpeechBrain when the torch extra is installed. If you do
-not use voice matching, `diarizer_backend = "onnx"` is the better pick.
+embedder's (`titanet_small` again) is 0.640. That is the one number
+"Remember my voice" depends on, so `auto` still prefers SpeechBrain when the
+torch extra is installed. If you do not use voice matching,
+`diarizer_backend = "onnx"` is the better pick.
 
 **Model attribution.** `nemo_en_titanet_small.onnx` is NVIDIA's TitaNet-small,
 licensed **CC-BY-4.0** (© NVIDIA), redistributed through the sherpa-onnx
@@ -481,7 +484,7 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against dev @ 15254e860 + feat/meeting-onnx-diarizer @ bea5225ea —
+*Verified against dev @ 15254e860 + feat/meeting-onnx-diarizer @ 3b82d4763 —
 2026-09-07. That branch added the torch-free ONNX (sherpa-onnx) live diarizer
 (TASK-31827): the "Speaker-label engines and their models" section and the
 three new `[meetings]` keys (`diarizer_backend`'s four values, `onnx_embedder`,
@@ -491,7 +494,9 @@ validators), `tldw_chatbook/Audio/diarizer_engine_onnx.py` (the manifest's file
 names, sizes, hashes and licences, the download allowlist and 10-minute budget,
 `onnx_models_dir` semantics) and
 `tldw_chatbook/UI/Screens/meetings_screen.py` (`_live_diarization_copy`,
-`_tick_diarizer_status`, `_onnx_download_mb`) — not by a live session: no
+`_tick_diarizer_status`, `_onnx_download_mb`; the final fix wave re-read the
+last of those for the split "off (models unavailable)" / "off (backend
+unavailable)" rows) — not by a live session: no
 meeting has been recorded on this host with `live_diarization = true`, and no
 model download has been watched on the rail. The engine-comparison paragraph
 and the `voice_match_threshold` starting values are quoted from the measured
