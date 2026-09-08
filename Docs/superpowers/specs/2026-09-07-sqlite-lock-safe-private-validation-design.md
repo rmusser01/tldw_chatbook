@@ -1,7 +1,8 @@
 # Lock-safe private SQLite validation
 
 Date: 2026-09-07
-Status: Approved by user on 2026-09-07, including the reviewed terminal-retention contract
+Status: Core design approved; native-close amendment below awaits written review
+Runtime decision: Python >=3.12 approved by user on 2026-09-07; not yet implemented
 Task: TASK-31942
 ADR: [ADR-125](../../../backlog/decisions/125-lock-safe-private-sqlite-validation.md)
 
@@ -12,8 +13,13 @@ at the explicitly required orderly-shutdown safety gate; the actual retained-own
 experiment, including helper-shaped ownership, unlinks foreign sidecar names after
 an atexit observation and before normal interpreter exit completes. See the preserved
 [gate evidence](../reviews/2026-09-07-sqlite-orderly-exit-gate.md). The terminal-loss
-design must be revisited before implementation continues; no alternative policy
-or weakened preservation requirement is approved by this checkpoint.
+design must be revised before implementation continues. The subsequent
+[native-policy spike](../reviews/2026-09-07-sqlite-native-close-policy-spike.md)
+passed all 25 native-policy cases on the local runtime; eight default controls
+reproduced ordinary-exit deletion. That supports the proposed amendment below,
+not production qualification or a weakened preservation requirement. The user
+approved Python >=3.12 after reviewing these results. Task5 remains paused until
+this written amendment is approved and its implementation plan is updated.
 
 Repair private-file inspection without canceling locks held by live SQLite
 connections. Keep Canvas Mermaid disabled until the corrective work is reviewed
@@ -42,6 +48,8 @@ but does not establish every historical crash's precise interleaving.
 - Keep SQL, transactions, connection factories, WAL concurrency, backup and
   restore ownership at their existing callers. No journal-mode or mmap workaround,
   SQLite replacement, schema migration, full database copy or new dependency.
+  The proposed amendment changes only the affected live TTS connections' native
+  close/checkpoint policy and the explicitly approved Python support floor.
 - Windows retains its explicit unverified ACL posture; do not claim this POSIX
   correction qualifies Windows permissions or locking.
 - No network listener, daemon, generic SQL/callable execution service, settings,
@@ -228,11 +236,122 @@ protocol failures remain fatal, and unsuccessful initialization remains refused.
 The wrapper retains the helper lease instead of raw original-inode FDs or a local
 immutable evidence connection. It may retain a separately verified directory-only
 parent FD for the concrete namespace consumers below. Normal close revalidates
-authority, settles required tombstones, closes its SQLite connection, then
-closes/reaps the helper and releases directory/owner resources. If SQLite close
+authority, performs the guarded cleanup described below, closes its SQLite
+connection, then closes/reaps the helper and releases directory/owner resources. If SQLite close
 fails while proof remains available, retain the same quarantined owner/lease for
 the existing cleanup retry; do not publish a usable repository. Partial setup
 failures must preserve locks held by an independent live sibling.
+
+### Native close-policy amendment — proposed for written approval
+
+ADR required: yes
+ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md (amendment)
+Reason: Refines that ADR's failed terminal-shutdown mechanism and records the
+approved runtime baseline; it does not create a second storage architecture.
+
+**Boundary.** Keep live SQLite, SQL and repository workers in Chatbook. Keep raw
+original-file proof in the reviewed helper. Set and verify
+`SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` on every live exact-current TTS connection before
+any caller SQL, including query-only setup or WAL acquisition. Leave it enabled
+for that handle's whole lifetime. The TTS opener owns this policy; do not add a
+global toggle to `connect_private_sqlite`, change unrelated databases, or rely on
+monkeypatching the factory as the spike did. The generic factory's custom/borrowed
+connection contract is unchanged.
+
+[SQLite documents the option](https://www.sqlite.org/c3ref/c_dbconfig_defensive.html)
+as overriding the normal close-time checkpoint behavior. The pinned 3.49.1 source
+and local preservation tests support this use, but do not prove all finalizer
+paths or every supported platform. The production wrapper still requires the
+ordinary-exit gate; Python reference retention alone is not its safety mechanism.
+
+**Runtime admission.** The supported Python floor becomes 3.12 using the public
+[Connection.setconfig/getconfig API](https://docs.python.org/3.12/library/sqlite3.html#sqlite3.Connection.setconfig).
+Update package metadata/classifiers, active installation/build/preflight guidance,
+the type-checker target and CI jobs that install or qualify Chatbook as one
+compatibility change. Do not rewrite historical qualification rows or unrelated
+standalone scripts merely because they mention 3.11. No dependency upgrade,
+custom SQLite build, ctypes or private CPython layout access is included.
+
+Python version alone does not establish SQLite build capability. Before TTS
+store initialization or live admission, verify the public methods, named constant
+and successful set/get on an owned in-memory SQLite handle, then close that handle.
+Verify the setting again on each actual live handle before first SQL. A missing
+or unsupported capability refuses TTS admission with the closed error code
+`runtime_unsupported` and source-free remediation: the SQLite runtime lacks the
+required close-policy support. It does not disable unrelated Chatbook features,
+install a runtime, use a numeric constant as fallback or latch a proof-loss state
+when no live owner has lost proof.
+
+If actual-handle configuration fails before first SQL, close that still-unused
+handle and release its proof/permit through ordinary early cleanup. If that close
+itself fails, preserve its explicit cleanup owner rather than discarding it.
+Preflight success is not permission to skip actual-handle verification.
+
+**Healthy cleanup.** The serialized TTS owner first completes or rolls back its
+own pending transaction under valid proof; it never commits work just to close.
+Revalidate before each cleanup phase, settle the existing reusable tombstones,
+and attempt one explicit `PRAGMA main.wal_checkpoint(PASSIVE)` before native close.
+Revalidate afterward and retain the flag while closing SQLite, then close/reap
+the proof helper and release directory/lease/permit resources in the existing order.
+
+PASSIVE is chosen because it does not wait for readers or writers to finish;
+it can leave uncheckpointed frames. Preserve existing operation deadlines and
+worker placement; do not add a retry loop or raise performance ceilings.
+An exact SQLITE_BUSY result or a valid partial checkpoint is not data loss and
+does not require exclusive ownership: leave WAL/SHM intact and proceed only if
+proof still authorizes close. Other SQL/I/O errors are reported, with the cleanup
+owner and worker retained for guarded retry; do not report successful close or
+silently treat those errors as BUSY. A live proof loss enters terminal quarantine
+instead. [Checkpoint semantics](https://www.sqlite.org/pragma.html#pragma_wal_checkpoint).
+
+Persisted WAL/SHM is legitimate state, not a leak to fix with an unlink. Existing
+commit-time auto-checkpoint behavior and WAL concurrency remain unchanged.
+No new cleanup daemon or background checkpoint service is introduced. Preserve
+the existing stricter checkpoint/identity/export/exclusive-cleanup sequence for
+restore; a partial PASSIVE checkpoint cannot substitute for a required completed
+restore checkpoint. Restore must not accidentally execute duplicate close-time
+checkpoint work outside its already guarded sequence.
+
+**Initialization and exclusive artifacts.** Initialization, migration candidates,
+publication/recovery and immutable evidence views retain their existing explicit
+ownership and checkpoint rules. Do not apply the live-handle flag through the
+shared schema factory: the coarse spike injection failed during initialization.
+Its precise internal refusal remains untraced; it is not evidence of a diagnosed
+data-loss bug. Qualify fresh creation, upgrade, checkpointed schema publication,
+normal reopen with residual WAL, backup/restore and sidecar identity handoff before
+accepting this scope distinction. Task6's exclusive finalizer correction remains
+required, not implicitly fixed by the live connection option.
+
+**Lost proof.** Preserve the terminal-retention contract below: no new SQL,
+rollback, checkpoint, native close, replacement proof or forced application exit
+after live helper loss. The already verified native setting remains in place for
+eventual interpreter finalization. Do not switch the flag off for orderly shutdown.
+The spike does not authorize eager cleanup or change the four-owner bound.
+
+**Qualification required before integration is accepted.** Convert the relevant
+spike behavior into real wrapper/repository regressions, retaining failing default
+controls only in isolated diagnostic subprocesses. Cover missing/rejected runtime
+capabilities before store mutation, failure to configure an actual handle, fresh
+creation/migration, read/write/idle ordinary and abrupt shutdown, actual helper
+loss during partial setup, sibling close/exclusion, and committed-data recovery.
+Exercise PASSIVE completion/BUSY/partial/error paths with a real pinned reader and
+writer, restore refusal/cleanup, residual WAL across repeated reopen, and bounded
+normal and interrupted ownership. Audit every non-exclusive live TTS opener so
+an unconfigured final handle cannot silently reintroduce default cleanup.
+
+Include outstanding statements, spilled writes and supported BLOB-handle lifetimes
+where reachable by the production owner, plus native rollback/data recovery during
+ordinary finalization. The small-transaction spike did not qualify these. Use the
+actual app-owned shutdown path and the installed wheel on the supported POSIX
+platforms; report unavailable platform evidence as a gap. Unsupported-platform
+policy and Windows ACL claims do not expand. Existing storage, import/performance,
+independent-review and actual Canvas release gates remain unchanged.
+
+**Alternatives.** Moving the live TTS repository into a child remains a fallback
+only if the scoped native design fails qualification; it is not selected. A
+general SQL service, private ABI shim, forced app exit, global close-policy switch
+or disabling WAL is not part of this correction. Python 3.11 compatibility is
+deliberately dropped for the supported public API, not emulated.
 
 ### Repository authority handoff
 
@@ -277,8 +396,10 @@ independently where possible. An ordinary namespace mismatch with a healthy
 helper still supports the existing exact-authority restoration and close retry.
 
 Retain terminal owners through existing application/repository ownership, never
-drop them to trigger SQLite finalizers. Latch new TTS repository admission off
-for this process after a live owner loses proof; already healthy siblings remain
+drop them to trigger SQLite finalizers. Reference retention is not sufficient at
+interpreter exit; the proposed native policy above must pass integrated shutdown
+qualification before this contract can be called satisfied. Latch new TTS
+repository admission off for this process after a live owner loses proof; already healthy siblings remain
 usable. Together with the four-owner permit limit this prevents repeated reopen
 attempts from accumulating quarantined connections or workers. No polling worker,
 automatic process restart, force-close, foreign-sidecar deletion or global

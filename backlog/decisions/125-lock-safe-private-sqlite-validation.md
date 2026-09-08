@@ -1,6 +1,7 @@
 # ADR-125: Isolate private SQLite file checks from live lock ownership
 
 Status: Accepted
+Amendment status: Native-close integration proposed; Python >=3.12 baseline approved
 Date: 2026-09-07
 Related Task: TASK-31942
 Extends: ADR-029
@@ -121,6 +122,43 @@ authorization to force application exit or weaken foreign-cohort preservation.
 Tasks1–4 remain reviewed. See the preserved
 [gate evidence](../../Docs/superpowers/reviews/2026-09-07-sqlite-orderly-exit-gate.md)
 for precise scope, limitations and independent review status.
+
+## Native-close amendment proposed after qualification spike
+
+The user approved Python >=3.12 on 2026-09-07 after an isolated native-policy
+spike passed all 25 configured cases; eight default ordinary-exit controls
+reproduced foreign-file deletion. This is a compatibility decision, not an
+assertion that package metadata or production behavior has already changed.
+See the [archived probe](../../Docs/superpowers/reviews/2026-09-07-sqlite-native-close-policy-spike.md).
+
+The proposed refinement keeps live SQLite in Chatbook and raw proof in helpers.
+Every live exact-current TTS handle sets and verifies the public
+SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE option before first SQL and keeps it enabled.
+TTS admission checks runtime capability before initializing a store and refuses
+unsupported builds without a private ABI shim. A runtime capability refusal is
+distinct from terminal loss of an existing live proof owner.
+
+Healthy cleanup explicitly attempts a guarded PASSIVE checkpoint without waiting
+for siblings to finish; valid partial/BUSY results leave recoverable WAL intact.
+Actual cleanup failures retain ownership for guarded retry. Restore retains its
+stricter checkpoint/authority rules. Initialization, migrations, exclusive
+artifacts, immutable evidence and unrelated SQLite owners do not inherit the
+live flag through a global factory change. A coarse spike injection affected
+initialization and failed before ready, so this boundary requires real regression
+coverage rather than a blanket toggle.
+
+Terminal helper loss still forbids SQL, rollback, checkpoint or explicit native
+close. Retained owner bounds and admission latching remain; the preconfigured
+native policy addresses eventual finalization without forced app exit. All
+supported shutdown paths and actual wrapper integration remain unqualified until
+the original gates pass. No general database service is selected.
+
+This amendment is **proposed for written user review** in the linked detailed
+design. It would narrowly supersede the earlier unchanged-WAL-behavior statement
+for live TTS close/checkpoint policy only. The core helper decision, reviewed
+Tasks1–4, no-follow/privacy guarantees and Canvas release gates are unchanged.
+Task5 remains stopped until written approval and an updated implementation plan;
+the probe is not implementation or merge authorization.
 
 ## Links
 

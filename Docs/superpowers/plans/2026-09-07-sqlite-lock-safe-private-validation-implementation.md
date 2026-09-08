@@ -367,6 +367,15 @@ Read [gate evidence](../reviews/2026-09-07-sqlite-orderly-exit-gate.md) before a
 resumption. User direction on a revised terminal-loss ownership/shutdown contract
 is required; do not proceed to implementation or Task6 from this checkpoint.
 
+Subsequent checkpoint: the native-close spike passed all 25 configured cases
+while eight default ordinary-exit controls reproduced deletion. Python >=3.12
+is now approved. The native-close amendment in the linked design awaits written
+user review; these implementation steps have NOT yet been updated or unblocked.
+After approval, use writing-plans to add runtime compatibility/capability checks,
+scoped native policy, guarded healthy checkpoint behavior and integrated lifecycle
+qualification before resuming Task5. Do not execute the old close instructions
+as if the probe had satisfied the production gate.
+
 **Files:** Modify `TTS/profile_schema.py`, `TTS/profile_repository.py`, `TTS/profile_errors.py`, `DB/private_sqlite_process.py`, and `TTS/profile_migration_namespace.py` only for the required validated metadata adaptation; create `Tests/TTS/test_profile_sqlite_helper_lifecycle.py`; extend `Tests/TTS/test_profile_repository_lifecycle.py` and focused namespace comparison tests as needed. Exclusive finalizer behavior remains Task 6.
 
 **Interfaces:**
