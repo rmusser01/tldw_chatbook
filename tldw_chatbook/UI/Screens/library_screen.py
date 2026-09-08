@@ -7513,6 +7513,27 @@ class LibraryScreen(BaseAppScreen):
             and ordinary_emergency_required(width)
         )
 
+    def _build_library_media_rail_return(self) -> Button:
+        """Build the Media stage's named way back to the rail (task-32065).
+
+        One builder for both the compose and the remount below, so the label
+        (and its ASCII fallback), the id and the initial visibility cannot
+        drift apart.
+
+        Returns:
+            The "‹ Library" control, already showing or hidden.
+        """
+        control = Button(
+            "< Library" if ascii_glyph_mode() else "‹ Library",
+            id="library-media-rail-return",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        control.display = self._library_media_rail_return_visible(
+            self._media_state.reader_layout, self.size.width
+        )
+        return control
+
     def _sync_library_media_rail_return(
         self, layout: MediaReaderEffectiveLayout, width: int
     ) -> None:
@@ -7522,11 +7543,25 @@ class LibraryScreen(BaseAppScreen):
             layout: The layout just applied to the shell.
             width: The shell's settled width in cells.
         """
+        visible = self._library_media_rail_return_visible(layout, width)
+        controls = self.query("#library-media-rail-return")
+        if controls:
+            controls.first(Button).display = visible
+            return
+        if not visible:
+            return
+        # Fix round 1: every route swap replaces the WHOLE child list of
+        # ``#library-canvas`` (four sites do ``remove_children(host.children)``
+        # then mount the new route), so this control is detached with the
+        # outgoing canvas -- live at 60x24 the second visit to Media had the
+        # list but no way back. The ordinary shell escapes that by nesting its
+        # route in ``#library-canvas-route-content``; the Media items host has
+        # no such wrapper, so the control puts itself back instead.
         try:
-            control = self.query_one("#library-media-rail-return", Button)
+            host = self.query_one("#library-canvas", Vertical)
         except (NoMatches, QueryError):
             return
-        control.display = self._library_media_rail_return_visible(layout, width)
+        host.mount(self._build_library_media_rail_return(), before=0)
 
     @on(Button.Pressed, "#library-media-rail-return")
     def handle_library_media_rail_return(self, event: Button.Pressed) -> None:
@@ -11572,11 +11607,12 @@ class LibraryScreen(BaseAppScreen):
         """Return the active route child without treating recovery chrome as one.
 
         task-32065: "without treating recovery chrome as one" used to rest on
-        that chrome being hidden -- the ordinary ``LibraryEmergencyReturn``
-        normally is. A VISIBLE return control (this task's Media "‹ Library",
-        and the ordinary bar below 64 columns) then became the route owner,
-        which is neither a route nor a focus-restore target. Both are skipped
-        by identity now, so the answer is the same whether or not they show.
+        that chrome being hidden. The Media items host has no
+        ``#library-canvas-route-content`` wrapper to keep chrome out of the
+        route's own container, so its VISIBLE "‹ Library" became the route
+        owner -- neither a route nor a focus-restore target. (The ordinary
+        ``LibraryEmergencyReturn`` needs no such clause: it is a sibling of
+        that wrapper, so it is never among this host's children.)
         """
         host = self._library_entry_canvas_host()
         if host is None:
@@ -11585,9 +11621,7 @@ class LibraryScreen(BaseAppScreen):
             (
                 child
                 for child in host.children
-                if child.display
-                and not isinstance(child, LibraryEmergencyReturn)
-                and child.id != "library-media-rail-return"
+                if child.display and child.id != "library-media-rail-return"
             ),
             None,
         )
@@ -14869,15 +14903,7 @@ class LibraryScreen(BaseAppScreen):
             # ``LibraryEmergencyReturn``: that widget's visibility belongs to
             # the ordinary-route emergency stage, which force-hides every one
             # of them whenever an adaptive reader shell is mounted.
-            media_rail_return = Button(
-                "< Library" if ascii_glyph_mode() else "‹ Library",
-                id="library-media-rail-return",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            media_rail_return.display = self._library_media_rail_return_visible(
-                self._media_state.reader_layout, self.size.width
-            )
+            media_rail_return = self._build_library_media_rail_return()
             items_host = Vertical(
                 media_rail_return,
                 self._build_library_media_active_child(),
@@ -22507,6 +22533,18 @@ class LibraryScreen(BaseAppScreen):
                 self._present_library_skills_import_choice_if_needed
             )
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            # task-32065 (fix round 1): selecting a destination resolves THAT
+            # destination's stage. The resolved layout carries a
+            # ``priority_pane`` the resolver inherits on every later resolve,
+            # so one "‹ Library" (or Library grip) press below the
+            # single-stage floor pinned rail-plus-empty-Reader for the rest of
+            # the visit -- critique #8's finding again, with the return
+            # control hidden by its own rule. Pane PREFERENCES are untouched
+            # (a manual open/close still persists); only the transient
+            # starved-layout hint is cleared, and the resolver re-derives it.
+            self._media_state.reader_layout = dataclasses.replace(
+                self._media_state.reader_layout, priority_pane=None
+            )
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self._request_library_media_browse(
                 self._library_media_browse_controller.mutation_refresh_scope,

@@ -368,6 +368,31 @@ async def test_variables_checkbox_states_itself_with_a_glyph() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("width", [44, 80, 140])
+async def test_use_in_console_paints_in_full_at_the_editor_pane_floor(
+    width: int,
+) -> None:
+    """task-32074 AC#2, fix round 1: the action needs its own row.
+
+    As a fourth control inside ``#library-prompt-mode-controls`` -- a bare
+    ``Horizontal`` with no overflow rule anywhere -- it started at column 48
+    and fell off a 44-cell canvas entirely, which is what the prompts work
+    pane's own 48-cell floor hands it. Coverage was 140 and 235 only.
+    """
+    app = _PromptsCanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+    )
+    async with app.run_test(size=(width, 40)) as pilot:
+        row = pilot.app.query_one("#library-prompt-header-actions")
+        button = pilot.app.query_one("#library-prompt-insert-console", Button)
+        assert button.region.width > 0
+        assert button.region.right <= row.region.right
+        assert "Use in Console" in _painted(button)
+
+
+@pytest.mark.asyncio
 async def test_use_in_console_sits_in_the_prompt_editor_header() -> None:
     """task-32074 AC#2: beside Basic/Advanced/Info, like the Media reader.
 
@@ -385,12 +410,77 @@ async def test_use_in_console_sits_in_the_prompt_editor_header() -> None:
             "library-prompt-mode-basic",
             "library-prompt-mode-advanced",
             "library-prompt-mode-info",
-            "library-prompt-insert-console",
         ]
+        # Its own row, directly under the mode tabs -- see the narrow-width
+        # test above for why it is not a fourth control inside them.
+        header = pilot.app.query_one("#library-prompt-header-actions")
+        assert [child.id for child in header.children] == [
+            "library-prompt-insert-console"
+        ]
+        assert header.region.y >= modes.region.bottom - 1
         actions = pilot.app.query_one("#library-prompt-editor-actions")
         assert "library-prompt-insert-console" not in [
             child.id for child in actions.children
         ]
+
+
+@pytest.mark.asyncio
+async def test_media_below_64_returns_to_its_list_after_a_library_round_trip() -> None:
+    """task-32065 AC#1, after AC#2 has been used (fix round 1).
+
+    The return press seeds a "library" layout priority, and the resolver
+    inherits a priority from the previous layout -- so re-entering Media at
+    60x24 came back to critique #8's finding (rail plus an empty Reader, no
+    list) with the return control itself hidden. Selecting a destination
+    resolves that destination's stage.
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(60, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        media_row = screen.query_one("#library-row-browse-media")
+        media_row.press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-media-rail-return", Button).display,
+            message="The first visit did not offer '‹ Library'.",
+        )
+
+        screen.query_one("#library-media-rail-return", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(
+                "#library-media-reader-shell"
+            ).effective_layout.library_open,
+            message="'‹ Library' did not bring the rail back.",
+        )
+
+        # Second visit: the same stage as the first, not the rail-and-empty
+        # Reader the inherited priority used to pin for the rest of the visit.
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(
+                "#library-media-reader-shell"
+            ).effective_layout.items_open
+            and screen.query_one("#library-media-rail-return", Button).display,
+            message=lambda: (
+                "The second visit did not return to the Items list: "
+                f"{screen.query_one('#library-media-reader-shell').effective_layout!r}"
+            ),
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-row-0"))
+            and screen.query_one("#library-media-row-0", Button).region.width > 0,
+            message="The Items list never painted on the second visit.",
+        )
+
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
 
 
 # ---------------------------------------------------------------------------

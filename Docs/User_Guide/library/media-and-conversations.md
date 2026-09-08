@@ -85,7 +85,10 @@ list uses the width that frees up:
   is left for its placeholder, and a **‹ Library** (or **< Library** with
   ASCII glyphs) control at the top of the Items pane returns to the rail.
   It is the only width that shows that control; opening an item hands the
-  width back to the Reader as usual.
+  width back to the Reader as usual. Going back to the rail gives it the
+  width while you are there — selecting **Media** again returns to the list
+  and its **‹ Library** control, so the two are a round trip rather than a
+  one-way door.
 
 *Verified against fix/media-crit6-layout — 2026-09-07 (task-31979: the
 empty-reader widening. Pinned in tests at 235x52 and 100x30 — with no item
