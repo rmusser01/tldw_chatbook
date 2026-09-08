@@ -13,7 +13,6 @@ from pathlib import Path
 import re
 import threading
 from typing import Any, Dict, Literal, Optional, TYPE_CHECKING
-from uuid import uuid4
 
 import toml
 from loguru import logger
@@ -146,7 +145,6 @@ from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
 )
-from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import (
     ConsoleChatController,
     ConsoleSubmitResult,
@@ -159,7 +157,6 @@ from ...Widgets.Console.console_canvas_card import (
     ConsoleCanvasCardOpenRequested,
     ConsoleCanvasOpenRecoveryCard,
     ConsoleCanvasOpenRetryRequested,
-    open_canvas_with_textual,
 )
 from ...Chat.console_switcher_state import (
     ConsoleSwitcherCharacterResult,
@@ -462,9 +459,6 @@ from ...Widgets.Console.console_conversation_inspector import (
     TAB_COSTS,
     TAB_NEXT_SEND,
     ConsoleConversationInspector,
-)
-from ...Widgets.Console.console_citation_sources_modal import (
-    selected_valid_evidence_ordinals,
 )
 from ...Widgets.Console.console_generation_card import generation_card_signature
 from ...Widgets.Console.console_video_card import video_card_signature
@@ -4910,20 +4904,11 @@ class ChatScreen(BaseAppScreen):
         self._console_attach_resume_in_progress = False
         self._console_attach_reconcile_retry_count = 0
         self._console_attach_reconcile_retry_exhausted = False
-        self._console_citation_counts: dict[str, int] = {}
         # Same precedent, same reason (task-18515 review-note management
         # task 3 fix round): a rapid double marker-click / double-`n` before
         # the first worker's off-thread DB read resolves must not stack two
         # ConsoleReviewNotesModals with independent DB-bound closures.
         self._console_review_notes_inflight = False
-        self._console_citation_resolved_signatures: dict[
-            str, tuple[str, str, str, str]
-        ] = {}
-        self._console_citation_repository_token: tuple[str, int, int, int] | None = None
-        self._console_citation_input_signature: (
-            tuple[str | None, tuple[tuple[str, str, str, str], ...]] | None
-        ) = None
-        self._console_citation_request_generation = 0
         self._last_native_transcript_refresh_key: tuple[int, tuple[Any, ...]] | None = (
             None
         )
@@ -6475,11 +6460,11 @@ class ChatScreen(BaseAppScreen):
         runtime = self._console_runtime()
         if runtime.canvas_controller is not None:
             runtime.bind_canvas_native_view(
-                scope_resolver=self._console_canvas_scope,
-                bridge_sink=self._prefill_console_canvas_repair,
-                bridge_prepare=self._prepare_console_canvas_submit,
-                auto_open=self._schedule_console_canvas_tool_open,
-                publication_guard=self._console_canvas_publication_is_current,
+                scope_resolver=self._message._console_canvas_scope,
+                bridge_sink=self._message._prefill_console_canvas_repair,
+                bridge_prepare=self._message._prepare_console_canvas_submit,
+                auto_open=self._message._schedule_console_canvas_tool_open,
+                publication_guard=self._message._console_canvas_publication_is_current,
             )
         return store
 
@@ -13171,192 +13156,6 @@ class ChatScreen(BaseAppScreen):
 
         self.app.push_screen(modal, callback=_open_source_in_library)
 
-    def _sync_console_citation_count_discovery(self, messages: list[Any]) -> None:
-        """Dispatch one count lookup worker when eligible inputs change."""
-        signature = self._message._console_citation_signature(messages)
-        repository_token, repository = (
-            self._message._console_citation_repository_readiness()
-        )
-        repository_changed = repository_token != self._console_citation_repository_token
-        if repository_changed:
-            self._console_citation_repository_token = repository_token
-            self._console_citation_input_signature = signature
-            self._console_citation_request_generation += 1
-            self._console_citation_counts = {}
-            self._console_citation_resolved_signatures = {}
-            if repository is None or not signature[1]:
-                return
-            unresolved = signature[1]
-            generation = self._console_citation_request_generation
-            self.run_worker(
-                self._discover_console_citation_counts(
-                    repository,
-                    signature,
-                    generation,
-                    unresolved,
-                    repository_token,
-                ),
-                exclusive=True,
-                group="console-citation-counts",
-            )
-            return
-        if repository is None:
-            if signature != self._console_citation_input_signature:
-                self._console_citation_input_signature = signature
-                self._console_citation_request_generation += 1
-            self._console_citation_counts = {}
-            self._console_citation_resolved_signatures = {}
-            return
-        if signature == self._console_citation_input_signature:
-            return
-
-        previous_signature = self._console_citation_input_signature
-        same_session = (
-            previous_signature is not None and previous_signature[0] == signature[0]
-        )
-        current_entries = {item[0]: item for item in signature[1]}
-        if not same_session:
-            self._console_citation_counts = {}
-            self._console_citation_resolved_signatures = {}
-        else:
-            cached_ids = set(self._console_citation_counts) | set(
-                self._console_citation_resolved_signatures
-            )
-            for native_message_id in cached_ids:
-                if self._console_citation_resolved_signatures.get(
-                    native_message_id
-                ) != current_entries.get(native_message_id):
-                    self._console_citation_counts.pop(native_message_id, None)
-                    self._console_citation_resolved_signatures.pop(
-                        native_message_id,
-                        None,
-                    )
-
-        self._console_citation_input_signature = signature
-        self._console_citation_request_generation += 1
-        generation = self._console_citation_request_generation
-        unresolved = tuple(
-            item
-            for item in signature[1]
-            if self._console_citation_resolved_signatures.get(item[0]) != item
-            or item[0] not in self._console_citation_counts
-        )
-        if not unresolved:
-            return
-        self.run_worker(
-            self._discover_console_citation_counts(
-                repository,
-                signature,
-                generation,
-                unresolved,
-                repository_token,
-            ),
-            exclusive=True,
-            group="console-citation-counts",
-        )
-
-    @staticmethod
-    def _read_console_citation_counts(
-        repository: Any,
-        eligible: tuple[tuple[str, str, str, str], ...],
-    ) -> dict[str, int]:
-        """Read verified non-governed trace metadata into integer counts."""
-        counts: dict[str, int] = {}
-        for native_message_id, persisted_message_id, current_body, _status in eligible:
-            counts[native_message_id] = 0
-            try:
-                result = repository.get_active_trace_for_current_message(
-                    persisted_message_id,
-                    current_body,
-                )
-                summary = getattr(result, "summary", None)
-                if (
-                    getattr(result, "state", None)
-                    is not ActiveCitationTraceState.ACTIVE
-                    or summary is None
-                    or getattr(result, "availability_warning", None) is not None
-                    or not repository.verify_active_trace_result(result)
-                ):
-                    continue
-                evidence_ordinals = selected_valid_evidence_ordinals(summary.trace)
-            except Exception:
-                logger.exception(
-                    "Unable to read Console citation count: "
-                    "native_message_id={} persisted_message_id={}",
-                    native_message_id,
-                    persisted_message_id,
-                )
-                continue
-            if evidence_ordinals:
-                counts[native_message_id] = len(evidence_ordinals)
-        return counts
-
-    def _apply_console_citation_counts(
-        self,
-        signature: tuple[str | None, tuple[tuple[str, str, str, str], ...]],
-        generation: int,
-        counts: Mapping[str, int],
-        eligible: tuple[tuple[str, str, str, str], ...] | None = None,
-        repository_token: tuple[str, int, int, int] | None = None,
-    ) -> bool:
-        """Apply count-only results when their full captured input is current."""
-        current_repository_token, current_repository = (
-            self._message._console_citation_repository_readiness()
-        )
-        if (
-            generation != self._console_citation_request_generation
-            or signature != self._console_citation_input_signature
-            or current_repository is None
-            or repository_token != current_repository_token
-            or signature
-            != self._message._console_citation_signature(
-                self._message._native_console_messages()
-            )
-        ):
-            return False
-        current_entries = {item[0]: item for item in signature[1]}
-        for item in signature[1] if eligible is None else eligible:
-            native_message_id = item[0]
-            if current_entries.get(native_message_id) != item:
-                continue
-            count = counts.get(native_message_id, 0)
-            self._console_citation_counts[native_message_id] = (
-                count if type(count) is int and count >= 0 else 0
-            )
-            self._console_citation_resolved_signatures[native_message_id] = item
-        return True
-
-    async def _discover_console_citation_counts(
-        self,
-        repository: Any,
-        signature: tuple[str | None, tuple[tuple[str, str, str, str], ...]],
-        generation: int,
-        eligible: tuple[tuple[str, str, str, str], ...] | None = None,
-        repository_token: tuple[str, int, int, int] | None = None,
-    ) -> None:
-        """Discover citation footer counts off-loop and refresh current rows."""
-        if repository_token is None:
-            repository_token, current_repository = (
-                self._message._console_citation_repository_readiness()
-            )
-            if current_repository is not repository:
-                return
-        queried = signature[1] if eligible is None else eligible
-        counts = await asyncio.to_thread(
-            self._read_console_citation_counts,
-            repository,
-            queried,
-        )
-        if not self._apply_console_citation_counts(
-            signature,
-            generation,
-            counts,
-            queried,
-            repository_token,
-        ):
-            return
-        await self._sync_native_console_chat_ui()
-
     def _native_console_transcript_fingerprint(
         self, messages: list[Any]
     ) -> tuple[Any, ...]:
@@ -13477,7 +13276,7 @@ class ChatScreen(BaseAppScreen):
             transcript.set_change_review_provider_factory(
                 self._review_selection._console_change_review_provider
             )
-            self._sync_console_citation_count_discovery(messages)
+            self._message._sync_console_citation_count_discovery(messages)
             message_ids = {message.id for message in messages}
             controller = self._console_chat_controller
             for message_id in tuple(self._console_original_attempt_previews):
@@ -13514,7 +13313,7 @@ class ChatScreen(BaseAppScreen):
             )
             visible_citation_counts = {
                 message_id: count
-                for message_id, count in self._console_citation_counts.items()
+                for message_id, count in self._message._console_citation_counts.items()
                 if type(count) is int and count > 0
             }
             transcript.set_citation_counts(visible_citation_counts)
@@ -14995,362 +14794,12 @@ class ChatScreen(BaseAppScreen):
             return True
         return await self._message.handle_console_message_action(event)
 
-    def _console_canvas_scope(self, session_id: str) -> Any:
-        """Capture the exact active Console branch for native Canvas authority."""
-
-        from tldw_chatbook.Canvas.models import CanvasScope
-
-        store = self._ensure_console_chat_store()
-        if store.active_session_id != session_id:
-            raise RuntimeError("Canvas session is no longer active")
-        session = self._session._active_native_console_session()
-        if session is None or session.id != session_id:
-            raise RuntimeError("Canvas session is unavailable")
-        active_ids = store.canvas_active_path_message_ids(session_id)
-        if not active_ids:
-            raise RuntimeError("Canvas requires an active transcript message")
-        return CanvasScope(
-            session_id=session_id,
-            conversation_id=session.persisted_conversation_id or session_id,
-            active_message_ids=active_ids,
-            selected_canvas_id=None,
-            selected_revision_id=None,
-            run_id=str(uuid4()),
-        )
-
-    def _prefill_console_canvas_repair(
-        self,
-        target_or_repair: Any,
-        repair: str | None = None,
-    ) -> None:
-        """Place a repair request into its exact live Console draft.
-
-        Native Canvas bridge submissions provide a captured browser target and
-        are revalidated here, at the effect boundary.  The one-argument form is
-        retained for the local transcript repair action, which already acts on
-        the current message and never crosses the browser capability boundary.
-        """
-
-        from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
-
-        store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
-        if repair is None:
-            repair_text = target_or_repair
-        else:
-            target = target_or_repair
-            if (
-                not isinstance(target, CanvasBridgeTarget)
-                or session_id != target.session_id
-            ):
-                raise RuntimeError("Canvas repair target is unavailable")
-            session = next(
-                (item for item in store.sessions() if item.id == target.session_id),
-                None,
-            )
-            if (
-                session is None
-                or (session.persisted_conversation_id or session.id)
-                != target.conversation_id
-            ):
-                raise RuntimeError("Canvas repair target is unavailable")
-            active_ids = tuple(
-                (message.persisted_message_id or message.id)
-                for message in (
-                    store.get_message(native_id)
-                    for native_id in store.active_path_message_ids(target.session_id)
-                )
-            )
-            if active_ids != target.active_message_ids:
-                raise RuntimeError("Canvas repair target is unavailable")
-            repair_text = repair
-        composer = self._console_composer_or_none()
-        if (
-            session_id is None
-            or composer is None
-            or not isinstance(repair_text, str)
-        ):
-            raise RuntimeError("Canvas repair composer is unavailable")
-        composer.load_draft(repair_text)
-        store.set_session_draft(session_id, repair_text)
-        composer.focus()
-
-    def _prepare_console_canvas_submit(self, target: Any) -> Callable[[str], None]:
-        """Capture one exact composer generation before browser confirmation."""
-
-        from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
-
-        if not isinstance(target, CanvasBridgeTarget):
-            raise RuntimeError("Canvas submit target is unavailable")
-        store = self._ensure_console_chat_store()
-        composer = self._console_composer_or_none()
-        if store.active_session_id != target.session_id or composer is None:
-            raise RuntimeError("Canvas submit composer is unavailable")
-        session = next(
-            (item for item in store.sessions() if item.id == target.session_id),
-            None,
-        )
-        active_ids = tuple(
-            (message.persisted_message_id or message.id)
-            for message in (
-                store.get_message(native_id)
-                for native_id in store.active_path_message_ids(target.session_id)
-            )
-        )
-        if (
-            session is None
-            or (session.persisted_conversation_id or session.id)
-            != target.conversation_id
-            or active_ids != target.active_message_ids
-        ):
-            raise RuntimeError("Canvas submit target is unavailable")
-        captured = composer.capture_draft_snapshot()
-
-        def apply(text: str) -> None:
-            current = self._console_composer_or_none()
-            current_store = self._ensure_console_chat_store()
-            live_session = next(
-                (item for item in current_store.sessions() if item.id == target.session_id),
-                None,
-            )
-            live_ids = tuple(
-                (message.persisted_message_id or message.id)
-                for message in (
-                    current_store.get_message(native_id)
-                    for native_id in current_store.active_path_message_ids(target.session_id)
-                )
-            )
-            if (
-                current_store.active_session_id != target.session_id
-                or current is not composer
-                or live_session is None
-                or (live_session.persisted_conversation_id or live_session.id)
-                != target.conversation_id
-                or live_ids != target.active_message_ids
-                or current.capture_draft_snapshot() != captured
-            ):
-                raise RuntimeError("Canvas submit composer changed")
-            current.load_draft(text)
-            current_store.set_session_draft(target.session_id, text)
-            current.focus()
-
-        return apply
-
-    def _console_canvas_authority(self) -> Any:
-        runtime = self._console_runtime()
-        if not runtime.canvas_enabled():
-            raise RuntimeError("Canvas is disabled")
-        store = self._ensure_console_chat_store()
-        if store.active_session_id is None:
-            raise RuntimeError("Canvas session is unavailable")
-        authority = runtime.ensure_canvas_native_authority(
-            scope_resolver=self._console_canvas_scope,
-            bridge_sink=self._prefill_console_canvas_repair,
-            bridge_prepare=self._prepare_console_canvas_submit,
-            auto_open=self._schedule_console_canvas_tool_open,
-            publication_guard=self._console_canvas_publication_is_current,
-        )
-        if authority is None:
-            raise RuntimeError("Canvas is disabled")
-        return authority
-
-    def _console_canvas_publication_is_current(self, publication: Any) -> bool:
-        """Accept a settled mutation only for the live native chat branch."""
-
-        if not self._console_runtime().canvas_enabled():
-            return False
-
-        scope = getattr(publication, "scope", None)
-        revisions = getattr(publication, "revisions", ())
-        session_id = getattr(scope, "session_id", None)
-        conversation_id = getattr(scope, "conversation_id", None)
-        if not isinstance(session_id, str) or not revisions:
-            return False
-        store = self._ensure_console_chat_store()
-        if store.active_session_id != session_id:
-            return False
-        session = next(
-            (item for item in store.sessions() if item.id == session_id),
-            None,
-        )
-        if session is None:
-            return False
-        if (session.persisted_conversation_id or session.id) != conversation_id:
-            return False
-        active_ids = set(store.active_path_message_ids(session_id))
-        return all(
-            getattr(getattr(revision, "origin", None), "message_id", None) in active_ids
-            for revision in revisions
-        )
-
-    def _schedule_console_canvas_tool_open(self, session_id: str, info: Any) -> None:
-        """Auto-open a created tool Canvas or let its live shell hot-reload."""
-
-        def schedule() -> None:
-            from tldw_chatbook.config import get_canvas_config_policy
-
-            policy = get_canvas_config_policy()
-            if (
-                not self._console_runtime().canvas_enabled()
-                or not policy.auto_open_on_create
-            ):
-                return
-            gateway = self._console_runtime().canvas_gateway
-            if gateway is not None and gateway.has_browser_session_for(session_id):
-                return
-            self.run_worker(
-                self._open_console_canvas_selection(
-                    session_id=session_id,
-                    canvas_id=info.canvas_id,
-                    revision_id=info.revision_id,
-                    follow_latest=True,
-                ),
-                exclusive=True,
-                group="console-canvas-auto-open",
-            )
-
-        call_from_thread = getattr(self.app_instance, "call_from_thread", None)
-        if callable(call_from_thread):
-            try:
-                call_from_thread(schedule)
-                return
-            except Exception as exc:  # noqa: BLE001 - fall back to UI-thread schedule
-                logger.debug(
-                    f"Canvas auto-open thread handoff failed: {type(exc).__name__}"
-                )
-        schedule()
-
-    async def _open_console_canvas_block(self, reference: Any, source: str) -> Any:
-        """Import one authorized HTML block and open its native preview."""
-
-        from tldw_chatbook.Canvas.compiler import CanvasCompileError
-        from tldw_chatbook.Chat.console_message_actions import (
-            canvas_block_origin_turn_id,
-            resolve_canvas_html_block,
-        )
-
-        store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
-        message_id = reference.message_id
-        if (
-            session_id is None
-            or store.session_id_for_message(message_id) != session_id
-            or message_id not in store.active_path_message_ids(session_id)
-        ):
-            raise RuntimeError("Canvas source message is no longer current")
-        message = store.get_message(message_id)
-        authority = self._console_canvas_authority()
-        runtime = self._console_runtime()
-        captured_scope = self._console_canvas_scope(session_id)
-        canvas_controller = runtime.canvas_controller
-        if canvas_controller is None:
-            raise RuntimeError("Canvas source message is no longer current")
-        temporary = captured_scope.conversation_id == captured_scope.session_id
-        captured_owner = canvas_controller.capture_interactive_owner(
-            captured_scope, temporary=temporary
-        )
+    def _clear_console_canvas_open_failure(self) -> None:
+        """Remove the view-owned recovery card after a successful open."""
         try:
-            info = await authority.import_html_async(
-                session_id=session_id,
-                source=source,
-                create_new=reference.create_new,
-                source_message_id=message.id,
-                origin_message_id=message.persisted_message_id or message.id,
-                source_turn_id=canvas_block_origin_turn_id(
-                    message, reference.block_index, language=reference.language
-                ),
-                block_index=reference.block_index,
-                block_identity=reference.identity,
-                _is_current=lambda: (
-                    self.is_mounted and self._console_runtime() is runtime
-                ),
-            )
-        except CanvasCompileError:
-            stale = (
-                not self.is_mounted
-                or self._console_runtime() is not runtime
-                or not runtime.canvas_authority_is_current(authority)
-                or runtime.canvas_controller is not canvas_controller
-                or store.active_session_id != session_id
-                or store.session_id_for_message(message_id) != session_id
-                or message_id not in store.active_path_message_ids(session_id)
-            )
-            try:
-                canvas_controller.validate_interactive_owner(
-                    captured_scope, captured_owner, temporary=temporary
-                )
-                current_message = store.get_message(message_id)
-                current_block = resolve_canvas_html_block(current_message, reference)
-                stale = stale or current_block is None or current_block.html != source
-            except Exception:  # noqa: BLE001 - stale repair effects fail closed
-                stale = True
-            if stale:
-                raise RuntimeError(
-                    "Canvas source message is no longer current"
-                ) from None
-            raise
-        return await self._open_console_canvas_selection(
-            session_id=session_id,
-            canvas_id=info.canvas_id,
-            revision_id=info.revision_id,
-            follow_latest=True,
-        )
-
-    async def _open_console_canvas_selection(
-        self,
-        *,
-        session_id: str,
-        canvas_id: str,
-        revision_id: str | None,
-        follow_latest: bool,
-    ) -> Any:
-        authority = self._console_canvas_authority()
-        served_client = getattr(self.app_instance, "served_canvas_control", None)
-        served_handler = getattr(self.app_instance, "served_canvas_handler", None)
-        served_available = served_client is not None and served_handler is not None
-        browser_id = served_client.child_id if served_available else f"browser-{session_id}"
-        scope = authority.gateway_scope(
-            session_id=session_id,
-            browser_session_id=browser_id,
-            canvas_id=canvas_id,
-            revision_id=revision_id,
-            follow_latest=follow_latest,
-        )
-        if served_available or getattr(self.app_instance, "_served_canvas_mode", False):
-            if served_available:
-                served_handler.bind(authority, scope)
-            self._canvas_last_open_request = (
-                session_id,
-                canvas_id,
-                revision_id,
-                follow_latest,
-            )
-            from tldw_chatbook.Canvas.gateway import CanvasGatewayLaunch
-
-            return CanvasGatewayLaunch(
-                clean_url="/canvas/",
-                browser_url="/canvas/",
-                opened=served_available,
-                error_code=None if served_available else "served_canvas_unavailable",
-            )
-        gateway = self._console_runtime().ensure_canvas_gateway(authority=authority)
-        if gateway is None:
-            raise RuntimeError("Canvas is disabled")
-        self._canvas_last_open_request = (
-            session_id,
-            canvas_id,
-            revision_id,
-            follow_latest,
-        )
-        launch = await open_canvas_with_textual(gateway, scope, self.app_instance)
-        if launch.opened is False:
-            await self._show_console_canvas_open_failure(launch.browser_url)
-        else:
-            try:
-                self.query_one("#console-canvas-open-recovery").remove()
-            except (NoMatches, QueryError):
-                pass
-        return launch
+            self.query_one("#console-canvas-open-recovery").remove()
+        except (NoMatches, QueryError):
+            pass
 
     async def _show_console_canvas_open_failure(self, browser_url: str) -> None:
         try:
@@ -15373,11 +14822,11 @@ class ChatScreen(BaseAppScreen):
         """Mint a fresh one-time bootstrap instead of replaying the failed URL."""
 
         event.stop()
-        request = getattr(self, "_canvas_last_open_request", None)
+        request = self._message._canvas_last_open_request
         if request is None:
             return
         session_id, canvas_id, revision_id, follow_latest = request
-        await self._open_console_canvas_selection(
+        await self._message._open_console_canvas_selection(
             session_id=session_id,
             canvas_id=canvas_id,
             revision_id=revision_id,
@@ -15399,7 +14848,7 @@ class ChatScreen(BaseAppScreen):
             or session_id != store.active_session_id
         ):
             return
-        await self._open_console_canvas_selection(
+        await self._message._open_console_canvas_selection(
             session_id=session_id,
             canvas_id=event.canvas_id,
             revision_id=event.revision_id,

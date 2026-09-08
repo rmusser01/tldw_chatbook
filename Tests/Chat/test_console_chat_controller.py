@@ -5758,17 +5758,19 @@ async def test_canvas_scope_projects_only_native_system_rows_by_durability(
             persist=persist_seed,
         )
         if materialize_native_authority:
-            from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+            from tldw_chatbook.UI.Console_Modules.message import (
+                ConsoleMessageController,
+            )
 
             screen_owner = SimpleNamespace(
                 _ensure_console_chat_store=lambda: store,
-                _session=SimpleNamespace(
-                    _active_native_console_session=lambda: session,
-                ),
+                _active_native_console_session=lambda: session,
             )
             runtime.ensure_canvas_native_authority(
-                scope_resolver=lambda session_id: ChatScreen._console_canvas_scope(
-                    screen_owner, session_id
+                scope_resolver=lambda session_id: (
+                    ConsoleMessageController._console_canvas_scope(
+                        screen_owner, session_id
+                    )
                 ),
             )
 

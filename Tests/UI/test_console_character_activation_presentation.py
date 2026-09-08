@@ -419,4 +419,4 @@ async def test_queued_switcher_acknowledges_only_its_own_commit(
         else:
             assert len(opens) == 2
             assert host.screen is chat
-            assert workspace._character_conversation_target_visible(request)
+            assert chat._workspace._character_conversation_target_visible(request)

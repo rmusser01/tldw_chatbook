@@ -1,5 +1,5 @@
 ---
-id: TASK-31902
+id: TASK-32015
 title: Defer Chunking Lab action imports beyond screen preimport
 status: Done
 assignee:
@@ -48,3 +48,7 @@ while rebasing PR 2427 onto dev c4d45c0926. The user approved preserving
 upstream task identities and renumbering review-created collisions only.
 Original creation dates, task history, and literal verification artifact paths
 are retained. See backlog/docs/pr-2427-rebase-reconciliation.md for the mapping.
+
+On 2026-09-07 the review record moved again, from TASK-31902 to TASK-32015,
+to preserve upstream transcript-suite triage ownership on dev 3090013cfe.
+The earlier mapping above remains historical provenance.

@@ -523,7 +523,7 @@ def main() -> None:
                 interval=0.05 if recovered_root_revision is not None else 0.02,
             )
             screen = app.screen
-            original_open = screen._open_console_canvas_selection
+            original_open = screen._message._open_console_canvas_selection
 
             def acknowledge_applied_selection():
                 handler = app.served_canvas_handler
@@ -542,14 +542,14 @@ def main() -> None:
                 )
 
             async def observe_open_completion(**kwargs):
-                screen._open_console_canvas_selection = original_open
+                screen._message._open_console_canvas_selection = original_open
                 result = await original_open(**kwargs)
                 # The real card handler has no further await after this call;
                 # acknowledge on the next refresh, after its dispatch returns.
                 app.call_after_refresh(acknowledge_applied_selection)
                 return result
 
-            screen._open_console_canvas_selection = observe_open_completion
+            screen._message._open_console_canvas_selection = observe_open_completion
             button.press()
 
         app.action_canvas_fixture_reopen = reopen_exact_created_card

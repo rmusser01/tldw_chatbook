@@ -7,6 +7,9 @@ from unittest.mock import MagicMock
 import pytest
 from textual.worker import WorkerState
 
+from Tests.app_thread_resource_fixtures import (
+    close_owned_console_workers as close_owned_console_workers,
+)
 from Tests.console_resource_fixtures import (
     close_owned_console_resources as close_owned_console_resources,
     close_owned_console_test_apps as close_owned_console_test_apps,

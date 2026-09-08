@@ -38,6 +38,7 @@ from ...Chat.provider_test_evidence import (
     ProviderGenerationProbeResult,
 )
 from ...Constants import TAB_SETTINGS
+from .settings_diagnostics import log_settings_failure
 
 
 if TYPE_CHECKING:
@@ -366,8 +367,8 @@ class ConsoleSettingsNavigationController:
                     if _on_transfer_committed is None
                     else _on_transfer_committed() is True
                 )
-            except Exception:
-                logger.error("Unable to commit Conversation settings modal transfer")
+            except Exception as exc:
+                log_settings_failure("transfer_commit", exc, session_id=session_id)
                 transfer_outcome = False
             if not transfer_outcome:
                 # The source snapshot remains authoritative. The covered-modal

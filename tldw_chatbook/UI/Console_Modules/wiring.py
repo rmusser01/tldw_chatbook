@@ -1563,7 +1563,7 @@ def build_console_controllers(
             screen, "#console-native-transcript"
         ),
         inspector_rail=lambda: _console_widget_or_none(screen, "#console-right-rail"),
-        citation_counts=lambda: screen._console_citation_counts,
+        citation_counts=lambda: screen._message._console_citation_counts,
         reveal_inspector=lambda: screen._reveal_console_inspector_rail(),
         sync_native_ui=lambda: screen._sync_native_console_chat_ui(),
         notify=lambda *args, **kwargs: screen.app_instance.notify(*args, **kwargs),
@@ -2376,14 +2376,13 @@ def build_console_controllers(
                 screen._session, "request_console_chat_fork", lambda _message_id: None
             )(message_id)
         ),
-        open_canvas_block=(
-            lambda reference, source: screen._open_console_canvas_block(
-                reference, source
-            )
+        console_runtime=lambda: screen._console_runtime(),
+        console_composer_or_none=lambda: screen._console_composer_or_none(),
+        canvas_app_accessor=lambda: screen.app_instance,
+        show_canvas_open_failure=(
+            lambda url: screen._show_console_canvas_open_failure(url)
         ),
-        prefill_canvas_repair=(
-            lambda repair: screen._prefill_console_canvas_repair(repair)
-        ),
+        clear_canvas_open_failure=lambda: screen._clear_console_canvas_open_failure(),
     )
     screen._console_fork_eligibility = screen._message.console_fork_eligibility
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(

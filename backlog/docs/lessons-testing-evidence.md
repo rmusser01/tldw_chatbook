@@ -13937,3 +13937,26 @@ future concealed this. Real mounted overlay/navigation controls reproduced the
 leak; the owned modal now abandons its exact audio session when suspended without
 a decision. Confirm and Escape record their decision before removal, preserving
 their intended behavior. Test actual modal stacking, not only the parent hook.
+
+## Preserve callable identity when an authority uses it as a generation fence
+
+**TASK-31932, 2026-09-07 Canvas extraction.** Moving Canvas helpers into the
+existing message controller initially supplied fresh resolver lambdas each time
+the store was read. Native authority rebinding interpreted their changed identity
+as a new view generation and canceled imports before compilation. Stable bound
+controller methods preserved identity while their injected dependencies remained
+late-bound. The compiler scheduling, citation, message, and wiring files then
+passed all 159 cases. Compare callback lifetime as well as callback results when
+moving an authority boundary; a body-equivalent move can still change its fences.
+
+## A canceled asyncio wrapper is not a completed database worker
+
+**TASK-31932, 2026-09-07 resource review.** Native descriptor tracing showed a
+ChaChaNotes initializer resume seeding and reopen SQLite after fixture quiescence:
+Textual had canceled its asyncio wrapper, but the underlying thread was still
+running. The test-owned adapter now drains actual concurrent futures before DB
+teardown, closes exact newly acquired thread-local handles on their creating
+thread, and preserves borrowed connection identity (including detecting a
+replacement for an invalid borrowed handle). All 52 worker/smoke/cleanup controls
+pass without retained SQLite descriptors. Do not use wrapper cancellation as
+proof that a database owner can be safely finalized.

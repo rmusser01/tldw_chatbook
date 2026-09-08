@@ -9,6 +9,9 @@ import tempfile
 import os
 from unittest.mock import patch
 
+from Tests.app_thread_resource_fixtures import (
+    close_owned_app_initialization_connections as close_owned_app_initialization_connections,
+)
 from Tests.console_resource_fixtures import (
     close_owned_console_resources as close_owned_console_resources,
     close_owned_console_test_apps as close_owned_console_test_apps,
@@ -167,14 +170,10 @@ class TestUIComponents:
     """Smoke tests for UI components."""
 
     @pytest.mark.asyncio
-    async def test_app_initialization(self, close_owned_console_resources):
+    async def test_app_initialization(self):
         """Test that the main app can be initialized."""
         # Create app instance
         app = _build_test_app()
-        # This unmounted real app also owns the profile's current-thread DBs.
-        for database in (app.prompts_db, app.media_db):
-            if database is not None:
-                close_owned_console_resources.callback(database.close)
         assert app is not None
 
         # Check title (using TITLE constant)

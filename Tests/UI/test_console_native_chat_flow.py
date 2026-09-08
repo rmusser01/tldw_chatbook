@@ -1551,7 +1551,7 @@ async def test_warm_console_resume_consumes_staged_chat_handoff():
     router end-to-end instead of mocking ``open_chat_with_handoff``.
     """
 
-    app = _build_production_app(configured_default="chat")
+    app = _build_test_app(configured_default="chat")
     async with app.run_test(size=(100, 30)) as pilot:
         console = None
         for _ in range(_POLL_ATTEMPTS):
@@ -10101,7 +10101,11 @@ async def test_console_browser_selecting_non_default_workspace_native_session_sw
         )
         store = console._ensure_console_chat_store()
         first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
-        second = store.create_session(title="Workspace B Chat", workspace_id="ws-b")
+        second = store.create_session(
+            title="Workspace B Chat",
+            workspace_id="ws-b",
+            settings=console._session._default_console_session_settings(),
+        )
         store.append_message(
             second.id,
             role=ConsoleMessageRole.USER,
@@ -10215,6 +10219,7 @@ async def test_console_browser_selecting_default_native_session_uses_private_scr
         second = store.create_session(
             title="Default Chat",
             workspace_id=DEFAULT_WORKSPACE_ID,
+            settings=console._session._default_console_session_settings(),
         )
         store.append_message(
             second.id,
@@ -14958,3 +14963,41 @@ async def test_console_routine_send_fires_no_success_toast():
 
     success_toasts = [m for m, severity in notifications if severity == "success"]
     assert success_toasts == []
+
+
+@pytest.mark.asyncio
+async def test_settings_transfer_failure_logs_safe_context_and_revokes_modal():
+    from loguru import logger
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    records, rendered = [], []
+
+    def failed_commit():
+        raise RuntimeError("credential-canary /private/path-canary draft-canary")
+
+    def capture(message):
+        records.append(message.record)
+        rendered.append(str(message))
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        session_id = console._ensure_console_chat_store().ensure_session().id
+        sink = logger.add(capture, level="ERROR", format="{message}")
+        try:
+            opened = await console._settings_navigation._open_console_settings(
+                _on_transfer_committed=failed_commit,
+            )
+        finally:
+            logger.remove(sink)
+        assert opened is False
+        assert not any(isinstance(screen, ConsoleSettingsModal) for screen in host.screen_stack)
+        assert len(records) == 1
+        text = "".join(rendered)
+        assert "operation=console_settings phase=transfer_commit" in text
+        assert "failure=RuntimeError" in text
+        assert f"session_id={session_id}" in text
+        assert records[0]["exception"] is None
+        assert "canary" not in text

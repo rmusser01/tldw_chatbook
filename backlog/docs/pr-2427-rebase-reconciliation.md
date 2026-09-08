@@ -196,3 +196,104 @@ cases: 29 incremental agent-persistence cases, 12 worker cases, and smoke
 initialization. These remain resource findings, not a resource-clean
 qualification. Agent-persistence ownership still needs targeted attribution;
 the worker/smoke cross-thread findings above have been diagnosed.
+
+## September 7 recovery and approved review repairs
+
+The former temporary worktree was removed outside this task. The published
+branch was recovered into `.worktrees/pr2427-review-recovery`; the original
+dirty checkout was not used for source edits. The 179-commit rebase onto fetched
+dev `3090013cfea4dbf6133ac43d024656e2eb3a2a56` completed locally at
+`4a74c5d7e02552a5351d59df7647ea8811526bab`. Published head remains
+`d926e3a98021431ca6cf9f4b27d24c9adf3ed0d3` until the checkpoint is pushed.
+Dev subsequently advanced to `37bf45fb6232a1d4fb50fdba8f3c19c856ae7664`;
+that second reconciliation is pending, not covered by the evidence below.
+
+After a fresh refs/worktree task census, only the three review-created collisions
+were moved. Upstream identities and original dates/history remain intact:
+
+| Historical review ID | Current review ID | Subject |
+| --- | --- | --- |
+| TASK-31759 | TASK-32013 | Assistant-turn production stylesheet harness |
+| TASK-31901 | TASK-32014 | Loguru capture sink lifetime |
+| TASK-31902 | TASK-32015 | Deferred Chunking Lab imports |
+
+Historical IDs and evidence paths above remain incident references, not current
+task pointers. The task identity check passes all 3,589 task records.
+
+The user approved the private Canvas/citation move into the existing message
+controller and safe diagnostic context at Qodo's five settings boundaries.
+Both changes passed independent spec and quality reviews. ChatScreen decreased
+from 18,074 lines / 531 methods to 17,521 / 520; its unchanged limits still fail
+by 710 lines / 15 methods. The four complete wiring/message/citation/compiler
+files pass 159 tests. Callback identity required a correction before those passes;
+the incident is recorded in `lessons-testing-evidence.md`.
+
+Settings diagnostics record a fixed operation/phase, exception type, validated
+canonical v4 UUID session/submission IDs, and an exact nonnegative integer
+generation. They do not attach exception text or tracebacks. Four fault paths
+plus invalid-ID controls pass all 12 cases; the prior three-complete-file settings
+selection passed 53 cases before three additional invalid-UUID controls were
+added. The real modal-transfer failure control also passes. Qodo replies on a
+published correcting SHA are still pending.
+
+Incremental agent-step persistence now yields/closes its owned DB and supplies
+the real RunLogWriter with the test-owned directory. Its complete file passes
+34 cases, with zero retained SQLite descriptors under the native F_GETPATH
+observer (`/private/tmp/pr2427-agent-final-resource.jsonl`, matching XML).
+Worker/smoke ownership is separately being finalized and reviewed; temporary
+prototype success alone is not its completion evidence.
+
+The final worker/smoke implementation subsequently passed independent spec and
+quality review. Four complete files pass **52 tests**, with zero retained SQLite
+descriptors in all 52 under the native observer:
+`/private/tmp/pr2427-thread-owner-implementation.HOSRfM/final.log` and `final.jsonl`.
+The opt-in executor closes exact new/replacement handles on their creating
+thread, preserves borrowed connection identity, and drains actual concurrent
+futures before database teardown. Smoke captures only the returned app's exact
+constructor-thread Prompts/Media connections. Ten new controls cover failure,
+cancellation, timeout, borrowed transactions, replacement handles, and ordering.
+Scoped Ruff and whitespace checks pass. This is test-only ownership repair.
+
+Reconciliation found two stale production provider-selection calls in inactive
+conversation token warmup, plus one undefined native-test factory alias. The
+calls now use the existing owner on both sides of the await. Real-store/worker
+controls verify immutable inputs and payload/provider replacement fences.
+Receiver-specific moved-seam guard checks and explicit fixture/controller calls
+remove nine false positives without exempting wrong Console calls. Five complete
+affected files pass 53 cases (`/private/tmp/pr2427-seam-green.log`).
+
+The saved-Chatbook browser roundtrip passes after that production fix. The other
+two served-browser failures were an omitted runtime profile in a fixture source
+response; a diagnostic correction passed both without changing assertions. The
+repository fixture now uses the supported profile constant. Complete native and
+browser verification is still running; do not substitute these focused passes
+for the final file results.
+
+The complete native-chat file finished **349 passed / 2 failed**. Both remaining
+fixtures constructed inactive sessions with no settings, unlike the production
+new-session path; token warmup correctly refused them. Supplying existing
+default settings makes both focused cases pass with unchanged workspace/private
+scratch assertions. The complete two-file browser selection finished **64 passed
+/ 1 failed**: all served cases pass, while a native bridge-confirmation dialog
+timed out and remains under investigation. Complete-file qualification must be
+rerun after the newest dev reconciliation.
+
+All six derived preflight checks pass after reviewing the exact diagnostic
+statement changes: the two moved statements are unchanged, and five settings
+sites delegate to one privacy-filtered helper. The manifest now has 599 owners,
+7,670 TASK-494 calls, and 12 sink files. Controller receiving pins were reconciled
+to the exact sanctioned extraction replay (analysis 873, Reader 774); screen
+limits and the genuinely overgrown browse-controller pin remain unchanged.
+
+Open merge blockers include Console/Library screen size, Media browse-controller
+size, seven added broad CSS rules (281 versus 274 on fetched dev), final complete
+verification, the newly advanced dev tip, and published final-head review/checks.
+Additional Console/Library owner moves have been proposed for user approval;
+there is no normal-merge qualification yet.
+
+Environment disclosure: verification uses the recovery worktree's ignored
+isolated Python 3.12 / Textual 8.2.8 environment with its own editable install and
+a shared-dependency path. During initial browser setup, an agent also installed
+the already-declared `html5lib==1.1` into the original checkout's `.venv`; no other
+package changed. Original source files were not modified, but that environment
+was changed and must not be described as untouched.
