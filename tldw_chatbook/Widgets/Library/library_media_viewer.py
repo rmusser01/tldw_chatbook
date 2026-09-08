@@ -1048,6 +1048,17 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 generate.disabled = True
                 generate.tooltip = reason
             yield generate
+        if reason:
+            # task-31981: the reason must reach a keyboard-first user, not
+            # only a mouse tooltip. Same inline-reason grammar as the Export
+            # gate's "No destination chosen" line under its blocked button
+            # (library_export_canvas.py). The tooltip above stays as a bonus.
+            yield Static(
+                reason,
+                id="library-media-analysis-generate-reason",
+                classes="library-media-action-reason",
+                markup=False,
+            )
 
     def _compose_analysis_edit_form(self) -> ComposeResult:
         """Render the analysis edit ``TextArea`` prefilled with the current analysis.

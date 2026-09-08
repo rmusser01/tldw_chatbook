@@ -2143,6 +2143,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-31981: the always-visible reason line under a blocked Generate
+   (Reader Analysis pane) or Analyze (select mode) -- mirrors the Export
+   gate's inline "No destination chosen" line so a keyboard-first user
+   reads WHY the action is off, not just a hover tooltip. */
+.library-media-action-reason {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
 .library-export-field {
     width: 100%;
     height: 3;
