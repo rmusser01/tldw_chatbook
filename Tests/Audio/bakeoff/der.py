@@ -30,6 +30,12 @@ from collections.abc import Iterable, Sequence
 
 Segment = tuple[float, float, str]
 
+#: Hypothesis-speaker count past which `_best_mapping` stops being exact. The
+#: harness caps clusters at `max_speakers` (8) and references top out at 5, so
+#: this is unreachable here; `exact_mapping()` lets a caller record when it was
+#: not (review Minor 12).
+_DP_LIMIT = 20
+
 
 def _merged_exclusions(reference: Sequence[Segment], collar: float) -> list[tuple[float, float]]:
     """`[b - collar, b + collar]` around every reference boundary, merged."""
@@ -142,7 +148,15 @@ def _best_mapping(overlap: dict[tuple[str, str], float], refs: list[str], hyps: 
     return max(best.values())
 
 
-_DP_LIMIT = 20
+def exact_mapping(hypothesis: list[Segment]) -> bool:
+    """Whether `der` will use the EXACT speaker assignment for `hypothesis`.
+
+    False means the bitmask DP was skipped for best-first greedy, which is
+    optimal on most real pairings but not guaranteed -- callers that record
+    results should record this too, so an approximate mapping is never mistaken
+    for a measured one (review Minor 12).
+    """
+    return len({speaker for _, _, speaker in hypothesis}) <= _DP_LIMIT
 
 
 def der(

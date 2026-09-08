@@ -49,7 +49,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from Tests.Audio.bakeoff import corpus
-from Tests.Audio.bakeoff.der import der, mapping
+from Tests.Audio.bakeoff.der import der, exact_mapping, mapping
 
 WINDOW_S = 3.0
 MAX_LIVE_WINDOWS = 60          # per file; keeps a live cell to ~20 s of assigns
@@ -126,7 +126,11 @@ def _live_file(diarizer, entry: dict, reference: list) -> dict:
     return {
         "windows": len(assigned),
         "labelled": len(scored),
-        "purity": (pure / len(scored)) if scored else 0.0,
+        # Over every window FED, not just the ones the clusterer labelled:
+        # dividing by `scored` would silently forgive a backpressured clusterer
+        # that answered `None` (review Minor 1). `windows == labelled` on all
+        # 120 live rows of the committed run, so no number moves.
+        "purity": (pure / len(assigned)) if assigned else 0.0,
         "coverage": (len(covered) / len(speakers)) if speakers else 0.0,
         "clusters": len(counts),
         "ref_speakers": len(speakers),
@@ -231,6 +235,7 @@ def run_cell(spec: dict) -> dict:
             if spec["kind"] == "stop" and spec.get("via") == "inprocess":
                 measured = _stop_file_inprocess(spec, models_dir, entry, duration)
                 row["der"] = der(reference, measured["hypothesis"], collar=COLLAR_S)
+                row["exact_mapping"] = exact_mapping(measured["hypothesis"])
                 row["rtf"] = measured["elapsed"] / duration
                 row["hyp_segments"] = len(measured["hypothesis"])
                 row["hyp_speakers"] = len({s for _, _, s in measured["hypothesis"]})
@@ -251,6 +256,7 @@ def run_cell(spec: dict) -> dict:
                     row["rtf"] = (time.perf_counter() - t0) / duration
                     hypothesis = [(s.start_s, s.end_s, s.speaker) for s in segments]
                     row["der"] = der(reference, hypothesis, collar=COLLAR_S)
+                    row["exact_mapping"] = exact_mapping(hypothesis)
                     row["hyp_segments"] = len(hypothesis)
                     row["hyp_speakers"] = len({s for _, _, s in hypothesis})
                     row["ref_speakers"] = len({s for _, _, s in reference})
@@ -293,8 +299,41 @@ def _probe(python: str, modules: list[str]) -> list[str]:
     except (OSError, subprocess.SubprocessError) as exc:
         return [f"<{type(exc).__name__}>"]
     if out.returncode != 0:
-        return [f"<probe failed: {out.stderr.strip().splitlines()[-1:] or ''}>"]
+        return [f"<probe failed: {' '.join(out.stderr.strip().splitlines()[-1:]) or 'no output'}>"]
     return [m for m in out.stdout.strip().split(",") if m]
+
+
+#: Packages whose versions decide what a SpeechBrain baseline cell actually
+#: measured. torchcodec is the one that matters most: torchaudio >= 2.9 routes
+#: `load` through it, and without it the SpeechBrain Stop pass returns ZERO
+#: segments while the live path still looks healthy -- so a baseline run can
+#: silently be the broken one, and the JSON has to say which (review I3).
+#: These are DISTRIBUTION names (what `importlib.metadata.version` takes), not
+#: import names -- "sklearn" would report absent forever.
+BASELINE_PACKAGES = ("torch", "torchaudio", "torchcodec", "speechbrain", "scikit-learn")
+
+
+def interpreter_provenance(python: str) -> dict:
+    """`{package: version|"absent"}` for `python`, plus its own version.
+
+    Same argument-list subprocess shape as `_probe`; a package that cannot be
+    imported is recorded as `"absent"` rather than omitted, so "we did not
+    check" and "it was not installed" cannot be confused later.
+    """
+    code = (
+        "import importlib.metadata as m, platform, json;"
+        f"names = {list(BASELINE_PACKAGES)!r};"
+        "out = {'python': platform.python_version()};"
+        "\nfor n in names:\n"
+        "    try:\n        out[n] = m.version(n)\n"
+        "    except Exception:\n        out[n] = 'absent'\n"
+        "print(json.dumps(out))"
+    )
+    try:
+        done = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=180, check=False)
+        return json.loads(done.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {"python": "unknown"}
 
 
 def _stage_models(source: Path, work: Path, embedder: str, segmentation: str) -> Path:
@@ -307,8 +346,12 @@ def _stage_models(source: Path, work: Path, embedder: str, segmentation: str) ->
     seg = source / (engine.SEGMENTATION.file_name if segmentation == "float" else engine.SEGMENTATION_INT8.file_name)
     for src, name in ((seg, engine.SEGMENTATION.file_name), (source / engine.EMBEDDERS[embedder].file_name, None)):
         target = dest / (name or src.name)
-        if not target.exists():
-            target.symlink_to(src)
+        # `exists()` follows the link, so it is False for a DANGLING symlink --
+        # left behind by a previous run whose --models-dir has since been
+        # deleted -- and `symlink_to` would then raise FileExistsError and take
+        # the whole driver down before a single cell ran (review Minor 2).
+        target.unlink(missing_ok=True)
+        target.symlink_to(src)
     return dest
 
 
@@ -380,13 +423,29 @@ def _fmt(value, digits=3) -> str:
     return f"{value:.{digits}f}"
 
 
-#: spec §7's go/no-go, as (name, comparison) pairs. All must hold for the
-#: chosen embedder before `AUTO_ORDER` may put ONNX first.
-LATENCY_CEILING_MS = 150.0      # M-series; the runner's own ceiling is 300 ms
+#: spec §7's go/no-go. All must hold for the chosen embedder before
+#: `AUTO_ORDER` may put ONNX first.
+#: The latency ceiling is per-MACHINE in the spec -- 150 ms on the M-series,
+#: 300 ms on the runner -- so it is derived from the recorded machine, never a
+#: module constant: a report generated by `diarizer-bakeoff.yml` would
+#: otherwise print "300 ms (runner)" in its header and grade the runner's
+#: numbers at 150. That can only manufacture a spurious FAIL, and that run is
+#: exactly the one meant to close the evidence gap (review I2).
+LATENCY_CEILING_M_SERIES_MS = 150.0
+LATENCY_CEILING_OTHER_MS = 300.0
 RTF_CEILING = 0.15
 DER_SLACK = 0.02
 PURITY_SLACK = 0.03
 SEPARATION_SLACK = 0.05
+
+
+def latency_ceiling_ms(machine: dict) -> float:
+    """The spec §7 embed-latency ceiling for the machine that produced a run."""
+    return (
+        LATENCY_CEILING_M_SERIES_MS
+        if str(machine.get("machine", "")).lower() in ("arm64", "aarch64")
+        else LATENCY_CEILING_OTHER_MS
+    )
 
 
 def _cell_summary(cell: dict) -> dict:
@@ -454,6 +513,12 @@ def _gate_rows(results: dict) -> list[list[str]]:
     best = _best_cells(results)
     baseline = best.get(("speechbrain", ECAPA), {})
     base_stop, base_live = baseline.get("stop"), baseline.get("live")
+    if base_stop is None and base_live is None:
+        # No baseline in this run (the int8 study is ONNX-only): every verdict
+        # would be "n/a" against an all-"--" baseline line. Print nothing
+        # rather than a table of generated noise (review Minor 10).
+        return []
+    ceiling = latency_ceiling_ms(results["machine"])
     rows: list[list[str]] = []
     for (engine, embedder), slot in sorted(best.items()):
         if engine != "onnx":
@@ -477,7 +542,7 @@ def _gate_rows(results: dict) -> list[list[str]]:
             f"{_fmt(live and live['purity'])} ({verdict(live and live['purity'], purity_floor, False)})",
             f"{_fmt(stop and stop['rtf'])} ({verdict(stop and stop['rtf'], RTF_CEILING)})",
             (f"{_fmt(live and live['latency_median_ms'], 1)} ms "
-             f"({verdict(live and live['latency_median_ms'], LATENCY_CEILING_MS)})"),
+             f"({verdict(live and live['latency_median_ms'], ceiling)})"),
             f"{_fmt(stop and stop['separation'])} ({verdict(stop and stop['separation'], sep_floor, False)})",
             f"cluster {_fmt(stop and stop['cluster_threshold'], 2)} / live {_fmt(live and live['live_threshold'], 2)}",
         ])
@@ -493,7 +558,15 @@ def _report(results: dict) -> str:
     add(f"- Commit: `{machine['commit']}`")
     add(f"- Machine: {machine.get('cpu_brand', machine['processor'])}, "
         f"{machine['cpu_count']} cores, {machine['platform']}, Python {machine['python']}")
-    add(f"- sherpa-onnx: {results['sherpa_onnx']}")
+    add(f"- sherpa-onnx: {results['sherpa_onnx']} (harness interpreter)")
+    baseline_python = results.get("baseline_python")
+    if baseline_python:
+        # Review I3: without torchcodec the SpeechBrain Stop pass returns ZERO
+        # segments while the live path looks healthy, so the baseline's
+        # interpreter is provenance, not trivia -- the JSON has to say which
+        # of the two runs this is.
+        add("- Baseline interpreter (`--speechbrain-python`): "
+            + ", ".join(f"{name} {version}" for name, version in sorted(baseline_python.items())))
     add(f"- Corpus: {results['corpus']['files']} files "
         f"({results['corpus']['voxconverse']} VoxConverse dev + {results['corpus']['ami']} AMI dev), "
         f"{results['corpus']['seconds'] / 60.0:.0f} minutes of audio")
@@ -509,6 +582,7 @@ def _report(results: dict) -> str:
 
     gate_rows = _gate_rows(results)
     if gate_rows:
+        ceiling = latency_ceiling_ms(machine)
         best = _best_cells(results)
         base = best.get(("speechbrain", ECAPA), {})
         add("## Go/no-go (spec §7) -- best cell per embedder vs the ECAPA baseline")
@@ -520,8 +594,9 @@ def _report(results: dict) -> str:
             f"separation {_fmt(base.get('stop', {}).get('separation'))}.")
         add("")
         add(f"Gates: DER within {DER_SLACK} absolute, purity within {PURITY_SLACK}, "
-            f"RTF <= {RTF_CEILING}, embed latency <= {LATENCY_CEILING_MS:.0f} ms (M-series) / 300 ms (runner), "
-            f"separation within {SEPARATION_SLACK}.")
+            f"RTF <= {RTF_CEILING}, embed latency <= {ceiling:.0f} ms "
+            f"(the spec's ceiling for this machine: {LATENCY_CEILING_M_SERIES_MS:.0f} ms M-series / "
+            f"{LATENCY_CEILING_OTHER_MS:.0f} ms runner), separation within {SEPARATION_SLACK}.")
         add("")
         add("| embedder | DER | live purity | RTF | embed latency | separation | best thresholds |")
         add("| --- | --- | --- | --- | --- | --- | --- |")
@@ -547,8 +622,8 @@ def _report(results: dict) -> str:
     add("## Live purity / coverage and per-window embed latency")
     add("")
     add("| engine | embedder | live threshold | purity | coverage | clusters vs speakers | "
-        "latency median (ms) | p95 (ms) | windows |")
-    add("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+        "latency median (ms) | p95 (ms) | windows | latency samples |")
+    add("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for cell in results["cells"]:
         spec = cell["spec"]
         if spec["kind"] != "live":
@@ -560,13 +635,15 @@ def _report(results: dict) -> str:
         add(f"| {spec['engine']} | {spec['embedder']} | {_fmt(spec.get('live_threshold'), 2)} | "
             f"{_fmt(_aggregate(rows, 'purity'))} | {_fmt(_aggregate(rows, 'coverage'))} | "
             f"+{_fmt(_cell_summary(cell)['cluster_error'], 2)} | "
-            f"{_fmt(median, 1)} | {_fmt(p95, 1)} | {len(latencies)} |")
+            f"{_fmt(median, 1)} | {_fmt(p95, 1)} | "
+            f"{sum(r.get('windows', 0) for r in rows)} | {len(latencies)} |")
     add("")
 
     add("## Self-match separation (VoxConverse speakers)")
     add("")
-    add("| engine | embedder | cluster threshold | self cos | best other cos | separation | recommended voice_match_threshold |")
-    add("| --- | --- | --- | --- | --- | --- | --- |")
+    add("| engine | embedder | cluster threshold | self cos | best other cos | separation | "
+        "recommended voice_match_threshold | n files |")
+    add("| --- | --- | --- | --- | --- | --- | --- | --- |")
     for cell in results["cells"]:
         spec = cell["spec"]
         if spec["kind"] != "stop":
@@ -579,7 +656,8 @@ def _report(results: dict) -> str:
             return statistics.mean(values) if values else None
         add(f"| {spec['engine']} | {spec['embedder']} | {_fmt(spec.get('cluster_threshold'), 2)} | "
             f"{_fmt(_mean('self_similarity'))} | {_fmt(_mean('other_similarity'))} | "
-            f"{_fmt(_mean('separation'))} | {_fmt(_mean('recommended_threshold'))} |")
+            f"{_fmt(_mean('separation'))} | {_fmt(_mean('recommended_threshold'))} | "
+            f"{sum(1 for f in found if isinstance(f.get('separation'), (int, float)))} |")
     add("")
 
     if results["skipped"]:
@@ -651,6 +729,10 @@ def _merge(paths: list[str], out_path: Path) -> int:
                 f"merge: {Path(raw).name} ran a different corpus ({len(loaded['corpus']['ids'])} files) "
                 "-- its cells are included but are NOT comparable"
             )
+        if "baseline_python" in loaded and "baseline_python" not in merged:
+            # The baseline runs in its own file (its own interpreter); the
+            # first merged file is usually an ONNX-only run and has none.
+            merged["baseline_python"] = loaded["baseline_python"]
         merged["cells"].extend(loaded["cells"])
         merged["skipped"].extend(loaded["skipped"])
         for asset in loaded["models"]:
@@ -751,6 +833,11 @@ def main(argv: list[str] | None = None) -> int:
         "cells": [],
         "skipped": skipped,
     }
+    if "speechbrain" in args.engines:
+        # Review I3: which of the two possible baseline runs is this? Without
+        # torchcodec the SpeechBrain Stop pass returns zero segments, and the
+        # JSON alone could not previously tell the broken run from the good one.
+        results["baseline_python"] = interpreter_provenance(args.speechbrain_python)
 
     for index, cell in enumerate(cells, 1):
         python = args.speechbrain_python if cell["engine"] == "speechbrain" else sys.executable
