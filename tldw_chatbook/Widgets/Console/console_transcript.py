@@ -1747,6 +1747,10 @@ class ConsoleMarkdownMessage(Vertical):
 
         Args:
             capped: Apply the quote limit; False preserves the full clipboard text.
+
+        Returns:
+            The selected Markdown source, quote-capped when capped is True
+            and otherwise complete, or an empty string when nothing is selected.
         """
         if self._selection_line_range is None:
             return ""
@@ -2106,6 +2110,10 @@ class ConsoleTranscriptMessage(Vertical):
 
         Args:
             capped: Apply the quote limit; False preserves the full clipboard text.
+
+        Returns:
+            The highlighted body text, quote-capped when capped is True and
+            otherwise complete, or an empty string when nothing is selected.
         """
         if self._selection_range is None:
             return ""
@@ -2343,6 +2351,10 @@ class ConsoleToolDiffRow(Vertical):
 
         Args:
             capped: Apply the quote limit; False preserves the full clipboard text.
+
+        Returns:
+            The selected diff lines, quote-capped when capped is True and
+            otherwise complete, or an empty string when nothing is selected.
         """
         if self._selection_range is None:
             return ""

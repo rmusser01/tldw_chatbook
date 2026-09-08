@@ -1,11 +1,11 @@
 ---
 id: TASK-32033
 title: Add Copy selection to the Console selection menu
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-08 05:16'
-updated_date: '2026-09-08 06:36'
+updated_date: '2026-09-08 06:47'
 labels:
   - console
   - clipboard
@@ -40,6 +40,7 @@ Users selecting part of a Console message need an explicit way to copy that text
 5. Regenerate the bundled widget stylesheets and use the production stylesheet harness on current dev. Run the targeted selection suites, scoped lint/format checks, and a production Console rendering/interaction check; self-review the diff and record evidence. Compare any existing test failures against pristine dev.
 6. Per the requested follow-up, trace and repair the three inherited failures before rebasing or merging. Use the existing production-style keyboard harness, sample geometry after selection entry, and wire the real workspace registry into the two real-database stores. Preserve or strengthen the behavioral assertions and rerun the complete selection slice. This is test-harness repair within existing runtime and persistence contracts; no new ADR is required.
 7. Address Qodo's two findings: annotate/document the public compose override, and remeasure the menu when its owner's bounds change. Exercise shrink/grow cycles from terminal and transcript changes in normal and ANSI modes; restore normal sizing without losing focus. Reuse Textual's layout notification and the existing clamp; no new ADR is required.
+8. Document the empty-selection and capped/full-text return contracts on all three modified selection getters, as requested by Qodo's follow-up review. This is documentation only; no new ADR or behavior test is required. Rebase onto the updated dev and repeat the targeted integration and preflight checks.
 
 ADR required: no
 
@@ -62,6 +63,8 @@ The consolidated widget stylesheets are regenerated from the menu source. The ne
 The three inherited failures were repaired at their test setup boundaries. The keyboard harness lacked the consolidated CSS and sampled the row before selection entry added its highlight and reflowed the layout. It now samples the selected row and additionally verifies that the menu stays inside its owner without shrinking it. The two real-database feedback tests now supply the same real workspace registry as ConsoleRuntime; their SQLite event and annotation assertions remain intact. Independent review found no masked production defect or weakened coverage.
 
 Addressed Qodo's two findings: compose now declares ComposeResult and documents its yielded widgets; the menu observes screen layout changes, clears temporary compact styling and height limits when owner bounds change, and remeasures. Offset corrections use the measured position and request layout only when the offset changes. The layout subscription is removed on unmount. Eight resize cases cover terminal and transcript growth/shrinkage in both color modes, restoration of the feedback hint and actions, preserved focus and selection, and clicking Copy after repositioning. Independent review found no remaining actionable issues.
+
+Qodo's follow-up requested explicit Returns sections on the three selection getters. Those docstrings now describe each row type's selected text, the capped/full-text option, and the empty-string result. The executable Python AST is unchanged by this documentation correction, with no new Ruff diagnostics and all edited regions formatted.
 
 Files: `Widgets/Console/console_selection_menu.py`, `Widgets/Console/console_transcript.py`, both generated `css/widget_defaults_*.tcss` files, the new `Tests/UI/test_console_selection_copy.py`, existing selection-menu, keyboard-selection, and end-to-end tests, `Docs/User_Guide/console/text-selection-and-feedback.md`, and `backlog/docs/lessons-textual.md`.
 
