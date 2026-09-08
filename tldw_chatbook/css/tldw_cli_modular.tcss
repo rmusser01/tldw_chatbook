@@ -2279,17 +2279,10 @@ EnhancedFileDialog InputBar Select {
     background: $ds-surface-raised;
 }
 
-/* F-054/F-057: these two badges carry whole SENTENCES (the inspector's
-   empty-state explainer, the servers-mode aggregate summary), not one-word
-   chips -- they must wrap at narrow widths instead of clipping mid-word.
-   ID selectors beat the `.ds-status-badge` class rule above on
-   specificity; every other `.ds-status-badge` consumer keeps the fixed
-   height. `width: 1fr` is required alongside: the class rule's
-   `width: auto` would otherwise size the badge to its content's natural
-   width (no wrap at all -- the line just overflows its pane). Kept in
-   lockstep with the matching overrides in MCPInspector.DEFAULT_CSS and
-   MCPServersMode.DEFAULT_CSS, which cover the bare test harnesses that
-   never load this bundle. */
+/* F-054/F-057: sentence badges must wrap. ID rules override the fixed
+   .ds-status-badge size; 1fr avoids intrinsic-width overflow. Keep these
+   overrides in sync with MCPInspector/MCPServersMode.DEFAULT_CSS for
+   standalone harnesses. */
 #mcp-inspector-state,
 #mcp-overview-summary {
     width: 1fr;

@@ -64,6 +64,15 @@ from Tests.TTS_Events.test_spoken_feedback_streaming import (  # noqa: F401,E402
 )
 
 
+@pytest.fixture(autouse=True)
+async def _retire_utterance_handler(handler, monkeypatch):
+    """Finish owned artifact cleanup while the fake player is still installed."""
+    yield
+    await handler.cleanup_tts_resources()
+    assert not handler._audio_files
+    assert not handler._pending_legacy_cleanup_timers
+
+
 # ---------------------------------------------------------------------------
 # Extra fakes this file needs that the shared harness doesn't provide:
 # a service that can be called more than once (case a: two utterances back
@@ -590,7 +599,16 @@ async def test_last_played_and_the_handoff_event_are_registered_before_the_file_
     any concurrent stop could possibly need to find it."""
     audio_file = tmp_path / "clip.mp3"
     audio_file.write_bytes(b"fake audio data")
-    fake_player = _FakeLegacyPlayer(finishes_after_polls=1)
+    entered = threading.Event()
+    finish = threading.Event()
+
+    class HeldPlayer(_FakeLegacyPlayer):
+        def play(self, file_path):
+            entered.set()
+            assert finish.wait(5), "playback admission was not released"
+            return super().play(file_path)
+
+    fake_player = HeldPlayer(finishes_after_polls=1)
     monkeypatch.setattr(
         "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
     )
@@ -601,26 +619,26 @@ async def test_last_played_and_the_handoff_event_are_registered_before_the_file_
             "msg-1", audio_file, "Hi there.", on_finished
         )
     )
-    # Let the task run up to its own first real suspension point
-    # (the executor hop) -- everything before that, including the
-    # `_last_played` assignment and registering the handoff's own event,
-    # runs synchronously with no other await in between, so a handful of
-    # no-op yields reliably lands here without any wall-clock dependency.
-    for _ in range(5):
-        await asyncio.sleep(0)
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        async with handler._audio_files_lock:
+            assert handler._last_played == ("msg-1", audio_file)
+        assert len(handler._legacy_handoff_stop_events) == 1, (
+            "the handoff's own event must be registered before player admission"
+        )
+        assert not task.done()
+        assert results == []
 
-    async with handler._audio_files_lock:
-        assert handler._last_played == ("msg-1", audio_file)
-    assert len(handler._legacy_handoff_stop_events) == 1, (
-        "the handoff's own event must be registered for the duration of "
-        "the play-and-poll call -- this is what F3's fix gates on"
-    )
-
-    await task
-    assert results == [True]
-    assert handler._legacy_handoff_stop_events == set(), (
-        "the event must be discarded once the handoff completes"
-    )
+        finish.set()
+        await task
+        assert results == [True]
+        assert handler._legacy_handoff_stop_events == set(), (
+            "the event must be discarded once the handoff completes"
+        )
+    finally:
+        finish.set()
+        await task
+        await handler.cleanup_tts_resources()
 
 
 @pytest.mark.asyncio
