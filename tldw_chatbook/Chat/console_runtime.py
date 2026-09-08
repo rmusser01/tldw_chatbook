@@ -35,8 +35,13 @@ in two:
 
 | Call | When | What it does |
 |---|---|---|
-| `leave_console_runtime` | every navigation AWAY from Console | ends ONE visit: clears the view's hook slots, cancels+awaits this visit's USER stream tasks, denies its parked approval rounds, tombstones its queue chains |
+| `leave_console_runtime` | final Console unmount | ends ONE visit: clears the view's hook slots, cancels+awaits this visit's USER stream tasks, denies its parked approval rounds, tombstones its queue chains |
 | `dispose_console_runtime` | app exit (`_shutdown_app_owned_lifecycles`) | the permanent form — `controller.shutdown()` then `gateway.aclose()`, exactly the order `on_unmount` used to run |
+
+TASK-31520 reuses and suspends Console during ordinary navigation instead of
+unmounting it. Streams, queues and decisions continue with their original owners.
+TASK-32078 accounts for actual visibility when notifying and timing decisions;
+a covering modal also makes a retained card temporarily unanswerable.
 
 An `AGENT_WAKE` turn is deliberately NOT cancelled by `leave_console`
 (owner ruling): cancelling it would re-create the "only completes if you
@@ -120,12 +125,12 @@ it left behind — tree, active leaf, drafts, pending attachments and all.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import inspect
-from dataclasses import dataclass
-from pathlib import Path
-from threading import Lock
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from threading import Lock, get_ident
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 from uuid import uuid4
 
@@ -138,8 +143,8 @@ from tldw_chatbook.Chat.console_library_policy import (
 )
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.thinking_blocks import normalize_thinking_history_policy
-from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
+from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -738,6 +743,8 @@ class ConsoleRuntime:
         self._agent_bridge: Any | None = None
         self._agent_runs_db: Any | None = None
         self._activity_receipts: Any | None = None
+        self._activity_receipts_lock = Lock()
+        self._receipt_owner_thread_id = get_ident()
         self._activity_hydration_task: asyncio.Task[int] | None = None
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
@@ -957,6 +964,35 @@ class ConsoleRuntime:
                 )
             return authority
 
+    def _canvas_scope_for_run(self, session_id: str) -> Any:
+        """Resolve a live run's exact owner independently of the selected view.
+
+        Browser operations retain the view's active-session resolver. Queued
+        turns may start while another session or screen is selected, but must
+        still match their captured conversation and transcript branch.
+        """
+        from tldw_chatbook.Canvas.models import CanvasScope
+
+        store = self._chat_store
+        if self._disposed or store is None:
+            raise RuntimeError("Canvas session is unavailable")
+        session = next(
+            (item for item in store.sessions() if item.id == session_id), None
+        )
+        if session is None:
+            raise RuntimeError("Canvas session is unavailable")
+        active_ids = store.canvas_active_path_message_ids(session_id)
+        if not active_ids:
+            raise RuntimeError("Canvas requires an active transcript message")
+        return CanvasScope(
+            session_id=session_id,
+            conversation_id=session.persisted_conversation_id or session_id,
+            active_message_ids=active_ids,
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id=str(uuid4()),
+        )
+
     def _materialize_canvas_native_authority(self) -> Any:
         """Construct the single authority for an actual publication/open."""
 
@@ -976,6 +1012,7 @@ class ConsoleRuntime:
             self._canvas_native_authority = NativeConsoleCanvasAuthority(
                 scope_resolver=binding.scope_resolver,
                 canvas_controller=controller,
+                run_scope_resolver=self._canvas_scope_for_run,
                 bridge_sink=binding.bridge_sink,
                 bridge_prepare=binding.bridge_prepare,
                 auto_open=binding.auto_open,
@@ -1233,6 +1270,10 @@ class ConsoleRuntime:
         )
         self._chat_store = ConsoleChatStore(
             persistence=persistence,
+            assistant_defaults_provider=self._resolve_new_console_assistant,
+            on_assistant_default_notice=lambda notice: self._app.notify(
+                notice, severity="warning"
+            ),
             settle_provider_traces_off_thread=True,
             trace_projection=(
                 ConsoleTraceProjection(
@@ -1274,6 +1315,12 @@ class ConsoleRuntime:
             self._schedule_legacy_trace_maintenance(db, get_legacy_normalizer)
         self._bind_view_hooks()
         return self._chat_store
+
+    def _resolve_new_console_assistant(self, workspace_id: str, settings: Any) -> Any:
+        """Resolve new-chat identity without requiring a mounted Console view."""
+        from .console_assistant_defaults import resolve_new_console_assistant
+
+        return resolve_new_console_assistant(self._app, workspace_id, settings)
 
     def _schedule_legacy_trace_maintenance(
         self,
@@ -1495,6 +1542,48 @@ class ConsoleRuntime:
             )
         return self._provider_gateway
 
+    def ensure_activity_receipt_service(self) -> Any | None:
+        """Create local result storage without constructing Console or a provider.
+
+        Call via ``asyncio.to_thread`` from async presentation code. Construction
+        is serialized with other readers and disposal, and background callers
+        close their initialization connection before handing ownership back.
+
+        Returns:
+            The app-owned lazy receipt service, or None without a durable local
+            profile database or after shutdown admission has closed.
+        """
+        with self._activity_receipts_lock:
+            if self._disposed:
+                return None
+            if self._activity_receipts is not None:
+                return self._activity_receipts
+            db = getattr(self._app, "chachanotes_db", None)
+            db_path = getattr(db, "db_path", None) if db is not None else None
+            if not db_path or str(db_path) == ":memory:":
+                return None
+            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+            runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+            try:
+                service = _LazyConsoleActivityReceiptService(
+                    runs_db,
+                    getattr(self._app, "conversation_local_marks_service", None),
+                )
+                # Dispose writes its lifetime latch under this same lock. Never
+                # publish an owner between that latch and its resource snapshot.
+                with self._canvas_native_lock:
+                    if self._disposed:
+                        return None
+                    self._agent_runs_db = runs_db
+                    self._activity_receipts = service
+                    return service
+            finally:
+                # AgentRunsDB.close affects only the calling thread. A worker's
+                # held initialization connection cannot be closed by app exit.
+                if self._disposed or get_ident() != self._receipt_owner_thread_id:
+                    runs_db.close()
+
     def ensure_agent_bridge(
         self,
         *,
@@ -1533,20 +1622,11 @@ class ConsoleRuntime:
         """
         if self._agent_bridge is not None or self._disposed:
             return self._agent_bridge
-        db = getattr(self._app, "chachanotes_db", None)
-        db_path = getattr(db, "db_path", None) if db is not None else None
-        if not db_path or str(db_path) == ":memory:":
-            self._agent_bridge = None
+        if self.ensure_activity_receipt_service() is None or self._disposed:
             return None
         from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-        runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
-        self._agent_runs_db = runs_db
-        self._activity_receipts = _LazyConsoleActivityReceiptService(
-            runs_db,
-            getattr(self._app, "conversation_local_marks_service", None),
-        )
+        runs_db = self._agent_runs_db
         # TASK-1971 (Agent Change Review): the tracker is None when git is
         # absent -- the bridge then skips tracking entirely, and runs behave
         # exactly as before the feature existed (spec gating decision).
@@ -1608,19 +1688,27 @@ class ConsoleRuntime:
         service = self._activity_receipts
         if service is None or self._disposed:
             return None
-        if service.hydration_state() == "ready":
-            return self._activity_hydration_task
         task = self._activity_hydration_task
         if task is not None and not task.done():
             return task
+        if service.hydration_state() == "ready":
+            return self._activity_hydration_task
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return None
         token = self.authority_token
+        runs_db = self._agent_runs_db
+
+        def read_receipts() -> int:
+            try:
+                return service.hydrate_from_storage()
+            finally:
+                if runs_db is not None:
+                    runs_db.close()
 
         async def hydrate() -> int:
-            result = await asyncio.to_thread(service.hydrate_from_storage)
+            result = await asyncio.to_thread(read_receipts)
             if self._disposed or self.authority_token != token:
                 return 0
             return result
@@ -1956,10 +2044,15 @@ class ConsoleRuntime:
         controller, gateway = self._chat_controller, self._provider_gateway
         canvas_gateway = self._canvas_gateway
         canvas_authority = self._canvas_native_authority
-        coordinator, runs_db = (
-            self._change_review_coordinator,
-            self._agent_runs_db,
-        )
+        coordinator = self._change_review_coordinator
+
+        def receipt_database_after_creation() -> Any:
+            # An inbox may still be initializing storage on a worker. Wait away
+            # from the UI loop; the disposed latch prevents late publication.
+            with self._activity_receipts_lock:
+                return self._agent_runs_db
+
+        runs_db = await asyncio.to_thread(receipt_database_after_creation)
         self.generation += 1
         hydration_task = self._activity_hydration_task
         self._activity_hydration_task = None

@@ -252,7 +252,7 @@ from ...Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
     ConsoleActivityOutcomePresentation,
 )
-from ...Workspaces import ConsoleConversationBrowserRow, DEFAULT_WORKSPACE_ID
+from ...Workspaces import ConsoleConversationBrowserRow
 from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
@@ -267,31 +267,6 @@ if TYPE_CHECKING:
 # helpers) so it stays out of the UI-ready module census.
 
 logger = logger.bind(module="ChatScreen")
-
-
-def _safe_persona_lookup(service: Any, persona_id: str) -> Mapping[str, Any] | None:
-    """Look a persona up through the app service; any failure means ``None``."""
-    try:
-        record = service.get_persona_profile(persona_id)
-    except Exception:  # noqa: BLE001 -- workspace defaults degrade, never block
-        return None
-    return record if isinstance(record, Mapping) else None
-
-
-def build_persona_agent_system_prompt(record: Mapping[str, Any]) -> str:
-    """Compose a persona record into a Console system prompt (preview seam parity)."""
-    from ...Character_Chat.Character_Chat_Lib import compose_character_card_text
-
-    return (
-        compose_character_card_text(
-            name=str(record.get("name") or "Workspace Agent"),
-            system_prompt=str(record.get("system_prompt") or ""),
-            personality=str(record.get("personality") or ""),
-            description=str(record.get("description") or ""),
-            user_name="User",
-        )
-        or "Stay in character."
-    )
 
 
 _DEFAULT_PROJECT_INSTRUCTION_NOTICE_TIMEOUT_SECONDS = 120.0
@@ -3057,8 +3032,10 @@ class ConsoleSessionController:
         # session. Settings/default-persona selection lives in the helper
         # below so published-default provenance is testable without a live
         # screen.
-        settings, assistant_kwargs = self._new_session_startup_settings()
+        target_workspace_id = self._ensure_console_chat_store().workspace_context.active_workspace_id
+        settings, assistant_kwargs = self._new_session_startup_settings(target_workspace_id)
         self._ensure_console_chat_controller().new_session(
+            workspace_id=target_workspace_id,
             settings=settings,
             canonical_settings_baseline=settings,
             new_chat_default_generation=(self._console_new_chat_default_generation()),
@@ -3184,132 +3161,53 @@ class ConsoleSessionController:
         return ()
 
     def _workspace_default_for_new_session(
-        self,
+        self, workspace_id: str | None = None
     ) -> tuple[str, str, str, str] | None:
-        """Resolve the active workspace's default persona for a NEW session.
+        """Resolve the explicitly targeted workspace for a new conversation."""
+        from ...Chat.console_assistant_defaults import resolve_new_console_assistant
 
-        Workspace assistant defaults (Task 9): explicit workspaces may pin a
-        default persona; a plain new Console tab in such a workspace starts
-        as that persona's session. Returns
-        ``(assistant_id, label, system_prompt, memory_mode)`` only when the
-        active workspace is explicit (never the global console workspace or
-        the built-in Default workspace), not archived, and its effective
-        default resolves ``available``. Every absence or failure degrades to
-        ``None`` (plain session) -- never raises. Handoff/character paths do
-        not consult this helper; their explicit choices outrank the default.
-        """
-        try:
-            registry = getattr(self.app_instance, "workspace_registry_service", None)
-            personas = getattr(
-                self.app_instance, "local_character_persona_service", None
-            )
-            if registry is None or personas is None:
-                return None
-            store = self._ensure_console_chat_store()
-            workspace_id = getattr(
-                getattr(store, "workspace_context", None),
-                "active_workspace_id",
-                None,
-            )
-            if not workspace_id or workspace_id in (
-                CONSOLE_GLOBAL_WORKSPACE_ID,
-                DEFAULT_WORKSPACE_ID,
-            ):
-                return None
-            workspace = registry.get_workspace(workspace_id)
-            if workspace is None or getattr(workspace, "archived", False):
-                return None
-            # Lazy import (boot budget, ADR-097): per-turn resolution only.
-            from ...Workspaces.assistant_defaults import (
-                resolve_effective_assistant_default,
-            )
-
-            effective = resolve_effective_assistant_default(
-                getattr(workspace, "assistant_defaults", None),
-                lambda pid: _safe_persona_lookup(personas, pid),
-            )
-            if effective.status != "available" or not effective.assistant_id:
-                return None
-            record = _safe_persona_lookup(personas, effective.assistant_id)
-            if record is None:
-                return None
-            prompt = build_persona_agent_system_prompt(record)
-            return (
-                effective.assistant_id,
-                effective.label or "Workspace Agent",
-                prompt,
-                effective.persona_memory_mode or "read_only",
-            )
-        except Exception as exc:  # noqa: BLE001 -- workspace defaults degrade, never block
-            logger.warning(
-                "Console session startup: workspace default persona "
-                "resolution failed; starting a plain session; error_type={}",
-                type(exc).__name__,
-            )
+        target = workspace_id
+        if target is None:
+            target = self._ensure_console_chat_store().workspace_context.active_workspace_id
+        startup = resolve_new_console_assistant(
+            self.app_instance, target, ConsoleSessionSettings(provider="")
+        )
+        if startup.assistant_kind != "persona":
             return None
+        return (
+            startup.assistant_id, startup.settings.character_label,
+            startup.settings.system_prompt, startup.persona_memory_mode,
+        )
 
     def _new_session_startup_settings(
-        self,
-    ) -> "tuple[ConsoleSessionSettings | None, dict[str, str]]":
-        """Pick the settings + assistant identity a plain new tab starts with.
+        self, workspace_id: str | None = None
+    ) -> tuple[ConsoleSessionSettings, dict[str, Any]]:
+        """Capture one creation-time Persona choice; existing sessions are never read."""
+        from ...Chat.console_assistant_defaults import resolve_new_console_assistant
 
-        Per ADR-095, Ctrl+T and temporary chats are eligible blank-chat
-        creation paths: they start from the app-published new-chat defaults
-        and never clone the active session. An explicit workspace's available
-        default persona is then stamped onto that snapshot per ADR-079.
-        Duplicate, branch, continue, character, and handoff paths carry their
-        own source settings without routing through this helper. Never raises.
-        """
-        try:
-            settings = self._blank_console_session_settings()
-            if (
-                settings is not None
-                and settings.system_prompt is None
-                and not settings.character_label
-                and settings.persona_memory_mode is None
-            ):
-                workspace_default = self._workspace_default_for_new_session()
-                if workspace_default is not None:
-                    (
-                        default_assistant_id,
-                        default_label,
-                        default_prompt,
-                        default_memory_mode,
-                    ) = workspace_default
-                    return (
-                        replace(
-                            settings,
-                            system_prompt=default_prompt,
-                            character_label=default_label,
-                            persona_memory_mode=default_memory_mode,
-                        ),
-                        {
-                            "assistant_kind": "persona",
-                            "assistant_id": default_assistant_id,
-                            "assistant_label": default_label,
-                        },
-                    )
-            return settings, {}
-        except Exception as exc:  # noqa: BLE001 -- startup degrades, never blocks
-            logger.warning(
-                "Console session startup: new-session settings selection "
-                "failed; falling back to plain defaults; error_type={}",
-                type(exc).__name__,
-            )
-            try:
-                return self._blank_console_session_settings(), {}
-            except Exception:  # noqa: BLE001 -- last-resort plain session
-                return None, {}
+        target = workspace_id
+        if target is None:
+            target = self._ensure_console_chat_store().workspace_context.active_workspace_id
+        startup = resolve_new_console_assistant(
+            self.app_instance, target, self._blank_console_session_settings()
+        )
+        return startup.settings, {
+            "assistant_kind": startup.assistant_kind,
+            "assistant_id": startup.assistant_id,
+            "assistant_label": startup.settings.character_label,
+            "persona_memory_mode": startup.persona_memory_mode,
+            "assistant_default_notice": startup.notice,
+        }
 
     def _build_console_turn_execution_context(
         self, session_id: str
     ) -> ConsoleTurnConfigurationSnapshot:
         """Capture one detached configuration snapshot for an owning session."""
         from ...Chat.attachment_core import max_history_images
+        from ...model_capabilities import is_vision_capable
         from ..Screens.settings_library_rag_defaults import (
             load_direct_library_tools,
         )
-        from ...model_capabilities import is_vision_capable
 
         app_config = self._provider_readiness_app_config()
         selection = self._build_provider_selection_fn(session_id)
@@ -3533,6 +3431,15 @@ class ConsoleSessionController:
         # readiness mapping already resolved above so an eligible, unused,
         # blocked chat still converges without an app restart (task-177).
         fresh_defaults = blank_console_session_settings(app_config)
+        if session.assistant_kind == "persona":
+            # Provider setup recovery changes provider defaults, never the
+            # Persona already assigned at this conversation's creation.
+            fresh_defaults = replace(
+                fresh_defaults,
+                system_prompt=settings.system_prompt,
+                character_label=settings.character_label,
+                persona_memory_mode=session.persona_memory_mode,
+            )
         if fresh_defaults == settings:
             return settings
         fresh_readiness = build_console_settings_readiness(

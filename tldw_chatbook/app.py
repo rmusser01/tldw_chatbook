@@ -8457,16 +8457,12 @@ class TldwCli(
         with self._persona_buddy_controller_lock:
             if self._persona_buddy_controller is not None:
                 return self._persona_buddy_controller
-            # Only the persona service gates construction: the old eager
-            # wiring ran right after _wire_character_persona_services() and
-            # passed self.chachanotes_db through as-is (it is legitimately
-            # None on test-factory apps; the controller tolerates that).
-            local_persona_service = getattr(
-                self, "local_character_persona_service", None
-            )
-            if local_persona_service is None:
-                return None
+            # Independent Buddy artwork needs only the profile DB. The local
+            # Persona service remains optional compatibility for legacy choices.
+            local_persona_service = getattr(self, "local_character_persona_service", None)
             profile_db = getattr(self, "chachanotes_db", None)
+            if local_persona_service is None and profile_db is None:
+                return None
             from .Persona_Buddy.controller import (  # noqa: PLC0415 - imports Persona_Visual + PIL; first feature use only (TASK-21103)
                 PersonaBuddyController,
                 load_local_persona_portrait,
@@ -8486,8 +8482,11 @@ class TldwCli(
                 ),
                 profile_db=profile_db,
                 profile_root=get_user_data_dir(),
-                reduced_motion=bool(
-                    get_cli_setting("appearance", "reduce_motion", False)
+                reduced_motion=lambda: bool(
+                    self.app_config.get("appearance", {}).get("reduce_motion", False)
+                    or not self.app_config.get("buddy_interaction", {}).get(
+                        "animated", True
+                    )
                 ),
                 scheduler=self.call_after_refresh,
                 on_change=self._notify_persona_buddy_changed,
@@ -9355,20 +9354,87 @@ class TldwCli(
 
         if self.actor_pack_recovery_error is None:
             service = getattr(self, "local_character_persona_service", None)
-            if service is not None:
-                try:
-                    from .Persona_Visual.builtin_pixel_migu import (
-                        ensure_builtin_pixel_migu_buddy,
+            try:
+                from .Persona_Buddy.library import BuddyLibrary
+                from .Persona_Buddy.preferences import (
+                    parse_persona_buddy_preferences,
+                    persist_persona_buddy_preferences,
+                    serialize_persona_buddy_preferences,
+                )
+
+                library = BuddyLibrary(
+                    self.chachanotes_db,
+                    get_user_data_dir(),
+                    persona_reader=getattr(service, "get_persona_profile", None),
+                )
+                legacy_retired = False
+                if service is not None:
+                    try:
+                        legacy_builtin = service._find_persona_profile(
+                            "local-persona-builtin-pixel-migu", include_deleted=True
+                        )
+                    except ValueError:
+                        legacy_builtin = None
+                    legacy_retired = bool(
+                        legacy_builtin
+                        and (
+                            legacy_builtin.get("deleted")
+                            or legacy_builtin.get("is_active", True) is not True
+                            or library.repository.get_active_persona_pack(
+                                "local-persona-builtin-pixel-migu"
+                            )
+                            is None
+                        )
+                    )
+                library.ensure_builtin(legacy_retired=legacy_retired)
+                controller = getattr(self, "_persona_buddy_controller", None)
+                if controller is None:
+                    config = getattr(self, "app_config", {})
+                    previous = parse_persona_buddy_preferences(
+                        config.get("persona_buddy", {})
                     )
 
-                    ensure_builtin_pixel_migu_buddy(
-                        service, coordinator, profile_root=get_user_data_dir()
+                    def persist_unclaimed_migration(candidate):
+                        # First construction reads app_config under this same lock.
+                        # Keep disk admission and publication together so it sees
+                        # the committed owner, or takes over migration itself.
+                        with self._persona_buddy_controller_lock:
+                            if (
+                                self._persona_buddy_controller is not None
+                                or parse_persona_buddy_preferences(
+                                    config.get("persona_buddy", {})
+                                )
+                                != previous
+                                or not persist_persona_buddy_preferences(candidate)
+                            ):
+                                return False
+                            config["persona_buddy"] = serialize_persona_buddy_preferences(
+                                candidate
+                            )
+                            return True
+
+                    library.migrate_legacy_selection(
+                        previous,
+                        writer=persist_unclaimed_migration,
                     )
-                except Exception:
-                    self.loguru_logger.warning(
-                        "Built-in pixel-migu Buddy installation failed; "
-                        "will retry on next Personas read"
-                    )
+                    controller = getattr(self, "_persona_buddy_controller", None)
+                if controller is not None:
+
+                    def schedule_migration():
+                        self.run_worker(
+                            controller.migrate_legacy_selection(library),
+                            group="buddy-legacy-migration",
+                            exclusive=False,
+                        )
+
+                    if threading.get_ident() == getattr(self, "_thread_id", None):
+                        schedule_migration()
+                    else:
+                        self.call_from_thread(schedule_migration)
+            except Exception:
+                self.loguru_logger.warning(
+                    "Independent Buddy installation/migration deferred; existing choices retained"
+                )
 
     def ensure_actor_pack_staging_sweep(self) -> None:
         """Run the Actor Pack staging crash-sweep once per session (task-22216).
@@ -14796,6 +14862,18 @@ class TldwCli(
         """Close app-owned TTS resources without masking cancellation."""
 
         failures: list[tuple[str, BaseException]] = []
+        buddy_speech = getattr(self, "buddy_speech_coordinator", None)
+        if buddy_speech is not None:
+            try:
+                close_task = getattr(self, "_buddy_speech_close_task", None)
+                if close_task is None:
+                    close_task = asyncio.create_task(
+                        buddy_speech.aclose(), name="close_buddy_speech"
+                    )
+                    self._buddy_speech_close_task = close_task
+                await join_retained_task(close_task)
+            except BaseException as buddy_close_error:  # noqa: BLE001 - drain all owners before preserving cancellation
+                failures.append(("buddy_speech", buddy_close_error))
         if hasattr(self, "_close_tts_voice_bundle_service"):
             try:
                 await self._close_tts_voice_bundle_service()

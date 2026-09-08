@@ -15,9 +15,9 @@ from .assets import (
 )
 from .contracts import (
     ALLOWED_STATE_CATALOG_KINDS,
+    RESERVED_STATES,
     PersonaVisualManifest,
     PersonaVisualManifestError,
-    RESERVED_STATES,
 )
 from .publication import (
     PersonaVisualPublicationAssetSource,
@@ -29,7 +29,6 @@ from .repository import (
     PersonaVisualIdentity,
 )
 from .validation import validate_persona_visual_manifest
-
 
 _INVALID = "persona_visual_draft_invalid"
 _INCOMPLETE = "persona_visual_draft_incomplete"
@@ -137,6 +136,7 @@ def create_persona_visual_import_draft(
     description: str,
     manifest_json: str,
     assets: tuple[PersonaVisualDraftAsset, ...],
+    source_context: Mapping[str, str] | None = None,
 ) -> PersonaVisualAuthoringDraft:
     """Create a validated review draft from already-confined imported sources."""
 
@@ -148,7 +148,11 @@ def create_persona_visual_import_draft(
             title=title,
             description=description,
             source_kind="imported",
-            source_context=(("provenance", "untrusted-import"),),
+            source_context=tuple(
+                sorted(
+                    {"provenance": "untrusted-import", **(source_context or {})}.items()
+                )
+            ),
             manifest_json=manifest_json,
             assets=assets,
         )

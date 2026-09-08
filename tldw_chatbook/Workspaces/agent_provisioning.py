@@ -160,7 +160,7 @@ def run_workspace_agent_backfill(
     for record in registry.list_workspaces():
         if record.archived or record.workspace_id == DEFAULT_WORKSPACE_ID:
             continue
-        if record.assistant_defaults is not None:
+        if record.assistant_defaults is not None or record.assistant_defaults_explicit_none:
             continue
         defaults = provisioner.provision(record)
         if defaults is None:

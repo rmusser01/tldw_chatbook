@@ -1,22 +1,10 @@
-"""The teardown split: leaving a Console visit vs destroying the runtime.
+"""Final Console unmount and application disposal retain their cancellation fences.
 
-task-15860 (headless wake), the lifetime landing. `ConsoleChatController.
-shutdown()` used to mean both "cancel the user's work" and "this instance
-is finished forever", and one flag -- `_shutdown_requested` -- carried
-both meanings. With the runtime app-owned and surviving every navigation,
-those are different events:
-
-* `ConsoleRuntime.leave_console()` -> `controller.leave_console()` ends ONE
-  visit. AC#2's two documented screen-scoped semantics still happen here.
-* `ConsoleRuntime.dispose()` -> `controller.shutdown()` is the permanent,
-  app-exit form and keeps its old behaviour exactly.
-
-The two AC#2 tests below (`test_leaving_console_still_cancels_a_streaming_
-user_turn`, `test_leaving_console_still_denies_a_parked_approval_round`)
-are genuine reds for the intermediate state this landing passes through:
-with the runtime surviving and no `leave_console()` on the unmount path,
-BOTH fail. They were run in that state and observed failing before the
-split was wired -- see the lifetime report.
+TASK-15860 split visit cleanup from permanent runtime shutdown. TASK-31520
+subsequently made ordinary navigation reuse and suspend the mounted Console;
+that route does not call ``leave_console``. These direct runtime tests cover
+actual final-unmount cleanup and permanent app disposal. Real navigation with
+streams, queues and pending decisions is covered by test_console_navigation_decisions.
 """
 
 from __future__ import annotations
@@ -239,11 +227,7 @@ def _pending_call() -> MCPPendingCall:
 
 @pytest.mark.asyncio
 async def test_leaving_console_still_cancels_a_streaming_user_turn():
-    """AC#2 RED: nav-away must still kill the user's in-flight turn.
-
-    Goes red the moment the runtime survives unmount without a per-visit
-    teardown: the turn simply keeps streaming into a screen that is gone.
-    """
+    """An actual final unmount still cancels this visit's in-flight user turn."""
     gateway = _StalledGateway()
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
@@ -271,7 +255,7 @@ async def test_leaving_console_still_cancels_a_streaming_user_turn():
 
 @pytest.mark.asyncio
 async def test_leaving_console_still_denies_a_parked_approval_round():
-    """AC#2 RED: an undecided round at nav-away resolves to `deny`.
+    """An undecided round at final visit teardown resolves to `deny`.
 
     The round polls on a worker thread exactly as production does; nothing
     ever answers it, so only the visit's cancellation signal can end it

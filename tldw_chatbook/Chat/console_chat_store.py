@@ -32,6 +32,11 @@ from uuid import uuid4
 
 from loguru import logger
 
+from .console_assistant_defaults import ConsoleAssistantStartup
+
+# None is an explicit plain choice; omission alone permits workspace inheritance.
+UNSPECIFIED_ASSISTANT = object()
+
 if TYPE_CHECKING:
     from tldw_chatbook.Canvas.staging import (
         CanvasPromotionContribution,
@@ -1435,6 +1440,7 @@ class ConsoleChatSession:
     assistant_authority_id: str | None = None
     #: Persona-owned memory behavior persisted with persona conversations.
     persona_memory_mode: str | None = None
+    assistant_default_notice: str = ""
     #: Local-only numeric compatibility/display projection. Server character
     #: IDs remain opaque in ``assistant_id`` and never populate this field.
     character_id: int | None = None
@@ -1606,6 +1612,10 @@ class ConsoleChatStore:
         canvas_promotion_participant: ConsoleCanvasPromotionParticipant | None = None,
         canvas_turn_controller: Any | None = None,
         on_canvas_context_changed: Callable[[str | None], None] | None = None,
+        assistant_defaults_provider: Callable[
+            [str, ConsoleSessionSettings | None], ConsoleAssistantStartup
+        ] | None = None,
+        on_assistant_default_notice: Callable[[str], None] | None = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -1649,6 +1659,8 @@ class ConsoleChatStore:
                 a native session activation or active-branch transition.
         """
         self.persistence = persistence
+        self._assistant_defaults_provider = assistant_defaults_provider
+        self._on_assistant_default_notice = on_assistant_default_notice
         self.canvas_promotion_participant = canvas_promotion_participant
         self.canvas_turn_controller = canvas_turn_controller
         self._on_canvas_context_changed = on_canvas_context_changed
@@ -2051,10 +2063,11 @@ class ConsoleChatStore:
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
         thinking_history_policy: object = _OMITTED_THINKING_HISTORY_POLICY,
         runtime_backend: str = "local",
-        assistant_kind: str | None = "generic",
+        assistant_kind: str | None | object = UNSPECIFIED_ASSISTANT,
         assistant_id: str | None = "console",
         assistant_authority_id: str | None = None,
         persona_memory_mode: str | None = None,
+        assistant_default_notice: str = "",
         character_id: int | None = None,
         character_name: str | None = None,
         ephemeral: bool = False,
@@ -2090,6 +2103,27 @@ class ConsoleChatStore:
             or canonical_settings_baseline != settings
         ):
             raise ValueError("canonical baseline must equal the session settings.")
+        target_workspace_id = workspace_id or self.workspace_context.active_workspace_id
+        if assistant_kind is UNSPECIFIED_ASSISTANT:
+            assistant_kind, assistant_id = "generic", "console"
+            if self._assistant_defaults_provider is not None:
+                startup = self._assistant_defaults_provider(target_workspace_id, settings)
+                if canonical_settings_baseline is not None:
+                    canonical_settings_baseline = startup.settings
+                settings = startup.settings
+                assistant_kind = startup.assistant_kind
+                assistant_id = startup.assistant_id
+                persona_memory_mode = startup.persona_memory_mode
+                assistant_default_notice = startup.notice
+        elif assistant_kind is None:
+            assistant_kind, assistant_id = "generic", "console"
+        if assistant_kind == "persona" and settings is not None:
+            persona_memory_mode = persona_memory_mode or settings.persona_memory_mode
+            if settings.persona_memory_mode != persona_memory_mode:
+                was_canonical = canonical_settings_baseline == settings
+                settings = replace(settings, persona_memory_mode=persona_memory_mode)
+                if was_canonical:
+                    canonical_settings_baseline = settings
         defaults = (
             self._library_policy_defaults_provider()
             if self._library_policy_defaults_provider is not None
@@ -2110,7 +2144,7 @@ class ConsoleChatStore:
         session = ConsoleChatSession(
             id=resolved_session_id,
             title=title,
-            workspace_id=workspace_id or self.workspace_context.active_workspace_id,
+            workspace_id=target_workspace_id,
             settings=settings,
             canonical_settings_baseline=canonical_settings_baseline,
             thinking_history_policy=normalize_thinking_history_policy(
@@ -2121,6 +2155,7 @@ class ConsoleChatStore:
             assistant_id=assistant_id,
             assistant_authority_id=assistant_authority_id,
             persona_memory_mode=persona_memory_mode,
+            assistant_default_notice=assistant_default_notice,
             character_id=character_id,
             character_name=character_name,
             ephemeral=ephemeral,
@@ -2172,6 +2207,11 @@ class ConsoleChatStore:
             )
         if activate:
             self._activate_session(session.id)
+        if assistant_default_notice and self._on_assistant_default_notice is not None:
+            try:
+                self._on_assistant_default_notice(assistant_default_notice)
+            except Exception:  # noqa: BLE001 - presentation cannot undo a new chat
+                logger.warning("Workspace default Persona notice could not be shown")
         return session
 
     def _activate_session(self, session_id: str | None) -> None:
@@ -11180,6 +11220,7 @@ class ConsoleChatStore:
         message_id: str,
         *,
         presentation_context: ConsolePresentationContext | None = None,
+        owner_session_id: str | None = None,
     ) -> TTSMessageSpeechSnapshot:
         """Issue a trusted snapshot for one speakable active-path message.
 
@@ -11187,6 +11228,8 @@ class ConsoleChatStore:
             message_id: Native Console message selected by the user.
             presentation_context: Optional live identity used to resolve trusted
                 character-template content. ``None`` preserves neutral callers.
+            owner_session_id: Explicit local owner for app-owned Buddy speech.
+                Omission retains the visible-session requirement.
 
         Returns:
             An immutable snapshot bound to the exact selected text and
@@ -11202,7 +11245,7 @@ class ConsoleChatStore:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
             )
-        if session_id != self.active_session_id:
+        if session_id != (self.active_session_id if owner_session_id is None else owner_session_id):
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
             )
@@ -11212,6 +11255,8 @@ class ConsoleChatStore:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
             )
+        if owner_session_id is not None and session.runtime_backend != "local":
+            raise ConsoleSpeechSnapshotRejected(ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED)
         if message.generation_projection_quarantined:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
@@ -11277,6 +11322,7 @@ class ConsoleChatStore:
         snapshot: TTSMessageSpeechSnapshot,
         *,
         presentation_context: ConsolePresentationContext | None = None,
+        owner_session_id: str | None = None,
     ) -> str:
         """Revalidate an issued Console speech snapshot against live state.
 
@@ -11284,6 +11330,8 @@ class ConsoleChatStore:
             snapshot: Immutable snapshot previously issued by this store.
             presentation_context: Optional fresh identity used to re-resolve
                 trusted character-template content before comparison.
+            owner_session_id: Exact local owner, matching the issue-time opt-in.
+                The caller also validates its captured Buddy binding.
 
         Returns:
             The captured exact raw content after every identity, state,
@@ -11297,7 +11345,7 @@ class ConsoleChatStore:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
             )
-        if snapshot.session_id != self.active_session_id:
+        if snapshot.session_id != (self.active_session_id if owner_session_id is None else owner_session_id):
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
             )
@@ -11306,6 +11354,8 @@ class ConsoleChatStore:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
             )
+        if owner_session_id is not None and session.runtime_backend != "local":
+            raise ConsoleSpeechSnapshotRejected(ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED)
         owner_session_id = self._message_session_index.get(snapshot.message_id)
         if owner_session_id is None:
             raise ConsoleSpeechSnapshotRejected(

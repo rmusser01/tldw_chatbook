@@ -259,6 +259,7 @@ composer-level strip below shows once setup completes.
 | **Attach context** | Opens the "Console context" rail (staging itself is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Search Library** | Runs a user-initiated **Manual Search Library** request before sending; it remains available regardless of the conversation's automatic or assistant policy — see [Context & RAG](console/context-and-rag.md#per-conversation-library-controls). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
+| **Buddy** (composer **Menu**) | Manage independent Buddy artwork, follow a conversation/workspace, and change Persona settings — see [Buddies](buddies.md). |
 | **Help** | Opens the Console help panel (same as F1). |
 | **Speak replies** | Speaks new assistant replies in this conversation. |
 | **Hands-free** | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. |
@@ -474,13 +475,12 @@ requires an override. The default test suite makes no paid request.
 
 ### Leaving Console during a run
 
-Agent runs are screen-scoped: navigating to any other screen cancels every
-in-flight run and denies every pending approval. If runs are active, a
-**Leave Console?** dialog warns you first ("N agent runs will be cancelled
-if you leave Console. Leave anyway?") with **Leave** / **Stay** buttons,
-and a one-time toast on return reports what was cancelled. Details in
+Accepted runs, queues, and pending decisions continue when you navigate to another
+screen or open a modal. A hidden decision raises a notice and waits for you; a finite
+decision timeout counts only while its card is available to answer. **Stop**, session
+close, and application quit retain their cancellation behavior. Details in
 [Agent runs & tools](console/agent-runs-and-tools.md) and the
-[guide index](index.md#console-agent-runs-are-screen-scoped).
+[guide index](index.md#console-runs-continue-during-navigation).
 
 ## Common tasks
 

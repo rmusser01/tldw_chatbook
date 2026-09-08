@@ -227,6 +227,8 @@ def test_activate_new_pack_returns_immutable_path_safe_graph(
         "pack_version_id",
         "version_number",
         "manifest_sha256",
+        "buddy_id",
+        "buddy_revision",
     )
     assert not any("path" in field.name for field in fields(PersonaVisualIdentity))
     assert not any(

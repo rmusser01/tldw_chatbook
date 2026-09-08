@@ -9,6 +9,22 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Retained screen identity does not prove queued work survives navigation
+
+**TASK-32078, 2026-09-08.** TASK-31520 reuse checks passed, but an actual
+stalled provider turn with a queued follow-up failed after navigating Home
+and selecting another conversation: Canvas admission consulted the browser's
+active-view guard for the original run. A separate exact-owner run resolver
+fixed it without relaxing browser authority. The mounted test also had to
+wait for both settled assistant responses: an empty queue and zero active
+runs briefly occur between reservation release and the next admission.
+
+**What to do.** Verify accepted work and its final owner through real mounted
+navigation. Wait for the requested outcome, not a transient idle snapshot;
+use thread-safe gates when fake provider execution crosses event loops.
+
+---
+
 ## Index-plan guards must accept the names the DDL actually uses
 
 **TASK-31242 isolated PR preparation, 2026-09-05.** Five real-SQLite,
@@ -12568,3 +12584,38 @@ Chatterbox version in that extra.
 unseeded environment. Probe the capability and required resources, not just the
 top-level import or declared dependency consistency. Preserve the original
 extra-only evidence before adding test instrumentation.
+
+## Keep source stable while source-inspection tests execute
+
+**TASK-32079, independent Buddy ownership, 2026-09-08.** Formatting `app.py` during a
+long targeted run caused several shutdown/deferred-startup `inspect.getsource` checks
+to read neighboring methods: a shutdown assertion received
+`get_chunking_lab_coordinator`. Imported functions retained line numbers from the old
+file while inspection read the newly formatted source. A fresh, stable-file rerun of
+the six affected startup/shutdown checks passed.
+
+**What to do.** Do not change a module while tests inspect its source, including from
+a parallel worker. Finish edits first or rerun those checks in a fresh process. A
+failure whose quoted function has the wrong name is not evidence of a runtime change.
+
+## Exercise a cold opener and verify the destination composer
+
+**TASK-32082, Buddy interaction, 2026-09-08.** The first saved-row test visited
+Console before returning Home, so it could not expose the missing lazy runtime on
+a true Home startup. Configure Home as the startup destination and assert that
+the store/controller are absent before invoking the opener. The mounted cold test
+now loads the exact saved transcript, sends, closes and answers later questions
+without ever mounting Console or choosing an active session.
+
+A separate Open Console check found that changing the controller selection and
+navigating to the reused screen left its old composer visible. Assert the destination
+transcript/composer as well as its selected ID; use the existing navigation handoff
+that synchronizes both. When setting up multiple drafts directly in a mounted test,
+settle the real session-switch UI before typing the sibling draft, or the fixture
+itself will save that text against the previous visible owner.
+
+The combined management journey also reached the new modal on the screen stack
+before its Select child labels were composed. Assigning Select.value at that point
+raised NoMatches for the internal label. Settle the pilot after detecting the modal,
+then interact with its controls; the normal journey and compact controls passed
+together after that fixture correction.

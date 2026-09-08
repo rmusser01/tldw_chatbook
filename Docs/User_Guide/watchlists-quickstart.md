@@ -58,8 +58,8 @@ expect. A normal run may use these tools:
 8. `watchlists_get_briefing`
 
 The exact order and number of status checks can vary. Deny a call if its target
-or arguments do not match your request. Keep Console open until the workflow is
-finished: leaving Console cancels its active turn and any pending approval.
+or arguments do not match your request. The workflow continues if you leave Console;
+pending approvals raise a notice and remain available when you return.
 
 ## 3. Wait for terminal receipts
 

@@ -118,6 +118,10 @@ class PersonaBuddyOverlay:
                     controller, snapshot
                 )
             )
+            if desired and getattr(self.app, "app_config", {}).get("buddy_interaction"):
+                from .buddy_management import get_buddy_management
+
+                get_buddy_management(self.app).start_scope_tracking()
             if not desired:
                 await self._retire()
                 self._sync_affordances(screen)
