@@ -435,6 +435,35 @@ async def test_edit_metadata_from_read_routes_to_info_form_actions():
             assert screen.query(selector)
 
 
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_more_strip_move_to_trash_is_danger_marked_and_separated(size):
+    """task-31980 (critique #6 P2): the destructive More action must not end a
+    row of neutral actions unmarked and flush against them. It takes the
+    quiet-danger ink the Library's other destructive actions carry (colour
+    differs from the neutral Edit) and a left margin that holds it off its
+    neighbour, at both regimes."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        screen.query_one("#library-media-reader-more", Button).press()
+        delete = await _wait_for_selector(screen, pilot, "#library-media-delete")
+        edit = screen.query_one("#library-media-edit", Button)
+
+        # AC#3/#4: the destructive ink is not the neutral action's ink.
+        assert delete.styles.color is not None
+        assert delete.styles.color != edit.styles.color, (
+            delete.styles.color,
+            edit.styles.color,
+        )
+        # AC#3: a real gap holds it off the neutral actions (mirrors the
+        # RAG-profile delete-button separation precedent).
+        assert delete.styles.margin.left >= 2, delete.styles.margin
+
+
 @pytest.mark.asyncio
 async def test_external_detail_without_original_exposes_no_empty_more_menu():
     """A server-only detail exposes only actions that it can actually perform."""

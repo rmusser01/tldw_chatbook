@@ -2552,6 +2552,27 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-muted;
 }
 
+/* task-31980 (critique #6 P2): the Reader's More strip zeroes every button's
+   margin (`#library-media-reader-more-actions > Button` above, (1,0,1)), which
+   also swallows the danger class's own left margin. Restore it id-scoped
+   (1,1,1 beats that) so "Move to trash" reads apart from the neutral actions
+   -- mirrors the RAG-profile delete-button separation (`margin-left: 2`). */
+#library-media-reader-more-actions > .library-media-action-danger {
+    margin: 0 0 0 2;
+}
+
+/* task-31980 (critique #6 P2): the permanent-delete confirmation's commit
+   button read in ordinary body ink one cell from a fully-styled Cancel -- the
+   most destructive control was the least-marked. This is a DELIBERATE
+   confirmation (Cancel focused, "This cannot be undone." above it), so the
+   commit takes the readable $error role and reads as destructive. The id
+   selector (1,0,0) beats `.library-canvas-action`'s $ds-text-primary; the
+   >=3-cell gap off Cancel is set inline in the canvas. Readable token, not the
+   3.06:1 `$ds-status-error`, per the a11y contrast rule (see TASK-31664). */
+#library-media-trash-delete-confirm {
+    color: $ds-status-error-readable;
+}
+
 /* Each highlight is an indented card so its quote, meta, and delete read as
    one unit -- a per-row delete then clearly belongs to a single highlight. */
 .library-media-highlight-row {

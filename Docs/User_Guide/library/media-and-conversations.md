@@ -269,7 +269,11 @@ restored.
 A selected row offers two actions and no others: **"Restore"** (key `r`),
 and **"Delete forever"** (key `x`), which arms an inline "Cancel | Delete
 permanently" confirmation and, once confirmed, removes that one item for
-good — there is no undo and no receipt afterwards. The two sit two cells
+good — there is no undo and no receipt afterwards. In that confirmation the
+committing **"Delete permanently"** is painted in the theme's readable error
+colour (not the ordinary body ink) and sits at least three cells clear of the
+focused **"Cancel"**, so the most destructive control is the most marked and
+never a mis-click away from the safe one. The two row actions sit two cells
 apart, the destructive one set apart in the quiet danger styling the
 select-mode "Delete" uses; both keys are advertised in the footer, and
 only while the actions they stand for are genuinely pressable. The
@@ -294,6 +298,12 @@ and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 it opened read the same, "r" restored it ("Restored '…'." with the count
 going 4 → 3 items), and the footer carried "r restore | x delete" on the
 list and dropped both while the confirmation was armed).*
+
+*Verified against fix/media-crit6-deletemark — 2026-09-07 (task-31980: painted
+pins at 235x52 and 100x30 assert the confirmation's "Delete permanently" ink
+differs from "Cancel" and stands ≥3 cells clear of it, and that the More
+strip's "Move to trash" ink differs from the neutral "Edit metadata" with a
+left-margin gap).*
 
 ### Media list
 
@@ -452,7 +462,7 @@ still spans the pane.
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
-| "Move to trash" | Two-step, title-specific confirmation. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+| "Move to trash" | Two-step, title-specific confirmation. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
 
 *Verified against fix/media-riders-o — 2026-09-07 (tasks 31958/31959: live
 in tmux at 235x52 on a seeded scratch profile. A `plaintext` item with
