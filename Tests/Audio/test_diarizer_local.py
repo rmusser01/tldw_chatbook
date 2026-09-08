@@ -1438,6 +1438,63 @@ def test_onnx_start_raising_after_a_successful_fetch_still_releases_wait_ready()
     assert d.warmup_status == "unavailable"
 
 
+def test_close_during_the_model_fetch_never_spawns_a_worker():
+    """Final review I1: `close()` during the ONNX warm-up used to record
+    nothing the warm-up thread could see -- it set `_degraded` and swapped a
+    `self._proc` that was still None -- so `_warmup` finished its (up to
+    600 s) fetch and spawned a worker nobody owned: a live subprocess with an
+    ONNX model resident plus two daemon threads, for the life of the app."""
+    gate = threading.Event()
+    spawned: list[list[str]] = []
+
+    def _spawn(cmd, **k):
+        spawned.append(cmd)
+        return FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        assert gate.wait(5.0), "the test never released the fetch"
+        return (Path("s"), Path("e"))
+
+    d = LocalDiarizer(engine="onnx", spawn=_spawn, ensure_models=ensure)
+    assert d.warmup_status.startswith("downloading")   # the fetch is in flight
+    d.close()
+    gate.set()                                          # ... and finishes after close()
+
+    assert d.wait_ready(2.0) is False                   # the warm-up thread gave up
+    assert spawned == []                                # nothing was ever started
+    assert d._proc is None
+    assert d.warmup_status == "unavailable"
+
+
+def test_close_racing_the_spawn_terminates_the_worker_it_just_started():
+    """Final review I1, the narrow window: `close()` lands between
+    `_warmup`'s fetch and the spawn returning, so it swaps a `self._proc`
+    that is still None. The freshly spawned child must be killed here or it
+    outlives the backend that owns it."""
+    made: list[FakeProc] = []
+    holder: dict = {}
+    constructed = threading.Event()
+
+    def _spawn(cmd, **k):
+        proc = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        made.append(proc)
+        assert constructed.wait(5.0)
+        holder["d"].close()          # close() lands while the spawn returns
+        return proc
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        return (Path("s"), Path("e"))
+
+    d = holder["d"] = LocalDiarizer(engine="onnx", spawn=_spawn, ensure_models=ensure)
+    constructed.set()
+
+    assert d.wait_ready(2.0) is False
+    assert len(made) == 1
+    assert made[0].terminated or made[0].killed         # the child was reclaimed
+    assert d._proc is None                              # ... and nothing holds it
+    assert d.warmup_status == "unavailable"
+
+
 def test_constructor_never_raises_for_an_unknown_engine():
     """I4/m5 regression: `[meetings] diarizer_backend` is user-editable
     config -- an invalid value must degrade, never raise out of the

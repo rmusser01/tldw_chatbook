@@ -180,6 +180,10 @@ class LocalDiarizer:
         self._ready = threading.Event()
         self._ready_ok = False
         self._degraded = False
+        #: `close()` has run: no worker may be spawned any more, not even by
+        #: an ONNX warm-up thread still inside its model fetch (final review
+        #: I1 -- that spawn used to leak a worker for the life of the app).
+        self._closed = False
         #: Live labelling is over for this meeting (a crash), even though the
         #: restarted worker still serves the Stop pass (Qodo Q10).
         self._coarse_only = False
@@ -312,7 +316,18 @@ class LocalDiarizer:
             self.coarse_reason = reason
 
     def _start(self) -> bool:
-        """Spawn the worker; READY is awaited on a thread. False -> degrade."""
+        """Spawn the worker; READY is awaited on a thread. False -> degrade.
+
+        Refuses outright once `close()` has run (final review I1): the ONNX
+        warm-up thread reaches here AFTER a fetch of up to
+        `MODELS_DOWNLOAD_BUDGET_S`, long after its owner may have closed the
+        backend, and a worker spawned then is one nobody holds -- a live
+        subprocess with the model resident plus two daemon threads on its
+        pipes, until the app quits. Both callers treat False as "spawn
+        failed", which is the right end state for a closed backend.
+        """
+        if self._closed:
+            return False
         try:
             env = {**os.environ, "TLDW_DIARIZER_MAX_SPEAKERS": str(self._max)}
             # The ONNX worker has no other way to learn which embedder (and,
@@ -335,6 +350,13 @@ class LocalDiarizer:
             self._proc = None
             return False
         proc = self._proc
+        if self._closed:
+            # `close()` landed while the spawn was in flight: it swapped a
+            # `self._proc` that was still None, so this child would outlive
+            # the backend that owns it. Reclaim it here (final review I1).
+            self._proc = None
+            self._kill(proc)
+            return False
         if proc.poll() is not None:
             logger.warning("diarizer: worker exited before READY")
             return False
@@ -882,8 +904,15 @@ class LocalDiarizer:
             return [float(x) for x in centroid], float(reply.get("seconds") or 0.0)
 
     def close(self) -> None:
-        """Best-effort: ask the worker to exit, then tear it down. Idempotent."""
+        """Best-effort: ask the worker to exit, then tear it down. Idempotent.
+
+        `_closed` is what an in-flight ONNX warm-up sees: it is still inside
+        `ensure_models` here, with `self._proc` None, so swapping the proc
+        alone told it nothing and it went on to spawn a worker this call
+        could never reach (final review I1).
+        """
         with self._lock:
+            self._closed = True
             self._degraded = True
             proc, self._proc = self._proc, None
         if proc is None:
