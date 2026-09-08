@@ -1311,3 +1311,169 @@ def test_onnx_restart_after_crash_does_not_refetch_models():
     assert len(made) == 2                     # exactly one restart, no re-fetch gate
     assert d.wait_ready(2.0) is True
     assert len(calls) == 1
+
+
+# --- Fix round 1 (review, 31827 task 4): C1 / I2 / I3 / I4 -----------------
+
+def test_restart_after_a_failed_enroll_send_still_reaches_ready():
+    """C1 regression (reviewer probe): the FIRST worker's enroll write fails
+    (broken pipe) from INSIDE its own watcher -- `_send_enroll` -> `_fail()`
+    -> `_start()` all run before that watcher's own `ready.set()` -- so the
+    dying watcher must not open the REPLACEMENT's gate. Both workers' READY
+    are gated so worker 1's `ready.set()` is forced to land BEFORE worker 2
+    is even allowed to check its own gate -- the review's own "in production
+    the old one always wins" ordering, made deterministic here instead of
+    left to scheduling luck. The replacement's own READY still has to land:
+    `wait_ready` True, `_ready_ok` True, and the voiceprint re-sent to the
+    NEW process."""
+    made: list[FakeProc] = []
+    gate0 = threading.Event()
+    gate1 = threading.Event()
+
+    class _RaisingOnce(_Pipe):
+        def __init__(self) -> None:
+            super().__init__()
+            self._raised = False
+
+        def write(self, data: bytes) -> int:
+            if not self._raised and b'"cmd": "enroll"' in data:
+                self._raised = True
+                raise OSError("broken pipe")
+            return super().write(data)
+
+    def _spawn(*a, **k):
+        p = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        if not made:
+            p.stdin = _RaisingOnce()
+            p.stderr = _GatedStderr(gate0)
+        else:
+            p.stderr = _GatedStderr(gate1)
+        made.append(p)
+        return p
+
+    d = SpeechBrainDiarizer(spawn=_spawn, voiceprint=[1.0, 0.0])
+    gate0.set()  # worker 1 reports READY -> enroll fails -> restart spawns worker 2
+
+    deadline = time.monotonic() + 2.0
+    while len(made) < 2:
+        assert time.monotonic() < deadline, "restart never spawned a replacement"
+        time.sleep(0.005)
+    # Worker 1's watcher thread has, at most, its own `ready.set()` left to
+    # run (no further blocking calls follow spawning worker 2) -- give it a
+    # moment to actually do so before worker 2 is allowed to check its gate,
+    # so the ordering this regression exists for is forced, not left to luck.
+    time.sleep(0.05)
+    gate1.set()  # only now does the REPLACEMENT get to report its own READY
+
+    # Poll for the terminal FACT directly (same reasoning as
+    # `test_failed_enroll_send_goes_through_the_existing_failure_path`):
+    # `self._ready`'s object identity changes mid-flight on another thread,
+    # so gating THIS assertion on it would just re-introduce the race under
+    # test.
+    deadline = time.monotonic() + 2.0
+    while not any(b'"cmd": "enroll"' in c for c in made[-1].stdin.chunks):
+        assert time.monotonic() < deadline, "replacement worker never re-enrolled"
+        time.sleep(0.005)
+
+    assert d._ready_ok is True                 # the REPLACEMENT reported READY
+    assert d.wait_ready(2.0) is True            # ... and `wait_ready` agrees
+
+
+def test_restart_warmup_status_goes_through_warming_up_again():
+    """I3 regression: a restart's second warm-up must not read a stale
+    "ready" left over from the dead worker for the whole second warm-up."""
+    gate = threading.Event()
+    procs = iter([FakeProc([]), FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])])
+    made: list[FakeProc] = []
+
+    def _spawn(*a, **k):
+        p = next(procs)
+        if made:  # the restart -- gate its READY so "warming up" is observable
+            p.stderr = _GatedStderr(gate)
+        made.append(p)
+        return p
+
+    d = _ready(SpeechBrainDiarizer(spawn=_spawn))
+    assert d.warmup_status == "ready"
+    made[0]._alive = False
+    assert d.assign(_PCM, 16000, 0) is None    # detects, restarts (synchronous: `_fail`/`_start` run here)
+    assert d.warmup_status == "warming up"     # not a stale "ready"
+    gate.set()
+    assert d.wait_ready(2.0) is True
+    assert d.warmup_status == "ready"
+
+
+def test_onnx_spawn_failure_after_a_successful_fetch_releases_wait_ready_promptly():
+    """I2 regression: a spawn failure after a successful model fetch must
+    still set `_ready` -- otherwise `wait_ready` burns its whole timeout for
+    a failure that is already known (reviewer measured 1.005 s vs. prompt)."""
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        return (Path("s"), Path("e"))
+
+    def _spawn(cmd, **k):
+        raise OSError("boom")
+
+    d = LocalDiarizer(engine="onnx", spawn=_spawn, ensure_models=ensure)
+    t0 = time.monotonic()
+    assert d.wait_ready(2.0) is False
+    assert time.monotonic() - t0 < 1.0          # released promptly, not after the full budget
+    assert d.coarse_reason == COARSE_UNAVAILABLE
+    assert d.warmup_status == "unavailable"
+
+
+def test_onnx_start_raising_after_a_successful_fetch_still_releases_wait_ready():
+    """I2/m6 regression: an exception ESCAPING `_start()` itself (not just a
+    False return) must also be caught inside `_warmup` and release
+    `wait_ready` -- nothing may escape this daemon thread."""
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        return (Path("s"), Path("e"))
+
+    class _PollRaises(FakeProc):
+        def poll(self):
+            raise RuntimeError("boom")
+
+    d = LocalDiarizer(engine="onnx", spawn=lambda cmd, **k: _PollRaises([]), ensure_models=ensure)
+    assert d.wait_ready(2.0) is False
+    assert d.coarse_reason == COARSE_UNAVAILABLE
+    assert d.warmup_status == "unavailable"
+
+
+def test_constructor_never_raises_for_an_unknown_engine():
+    """I4/m5 regression: `[meetings] diarizer_backend` is user-editable
+    config -- an invalid value must degrade, never raise out of the
+    constructor, and must never spawn anything with a bogus `--engine`."""
+    spawned = []
+    d = LocalDiarizer(engine="bogus", spawn=lambda cmd, **k: spawned.append(cmd))
+    assert spawned == []
+    assert d._degraded is True
+    assert d.coarse_reason == COARSE_MODELS_UNAVAILABLE
+    assert d.warmup_status == "unavailable"
+    assert d.wait_ready(2.0) is False
+    assert d.assign(_PCM, 16000, 0) is None
+
+
+def test_constructor_never_raises_for_an_unknown_embedder():
+    """I4 regression: `[meetings] onnx_embedder` is user-editable config --
+    an invalid value must degrade, never raise `KeyError` out of the
+    constructor."""
+    spawned = []
+    d = LocalDiarizer(engine="onnx", embedder="not-a-key", spawn=lambda cmd, **k: spawned.append(cmd))
+    assert spawned == []
+    assert d._degraded is True
+    assert d.coarse_reason == COARSE_MODELS_UNAVAILABLE
+    assert d.warmup_status == "unavailable"
+    assert d.wait_ready(2.0) is False
+
+
+def test_model_id_for_speechbrain_matches_the_worker_constant():
+    """m3 regression: one canonical copy of the SpeechBrain model id."""
+    from tldw_chatbook.Audio import diarizer_worker
+
+    assert model_id_for("speechbrain") == diarizer_worker.MODEL_ID
+
+
+def test_speechbrain_diarizer_rejects_a_duplicate_engine_kwarg():
+    """m4 regression: an explicit `engine=` collides loudly (TypeError), not
+    a silent `.pop()` that would hide the caller bug."""
+    with pytest.raises(TypeError):
+        SpeechBrainDiarizer(engine="onnx", spawn=lambda *a, **k: FakeProc([]))
