@@ -639,10 +639,10 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 72)
+        for number in range(1, 74)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 36)
+        f"B{number:02d}" for number in range(1, 37)
     ]
 
 
@@ -1078,7 +1078,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 1,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 26,
+            "copy_private_sqlite": 27,
             "migrate_profile_store_to_candidate": 1,
             "restore_private_sqlite": 2,
         }
@@ -1114,6 +1114,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
     expected_calls = Counter(
         {
             ("tldw_chatbook/DB/recovery_core", "_CoreAdapter.capture", "copy_private_sqlite"): 1,
+            ("tldw_chatbook/TTS/recovery", "_Profiles.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/Research_Interop/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/Writing_Interop/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/Evals/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
@@ -1432,6 +1433,8 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
         'recovery.operations.agent_logs',
         'recovery.operations.kanban',
         'recovery.operations.note_bindings',
+        'recovery.files.persona',
+        'recovery.files.tts',
     }
     assert {a.backup_owner_id for a in adapters} | installed_domain_authority == {
         name for name, policy in SQLITE_OWNER_REGISTRY.items() if policy.recovery_capture_allowed

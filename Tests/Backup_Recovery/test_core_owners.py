@@ -580,7 +580,7 @@ def test_discovery_custom_paths_and_explicit_core_dependencies(tmp_path):
         assert "profile:selected:config" in item.dependencies
         assert not classify_entries((item,)).complete
     chacha = core_adapters()[0].discover(config)[0]
-    assert "profile:selected:persona.assets:unresolved" in chacha.dependencies
+    assert "profile:selected:persona.assets" in chacha.dependencies
     assert "profile:selected:notes.file_notes" in chacha.dependencies
 
 

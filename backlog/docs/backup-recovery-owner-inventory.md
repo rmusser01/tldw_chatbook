@@ -62,8 +62,9 @@ The scope digest covers selectors, lexical and observed resolved owner paths,
 statuses, dependencies and shared relationships, and intentionally excludes
 changing content, inode generations and row counts. Retargeting an alias changes
 scope; atomic replacement at the same logical path does not. Capture
-options/budgets are not accepted by this API: the later service must include them
-when composing its operation scope digest, never substitute this inventory digest
+budgets remain a later service contract. Task9 adds locally validated selection
+context and incorporates external/model/temporary/diagnostic selections plus the
+planned output declaration into this digest. Never substitute the inventory digest
 for a payload digest or target fingerprint.
 
 `deletion_validated` is trusted installed-owner validation output, never a portable
@@ -1469,7 +1470,7 @@ copy census rows therefore remain unchanged by this consolidation.
 ## Task 8 installed operational producer additions
 
 | tldw_chatbook/Agents/recovery.py | _RunLogs.discover | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| tldw_chatbook/Backup_Recovery/file_inventory.py | inventory_tree.walk | open | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/file_inventory.py | _inventory_tree.walk | open | 2 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _consume_recovery_file | open | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/DB/recovery_operations.py | _AgentRunsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/DB/recovery_operations.py | _AgentRunsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
@@ -1582,3 +1583,104 @@ fixture authority: their per-call `with connection` commits but does not close, 
 .close only handles memory connections. This **does not qualify runtime maintenance
 drain**. Task10 owns coordinated live-resource closure; no complete backup capability
 may infer production drain from fixture GC.
+
+## Configuration and durable-file recovery census (TASK-31992)
+
+| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.discover | connect_private_sqlite | 1 | generic_boundary | qualified-core-reference-discovery |
+| tldw_chatbook/Persona_Visual/recovery.py | _Assets._references | connect_private_sqlite | 1 | generic_boundary | qualified-persona-reference-discovery |
+| tldw_chatbook/TTS/recovery.py | _Profiles.validate | connect_private_sqlite | 1 | generic_boundary | qualified-tts-schema-validation |
+| tldw_chatbook/TTS/recovery.py | _Profiles.capture | copy_private_sqlite | 1 | generic_boundary | qualified-tts-capture |
+
+| sqlite:recovery.files.tts | tldw_chatbook/TTS/recovery | _PRIVATE_AND_READ_ONLY | sqlite/durable-file-reference-qualified |
+| sqlite:recovery.files.persona | tldw_chatbook/Persona_Visual/recovery | _READ_ONLY_URI | sqlite/durable-file-reference-qualified |
+
+Task9 refines only the exact installed roots below. The source-symbol census above
+remains exhaustive: a raw writer's `unsupported` row is **not** silently promoted to
+ordinary-writer qualification by a recovery copy/read policy. The remaining `rag`,
+`runtime.credentials`, and caller-derived miscellaneous owners remain explicit
+unsupported cohorts. Unknown app-data children, unknown skill/model siblings,
+custom acquisition formats, and unresolved current or retained locators block
+complete inventory. Existing process/external/server/generic-boundary rows retain
+those exact classifications; no home scan or broad cache/backup-name exclusion was
+added. Earlier qualified SQLite/operational owners keep their own adapters.
+
+### Installed file policies and task10 participant handoff
+
+`data` below is the pure selected `profile_paths.user_data_dir(config)`, including
+installed `paths`/`Paths` aliases and user-folder selection. `config-parent` is the
+explicit active config's parent. Every listed ordinary raw writer must enroll its
+**full mutation lifetime**, including remove/rename/cleanup/child-process work,
+before task10 may remove the corresponding `participant_pending` declaration or
+release startup holds. A read-only/copy ID grants no ordinary-writer bypass.
+
+| Installed owner | Exact selector / bytes policy | Actual source producer or selector; participant obligation |
+| --- | --- | --- |
+| config; config.history | Active config plus exact `.toml.bak` and `config_backup_YYYYMMDD_HHMMSS.toml` siblings; corrupt histories retained as bytes | `config._get_effective_config_path`, `config._write_serialized_config_artifact_unlocked`; existing checked config save admission remains. Credential policy applies equally to history in task14. |
+| personas | data/tldw_chatbook_personas.json | `app._wire_character_persona_services`, `LocalCharacterPersonaService._persist_personas`; participant pending. |
+| chat.dictionary_history | data/tldw_chatbook_chat_dictionary_history.json | `LocalChatDictionaryService._persist_history`; participant pending. |
+| chat.rag_context | data/tldw_chatbook_chat_rag_context.json | `ChatConversationService._save_rag_context_store`; participant pending. |
+| chat.grammars; feedback; audio.history | data/tldw_chatbook_chat_grammars.json; tldw_chatbook_feedback.json; tldw_chatbook_audio_history.json | `LocalChatGrammarsService._persist`, `LocalFeedbackService._persist`, `LocalAudioServicesService._persist_history`; participant pending. |
+| chat.dictionaries | data/chat_dicts, including all retained files and empty topology | `config.load_settings` and installed dictionary writers; actual core `chat_dictionaries.file_path` remains a required group when present. Participant pending. |
+| chunking.templates | data/chunking_templates | `ChunkingTemplateManager._get_user_templates_dir`, `ChunkingTemplateManager.save_template`; participant pending. |
+| notes.templates | config-parent/note_templates.json | `Event_Handlers.notes_events.load_note_templates` effective config selector; `note_ingest_events.handle_ingest_notes_import_now_button_pressed.import_worker_notes` raw JSON write requires participant lifetime, pending. |
+| chat.prompts | installed package/Chat/prompt_templates | `Chat.prompt_template_manager.PROMPT_TEMPLATES_DIR`, `load_template`; inert internal definitions. |
+| generation.styles | data/image_generation_styles | `Media_Creation.generation_templates` installed template directory; participant pending. |
+| tokenizers.custom | canonical ~/.config/tldw_cli/tokenizers, exact installed tokenizer owner root | `Utils.custom_tokenizers.CustomTokenizerManager.__init__`, `install_tokenizer`, `save_mappings`; participant pending. No environment model-cache inference. |
+| skills | data/skills; known tldw_chatbook_skills.json, skills/, trust/ | Runtime `default_local_skills_store_dir` now delegates the pure recovery selector. `LocalSkillsService._save_index`, `_write_bytes_atomic`, `_write_text_atomic`, create/import/remove/script lifecycle; `Skills_Interop.atomic_write` and trust-store `_atomic_write_bytes`/`_atomic_write_json` require full participant lifetimes. Trust manifests/grants/snapshots are historical bytes, never imported execution authority. |
+| persona.assets | data/persona_visual | `publish_persona_visual`, publication candidate cleanup, importer and authoring-workspace materialization/cleanup; participant pending. Qualified core42 `persona_visual_assets` current/retained locators require exact source size/hash. |
+| persona.visual_identity | data/visual_identities | `Character_Chat.visual_identity.publish_visual_identity_candidate` and cleanup/materialization; actual manual pack assets plus preview locators. Participant pending. Unknown source kinds refuse. |
+| persona.visual_identity_builtin | Only referenced built-in files and ancestors under installed package/assets | Exact owning pack `source_kind=builtin`, core42 schema, checked relative path/size/SHA256. No whole-package traversal. Captured bytes never authorize installation or overwriting package assets. |
+| chat.attachments | Same physical core DB, message_attachments.data and core image BLOBs | Exact core/attachment cohort with physical identity first. Delegates checked core capture/schema; no new raw writer. |
+| tts.profile_store; tts.references | Canonical configured TTS DB, exact installed schema4; clone bytes/transcript/recipe references retained in DB | `_Profiles.capture` uses literal recovery.files.tts and existing checked SQLite snapshot. Exact TTS physical cohort; reference count/hash verified. Runtime `TTSProfileRepository` coordinated worker drain belongs task10. |
+| tts.voices | Installed CHATTERBOX_VOICE_DIR and HiggsSettings.voice_samples_dir selectors, configured/default Kokoro blends directory, active config-parent/kokoro_voice_blends.json | `ChatterboxTTSBackend`, `HiggsVoiceProfileManager` create/import/save/restore/backup, `KokoroTTSBackend` saved blends and `voice_blend_paths.write_private_json`; participant pending. Voice payloads are baseline, not model opt-in. |
+| TTS migration state | Exact journal/candidate/rollback constants from profile_migration_journal and DB-name.pre-v3.sqlite3/.pre-v4.sqlite3 | Existing state is an explicit unsafe pending-operation blocker; absence is recorded. No constructor, journal replay, migration, or blanket disposable classification. |
+| models.artifacts | data/models topology; only models/managed installed descriptor layout qualified; unknown siblings unsupported | `managed_model_artifact_root` delegates pure selector. `ModelArtifactService.install`, import, acquire/activate/remove/reconcile and their stage/lease lifetimes remain participant pending. |
+| Model recipes/state | Valid installed ArtifactDescriptor manifests and active/ready files retained inert by default; exact lock artifacts excluded | Locally present model_id variants only; no required downloadable alternatives. No recipe/state activation. |
+| Selected model payloads | Opt-in model_id and exact ArtifactRef dependency closure, installed sizes/hashes; no generic links | Direct manifest dependency edges use final profile-qualified IDs. `_Artifacts.validate_dependencies` rechecks declared staged payloads and dependent manifest identity. Every selected manifest in the closure must be validated by task15/17. |
+| Model staging/resume | Empty staging topology retained; nonempty staging is a specific unsafe pending-operation blocker | Actual `ModelArtifactService._download_stage_for` creates download-stage.json/payload/state; `_create_install_staging` owns install candidates. Discovery neither removes nor replays them. Unwired/unknown layouts cannot be selected as qualified model bytes. |
+| generation.assets | data/generated_images/saved baseline; generated_images/temp and generated_videos opt-in | `Media_Creation.image_generation_service.ImageGenerationService._setup_output_directory`, `generate_custom`, `save_generation`, `cleanup_temp_images` and `VideoStore._atomic_publish`/`_commit_sibling`. Included assets retain participant pending; selected temporary media also retains explicit task11 reference-catalog qualification pending. |
+| diagnostics.logs | Exact installed logging.log_filename under data plus numeric rotations, opt-in | `app` logging selector; defaults do not read diagnostic content. Unknown diagnostic/artifact layouts remain unsupported, not dropped. |
+| cache.model_catalog | Exact data/model_catalog_cache.json excluded | `app` installed provider catalog cache selector; this does not exclude other caches. |
+| external.files | Only explicit selected roots, including empty topology and ordinary metadata | No general symlink/mount/alias following. Missing selected roots are unavailable. |
+| recovery.output | INTERNAL planned_output_root only; positive absence below pinned parent and no required baseline overlap | `_planned_output_exclusion`; existing empty paths refuse. No public extra CaptureOptions key, caller proof bit, output creation, or arbitrary existing output exclusion. Actual created output/control/rollback owners must independently qualify in tasks15/16/18. |
+
+### Metadata, configuration and staged dependency contracts
+
+`FileMetadata` is frozen, version1: final profile-qualified root/parent IDs,
+bounded relative path, exact file/directory kind, observed ordinary mode bits,
+mtime_ns, and private/external policy. Root/parent IDs remap with their item IDs;
+private policy retains source mode evidence so later preview can explain restoring
+private directories as0700. No foreign ownership or privilege restoration.
+Metadata is preview evidence only; task15 must reobserve pinned sources at capture.
+Scope digest includes topology/policy/selections/exclusions, not mode/mtime churn.
+
+Actual Darwin tests exercise ACL, xattr, flags/links/special objects and private
+metadata. Linux detection is implemented using fd listxattr but not host-qualified
+here. Other platforms return unavailable capability. Unsupported metadata never
+means presumed absent; selected builtins use the same walker with a bounded
+private selected-path set, and an empty set never expands to the entire tree.
+
+`managed_secret_locations` returns only known sensitive mapping-key tuples using
+the installed sensitive-key predicate; no values, keyring access or decryption.
+`remap_config_locations` accepts **exact installed section.key names**, comprising
+all `profile_paths.DATABASE_PATHS` database selectors, paths.data_dir/Paths.data_dir,
+notes.sync_directory, console.workspace_root, llm_management.model_download_dir,
+embedding_config.model_cache_dir, app_tts.CHATTERBOX_VOICE_DIR,
+app_tts.KOKORO_VOICE_BLENDS_DIR, HiggsSettings.voice_samples_dir. Unknown keys or
+conflicting alias targets refuse. Arbitrary prose/unrecognized values are preserved.
+These are pure parsed-mapping transformations, not mutation authority.
+OwnerAdapter.relocate remains validation-only until task17 staged mutation authority.
+
+Persona current and retained references are not deleted by a raw deleted flag.
+Manual previews have no installed source digest column: require checked bytes now;
+the archive capture supplies their content digest. Builtin bytes require the actual
+installed digest, never a version label. Task11/17 must resolve staged builtin
+bytes into validated dependency groups/new approved roots; incompatible installed
+bytes require refusal or explicit remap, never package overwrite. All staged peer
+lookups use exact declared final profile IDs, not suffix searches or archive paths.
+
+TTS public package exports remain exact and lazy; public resolution admits startup.
+Both actual TTS -m routes and the nested backend package guard before optional
+imports; direct chatterbox protection remains. Persona/Skills exact exports are
+lazy and model-store discovery preserves the no-inference/no-HTTP import seam.
+No startup hold is released as a shortcut for a raw writer lacking tokens.

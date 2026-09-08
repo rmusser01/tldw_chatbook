@@ -215,3 +215,13 @@ retired before capture scope exit. See [core owner qualification](backup-recover
 | B33 | tldw_chatbook/Notes/recovery | _FileNotesAdapter.capture | recovery.operations.file_notes | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
 | B34 | tldw_chatbook/Notes/recovery | _ReceiptsAdapter.capture | recovery.operations.receipts | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
 | B35 | tldw_chatbook/Kanban_Interop/recovery | _KanbanAdapter.capture | recovery.operations.kanban | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Exact checked maintenance snapshot; historical claims remain inactive. |
+
+## Installed durable-file reference authority (TASK-31992)
+
+| C72 | tldw_chatbook/TTS/recovery | _Profiles.validate | recovery.files.tts | private_file, read_only_uri | exact installed TTS schema 4 validation | Migrated via `connect_private_sqlite`. Literal owner authority; no runtime constructor or migration replay. |
+| C73 | tldw_chatbook/Persona_Visual/recovery | _Assets._references | recovery.files.persona | read_only_uri | core schema 42 qualified current and retained locators | Migrated via `connect_private_sqlite`. Read-only reference proof; no publication authority. |
+| B36 | tldw_chatbook/TTS/recovery | _Profiles.capture | recovery.files.tts | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Checked maintenance snapshot includes clone-reference BLOBs. |
+
+`_CoreAdapter.discover` additionally reads qualified core schema 42 using literal
+`recovery.core.chachanotes` to derive present reference groups; it does not change
+the existing C/B owner policy or admit an arbitrary dynamic call site.

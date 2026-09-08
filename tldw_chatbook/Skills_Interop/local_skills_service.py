@@ -66,7 +66,9 @@ def default_local_skills_store_dir(user_data_dir: str | Path) -> Path:
     Returns:
         ``Path(user_data_dir) / "skills"``.
     """
-    return Path(user_data_dir) / _LOCAL_SKILLS_STORE_DIRNAME
+    from .recovery import default_local_skills_store_dir as pure_selector
+
+    return pure_selector(user_data_dir)
 _FRONT_MATTER_PATTERN = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 _METADATA_FIELDS = {
     "name",

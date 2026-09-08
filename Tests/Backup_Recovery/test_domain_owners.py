@@ -853,12 +853,15 @@ def test_eval_current_character_references_require_exact_profile_peer(tmp_path):
 
 
 @pytest.mark.parametrize("fault", ["outside", "symlink", "hardlink", "budget", "owner"])
-def test_definition_reader_uses_native_capture_authority(raw_scope, tmp_path, fault):
+@pytest.mark.parametrize("mode", ["bytes", "digest"])
+def test_definition_reader_uses_native_capture_authority(raw_scope, tmp_path, fault, mode):
     import os
     from tldw_chatbook.Backup_Recovery.storage_admission import _read_recovery_file
     from tldw_chatbook.Backup_Recovery.admission import _local
 
     source, stage, enter = raw_scope
+    from tldw_chatbook.Backup_Recovery.storage_admission import _digest_recovery_file
+    reader = _read_recovery_file if mode == "bytes" else _digest_recovery_file
     selected = source
     owner = "eval.definitions"
     limit = 4096
@@ -877,7 +880,7 @@ def test_definition_reader_uses_native_capture_authority(raw_scope, tmp_path, fa
         owner = "unregistered"
     with enter():
         with pytest.raises((OSError, ValueError, RuntimeError)):
-            _read_recovery_file(owner, selected, max_bytes=limit)
+            reader(owner, selected, max_bytes=limit)
         assert _local.capture_scope.resources == []
 
 
@@ -976,7 +979,7 @@ def test_asset_reference_cannot_resolve_a_valid_identifier_prefix(study_store):
         "copy_source",
         "copy_destination",
         "capture_read",
-        "ordinary_read",
+        "ordinary_read", "ordinary_digest", "capture_digest",
         "traversal_parent",
         "symlink_parent",
     ],
@@ -1034,13 +1037,17 @@ def activate(self, scope):
     state["active"] = True
 storage._CaptureFileDescriptors.__init__ = activate
 try:
-    if operation == "ordinary_read":
+    if operation == "ordinary_digest":
+        storage._digest_recovery_file("eval.definitions", source, max_bytes=4096)
+    elif operation == "ordinary_read":
         storage._read_recovery_file("eval.definitions", source, max_bytes=4096)
     else:
         authority = admission_authority(root)
         with authority.maintenance(("core", "bootstrap.unbound"), 1) as session:
             with session.capture_scope((source,), stage):
-                if operation == "capture_read":
+                if operation == "capture_digest":
+                    storage._digest_recovery_file("eval.definitions", source, max_bytes=4096)
+                elif operation == "capture_read":
                     storage._read_recovery_file("eval.definitions", source, max_bytes=4096)
                 else:
                     storage.copy_capture_file("eval.definitions", source, stage / "copy.yaml", Event(), max_bytes=4096)

@@ -487,6 +487,29 @@ def _check_capture_file_identity(scope, selected, info, *, source_only=False):
 
 # Explicit installed owners; identifiers grant no path or maintenance authority.
 _RAW_RECOVERY_LIMITS = {
+    "generation.assets": 256 * 1024**3,
+    "diagnostics.logs": 256 * 1024**3,
+    "tokenizers.custom": 256 * 1024**3,
+    "skills": 256 * 1024**3,
+    "persona.assets": 256 * 1024**3,
+    "persona.visual_identity": 256 * 1024**3,
+    "persona.visual_identity_builtin": 256 * 1024**3,
+    "tts.voices": 256 * 1024**3,
+    "models.artifacts": 256 * 1024**3,
+    "config": 16 * 1024**2,
+    "config.history": 16 * 1024**2,
+    "personas": 256 * 1024**3,
+    "chat.dictionary_history": 256 * 1024**3,
+    "chat.rag_context": 256 * 1024**3,
+    "chat.grammars": 256 * 1024**3,
+    "feedback": 256 * 1024**3,
+    "audio.history": 256 * 1024**3,
+    "chat.dictionaries": 256 * 1024**3,
+    "chunking.templates": 256 * 1024**3,
+    "notes.templates": 256 * 1024**3,
+    "chat.prompts": 256 * 1024**3,
+    "generation.styles": 256 * 1024**3,
+    "external.files": 256 * 1024**3,
     "eval.definitions": 1024**4,
     "mcp.local": 16 * 1024**2,
     "mcp.targets": 16 * 1024**2,
@@ -534,6 +557,20 @@ def _check_recovery_file(
     )
 
 
+def _digest_recovery_file(
+    owner_id: str,
+    candidate: Path,
+    *,
+    max_bytes: int,
+    cancel: threading.Event | None = None,
+) -> tuple[int, str]:
+    """Return actual byte count/SHA256 only after positive native retirement."""
+    return _consume_recovery_file(
+        owner_id, candidate, max_bytes=max_bytes,
+        collect=False, cancel=cancel, digest=True,
+    )
+
+
 def _consume_recovery_file(
     owner_id: str,
     candidate: Path,
@@ -541,7 +578,8 @@ def _consume_recovery_file(
     max_bytes: int,
     collect: bool,
     cancel: threading.Event | None = None,
-) -> bytes | None:
+    digest: bool = False,
+) -> bytes | tuple[int, str] | None:
     """Return bounded definition bytes after native reader retirement."""
     _recovery_file_limit(owner_id, max_bytes)
     selected = lexical_path(candidate)
@@ -564,6 +602,9 @@ def _consume_recovery_file(
             if scope is not None:
                 _check_capture_file_identity(scope, selected, info)
             chunks = []
+            import hashlib
+
+            hasher = hashlib.sha256() if digest else None
             total = 0
             while True:
                 if cancel is not None and cancel.is_set():
@@ -578,6 +619,8 @@ def _consume_recovery_file(
                     raise ValueError("definition_byte_limit")
                 if collect:
                     chunks.append(chunk)
+                if hasher is not None:
+                    hasher.update(chunk)
             if scope is not None:
                 _check_capture_file_identity(scope, selected, os.fstat(fd))
                 current_parent = selected.parent.stat()
@@ -587,6 +630,8 @@ def _consume_recovery_file(
                     held_parent.st_ino,
                 ):
                     raise bootstrap.RecoveryRequired("capture_target_changed")
+            if hasher is not None:
+                return total, hasher.hexdigest()
             return b"".join(chunks) if collect else None
     finally:
         # If native retirement fails, ordinary admission is retained too. Never

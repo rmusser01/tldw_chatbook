@@ -445,6 +445,21 @@ _SQLITE_OWNER_POLICIES = {
         _MEMORY,
         "Sync state currently uses only an in-memory database.",
     ),
+    "recovery.files.persona": SQLiteOwnerPolicy(
+        "tldw_chatbook/Persona_Visual/recovery",
+        _READ_ONLY_URI,
+        "Read current/retained installed core asset references without activation.",
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.files.tts": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/recovery",
+        _PRIVATE_AND_READ_ONLY,
+        "Installed TTS profile schema4 and embedded clone-reference recovery.",
+        centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
     "tts.profile_store": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_schema",
         _PRIVATE_FILE,

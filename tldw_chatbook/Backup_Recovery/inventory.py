@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .models import (
     DISCOVERY_CONTEXT_KEY,
     DiscoveryContext,
+    DiscoverySelections,
     Inventory,
     StorageItem,
     storage_logical_id,
@@ -226,6 +227,16 @@ def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
                 tuple(sorted(item.dependencies)),
                 item.shared_group,
                 item.deletion_validated,
+                (
+                    item.metadata.version,
+                    item.metadata.root_id,
+                    item.metadata.relative_path,
+                    item.metadata.parent_id,
+                    item.metadata.kind,
+                    item.metadata.policy,
+                )
+                if item.metadata
+                else None,
             )
             for item in items
         ),
@@ -289,13 +300,57 @@ def _unknown_children(
         )
 
 
-def discover(config_paths: tuple[Path, ...]) -> Inventory:
+def _planned_output_exclusion(context, declared, data_root):
+    """An absent output is a plan, never permission to omit existing bytes."""
+    selected = context.selections.planned_output_root
+    if selected is None:
+        return ()
+    from .bootstrap import pinned_directory
+
+    output = profile_paths.lexical_path(selected)
+    with pinned_directory(output.parent) as parent:
+        try:
+            os.stat(output.name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError("output_root_not_new")
+        for path in (
+            data_root,
+            *(
+                item.path
+                for item in declared
+                if item.path is not None
+                and item.status != "intentionally_excluded"
+                and not item.owner.startswith("external.")
+            ),
+        ):
+            if output == path or output in path.parents or path in output.parents:
+                raise ValueError("output_overlaps_baseline")
+    return (
+        StorageItem(
+            "recovery.output",
+            storage_logical_id(context, "recovery.output"),
+            output,
+            "intentionally_excluded",
+            (),
+        ),
+    )
+
+
+def discover(
+    config_paths: tuple[Path, ...], *, selections: DiscoverySelections | None = None
+) -> Inventory:
     """Read only explicitly selected TOML sources and canonical app-owned roots.
 
     Empty selection means the canonical effective config, never fallback creation.
     Config parse failures produce no guessed profile/database targets. Installed
     adapters may extend declarations without importing optional engines here.
     """
+    if selections is None:
+        selections = DiscoverySelections()
+    if type(selections) is not DiscoverySelections:
+        raise ValueError("invalid_discovery_selections")
     items: list[StorageItem] = []
     adapters = registered()
     selected_roots: set[Path] = set()
@@ -303,7 +358,7 @@ def discover(config_paths: tuple[Path, ...]) -> Inventory:
         selected = profile_paths.lexical_path(selected)
         profile_id = hashlib.sha256(str(selected).encode()).hexdigest()[:24]
         prefix = "profile:" + profile_id
-        context = DiscoveryContext(selected, profile_id)
+        context = DiscoveryContext(selected, profile_id, selections)
         config_id = storage_logical_id(context, "config")
         profile_start = len(items)
         item = _source_item("config", config_id, selected, required=True)
@@ -383,6 +438,18 @@ def discover(config_paths: tuple[Path, ...]) -> Inventory:
                     entry for entry in declared if entry.owner != adapter.owner_id
                 ]
                 declared.extend(extras)
+            if selections.external_roots:
+                from .recovery_files import _RawDeclaration
+
+                for external_root in selections.external_roots:
+                    declared.extend(
+                        _RawDeclaration("external.files")._tree(
+                            config,
+                            profile_paths.lexical_path(external_root),
+                            external=True,
+                        )
+                    )
+            declared.extend(_planned_output_exclusion(context, declared, root))
             items[profile_start:] = declared
             known = {entry.path for entry in declared if entry.path is not None}
             items.extend(_unknown_children(root, known, prefix))
@@ -450,6 +517,8 @@ def discover(config_paths: tuple[Path, ...]) -> Inventory:
             for index in indexes:
                 items[index] = replace(items[index], shared_group=group)
     items, cohort_issues = _merge_chachanotes_cohort(tuple(items))
+    items, tts_issues = _merge_chachanotes_cohort(items, cohort="tts")
+    cohort_issues = (*cohort_issues, *tts_issues)
     result = classify_entries(tuple(items))
     issues = set(result.issues) | set(cohort_issues)
     if any(item.logical_id.endswith(":parse_failure") for item in items):
@@ -457,12 +526,34 @@ def discover(config_paths: tuple[Path, ...]) -> Inventory:
     if any(item.logical_id.endswith(":discovery_failure") for item in items):
         issues.add("config_discovery_failure")
     return replace(
-        result, complete=result.complete and not issues, issues=tuple(sorted(issues))
+        result,
+        complete=result.complete and not issues,
+        issues=tuple(sorted(issues)),
+        scope_digest=hashlib.sha256(
+            json.dumps(
+                (
+                    result.scope_digest,
+                    tuple(
+                        str(profile_paths.lexical_path(p))
+                        for p in selections.external_roots
+                    ),
+                    selections.model_ids,
+                    selections.temporary_media,
+                    selections.diagnostics,
+                    str(profile_paths.lexical_path(selections.planned_output_root))
+                    if selections.planned_output_root
+                    else None,
+                ),
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest(),
     )
 
 
 def _merge_chachanotes_cohort(
     items: tuple[StorageItem, ...],
+    *,
+    cohort: str = "chachanotes",
 ) -> tuple[tuple[StorageItem, ...], tuple[str, ...]]:
     """Merge only installed shared declarations after checking original groups.
 
@@ -470,12 +561,17 @@ def _merge_chachanotes_cohort(
     never part of the durable scope label. A mismatching original declaration is
     refused before any rewrite can hide it by splitting into different groups.
     """
-    owners = {
-        "db.chachanotes.primary",
-        "study.local",
-        "quiz.local",
-        "notes.sync_bindings",
+    cohorts = {
+        "chachanotes": {
+            "db.chachanotes.primary",
+            "study.local",
+            "quiz.local",
+            "notes.sync_bindings",
+            "chat.attachments",
+        },
+        "tts": {"tts.profile_store", "tts.references"},
     }
+    owners = cohorts[cohort]
     original = {}
     physical = {}
     try:
@@ -498,7 +594,7 @@ def _merge_chachanotes_cohort(
                 or not parts[1]
             ):
                 return items, ("invalid_shared_declaration",)
-            expected = "shared:chachanotes:profile:" + parts[1]
+            expected = "shared:" + cohort + ":profile:" + parts[1]
             if item.shared_group != expected or item.path is None:
                 return items, ("invalid_shared_declaration",)
             physical.setdefault(_identity(item.path), []).append(index)
@@ -507,7 +603,9 @@ def _merge_chachanotes_cohort(
     result = list(items)
     for indexes in physical.values():
         label = (
-            "shared:chachanotes:"
+            "shared:"
+            + cohort
+            + ":"
             + hashlib.sha256(
                 "\0".join(sorted(items[i].logical_id for i in indexes)).encode()
             ).hexdigest()[:24]

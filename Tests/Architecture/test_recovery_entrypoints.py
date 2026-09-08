@@ -134,6 +134,7 @@ def test_bootstrap_dependency_leaf_and_script_route_inventory():
         "pathlib",
         "Utils.private_paths",
         "profile_paths",
+        "typing",
     }
 
 
@@ -209,8 +210,8 @@ ROUTE_CLASSIFICATIONS = {
     "RAG_Search/backfill.py": "enrolled_headless",
     "Config_Files/create_custom_template.py": "enrolled_config",
     "Utils/paths.py": "enrolled_config",
-    "TTS/utils/download_models.py": "enrolled_tts_package",
-    "TTS/backends/higgs_voice_manager.py": "enrolled_tts_package",
+    "TTS/utils/download_models.py": "enrolled_tts_direct",
+    "TTS/backends/higgs_voice_manager.py": "enrolled_tts_direct",
     "TTS/backends/chatterbox_process.py": "enrolled_direct_worker",
     "Tools/_grep_worker.py": "external_read_only_worker",
     "css/check_bundle_sync.py": "development_tool",

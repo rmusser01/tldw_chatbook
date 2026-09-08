@@ -10,7 +10,34 @@ import time
 from pathlib import Path
 from typing import Optional, Sequence, Union
 from loguru import logger
-from ..Metrics.metrics_logger import log_counter, log_histogram
+
+
+# Telemetry belongs to actual validation calls; pure recovery path parsing must
+# not bootstrap config, optional engines or persistent metrics during discovery.
+def log_counter(*args, **kwargs):
+    from ..Metrics.metrics_logger import log_counter as emit
+
+    return emit(*args, **kwargs)
+
+
+def log_histogram(*args, **kwargs):
+    from ..Metrics.metrics_logger import log_histogram as emit
+
+    return emit(*args, **kwargs)
+
+
+def validate_recovery_relative_path(value: str) -> str:
+    """Validate one bounded portable tree name; empty string names its root."""
+    if type(value) is not str or len(value.encode("utf-8")) > 1024:
+        raise ValueError("invalid_recovery_relative_path")
+    if not value:
+        return value
+    if any(part in {"", ".", ".."} for part in value.split("/")) or any(
+        ord(char) < 32 or char in "\\:" for char in value
+    ):
+        raise ValueError("invalid_recovery_relative_path")
+    return value
+
 
 #: Ultra-short recovery pointer, LED with (round 1 review CRITICAL 2): the
 #: full `ROOT_DENIAL_RECOVERY_HINT` sentence below is itself too long to

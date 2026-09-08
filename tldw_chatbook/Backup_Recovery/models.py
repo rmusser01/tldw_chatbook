@@ -7,6 +7,64 @@ from typing import Mapping, Protocol
 
 
 @dataclass(frozen=True)
+class FileMetadata:
+    """Versioned preview observations, never final capture or restore authority."""
+
+    version: int
+    root_id: str
+    relative_path: str
+    parent_id: str | None
+    kind: str
+    mode: int
+    mtime_ns: int
+    policy: str
+
+    def __post_init__(self) -> None:
+        from tldw_chatbook.Utils.path_validation import validate_recovery_relative_path
+
+        validate_recovery_relative_path(self.relative_path)
+        if (
+            type(self.version) is not int
+            or self.version != 1
+            or self.kind not in {"file", "directory"}
+            or self.policy not in {"private", "external"}
+            or type(self.mode) is not int
+            or not 0 <= self.mode <= 0o777
+            or type(self.mtime_ns) is not int
+            or type(self.root_id) is not str
+            or not self.root_id
+            or (self.parent_id is not None and type(self.parent_id) is not str)
+        ):
+            raise ValueError("invalid_file_metadata")
+
+
+@dataclass(frozen=True)
+class DiscoverySelections:
+    """Explicit local options; operation exclusions are separately validated."""
+
+    external_roots: tuple[Path, ...] = ()
+    model_ids: tuple[str, ...] = ()
+    temporary_media: bool = False
+    diagnostics: bool = False
+    planned_output_root: Path | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.external_roots) is not tuple
+            or any(not isinstance(path, Path) for path in self.external_roots)
+            or type(self.model_ids) is not tuple
+            or any(type(value) is not str or not value for value in self.model_ids)
+            or len(set(self.external_roots)) != len(self.external_roots)
+            or len(set(self.model_ids)) != len(self.model_ids)
+            or type(self.temporary_media) is not bool
+            or type(self.diagnostics) is not bool
+            or self.planned_output_root is not None
+            and not isinstance(self.planned_output_root, Path)
+        ):
+            raise ValueError("invalid_discovery_selections")
+
+
+@dataclass(frozen=True)
 class StorageItem:
     owner: str
     logical_id: str
@@ -15,12 +73,15 @@ class StorageItem:
     dependencies: tuple[str, ...]
     shared_group: str | None = None
     deletion_validated: bool = False
+    metadata: FileMetadata | None = None
 
     def __post_init__(self) -> None:
         if type(self.dependencies) is not tuple or any(
             type(value) is not str for value in self.dependencies
         ):
             raise TypeError("immutable_dependencies_required")
+        if self.metadata is not None and type(self.metadata) is not FileMetadata:
+            raise TypeError("invalid_file_metadata")
         if type(self.deletion_validated) is not bool:
             raise TypeError("invalid_deletion_evidence")
 
@@ -80,6 +141,7 @@ class DiscoveryContext:
 
     config_path: Path
     profile_id: str
+    selections: DiscoverySelections = DiscoverySelections()
 
 
 DISCOVERY_CONTEXT_KEY = "__chatbook_recovery_context__"

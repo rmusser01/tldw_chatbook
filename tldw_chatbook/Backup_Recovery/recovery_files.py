@@ -1,6 +1,6 @@
 """Shared inert raw-file declarations; exact installed owners select all paths."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import stat
@@ -43,28 +43,27 @@ class _RawDeclaration:
 
     def _item(self, config, path, local_id=""):
         context = discovery_context(config)
-        try:
-            info = path.lstat()
-            status = (
-                "included"
-                if stat.S_ISREG(info.st_mode) and info.st_nlink == 1
-                else "unsupported"
-            )
-        except FileNotFoundError:
-            status = "unused"
-        except OSError:
-            status = "unavailable"
+        entry = inventory_tree(path, owner=self.owner_id, external=False)[0]
+        logical_id = storage_logical_id(context, self.owner_id, local_id)
+        status = "unsupported" if entry.status == "included_directory" else entry.status
         return StorageItem(
             self.owner_id,
-            storage_logical_id(context, self.owner_id, local_id),
+            logical_id,
             path,
             status,
             (storage_logical_id(context, "config"),),
+            metadata=replace(entry.metadata, root_id=logical_id, parent_id=None)
+            if entry.metadata
+            else None,
         )
 
-    def _tree(self, config, root):
+    def _tree(self, config, root, *, external=False, selected_paths=None):
         context = discovery_context(config)
-        entries = inventory_tree(root, owner=self.owner_id, external=False)
+        from .file_inventory import _inventory_tree
+
+        entries = _inventory_tree(
+            root, owner=self.owner_id, external=external, selected_paths=selected_paths
+        )
         keys = {
             e.logical_id: storage_logical_id(
                 context,
@@ -81,6 +80,15 @@ class _RawDeclaration:
                 e.status,
                 tuple(keys[k] for k in e.dependencies)
                 + (storage_logical_id(context, "config"),),
+                metadata=replace(
+                    e.metadata,
+                    root_id=keys[e.metadata.root_id],
+                    parent_id=keys[e.metadata.parent_id]
+                    if e.metadata.parent_id
+                    else None,
+                )
+                if e.metadata
+                else None,
             )
             for e in entries
         )

@@ -1,3 +1,8 @@
+# ADR-126: actual runtime entry must fence before optional imports.
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+admit_startup()
+
 # higgs_voice_manager.py
 # Description: Voice profile management utilities for Higgs Audio TTS
 #

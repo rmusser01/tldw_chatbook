@@ -28,6 +28,20 @@ class _CoreAdapter:
         context = discovery_context(config)
         path = database_path(config, self.setting_name)
         status = "included" if path.is_file() else "missing_required"
+        dependent_owners = self.dependent_owners
+        if self.owner_id == "db.chachanotes.primary" and status == "included":
+            from .private_sqlite import connect_private_sqlite
+
+            if not self.validate(path):
+                with closing(connect_private_sqlite("recovery.core.chachanotes", path, read_only=True)) as connection:
+                    optional_groups = {
+                        "persona.assets": "SELECT 1 FROM persona_visual_assets LIMIT 1",
+                        "persona.visual_identity": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind != 'builtin' LIMIT 1",
+                        "persona.visual_identity_builtin": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind = 'builtin' LIMIT 1",
+                        "chat.dictionaries": "SELECT 1 FROM chat_dictionaries WHERE file_path IS NOT NULL LIMIT 1",
+                    }
+                    absent = {owner for owner, query in optional_groups.items() if connection.execute(query).fetchone() is None}
+                    dependent_owners = tuple(owner for owner in dependent_owners if owner not in absent)
         return (
             StorageItem(
                 self.owner_id,
@@ -40,11 +54,11 @@ class _CoreAdapter:
                         owner,
                         ""
                         if owner
-                        in ("config", "notes.file_notes", "notes.sync_bindings")
+                        in ("config", "notes.file_notes", "notes.sync_bindings", "chat.attachments", "chat.dictionaries", "persona.assets", "persona.visual_identity", "persona.visual_identity_builtin", "skills")
                         or owner.startswith("db.")
                         else "unresolved",
                     )
-                    for owner in ("config",) + self.dependent_owners
+                    for owner in ("config",) + dependent_owners
                 ),
                 shared_group=(
                     "shared:chachanotes:profile:" + context.profile_id
@@ -217,16 +231,20 @@ class _CoreAdapter:
                             "chat.dictionaries",
                         ),
                         (
-                            "SELECT 1 FROM persona_visual_assets UNION ALL SELECT 1 FROM visual_identity_assets LIMIT 1",
+                            "SELECT 1 FROM persona_visual_assets LIMIT 1",
                             "persona.assets",
+                        ),
+                        (
+                            "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind != 'builtin' LIMIT 1",
+                            "persona.visual_identity",
+                        ),
+                        (
+                            "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind = 'builtin' LIMIT 1",
+                            "persona.visual_identity_builtin",
                         ),
                     ):
                         if connection.execute(query).fetchone() is not None:
-                            key = (
-                                prefix
-                                + owner
-                                + ("" if owner == "notes.file_notes" else ":unresolved")
-                            )
+                            key = prefix + owner
                             if (
                                 key not in item.dependencies
                                 or key not in candidates
@@ -299,6 +317,8 @@ def core_adapters() -> tuple[OwnerAdapter, ...]:
                 "notes.sync_bindings",
                 "chat.dictionaries",
                 "persona.assets",
+                "persona.visual_identity",
+                "persona.visual_identity_builtin",
                 "chat.attachments",
             ),
         ),
