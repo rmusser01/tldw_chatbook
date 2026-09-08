@@ -708,3 +708,36 @@ Complete scroller, Reader/Analysis characterization and entry-focus files:
 **13 passed** in 12.78 seconds (`/private/tmp/pr2427-media-state-retarget.log`).
 Remaining visual failures and size gates are still open. This is a progress
 checkpoint, not merge qualification.
+
+### Existing-owner and fixture repairs after the published checkpoint
+
+Character Repair local deduplication reduces 518 to 499 lines under its unchanged
+502 ceiling. Nine repeated status updates use a fresh-query helper; three buttons
+retain exact types, labels, IDs, classes, order and parentage through an ordered
+loop. Existing controller logic and assertions are unchanged. Complete repair
+and CSS-parity group: **57 passed**, including new DOM and widget-replacement
+controls (`/private/tmp/pr2427-character-complete.log`); Ruff/format checks pass.
+
+The approved Session handoff move places claim/release/acknowledgement and staged
+evidence construction in the existing owner, retaining the composer DOM hook and
+named live ports. Source is 16,742 lines / 505 methods under 16,811 / 505.
+Independent root review confirms the ordering, sanitization, callback identity
+and existing ownership. Owner/production handoff group **63 passed**, native
+handoff selection **46 passed**, and boundary/registration group **78 passed**.
+The frozen broader group was **296 passed / 15 failed**, not a full success:
+14 inherited live-work failures plus a Message-test receiver alias guard.
+
+Diagnostic statement review found precisely five identical warning statements
+moved Screen to Session: 94270dbc2da185bc, 7bf3d873d385cf18,
+69ab88068ad33952, d1aa7e16248a9dbc, 2c56fe86128ca98f. No content, arguments,
+logger binding or sink topology changed. The official writer updates those two
+owner rows only (`/private/tmp/pr2427-handoff-diagnostic-statements.log`).
+
+The retired-Screen weakref failure was traced to a cancelled Environment-poll
+TimerHandle's saved async Context, with 8.8 seconds left on its original deadline.
+Keeping the real timer but shortening only that unrelated fixture cadence to
+0.05 seconds restores collection; explicit before/after timer-lifecycle assertions
+were added. Production code and the writer/unmount/durable-repair assertions are
+unchanged. The weakref case plus complete Message and moved-seam guard files:
+**32 passed** (`/private/tmp/pr2427-cleanup-fixture-green.log`). Full settings-file
+qualification remains open. See the incident in lessons-testing-evidence.md.
