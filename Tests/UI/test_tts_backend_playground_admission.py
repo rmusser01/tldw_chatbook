@@ -28,6 +28,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
 )
+from tldw_chatbook.TTS import pcm_playback
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.adapter_types import TTSProviderDescriptor, TTSProviderSpec
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
@@ -43,7 +44,6 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSSelectionOverrides,
 )
 from tldw_chatbook.TTS.TTS_Generation import TTSService
-from tldw_chatbook.UI.Speech import speech_playback_mixin
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.stts_playground_catalog import (
     LOADING_SELECT_VALUE,
@@ -672,7 +672,7 @@ async def test_cancelled_lab_pcm_copy_releases_its_lease_after_the_reader_retire
     entered = threading.Event()
     finish = threading.Event()
     copies = []
-    real_copy = speech_playback_mixin.create_pcm16_wav_copy
+    real_copy = pcm_playback.create_pcm16_wav_copy
 
     def held_copy(*args):
         result = real_copy(*args)
@@ -681,7 +681,7 @@ async def test_cancelled_lab_pcm_copy_releases_its_lease_after_the_reader_retire
         assert finish.wait(5)
         return result
 
-    monkeypatch.setattr(speech_playback_mixin, "create_pcm16_wav_copy", held_copy)
+    monkeypatch.setattr(pcm_playback, "create_pcm16_wav_copy", held_copy)
     async with backend_lab_factory("kokoro") as lab:
         original = tmp_path / "owned.pcm"
         original.write_bytes(struct.pack("<hh", 2000, -2000) * 1200)

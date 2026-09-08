@@ -58,7 +58,6 @@ from tldw_chatbook.TTS.default_profile_request_resolver import (
     resolve_default_profile,
 )
 from tldw_chatbook.TTS.pcm_stream import SinkPlan, sink_plan
-from tldw_chatbook.TTS.pcm_playback import create_pcm16_wav_copy
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
     TTSDefaultProfileSelection,
@@ -2033,6 +2032,8 @@ class TTSEventHandler:
                 await flush_artifact_batch()
 
                 if audio_format == "pcm":
+                    from tldw_chatbook.TTS.pcm_playback import create_pcm16_wav_copy
+
                     # This cache is a temporary playback fallback. The adapter
                     # response and Speech Lab's export artifact remain raw PCM.
                     # Never hand an untyped raw file to a container-only player.

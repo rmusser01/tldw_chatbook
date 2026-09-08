@@ -38,7 +38,6 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
 
 from tldw_chatbook.TTS import STTSGeneratedAudio, STTSPlaygroundResultProjection
 from tldw_chatbook.TTS.playground_types import PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS
-from tldw_chatbook.TTS.pcm_playback import create_pcm16_wav_copy
 from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
 
 
@@ -707,6 +706,8 @@ class SpeechPlaybackMixin:
                     logger.debug(f"Player state after stop: {state_after_stop}")
 
                     if audio_path.suffix.lower() == ".pcm":
+                        from tldw_chatbook.TTS.pcm_playback import create_pcm16_wav_copy
+
                         metadata = pcm_metadata or {}
                         copy_task = asyncio.create_task(
                             asyncio.to_thread(

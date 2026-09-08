@@ -103,3 +103,17 @@ remain unverified.
 ADR required: no. Existing ADRs 023, 039, and 040 govern these repaired delivery,
 settings-ownership, and current-result contracts. No new provider/runtime or
 storage boundary was introduced.
+
+## PR boot-guard follow-up
+
+CI exposed one extra boot-time module from the new PCM helper. Its imports now
+run only when PCM playback is requested; the existing census also pins the helper
+as absent at `_ui_ready`. The module budget is unchanged. All 4 census tests and 94 PCM/UI/streaming
+regressions pass after this fix.
+
+The fetched dev base also exceeded its CSS budget before this PR's changes:
+804,241 bytes versus 804,000. The CSS files in the original PR matched dev.
+Shortening an existing explanatory comment removes 497 bytes from the boot
+bundle, yielding 803,744 bytes. Both the source and generated bundle have
+identical non-comment CSS to HEAD. No rule or budget constant changed; ADR-097
+permits shedding this existing boot cost. The CSS budget regression passes.

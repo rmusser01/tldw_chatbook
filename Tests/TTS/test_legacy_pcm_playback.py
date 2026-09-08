@@ -278,7 +278,7 @@ async def test_malformed_pcm_does_not_complete_as_playable_audio(body, monkeypat
 async def test_cancelled_late_pcm_copy_cannot_delete_the_next_playback(monkeypatch):
     service, _requests = _service("kokoro")
     handler = _Handler(service)
-    original_copy = tts_events.create_pcm16_wav_copy
+    original_copy = pcm_playback.create_pcm16_wav_copy
     entered = threading.Event()
     allow_finish = threading.Event()
     first_copy = []
@@ -293,7 +293,7 @@ async def test_cancelled_late_pcm_copy_cannot_delete_the_next_playback(monkeypat
             assert allow_finish.wait(5)
         return path
 
-    monkeypatch.setattr(tts_events, "create_pcm16_wav_copy", held_copy)
+    monkeypatch.setattr(pcm_playback, "create_pcm16_wav_copy", held_copy)
     monkeypatch.setattr(tts_events, "sink_available", lambda: False)
     monkeypatch.setattr(tts_events, "_TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS", 0.01)
     task = asyncio.create_task(handler._generate_tts("Old PCM.", "same-owner", None))
