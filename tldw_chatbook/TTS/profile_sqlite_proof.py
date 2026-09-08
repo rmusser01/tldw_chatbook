@@ -34,6 +34,26 @@ _AUTHORITY_ERRNOS = frozenset(
 )
 
 
+def _is_authority_refusal(error: OSError) -> bool:
+    """Recognize only known parent-walk refusals or numeric authority errors."""
+    if isinstance(error, private_paths.PrivatePathError):
+        # The verified-parent walker wraps some OS errors with errno=None.
+        # Its status/reason pair distinguishes link refusal from generic OSError,
+        # which can represent internal I/O/descriptor exhaustion and stays fatal.
+        return (error.result.status, error.result.reason) in {
+            ("unsafe_parent", "shared_writable_parent"),
+            ("unsafe_parent", "untrusted_directory_owner"),
+            ("unsafe_parent", "missing_parent"),
+            ("link_or_non_regular", "non_directory_parent"),
+            ("link_or_non_regular", "symlink_hop_limit_exceeded"),
+            ("link_or_non_regular", "OSError"),
+            ("link_or_non_regular", "NotADirectoryError"),
+            ("operation_failed", "PermissionError"),
+            ("operation_failed", "FileNotFoundError"),
+        }
+    return error.errno in _AUTHORITY_ERRNOS
+
+
 class TTSProofError(RuntimeError):
     """Fixed semantic refusal, without source or exception details."""
 
@@ -263,7 +283,7 @@ class TTSProof:
                 "shm": current["shm"].to_payload() if self.sidecars else None,
             }
         except OSError as error:
-            if error.errno in _AUTHORITY_ERRNOS:
+            if _is_authority_refusal(error):
                 raise TTSProofError() from None
             raise
 
@@ -274,7 +294,7 @@ class TTSProof:
         try:
             self._capture_sidecars(require=True)
         except OSError as error:
-            if error.errno in _AUTHORITY_ERRNOS:
+            if _is_authority_refusal(error):
                 raise TTSProofError() from None
             raise
         return self.recheck()

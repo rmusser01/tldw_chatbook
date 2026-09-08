@@ -447,6 +447,14 @@ def test_actual_child_pins_and_exports_without_parent_original_file_opens(
 @contextmanager
 def substituted_proof_namespace(path, target):
     """Temporarily replace a closed owned fixture, then restore its exact inode."""
+    if target == "parent_permissions":
+        original_mode = path.parent.stat().st_mode & 0o7777
+        path.parent.chmod(0o777)
+        try:
+            yield
+        finally:
+            path.parent.chmod(original_mode)
+        return
     selected = (
         path.parent
         if target == "parent"
@@ -470,7 +478,9 @@ def substituted_proof_namespace(path, target):
         retained.rename(selected)
 
 
-@pytest.mark.parametrize("target", ["main", "wal", "shm", "parent"])
+@pytest.mark.parametrize(
+    "target", ["main", "wal", "shm", "parent", "parent_permissions"]
+)
 def test_actual_lease_retains_original_proof_across_authority_refusal(
     tmp_path, monkeypatch, target
 ):
@@ -703,7 +713,7 @@ def test_actual_first_pin_nofollow_refusal_restores_absent_then_complete_cohort(
         assert child.returncode == 0 and lease.cleanup_state == "reaped"
 
 
-@pytest.mark.parametrize("target", ["wal", "main", "parent"])
+@pytest.mark.parametrize("target", ["wal", "main", "parent", "parent_permissions"])
 def test_actual_partial_capture_retains_pins_until_exact_authority_restoration(
     tmp_path, monkeypatch, target
 ):
@@ -950,3 +960,116 @@ def test_actual_capture_privacy_refusal_never_remints_acquired_shm(tmp_path):
         assert not lease._failed and lease._child.poll() is None
         lease.close()
         assert lease.cleanup_state == "reaped" and lease._child.returncode == 0
+
+
+def test_actual_initial_unsafe_parent_keeps_private_path_classification(tmp_path):
+    store = tmp_path / "store"
+    store.mkdir(mode=0o700)
+    path = closed_store(store)
+    process = module("DB.private_sqlite_process")
+    protocol = module("DB.private_sqlite_protocol")
+    deadline = process.OperationDeadline(time.monotonic() + 30)
+    with process.HelperAdmission().reserve(
+        transient=1, retained=1, deadline=deadline
+    ) as owner:
+        with substituted_proof_namespace(path, "parent_permissions"):
+            lease = process.HelperLease.start(
+                protocol.PrepareRequest(str(path), False, False, False),
+                operation="tts_exact_current",
+                reservation=owner,
+                deadline=deadline,
+            )
+            assert lease.initial_response == {
+                "version": 1,
+                "operation": "tts_exact_current",
+                "status": "private_path_error",
+                "privacy_status": "unsafe_parent",
+                "reason": "shared_writable_parent",
+            }
+            assert lease._failed and lease._child.wait(timeout=2) == 0
+        with pytest.raises(process.HelperUnavailableError):
+            lease.request("tts_recheck", deadline=deadline)
+        lease.close()
+        assert lease.cleanup_state == "reaped"
+
+
+@pytest.mark.parametrize("operation", ["tts_recheck", "tts_pin_sidecars"])
+@pytest.mark.parametrize(
+    "status,reason,recoverable",
+    [
+        ("unsafe_parent", "shared_writable_parent", True),
+        ("unsafe_parent", "untrusted_directory_owner", True),
+        ("unsafe_parent", "missing_parent", True),
+        ("link_or_non_regular", "non_directory_parent", True),
+        ("link_or_non_regular", "symlink_hop_limit_exceeded", True),
+        ("link_or_non_regular", "OSError", True),
+        ("link_or_non_regular", "NotADirectoryError", True),
+        ("operation_failed", "PermissionError", True),
+        ("operation_failed", "FileNotFoundError", True),
+        ("operation_failed", "OSError", False),
+        ("operation_failed", "invalid_absolute_path", False),
+        ("unsafe_parent", "operation_failed", False),
+        ("wrong_owner", "shared_writable_parent", False),
+    ],
+)
+def test_actual_typed_parent_refusal_is_closed_and_operation_scoped(
+    tmp_path, monkeypatch, operation, status, reason, recoverable
+):
+    path = closed_store(tmp_path)
+    process = module("DB.private_sqlite_process")
+    protocol = module("DB.private_sqlite_protocol")
+    real_popen = subprocess.Popen
+
+    def launch(args, **kwargs):
+        script = f"""
+import runpy,sys
+def inject(frame,event,arg):
+    if event == 'call' and frame.f_code.co_name == {operation.removeprefix("tts_")!r} and frame.f_globals.get('__name__') == 'tldw_chatbook.TTS.profile_sqlite_proof' and frame.f_back.f_code.co_name != 'initialize' and frame.f_locals['self'].initialized:
+        paths = frame.f_globals['private_paths']
+        original = paths._open_verified_parent
+        def refused(*args,**kwargs):
+            paths._open_verified_parent = original
+            raise paths.PrivatePathError(paths.PrivatePathResult(args[0],paths.PrivatePathStatus({status!r}),reason={reason!r}))
+        paths._open_verified_parent = refused
+        sys.setprofile(None)
+sys.setprofile(inject)
+sys.argv = [{args[-1]!r}]
+runpy.run_path(sys.argv[0],run_name='__main__')
+"""
+        return real_popen([args[0], "-I", "-S", "-c", script], **kwargs)
+
+    monkeypatch.setattr(process.subprocess, "Popen", launch)
+    deadline = process.OperationDeadline(time.monotonic() + 30)
+    with process.HelperAdmission().reserve(
+        transient=1, retained=1, deadline=deadline
+    ) as owner:
+        lease = process.HelperLease.start(
+            protocol.PrepareRequest(str(path), False, False, False),
+            operation="tts_exact_current",
+            reservation=owner,
+            deadline=deadline,
+        )
+        assert lease.initial_response["status"] == "ok"
+        response = lease.request(operation, deadline=deadline)
+        if recoverable:
+            assert response == {
+                "version": 1,
+                "operation": operation,
+                "status": "tts_error",
+                "reason": "operation_failed",
+            }
+            assert not lease._failed and lease._child.poll() is None
+            assert lease.request("tts_recheck", deadline=deadline)["status"] == "ok"
+        else:
+            assert response == {
+                "version": 1,
+                "operation": operation,
+                "status": "private_path_error",
+                "privacy_status": status,
+                "reason": reason,
+            }
+            assert lease._failed and lease._child.wait(timeout=2) == 0
+            with pytest.raises(process.HelperUnavailableError):
+                lease.request("tts_recheck", deadline=deadline)
+        lease.close()
+        assert lease.cleanup_state == "reaped"
