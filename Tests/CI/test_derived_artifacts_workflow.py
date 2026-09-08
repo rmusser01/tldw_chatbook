@@ -103,9 +103,7 @@ def test_job_installs_nothing():
 
 def test_derived_artifact_ast_checkers_use_declared_python_floor():
     setup = next(
-        step
-        for step in _steps()
-        if step.get("uses") == "actions/setup-python@v5"
+        step for step in _steps() if step.get("uses") == "actions/setup-python@v5"
     )
 
     assert setup["with"] == {"python-version": "3.12"}

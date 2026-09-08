@@ -733,7 +733,7 @@ def test_runtime_capability_probe_is_one_literal_memory_only_raw_call() -> None:
     (
         'return sqlite3.connect("profiles.sqlite3")',
         'return sqlite3.connect("file:profiles.sqlite3", uri=True)',
-        'return sqlite3.connect(target)',
+        "return sqlite3.connect(target)",
         'first = sqlite3.connect(":memory:")\n    return sqlite3.connect(":memory:")',
     ),
     ids=("file", "uri", "variable-target", "duplicate-call"),
@@ -744,9 +744,7 @@ def test_runtime_capability_probe_guard_rejects_nonliteral_or_duplicate_calls(
 ) -> None:
     source_path = tmp_path / "profile_sqlite_policy.py"
     source_path.write_text(
-        "import sqlite3\n\n"
-        "def require_native_close_policy_support():\n"
-        f"    {body}\n",
+        f"import sqlite3\n\ndef require_native_close_policy_support():\n    {body}\n",
         encoding="utf-8",
     )
 
