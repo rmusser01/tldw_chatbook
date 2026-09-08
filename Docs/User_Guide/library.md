@@ -130,11 +130,11 @@ knows more than the source owners do:
 - **Quick actions** are **Import…**, **New note**, then **Search**. They use the
   same guarded destinations as the rail.
 
-At compact widths the landing canvas is hidden and the rail remains the
-navigation owner. If focus was on Continue, recovery, a cached summary, or a
-quick action when the terminal became compact, focus moves to that action's
-matching rail destination. Widening restores the landing control only if you
-did not choose a newer rail target in the meantime.
+At compact widths the landing canvas **stays** beside the rail — both panes
+are kept, the rail narrows, and whatever you had focused (Continue, a recovery
+action, a cached summary, a quick action) keeps focus straight through the
+resize. Only Notes' own workflow routes fold to a single pane at those widths;
+the landing does not.
 
 ## Layout tour
 
@@ -706,9 +706,11 @@ queue. Details on the
 [import & export](library/import-and-export.md) page.)*
 
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32066:
-below 120 columns the landing canvas no longer paints beside the rail — the
-rail takes the full width and owns navigation, matching the compact contract
-this page already described.)*
+this page claimed the landing hides below 120 columns; it does not, and that is
+deliberate — "keep compact landing alongside rail" (1a6c293761) took it out of
+compact single-stage on purpose and pinned the two-pane result at 80 and 100
+columns together with a focus-stability contract. The page now describes what
+the app does. Confirmed live at 100x30.)*
 
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32059:
 Get started is no longer skipped for a profile that completed setup and

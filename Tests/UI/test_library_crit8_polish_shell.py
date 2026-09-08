@@ -44,13 +44,20 @@ WIDE_TEST_SIZE = (170, 48)
 
 
 @pytest.mark.asyncio
-async def test_library_landing_canvas_is_hidden_at_compact_widths():
-    """task-32066: library.md says the rail owns navigation below 120 columns.
+async def test_library_landing_canvas_stays_beside_the_rail_at_compact_widths():
+    """task-32066: docs and code disagreed; the CODE is the one that is right.
 
-    At 100x30 the landing canvas ("Search everything…", counts, From your
-    Library, Quick actions) was still painted beside the 22-column rail.
+    `library.md` said the landing hides below 120 columns and the rail takes
+    over. It does not, and that is deliberate: commit 1a6c293761 ("keep compact
+    landing alongside rail", 2026-08-26) took the landing OUT of compact
+    single-stage on purpose and pinned the two-pane result at 80 and 100
+    columns, with a focus-stability contract attached
+    (test_library_returning_landing_geometry_keyboard_and_compact_focus_stability
+    keeps a focused Continue button through the resize -- hiding the canvas
+    would drop that focus into nothing). The guide was corrected instead.
     """
     app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
 
     async with host.run_test(size=COMPACT_TEST_SIZE) as pilot:
@@ -58,43 +65,13 @@ async def test_library_landing_canvas_is_hidden_at_compact_widths():
         await _wait_for_library_shell(screen, pilot)
         await pilot.pause()
 
-        landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
         rail = screen.query_one("#library-rail")
+        landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
 
-        assert rail.display is True
-        assert landing.region.width == 0, (
-            "the landing canvas must not paint at compact widths"
-        )
-
-
-@pytest.mark.asyncio
-async def test_compact_hide_hands_landing_focus_to_the_matching_rail_row():
-    """task-32066: library.md's focus-recovery half of the compact rule.
-
-    Hiding the canvas only writes `display`; Textual resets focus on removal,
-    not on a hidden ancestor, so a landing control that had focus when the
-    terminal shrank kept it and swallowed Enter while invisible.
-    """
-    app = _build_test_app()
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=(235, 52)) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        action = screen.query_one("#library-hub-action-import", Button)
-        action.focus()
-        await pilot.pause()
-        assert action.has_focus
-
-        await pilot.resize_terminal(*COMPACT_TEST_SIZE)
-        await pilot.pause()
-        await pilot.pause()
-
-        assert screen.query_one("#library-canvas").display is False
-        focused = screen.focused
-        assert focused is not None, "focus was left on the hidden landing canvas"
-        assert focused.id == f"library-row-{action.row_id}", (
-            f"focus must land on the matching rail row, got {focused.id!r}"
+        assert screen._library_notes_compact is True
+        assert rail.display is True and rail.region.width > 0
+        assert landing.region.width > 0, (
+            "the compact landing keeps its pane beside the rail"
         )
 
 
@@ -333,9 +310,14 @@ async def _open_the_first_note_editor(screen, pilot, gates) -> None:
 
 
 async def _type(pilot, text: str) -> None:
-    """Send ``text`` one keystroke at a time, the way a person types it."""
-    for character in text:
-        await pilot.press("space" if character == " " else character)
+    """Send ``text`` as one burst of keystrokes, the way fast typing arrives.
+
+    task-32062: one `pilot.press` per character pumps the whole message queue
+    between keystrokes, so every async follow-up settles before the next key
+    lands -- and the defect never appears. `press(*keys)` posts them all first
+    and pauses once, which is what a ~0.4 s sentence actually looks like.
+    """
+    await pilot.press(*("space" if character == " " else character for character in text))
 
 
 @pytest.mark.asyncio
@@ -468,6 +450,50 @@ async def test_a_notes_refresh_never_rebuilds_the_editor_the_reader_is_typing_in
                 "My first note"
             )
             assert screen.query_one("#library-note-body", TextArea).text == "hello"
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_a_stale_snapshot_never_rewrites_the_field_that_has_focus():
+    """task-32062, the defect measured live: the in-place snapshot patch.
+
+    `apply_session_state` rewrote the title Input from the screen's snapshot,
+    which during a fast sentence is a keystroke or more behind. Assigning
+    `Input.value` clamps the cursor to the shorter text, so the rest of the
+    sentence was then typed at that stale position: "My first note" + Tab + a
+    body within ~0.4 s stored the title "Mhello from jordan, testing the
+    libraryy first note" with an empty body (live, fresh profile, 235x52).
+    The focused field is its own authority -- the snapshot is built from its
+    Changed events, so it can only be behind, never ahead.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            title = screen.query_one("#library-note-title", Input)
+            title.focus()
+            await pilot.pause()
+
+            # The window the burst opens: the widget holds text the screen's
+            # snapshot has not caught up with yet.
+            with title.prevent(Input.Changed):
+                title.value = "My first note"
+            title.cursor_position = len("My first note")
+            work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+            work.apply_session_state(screen._library_note_presentation_state())
+            await pilot.pause()
+
+            assert title.value == "My first note", (
+                "a stale snapshot must not overwrite what the reader has typed"
+            )
+            assert title.cursor_position == len("My first note"), (
+                "the cursor must not be dragged back into the middle of the text"
+            )
     finally:
         gates.release_all()
 
@@ -784,25 +810,3 @@ async def test_get_started_steps_are_live_controls_that_unlock_in_sequence():
 
         hint = str(screen.query_one("#library-hub-steps-hint", Static).renderable)
         assert "Import a file" in hint and hint.endswith(".")
-
-
-@pytest.mark.asyncio
-async def test_compact_landing_stays_visible_when_the_rail_is_collapsed():
-    """task-32066 regression: hiding the landing needs a navigation owner.
-
-    With the rail manually collapsed there is nothing to hand the columns to,
-    and hiding the canvas as well left the whole screen blank at 64 columns.
-    """
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=(100, 30)) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen._library_rail_collapsed = True
-        screen._apply_library_notes_stage_visibility()
-        await pilot.pause()
-
-        assert screen.query_one("#library-rail").display is False
-        assert screen.query_one("#library-canvas").display is True

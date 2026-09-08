@@ -2737,27 +2737,18 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             )
             assert screen._library_onboarding_all_empty is True
 
-            # task-32066: below 120 columns the landing canvas hides and the
-            # rail owns navigation (library.md's own compact contract), so
-            # only the rail half is on screen at the narrow size.
-            compact = size[0] < 120
             selectors = (
                 "#library-rail-collapse",
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"#library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "#library-rail-explore-all",
-            ) + (
-                ()
-                if compact
-                else (
-                    "#library-hub-heading",
-                    # task-32072: the orientation line is three controls now.
-                    "#library-hub-step-import",
-                    "#library-hub-step-find",
-                    "#library-hub-step-use",
-                    "#library-hub-action-import",
-                    "#library-hub-action-new-note",
-                )
+                "#library-hub-heading",
+                # task-32072: the orientation line is three controls now.
+                "#library-hub-step-import",
+                "#library-hub-step-find",
+                "#library-hub-step-use",
+                "#library-hub-action-import",
+                "#library-hub-action-new-note",
             )
             visible_widgets = screen._compositor.visible_widgets
             for selector in selectors:
@@ -2774,17 +2765,12 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
                 f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "library-rail-explore-all",
-            ] + (
-                []
-                if compact
-                else [
-                    "library-hub-step-import",
-                    "library-hub-step-find",
-                    "library-hub-step-use",
-                    "library-hub-action-import",
-                    "library-hub-action-new-note",
-                ]
-            )
+                "library-hub-step-import",
+                "library-hub-step-find",
+                "library-hub-step-use",
+                "library-hub-action-import",
+                "library-hub-action-new-note",
+            ]
             real_focus_order = [widget.id for widget in screen.focus_chain]
             library_start = real_focus_order.index("library-rail-collapse")
             assert real_focus_order[library_start:] == expected_focus_order
@@ -2811,12 +2797,11 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             assert "Page 0" not in painted
             assert "No recent" not in painted
             assert "Checking existing Library content…" not in painted
-            if not compact:
-                assert "Get started" in painted
-                # task-32072: three live controls, not one orientation line.
-                assert "Import a file" in painted
-                assert "Find it" in painted
-                assert "Use it in Console" in painted
+            assert "Get started" in painted
+            # task-32072: three live controls, not one orientation line.
+            assert "Import a file" in painted
+            assert "Find it" in painted
+            assert "Use it in Console" in painted
             assert "Import…" in painted
             assert "New note" in painted
             assert "Explore all tools" in painted
@@ -7264,7 +7249,12 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
         )
 
         owner = screen.query_one("#library-study-handoff-owner", Static)
-        assert str(owner.renderable) == "Generation and review run in Study."
+        # task-32069: the rail's three handoff rows each repeated "see what
+        # carries over" under them (six rows for three destinations); the
+        # promise moved onto this canvas, which is the thing that keeps it.
+        assert str(owner.renderable) == (
+            "This page shows what carries over; generation and review run in Study."
+        )
 
         # D2: ready state is a plain line, no warning-callout classes.
         recovery = screen.query_one("#library-study-handoff-recovery", Static)

@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 18:25'
-updated_date: '2026-09-08 20:03'
+updated_date: '2026-09-08 21:47'
 labels:
   - library
   - docs
@@ -39,5 +39,9 @@ At 100x30 the landing canvas ('Search everything…', counts, From your Library,
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-The compact contract library.md already documented was never implemented: below LIBRARY_NOTES_COMPACT_BREAKPOINT (120) the landing canvas painted beside the 22-column rail. _apply_library_notes_stage_legs now hides the canvas host while the landing is the mounted route, and the existing RAIL_ONLY ordinary width contract (resolved at the end of that same method from canvas.display) hands the rail the columns. Nothing else changes: the landing is the only canvas whose whole job the rail already does. Verified live at 100x30 (caps/15-compact-100x30-landing-hidden.txt). Files: tldw_chatbook/UI/Screens/library_screen.py, Tests/UI/test_library_crit8_polish_shell.py, Docs/User_Guide/library.md.
+REVERSED DIRECTION after evidence. AC#1 asks for docs and behaviour to AGREE, 'either hide the canvas or document that it stays'. I first implemented the hide (which the brief asked for), and the whole-file test_library_shell.py run then failed three geometry tests that pin the opposite -- including test_library_returning_landing_geometry_keyboard_and_compact_focus_stability, which keeps a focused Continue button through a resize to 100x30 and would lose that focus into a hidden pane.
+
+git log settled it: commit 1a6c293761 'fix(library): keep compact landing alongside rail' (2026-08-26) DELIBERATELY took the landing out of compact single-stage and added those pins. library.md's sentence is the stale artifact -- it was never updated when that fix landed, and the critique itself rated the disagreement 'Harmless visually'.
+
+So the code is unchanged and Docs/User_Guide/library.md now describes what the app does: at compact widths the landing stays beside the rail, both panes kept, focus preserved across the resize; only Notes' own workflow routes fold to one pane. A test pins the two-pane result at 100x30 so the guide and the behaviour cannot drift apart again. Confirmed live at 100x30. Files: Docs/User_Guide/library.md, Tests/UI/test_library_crit8_polish_shell.py (no production change).
 <!-- SECTION:NOTES:END -->

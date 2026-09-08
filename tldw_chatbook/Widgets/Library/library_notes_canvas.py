@@ -1678,11 +1678,19 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         wide_keywords = self.query_one("#library-note-keywords", Input)
         context_keywords = self.query_one("#library-note-context-keywords", Input)
         presented_title = "" if self.title_placeholder_only else snapshot.title
-        if title_input.value != presented_title:
+        # task-32062: the field the reader is typing in is its OWN authority.
+        # This patch used to overwrite it from a snapshot that could be one
+        # keystroke behind -- and assigning `Input.value` clamps the cursor to
+        # the shorter text, so the rest of the sentence was then inserted at
+        # that stale position. Live: "My first note", Tab, a body typed within
+        # ~0.4 s stored the title "Mhello from jordan, testing the libraryy
+        # first note" with an empty body. A focused field is skipped; its own
+        # Changed events are what the snapshot is built from anyway.
+        if title_input.value != presented_title and not title_input.has_focus:
             with title_input.prevent(Input.Changed):
                 title_input.value = presented_title
         title_input.placeholder = "Untitled" if self.title_placeholder_only else ""
-        if body_input.text != snapshot.body:
+        if body_input.text != snapshot.body and not body_input.has_focus:
             with body_input.prevent(TextArea.Changed):
                 body_input.text = snapshot.body
         if wide_keywords.value != snapshot.keywords_text:
