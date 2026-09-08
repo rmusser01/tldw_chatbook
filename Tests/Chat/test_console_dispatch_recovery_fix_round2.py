@@ -109,23 +109,23 @@ async def test_dispatch_callback_failure_is_not_a_provider_terminal_failure(
             assert (
                 controller.run_state_for("session-1").status is ConsoleRunStatus.FAILED
             )
-            assert (
-                db.get_connection()
-                .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
-                .fetchone()[0]
-                == 0
-            )
+            with db.transaction() as conn:
+                assert (
+                    conn.execute(
+                        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+                    ).fetchone()[0]
+                    == 0
+                )
             return
 
         assert terminal_writes == []
         assert first.provider_started is False
         assert gateway.calls == 0
         assert counts == {"attempts": 1, "successes": 0}
-        checkpoint = (
-            db.get_connection()
-            .execute("SELECT state FROM console_dispatch_checkpoints")
-            .fetchone()
-        )
+        with db.transaction() as conn:
+            checkpoint = conn.execute(
+                "SELECT state FROM console_dispatch_checkpoints"
+            ).fetchone()
         assert checkpoint["state"] == "accepted"
         _assert_exact_postcommit_recovery(
             controller, assistant_message_id=first.assistant_message_id
