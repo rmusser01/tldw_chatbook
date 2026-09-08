@@ -411,3 +411,8 @@ gated prompt ledger, the quarantine/trust-review expectation, and the
 *Verified against fix/media-riders-n — 2026-09-07 (task-31951: the Skills
 reader's two pane grips are one column each, painting `‹`/`›` instead of the
 five-column `<---`/`--->` run; opened live at 235x52.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32058: an
+accepted skill import now updates the rail count **and** the mounted list in
+place — the list previously kept its old rows until you left the Skills row and
+came back.)*

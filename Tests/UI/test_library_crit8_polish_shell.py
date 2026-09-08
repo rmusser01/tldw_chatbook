@@ -7,15 +7,23 @@ and 32072 -- the polish-shell group of the critique-8 fix wave.
 from __future__ import annotations
 
 import pytest
+from textual.widgets import Button
 
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import LibraryLandingCanvas
+from Tests.UI.test_destination_shells import (
+    StaticLibraryConversationScopeService,
+    StaticLibraryMediaScopeService,
+    StaticLibraryNotesListScopeService,
+)
 from Tests.UI.test_library_shell import (
     LibraryHarness,
+    _FakeSkillsScopeService,
     _active_library_screen,
     _build_test_app,
+    _wait_for_condition,
     _wait_for_library_shell,
 )
 
@@ -110,3 +118,49 @@ def test_get_started_survives_a_relaunch_before_the_first_library_visit(
     ), "profile creation must stamp the lifecycle into [library.rail_state]"
     screen = LibraryScreen(second_run)
     assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+
+
+# --- task-32058: a skill import updates the rail count and the list ------
+
+
+@pytest.mark.asyncio
+async def test_skill_import_updates_the_rail_count_and_the_list_in_place():
+    """task-32058: an import left the rail at (2) and the list unchanged.
+
+    The critique-8 review had to leave the Skills row and come back before the
+    imported skill appeared. The import coordinator's terminal receipt asks the
+    current screen to refresh its sources; the rail badge and the mounted list
+    must both settle on the new population without a re-entry.
+    """
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    service = _FakeSkillsScopeService(
+        available=[{"name": "code-review"}, {"name": "translate"}],
+    )
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert "Skills (2)" in str(
+            screen.query_one("#library-row-browse-skills", Button).label
+        )
+
+        service._available.append({"name": "summarize"})
+        screen._present_library_skills_import_snapshot(refresh_sources=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: "Skills (3)"
+            in str(screen.query_one("#library-row-browse-skills", Button).label),
+            message="the rail count did not follow the import",
+        )
+
+        assert screen.query("#library-skill-row-summarize"), (
+            "the imported skill must appear without re-entering the row"
+        )

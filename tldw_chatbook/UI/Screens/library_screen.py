@@ -24872,6 +24872,16 @@ class LibraryScreen(BaseAppScreen):
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
         ):
             terminal_status = self._library_skills_import_status
+            if refresh_sources:
+                # task-32058: the snapshot above only feeds the RAIL badge.
+                # The mounted list renders the browse controller's applied
+                # page, so an accepted import moved the count to (3) while
+                # the list still showed two rows until the row was left and
+                # re-entered. Re-request the browse the same way every other
+                # committed skills mutation does (see the editor exit).
+                self._request_library_skills_browse(
+                    self._library_skills_browse_controller.mutation_refresh_scope,
+                )
             _sync_library_canvas(
                 self,
                 "skills",

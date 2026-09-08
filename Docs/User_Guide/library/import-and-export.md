@@ -856,3 +856,9 @@ collapsed **"Import behavior"** panel's own title carrying the toggle's
 state while the fold is closed ("Import behavior · analysis on" / "·
 analysis off", AC#6), previously undocumented. No behaviour changed on
 this page; verified by reading the current source strings.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32058:
+Export ▸ Everything counts every conversation the rail counts. The export
+enumerator kept a `client_id` filter the Library's own browse query had
+dropped, so a library seeded or synced by another client reported "0
+conversations" against a rail showing six.)*

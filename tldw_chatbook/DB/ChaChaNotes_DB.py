@@ -11567,18 +11567,17 @@ UPDATE db_schema_version
         }
 
     def get_all_conversation_ids(self) -> List[str]:
-        """Return every non-deleted conversation id owned by this client (no page cap).
+        """Return every non-deleted conversation the Library lists (no page cap).
 
-        Mirrors the WHERE clause `search_conversations_page` builds for the
-        Library's conversations snapshot fetch: the Library screen calls
+        Built from the SAME filter `search_conversations_page` builds for the
+        Library's conversations snapshot fetch -- literally
+        `_conversation_search_filter(None, scope_type='all')` -- rather than a
+        hand-copied WHERE clause. The Library screen calls
         `ChatConversationService.list_conversations(mode="local", scope_type="all",
         limit=..., offset=0)`, which spans both 'global' and 'workspace'
         scoped conversations (Console chats persisted inside a workspace
-        session are workspace-scoped); `search_conversations_page` then
-        also scopes to `client_id = self.client_id` (its default when no
-        explicit `client_id` is passed) and excludes soft-deleted rows
-        (`deleted = 0`). This method issues the same client/deleted filter,
-        but returns the full id list instead of a `limit`/`offset` page --
+        session are workspace-scoped) and, since TASK-721, spans client ids
+        too. This method issues that filter with no `limit`/`offset` page --
         the truncation-proof source for Library chatbook export
         (`Library/library_export_scope.py`): the Library conversations
         canvas only ever renders a capped snapshot
@@ -11586,19 +11585,23 @@ UPDATE db_schema_version
         an export from that rendered snapshot would silently drop everything
         past the cap for a library larger than the page size.
 
+        task-32058: the hand-copied clause is what made the two surfaces
+        disagree. TASK-721 removed the `client_id` filter from the browse
+        scope but not from here, so a library seeded or synced by another
+        client counted six in the rail and zero in Export ▸ Everything.
+
         Returns:
             List[str]: Every matching conversation id, in ascending id order.
 
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = (
-            "SELECT id FROM conversations "
-            "WHERE client_id = ? AND deleted = 0 "
-            "ORDER BY id ASC"
+        where_clause, params = self._conversation_search_filter(
+            None, scope_type=CONVERSATION_SCOPE_ALL
         )
+        query = f"SELECT id FROM conversations WHERE {where_clause} ORDER BY id ASC"
         try:
-            cursor = self.execute_query(query, (self.client_id,))
+            cursor = self.execute_query(query, tuple(params))
             return [row["id"] for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
             logger.error(

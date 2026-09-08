@@ -1,9 +1,10 @@
 ---
 id: TASK-32058
 title: 'Library counts disagree across rail, lists and export scope'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-08 18:23'
+updated_date: '2026-09-08 19:05'
 labels:
   - library
   - export
@@ -27,3 +28,13 @@ Export 'Everything' reported '0 conversations' while the rail showed Conversatio
 - [ ] #3 A skill import updates the rail count and the list in place
 - [ ] #4 A disagreement that cannot be reconciled renders as a callout with Retry rather than silent zeros
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Failing test: six conversations written by another client -- rail counts 6, export scope 'everything' counts 0.
+2. Build get_all_conversation_ids from _conversation_search_filter(scope_type='all') so the enumerator IS the rail's query.
+3. Failing test: a skill import updates the rail badge but not the mounted list.
+4. Re-request the skills browse from the import receipt, as every other committed skills mutation does.
+5. Docs stamps.
+<!-- SECTION:PLAN:END -->
