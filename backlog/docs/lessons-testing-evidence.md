@@ -5593,3 +5593,15 @@ check the exit code) — never `tail -1`. The habit of tailing to keep output
 small is exactly what makes a per-item check unreadable. Note the exit code
 alone was also insufficient here: the script printed `::error::` and still
 exited 0 under the shell pipeline used.
+
+## Pydantic strict mode does not make `Literal[1]` reject JSON `true`
+
+**TASK-31984, 2026-09-07.** The recovery helper's package metadata used
+`ConfigDict(strict=True, extra="forbid")` with `protocol: Literal[1]`.
+A real metadata mutation from integer `1` to JSON `true` still reported the
+helper available. The focused test failed on `(True, "available")` before
+switching the field to `int = Field(strict=True, ge=1, le=1)`.
+
+**What to do.** At serialized integer-version boundaries, test boolean values
+explicitly. Use a strict integer field with the allowed range/value constraint;
+Python's `True == 1` equality can defeat the expected literal-type distinction.
