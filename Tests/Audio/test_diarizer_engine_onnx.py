@@ -175,6 +175,64 @@ def test_load_prefers_explicit_kwargs_over_env(fake_sherpa, tmp_path, monkeypatc
     assert loaded.model_id == eng.model_id_for_embedder("titanet_small")
 
 
+# --- Task 8: per-engine live threshold + env sweep overrides ----------------
+
+def _place(eng, tmp_path, key="titanet_small"):
+    (tmp_path / eng.SEGMENTATION.file_name).write_bytes(b"x")
+    (tmp_path / eng.EMBEDDERS[key].file_name).write_bytes(b"x")
+
+
+def test_live_threshold_manifest_covers_every_embedder(fake_sherpa, tmp_path):
+    """Task 8 (31827): the live clusterer threshold is per-engine, and the ONNX
+    engine carries one per embedder so the bake-off can pin a tuned value
+    without touching the worker."""
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+
+    assert set(eng.LIVE_THRESHOLD) == set(eng.EMBEDDERS)
+    assert set(eng.LIVE_THRESHOLD.values()) == {0.25}      # the pre-bake-off default
+
+
+def test_load_reports_the_embedders_live_threshold(fake_sherpa, tmp_path):
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    _place(eng, tmp_path)
+    loaded = eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path, verify_hashes=False)
+    assert loaded.live_threshold == eng.LIVE_THRESHOLD["titanet_small"]
+
+
+def test_env_overrides_both_thresholds_for_the_bakeoff(fake_sherpa, tmp_path, monkeypatch):
+    """The bake-off sweeps live x Stop thresholds across four embedders; without
+    these the sweep would have to edit the manifest between every cell."""
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    _place(eng, tmp_path)
+    monkeypatch.setenv("TLDW_DIARIZER_LIVE_THRESHOLD", "0.42")
+    monkeypatch.setenv("TLDW_DIARIZER_CLUSTER_THRESHOLD", "0.7")
+    wav = tmp_path / "mixed.wav"; _wav(wav)
+
+    loaded = eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path, verify_hashes=False)
+    assert loaded.live_threshold == 0.42
+    loaded.batch(str(wav), 0.0, 4.0)
+    assert _Diarizer.last_config["clustering"]["threshold"] == 0.7
+
+
+def test_invalid_threshold_env_values_are_ignored(fake_sherpa, tmp_path, monkeypatch):
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    _place(eng, tmp_path)
+    monkeypatch.setenv("TLDW_DIARIZER_LIVE_THRESHOLD", "not-a-float")
+    monkeypatch.setenv("TLDW_DIARIZER_CLUSTER_THRESHOLD", "")
+    wav = tmp_path / "mixed.wav"; _wav(wav)
+
+    loaded = eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path, verify_hashes=False)
+    assert loaded.live_threshold == eng.LIVE_THRESHOLD["titanet_small"]
+    loaded.batch(str(wav), 0.0, 4.0)
+    assert _Diarizer.last_config["clustering"]["threshold"] == eng.CLUSTER_THRESHOLD["titanet_small"]
+
+
 # --- Task 3: ensure_models (downloader) -------------------------------------
 
 class _StubHandler(http.server.BaseHTTPRequestHandler):

@@ -34,3 +34,38 @@ def test_speechbrain_engine_module_imports_without_torch(monkeypatch):
     mod = importlib.import_module("tldw_chatbook.Audio.diarizer_engine_speechbrain")
     assert mod.MODEL_ID == "speechbrain/spkrec-ecapa-voxceleb@unpinned"
     assert callable(mod.load)
+
+
+def test_loaded_engine_defaults_its_live_threshold_to_the_ecapa_tuned_value():
+    """Task 8 (31827): the live clusterer's threshold becomes per-engine.
+
+    0.25 is the value every engine used before this field existed, so an
+    engine that does not set one (the SpeechBrain engine) keeps it.
+    """
+    loaded = w.LoadedEngine(lambda pcm, sr: [1.0], lambda *a: ([], {}), "fake@1")
+    assert loaded.live_threshold == 0.25
+
+
+def test_main_builds_the_clusterer_at_the_engines_live_threshold(monkeypatch):
+    """The measured reason for this field (task-8-context, controller smoke):
+    ECAPA's 0.25 minted S1..S8 in 30 s on a titanet_small stream, so each
+    engine has to be able to hand `main()` its own tuned threshold."""
+    import io
+    import sys
+    import types
+
+    seen = {}
+
+    def fake_load(live, max_speakers):
+        seen["live"] = live
+        seen["max_speakers"] = max_speakers
+        return w.LoadedEngine(lambda pcm, sr: [1.0], lambda *a: ([], {}), "fake@1", live_threshold=0.55)
+
+    monkeypatch.setitem(sys.modules, "tldw_chatbook.Audio.fake_engine_for_test", types.SimpleNamespace(load=fake_load))
+    monkeypatch.setitem(w.ENGINES, "fake", "tldw_chatbook.Audio.fake_engine_for_test")
+    monkeypatch.setattr(sys, "argv", ["worker", "--engine", "fake"])
+    monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(buffer=io.BytesIO(b"")))
+    monkeypatch.setattr(sys, "stdout", types.SimpleNamespace(buffer=io.BytesIO()))
+
+    assert w.main() == 0
+    assert seen["live"].threshold == 0.55

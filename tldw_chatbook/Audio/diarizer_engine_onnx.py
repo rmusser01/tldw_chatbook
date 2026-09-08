@@ -107,6 +107,19 @@ DEFAULT_EMBEDDER = "titanet_small"  # Task 9 (bake-off) may change it
 #: point for every candidate; the bake-off (spec §7) tunes these.
 CLUSTER_THRESHOLD: dict[str, float] = {key: 0.5 for key in EMBEDDERS}
 
+#: Cosine-distance threshold for the LIVE `OnlineClusterer` per embedder
+#: (task 8: 31827). 0.25 -- the value hard-coded for ECAPA before this
+#: existed -- is the starting point for every candidate; the bake-off (spec
+#: §7) tunes these. `load()` hands the chosen one to `diarizer_worker.main()`
+#: through `LoadedEngine.live_threshold`.
+LIVE_THRESHOLD: dict[str, float] = {key: 0.25 for key in EMBEDDERS}
+
+#: Env overrides for both thresholds, read by `load()` (task 8: 31827). They
+#: exist so the bake-off harness can sweep a 5x5 grid over four embedders
+#: without editing the manifest between cells; a normal run sets neither.
+LIVE_THRESHOLD_ENV = "TLDW_DIARIZER_LIVE_THRESHOLD"
+CLUSTER_THRESHOLD_ENV = "TLDW_DIARIZER_CLUSTER_THRESHOLD"
+
 MIN_DURATION_ON, MIN_DURATION_OFF = 0.3, 0.5
 LIVE_THREADS, BATCH_THREADS = 2, 4
 #: Cap on the per-cluster centroid-building cost (spec §5): stop embedding a
@@ -122,6 +135,20 @@ def model_id_for_embedder(key: str) -> str:
 
 
 MODEL_ID = model_id_for_embedder(DEFAULT_EMBEDDER)
+
+
+def _threshold_from_env(name: str, default: float) -> float:
+    """`os.environ[name]` as a float, or `default` (task 8: 31827).
+
+    An unset, empty or unparseable value is IGNORED rather than raising: this
+    is a sweep knob, and a typo in it must never take the worker's load path
+    down (`main()` would frame it as `ERROR load ValueError` and the meeting
+    would silently lose live labels).
+    """
+    try:
+        return float(os.environ[name])
+    except (KeyError, TypeError, ValueError):
+        return default
 
 
 def models_dir(override: Path | None = None) -> Path:
@@ -703,7 +730,7 @@ def load(
         )
 
     extractor = _make_extractor(LIVE_THREADS)
-    threshold = CLUSTER_THRESHOLD[key]
+    threshold = _threshold_from_env(CLUSTER_THRESHOLD_ENV, CLUSTER_THRESHOLD[key])
 
     return LoadedEngine(
         lambda pcm, sr: _embed(extractor, np, pcm, sr),
@@ -716,4 +743,5 @@ def load(
             sherpa_onnx, np, _make_extractor(BATCH_THREADS), seg_path, emb_path, threshold, live, max_speakers, wav, s, e
         ),
         model_id_for_embedder(key),
+        live_threshold=_threshold_from_env(LIVE_THRESHOLD_ENV, LIVE_THRESHOLD[key]),
     )

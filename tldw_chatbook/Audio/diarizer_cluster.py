@@ -144,6 +144,14 @@ class OnlineClusterer:
         """
         return self._threshold
 
+    @threshold.setter
+    def threshold(self, value: float) -> None:
+        """Set once by `diarizer_worker.main()` right after the engine loads
+        (task 8: 31827) -- the engine owns its own tuned threshold, but
+        `load()` needs this object to exist first. Not a runtime knob: nothing
+        changes it after the first command is served."""
+        self._threshold = float(value)
+
     @property
     def max_id(self) -> int:
         """Highest cluster number in use: minted here, or inherited via

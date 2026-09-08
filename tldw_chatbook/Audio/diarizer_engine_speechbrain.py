@@ -184,6 +184,9 @@ def load(live, max_speakers: int):
         raise RuntimeError("torch unavailable")
     encoder = _load_encoder()
 
+    # `live_threshold` is left at `LoadedEngine`'s default (task 8: 31827):
+    # 0.25 is the value this engine has always run at, and the field exists
+    # so the ONNX engine can differ, not to re-tune ECAPA.
     return LoadedEngine(
         lambda pcm, sr: _embed(encoder, torch, np, pcm),
         lambda wav, s, e: _batch(encoder, torch, np, live, wav, s, e, max_speakers),

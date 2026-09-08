@@ -82,6 +82,13 @@ class LoadedEngine(NamedTuple):
     embed: Callable[[bytes, int], list]
     batch: Callable[[str, float, float], tuple]
     model_id: str
+    #: The cosine distance the LIVE clusterer should treat as "same voice"
+    #: for this engine (task 8: 31827). Was a single constant tuned for
+    #: ECAPA; measured on a titanet_small stream it minted S1..S8 inside the
+    #: first 30 s, so each engine now carries its own. The default is the
+    #: pre-existing value, so an engine that does not set one (SpeechBrain)
+    #: behaves exactly as before.
+    live_threshold: float = 0.25
 
 
 def _read_exactly(stream, n: int) -> bytes:
@@ -518,6 +525,11 @@ def main() -> int:
         live = OnlineClusterer(max_speakers=max_speakers, start_id=start_id)
         engine_mod = importlib.import_module(ENGINES[engine])
         loaded = engine_mod.load(live, max_speakers)
+        # Set here rather than passed to the constructor above (task 8: 31827):
+        # `load()` binds THIS clusterer into its `batch` closure, so the object
+        # has to exist before the engine can say what threshold it wants. One
+        # assignment, immediately after load, before a single command is served.
+        live.threshold = loaded.live_threshold
     except Exception as exc:  # noqa: BLE001 - type only, never the message content
         sys.stderr.write(f"ERROR load {type(exc).__name__}\n")
         sys.stderr.flush()
