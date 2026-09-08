@@ -213,7 +213,7 @@ async def test_no_change_traversal_builds_no_preview_and_copies_no_content():
         _release_everything(service)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.loaded_id == final_id,
+            lambda: screen._media_state.reader_session.loaded_id == final_id,
             message="The final traversal row never settled.",
         )
         await pilot.pause()
@@ -373,7 +373,7 @@ async def test_image_item_traversal_wall_time_probe():
         _release_everything(service)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.loaded_id == final_id,
+            lambda: screen._media_state.reader_session.loaded_id == final_id,
             timeout=180.0,
             message="The final traversal row never settled past the image item.",
         )

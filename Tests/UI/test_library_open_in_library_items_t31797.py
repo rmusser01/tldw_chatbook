@@ -55,7 +55,22 @@ def _make_deep_link_screen() -> SimpleNamespace:
     screen = SimpleNamespace(
         _prompts_state=SimpleNamespace(mutation_in_flight=False),
         _library_navigation_context_generation=7,
-        _library_media_reader_session=SimpleNamespace(external_detail=False),
+        # (wave-7 merge) The media fields this branch reads and assigns are
+        # `LibraryMediaState` fields now, not flat screen attributes -- the
+        # screen's generated shim block was deleted in the media cleanup PR.
+        # Same fixture shape as `test_library_media_trash.py`'s own fakes.
+        _media_state=SimpleNamespace(
+            reader_session=SimpleNamespace(external_detail=False),
+            # plain state fields the branch assigns to
+            selected_media_id=None,
+            view=None,
+            editing=None,
+            confirming_delete=None,
+            highlights=None,
+            editing_analysis=None,
+            content_mode=None,
+        ),
+        # WIRING, not state -- stays flat (task 1's 2 wiring attributes).
         _library_media_browse_controller=SimpleNamespace(
             mutation_refresh_scope=_REFRESH_SCOPE
         ),
@@ -75,15 +90,8 @@ def _make_deep_link_screen() -> SimpleNamespace:
         _request_library_media_browse=_request_browse,
         _request_library_media_facets=_request_facets,
         _apply_library_media_active_surface=_apply_active_surface,
-        # plain attributes the branch assigns to
-        _selected_media_id=None,
+        # plain SHELL attribute the branch assigns to
         _library_selected_row_id=None,
-        _library_media_view=None,
-        _library_media_editing=None,
-        _library_media_confirming_delete=None,
-        _library_media_highlights=None,
-        _library_media_editing_analysis=None,
-        _library_media_content_mode=None,
     )
     return screen
 
@@ -99,8 +107,8 @@ def test_open_in_library_deep_link_requests_media_browse_page() -> None:
     assert result is None
     # It lands on the Media browse row with the opened item selected.
     assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-    assert screen._selected_media_id == "5"
-    assert screen._library_media_view == "viewer"
+    assert screen._media_state.selected_media_id == "5"
+    assert screen._media_state.view == "viewer"
 
     # The core regression: the deep-link must load an Items page (the rail's
     # browse + facets request) so the middle pane is not left empty.

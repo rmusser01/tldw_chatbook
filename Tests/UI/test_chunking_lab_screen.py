@@ -894,7 +894,7 @@ def test_library_handoff_uses_local_id_and_refuses_server(lab_app):
     screen = LibraryScreen(lab_app)
     messages = []
     lab_app.post_message = lambda message: messages.append(message)
-    screen._library_media_reader_session = SimpleNamespace(
+    screen._media_state.reader_session = SimpleNamespace(
         external_detail=False,
         loaded_backing_id=42,
         loaded_id="local:media:42",
@@ -906,7 +906,7 @@ def test_library_handoff_uses_local_id_and_refuses_server(lab_app):
         "return_route": "library",
         "local_media_id": 42,
     }
-    screen._library_media_reader_session.external_detail = True
+    screen._media_state.reader_session.external_detail = True
     screen.open_chunking_lab(use_selected=True)
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 

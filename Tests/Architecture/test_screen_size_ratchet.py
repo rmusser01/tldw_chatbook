@@ -563,7 +563,175 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # AST method-name set on `LibraryScreen` is identical at the merge-base
     # and at `origin/dev` (measured, not assumed -- both directions of the set
     # difference are empty), so dev's extraction added and removed no name.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37537, 1282),
+    #
+    # 2026-09-06, wave-7 task 1 (media state PR, media series 1/3): 82 of the
+    # 85 "media"-named `LibraryScreen` attributes moved verbatim into
+    # `LibraryMediaState` (`UI/Library_Modules/library_media_state.py`), which
+    # the screen constructs as `self._media_state` and shims back under every
+    # original flat name. Fresh `_measure()`: 37537/1282 -> 37333/1282. The
+    # METHOD count is unchanged, as every pure field move's must be: zero
+    # `FunctionDef`s were touched. Line delta -204 reconciles EXACTLY, each
+    # term measured off the diff rather than estimated: -242 removed lines
+    # (110 lines of field statements spanning 78 of the 82 moved fields -- 75
+    # deleted outright and 3 whose value becomes a constructor argument; the
+    # other 4 fields KEEP their original assignment lines, because those run
+    # after the forced-early construction point -- plus the 131 comment lines
+    # that moved with them, every one verified byte-for-byte identical to its
+    # relocated copy in the state module, plus 1 blank line left doubled where
+    # the sole CLASS-BODY attribute, `_library_media_arrival_note`, and its
+    # comment were removed);
+    # +4 for the `library_media_state` import; +14 for the construction site
+    # (`self._media_state = LibraryMediaState(...)`, 3 constructor arguments,
+    # under a 9-line why-this-is-early comment); +20 for the sentinel-wrapped
+    # generated shim block at module end (the same shape the collections/
+    # search+RAG/skills/ingest/prompts state PRs each installed and their own
+    # cleanup PRs each deleted). -242 + 4 + 14 + 20 = -204.
+    #
+    # 2026-09-06, wave-7 task 2 (media controller PR, media series 2/3): 140
+    # of the 251 media-named `LibraryScreen` methods moved to
+    # `LibraryMediaController` (`UI/Library_Modules/library_media_controller.
+    # py`, born governed by `test_library_modules_size_ratchet.py`'s glob),
+    # each replaced by a one-line screen delegator. The other 111 stay
+    # screen-resident and full-bodied: 73 unbound-fake-self test bypasses, 16
+    # instance-attribute monkeypatches, 8 `inspect.getsource` censuses, 4
+    # module-globals couplings, 3 screen-identity (`self in
+    # <widget>.ancestors`), 2 class monkeypatches, 2 reached by a lifecycle
+    # hook on an `object.__new__`-bypassed screen, 1 callback-identity
+    # assertion, 1 shared shell helper (`_sanitize_media_field`, which
+    # Prompts and Notes also call) and 1 generic dispatcher
+    # (`_toggle_library_media_reader_pane`). The last THREE classes (6 names)
+    # were found by this task's own BATTERY after the RED tuple was already
+    # written, which recipe §3 records as the expected shape of the work
+    # rather than a defect in the census.
+    # Fresh `_measure()`: 37333/1282 -> 34754/1282. The METHOD count is
+    # unchanged, as every pure controller move's must be: 140 `FunctionDef`s
+    # left, 140 delegators arrived (the AST method-NAME SET on `LibraryScreen`
+    # is identical before and after, both directions of the difference empty
+    # -- a count match can hide an add-and-remove pair; a set match cannot).
+    # Line delta -2579 reconciles EXACTLY, each term measured rather than
+    # estimated: -3166 moved lines (each mover's first decorator line through
+    # its `end_lineno`; unlike the prompts move, ZERO movers carry comment
+    # lines outside their own AST range -- measured, not assumed -- so nothing
+    # was orphaned behind a delegator); +343 delegator lines (2-7 each: every
+    # `@on`/`@staticmethod` decorator line copied verbatim, one reconstructed
+    # signature, one forwarding `return` -- plus, for each of the cluster's
+    # three `@staticmethod`s (`_bounded_library_media_trash_title`,
+    # `_restore_library_media_scope`,
+    # `_valid_library_media_trash_delete_ack`), its own 4-line function-local
+    # import of the controller class, since a static delegator forwards to the
+    # CLASS and the class is deliberately NOT a module-level name here);
+    # -12 for four module-level constants relocated verbatim (with their
+    # comments) to `Library_Modules/screen_constants.py`, because moved bodies
+    # read them as bare module globals (`_MEDIA_VIEW_LIST`,
+    # `_MEDIA_VIEW_VIEWER`, `_ANALYZE_ORIGIN_MEDIA`, `_ANALYZE_ORIGIN_IMPORT`
+    # -- the last two are pinned at the `library_screen` module path by
+    # `test_library_ingest_analyze_skipped.py:611`/`:612`, which is why they
+    # are imported BACK rather than re-spelled); +4 for those four names in
+    # the existing `screen_constants` import block; +3 for the born-lazy
+    # `LibraryMediaController` import inside `__init__`'s existing lazy-import
+    # block (NEVER module level -- `Tests/Packaging/test_library_preimport_
+    # closure.py` and the `_ui_ready` module census both enforce this); and
+    # +249 for the construction site (`self._media_controller =
+    # LibraryMediaController(...)`, 83 keyword arguments, under a 3-line
+    # comment; 83 is the CONSTRUCTION-SITE count -- the 92 in the sibling
+    # controller-ratchet comment is the binding SURFACE, i.e. hand-written
+    # properties, and the two are different numbers on purpose).
+    # -3166 + 343 - 12 + 4 + 3 + 249 = -2579.
+    #
+    # Wave-7 task 3 (media series 3/3, CLEANUP PR). Fresh `_measure()`:
+    # 34754/1282 -> 34669/1260. The METHOD count drops by exactly the 22
+    # pruned screen delegators (1282 - 22 = 1260) -- the same one-for-one
+    # relationship every prior cleanup PR's row carries, and the reason a
+    # method-count change here is readable rather than mysterious.
+    # Line delta -85, each term measured rather than estimated:
+    #   -9   the generated media-state shim block (19 lines, sentinel
+    #        comments included) replaced by the 10-line "this block was
+    #        deleted, and why" comment every prior series left in its place;
+    #   -66  the 22 pruned delegators (3 lines each -- `def`, forwarding
+    #        `return`, and the blank separator line that followed; NONE of
+    #        the 22 is decorated, which the prune script asserts rather than
+    #        assumes, because an `@on`/`action_*` name is an unconditional
+    #        KEEP under recipe §4's whitelist);
+    #   -10  dead imports (13 names went unused across this wave, derived as
+    #        a DIFFERENCE against the wave-start commit `83e17323e` rather
+    #        than as an absolute unused-name list; 3 were KEPT -- two are
+    #        `_SURFACE`-pinned by exact name, `LIBRARY_MEDIA_HANDOFF_EXCERPT_
+    #        CHARS` and `LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT` (both spell
+    #        "MEDIA" uppercase, the exact case-sensitivity trap that nearly
+    #        cost the prompts series its own 5 saves), and one, `set_mode`,
+    #        has a LIVE re-export consumer at
+    #        `Tests/UI/test_library_entry_compose_once.py:1835`, which reads
+    #        it as `library_screen_module.set_mode(...)`).
+    # -9 - 66 - 10 = -85. The 456 `self.<flat>` -> `self._media_state.<field>`
+    # retargets, the 9 `getattr(self, "<flat>", ...)` receiver fixes and the
+    # 6 dynamic-dispatch string values are all line-neutral by construction.
+    #
+    # 2026-09-07, wave-7 final review: `origin/dev` reconciliation merge --
+    # the LARGEST of this program at 306 commits (merge-base 761416317).
+    # Fresh `_measure()` on the MERGED tree: 34669/1260 -> 35626/1289.
+    #
+    # The METHOD count is the load-bearing check, and it is a SET check, not
+    # a count check: `merged - branch` is EXACTLY dev's 29 new
+    # `LibraryScreen` method names, and `branch - merged` is EMPTY. That
+    # pair is what proves the resolution neither re-added a moved body nor
+    # dropped a wave-7 delegator -- the two failure modes a naive
+    # conflict resolution produces. 1260 + 29 = 1289.
+    #
+    # Line delta +957, reconciled against DEV's own delta rather than
+    # estimated. Dev moved this file 37537 -> 38525 (+988) over the same
+    # range. Of that, +63 is dev's edits to ELEVEN bodies this wave had
+    # already moved to `LibraryMediaController`; those edits follow the body
+    # into the controller (see its ratchet row), so the merged screen does
+    # not take them: 988 - 63 = 925 from dev. The remaining +32 is this
+    # merge's own:
+    #   +24  eight new keyword arguments at the `LibraryMediaController(...)`
+    #        construction site (3 lines each), for dev's new screen methods
+    #        the ported bodies call; the group-(e) block goes 35 -> 43 and the
+    #        site's total kwarg count 83 -> 91 (measured with `ast`, matching
+    #        the controller's own keyword-only arity);
+    #   +5   the `_library_media_trash_actions_live` retarget, where dev's
+    #        `getattr(self, "_library_media_view", _MEDIA_VIEW_LIST)` shape is
+    #        preserved and only the receiver swapped, under a 5-line comment
+    #        saying why the getattr is kept;
+    #   +3   a comment on dev's new `_library_media_rename_cache` field in
+    #        `__init__`, whose own comment referred to the analyze reason
+    #        cache "above" -- a field that now lives on `LibraryMediaState`.
+    # 925 + 24 + 5 + 3 = 957.
+    #
+    # Nine further screen-side flat-field references dev's 306 commits added
+    # were retargeted to `_media_state` and are line-neutral (a receiver
+    # swap): three of them WRITES, which is the silent class -- a write to a
+    # deleted flat name creates a stray attribute split from the state object
+    # instead of raising.
+    #
+    # 2026-09-07, wave-7 ROUND 2: `origin/dev` raced 75 more commits (the
+    # `fix/media-riders` series, actively editing this same media cluster)
+    # while PR #2501 was open. Fresh `_measure()`: 35626/1289 -> 35743/1290.
+    #
+    # Method SET check again, and it is exact both ways: `merged - branch` is
+    # dev's TWO new names (`_library_media_empty_list_fallback_target`,
+    # `_restore_library_media_reader_width_on_open`) and `branch - merged` is
+    # the ONE name dev itself deleted (`_library_media_int_backing_id`, which
+    # dev promoted to a module-level function in
+    # `Library/library_media_state.py`). Net +1: 1289 + 2 - 1 = 1290. No
+    # wave-7 delegator was lost.
+    #
+    # Line delta +117 against dev's own +121 (38525 -> 38646). The difference
+    # is the TWO mover bodies dev edited (`_select_library_media_reader_row`
+    # +5, `handle_library_media_review_selected` +2), which follow the body
+    # into the controller and so are not taken here: 121 - 7 = 114, plus this
+    # merge's own +3 for the ninth group-(e) construction-site kwarg
+    # (`restore_library_media_reader_width_on_open`, 3 lines). 114 + 3 = 117.
+    # Construction-site kwargs 91 -> 92.
+    #
+    # Six further screen-side flat-field references arrived in dev's new
+    # task-31979 width-restore code and were retargeted to `_media_state`
+    # (line-neutral). ONE is a write (`reader_layout = layout`) -- and one of
+    # the reads sat INSIDE a body this wave had already retargeted, where the
+    # auto-merge dropped dev's new flat line in among our retargeted ones
+    # without a conflict. That is the case for running the census over the
+    # merged tree rather than over the conflict hunks.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35777, 1290),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

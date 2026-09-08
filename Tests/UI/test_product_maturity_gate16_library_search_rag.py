@@ -2624,8 +2624,8 @@ async def test_library_search_rag_o_on_focused_card_opens_like_button() -> None:
 
         for _ in range(120):
             if (
-                screen._selected_media_id == "media-1"
-                and screen._library_media_view == "viewer"
+                screen._media_state.selected_media_id == "media-1"
+                and screen._media_state.view == "viewer"
             ):
                 break
             await pilot.pause(0.02)

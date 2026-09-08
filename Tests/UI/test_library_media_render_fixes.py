@@ -152,8 +152,8 @@ async def _open_first_reader_row(screen, pilot):
     await _wait_for_condition(
         pilot,
         lambda: (
-            screen._library_media_reader_session.pending_request is None
-            and screen._library_media_reader_session.loaded_id is not None
+            screen._media_state.reader_session.pending_request is None
+            and screen._media_state.reader_session.loaded_id is not None
         ),
         message="Reader detail never settled.",
     )
@@ -267,7 +267,7 @@ async def _walk_next(screen, service, pilot, expected_row: int) -> str:
     service.release(backing_id)
     await _wait_for_condition(
         pilot,
-        lambda: screen._library_media_reader_session.loaded_id == row_id,
+        lambda: screen._media_state.reader_session.loaded_id == row_id,
         message=f"] never loaded row {expected_row}.",
     )
     await pilot.pause()
@@ -275,8 +275,8 @@ async def _walk_next(screen, service, pilot, expected_row: int) -> str:
 
 
 async def _switch_to_analysis(screen, pilot) -> None:
-    screen._library_media_reader_session = set_mode(
-        screen._library_media_reader_session, "analysis"
+    screen._media_state.reader_session = set_mode(
+        screen._media_state.reader_session, "analysis"
     )
     screen._sync_library_media_viewer_or_recompose()
     await _wait_for_selector(screen, pilot, "#library-media-reader-mode-analysis")
@@ -301,7 +301,7 @@ async def test_analysis_mode_walk_never_moves_focus_into_the_search_field():
         assert not screen.query("#library-media-content-search-controls")
 
         await _walk_next(screen, service, pilot, expected_row=1)
-        assert screen._library_media_reader_session.mode == "analysis"
+        assert screen._media_state.reader_session.mode == "analysis"
         assert not isinstance(screen.focused, Input), screen.focused
         assert not screen.query("#library-media-content-search-controls")
 
@@ -329,13 +329,13 @@ async def test_find_on_the_analysis_tab_opens_the_bar_there_and_escape_closes_it
             lambda: search_input.has_focus,
             message="Find never focused the analysis search input.",
         )
-        assert screen._library_media_reader_session.mode == "analysis"
+        assert screen._media_state.reader_session.mode == "analysis"
 
         await pilot.press("escape")
         await pilot.pause()
         await pilot.pause()
         assert not screen.query("#library-media-content-search-controls")
-        assert screen._library_media_find_open is False
+        assert screen._media_state.find_open is False
 
 
 @pytest.mark.asyncio
@@ -366,7 +366,7 @@ async def test_read_mode_walk_with_an_empty_find_bar_never_steals_focus():
         assert not isinstance(screen.focused, Input)
 
         await _walk_next(screen, service, pilot, expected_row=1)
-        assert screen._library_media_find_open is True
+        assert screen._media_state.find_open is True
         assert screen.query("#library-media-content-search-controls")
         assert not isinstance(screen.focused, Input), screen.focused
 
@@ -387,7 +387,7 @@ async def test_find_toggles_the_bar_closed_when_it_is_open():
         await pilot.pause()
         await pilot.pause()
         assert not screen.query("#library-media-content-search-controls")
-        assert screen._library_media_find_open is False
+        assert screen._media_state.find_open is False
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +407,7 @@ async def test_delete_receipt_paints_undo_and_dismiss_at_the_items_pane_width():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        screen._media_state.delete_receipt_ids = ("local:media:1",)
         _sync_library_canvas(screen, "media")
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-bulk-delete-receipt"
@@ -437,7 +437,7 @@ async def test_delete_receipt_paints_a_live_undo_on_a_stale_page(size):
         controller = screen._library_media_browse_controller
         controller.freshness = "stale"
         controller.stale_copy = "Media changed; retry to load a current page."
-        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        screen._media_state.delete_receipt_ids = ("local:media:1",)
         _sync_library_canvas(screen, "media")
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-bulk-delete-receipt"
@@ -466,8 +466,8 @@ async def test_failed_undo_receipt_paints_its_reason_and_retry(size):
     host = _host()
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_delete_receipt_ids = ("local:media:1",)
-        screen._library_media_delete_receipt_undo_failure = (
+        screen._media_state.delete_receipt_ids = ("local:media:1",)
+        screen._media_state.delete_receipt_undo_failure = (
             "1 of 2 \u00b7 database is locked"
         )
         _sync_library_canvas(screen, "media")
@@ -520,9 +520,9 @@ async def test_analyze_receipt_paints_its_counts_retry_and_dismiss():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_analyze_total = 40
-        screen._library_media_analyze_done = 38
-        screen._library_media_analyze_failed_ids = ("local:media:1", "local:media:2")
+        screen._media_state.analyze_total = 40
+        screen._media_state.analyze_done = 38
+        screen._media_state.analyze_failed_ids = ("local:media:1", "local:media:2")
         _sync_library_canvas(screen, "media")
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-analyze-receipt"
@@ -542,10 +542,10 @@ async def test_analyze_receipt_paints_the_running_copy():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_analyze_running = True
-        screen._library_media_analyze_total = 40
-        screen._library_media_analyze_done = 0
-        screen._library_media_analyze_failed_ids = ("local:media:1", "local:media:2")
+        screen._media_state.analyze_running = True
+        screen._media_state.analyze_total = 40
+        screen._media_state.analyze_done = 0
+        screen._media_state.analyze_failed_ids = ("local:media:1", "local:media:2")
         _sync_library_canvas(screen, "media")
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-analyze-receipt"
@@ -566,8 +566,8 @@ async def test_analyze_receipt_omits_the_failed_segment_and_retry_at_zero():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_analyze_total = 40
-        screen._library_media_analyze_done = 40
+        screen._media_state.analyze_total = 40
+        screen._media_state.analyze_done = 40
         _sync_library_canvas(screen, "media")
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-analyze-receipt"
@@ -588,9 +588,9 @@ async def test_analyze_receipt_never_ticks_a_run_where_nothing_succeeded():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_analyze_total = 3
-        screen._library_media_analyze_done = 0
-        screen._library_media_analyze_failed_ids = ("a", "b", "c")
+        screen._media_state.analyze_total = 3
+        screen._media_state.analyze_done = 0
+        screen._media_state.analyze_failed_ids = ("a", "b", "c")
         _sync_library_canvas(screen, "media")
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-analyze-receipt"
@@ -609,7 +609,7 @@ async def test_analyze_overwrite_choice_paints_both_options():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_analyze_choice = (
+        screen._media_state.analyze_choice = (
             ("local:media:1", "local:media:2"),
             ("local:media:2",),
         )
@@ -643,7 +643,7 @@ async def test_a_scope_change_clears_the_armed_analyze_choice():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_analyze_choice = (
+        screen._media_state.analyze_choice = (
             ("local:media:1", "local:media:2"),
             ("local:media:2",),
         )
@@ -652,7 +652,7 @@ async def test_a_scope_change_clears_the_armed_analyze_choice():
 
         screen._request_library_media_filter("beta")
         await pilot.pause()
-        assert screen._library_media_analyze_choice is None
+        assert screen._media_state.analyze_choice is None
         _sync_library_canvas(screen, "media")
         await pilot.pause()
         await pilot.pause()
@@ -671,17 +671,17 @@ async def test_an_import_origin_run_paints_no_receipt_on_the_media_canvas():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_analyze_origin = "import"
-        screen._library_media_analyze_running = True
-        screen._library_media_analyze_total = 3
-        screen._library_media_analyze_done = 1
+        screen._media_state.analyze_origin = "import"
+        screen._media_state.analyze_running = True
+        screen._media_state.analyze_total = 3
+        screen._media_state.analyze_done = 1
         _sync_library_canvas(screen, "media")
         await pilot.pause()
         await pilot.pause()
         assert not screen.query("#library-media-analyze-receipt")
 
-        screen._library_media_analyze_running = False
-        screen._library_media_analyze_failed_ids = ("local:media:1", "local:media:2")
+        screen._media_state.analyze_running = False
+        screen._media_state.analyze_failed_ids = ("local:media:1", "local:media:2")
         _sync_library_canvas(screen, "media")
         await pilot.pause()
         await pilot.pause()
@@ -755,7 +755,7 @@ async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
             )
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_analyze_running is False,
+                lambda: screen._media_state.analyze_running is False,
                 message="the run never settled",
             )
             await pilot.pause()
@@ -863,7 +863,7 @@ async def test_analyze_run_cancelled_before_a_total_is_known_says_so_honestly():
             entered.is_set,
             message="the run never reached the partition pass",
         )
-        assert screen._library_media_analyze_total == 0
+        assert screen._media_state.analyze_total == 0
         await host.pop_screen()
         await pilot.pause()
         await pilot.pause()
@@ -910,7 +910,7 @@ async def test_analyze_bulk_action_follows_the_selection_in_place():
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "No analysis provider is configured.",
             )
-            screen._library_media_analyze_reason_cache = None
+            screen._media_state.analyze_reason_cache = None
             screen.query_one("#library-media-row-0").press()
             await pilot.pause()
             gated = screen.query_one("#library-media-analyze-selected", Button)
@@ -963,7 +963,7 @@ async def test_footer_drops_close_find_after_escape_closes_the_bar():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_find_open is False
+        assert screen._media_state.find_open is False
         labels = _footer_labels(screen)
         assert "close" not in labels, labels
         painted = _painted_footer(host, screen)
@@ -984,7 +984,7 @@ async def test_pressing_s_focuses_a_media_row_so_space_toggles_immediately():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_select_mode is True
+        assert screen._media_state.select_mode is True
         assert ("space", "toggle selection") in (
             screen._library_footer_shortcuts_for_current_state()
         )
@@ -995,7 +995,7 @@ async def test_pressing_s_focuses_a_media_row_so_space_toggles_immediately():
 
         await pilot.press("space")
         await pilot.pause()
-        assert screen._library_media_row_selection.count == 1
+        assert screen._media_state.row_selection.count == 1
 
 
 @pytest.mark.asyncio
@@ -1012,7 +1012,7 @@ async def test_space_in_select_mode_never_reaches_the_pane_grip():
         await pilot.press("s")
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_select_mode is True
+        assert screen._media_state.select_mode is True
 
         shell = screen.query_one(
             "#library-media-reader-shell", LibraryMediaReaderShell
@@ -1029,7 +1029,7 @@ async def test_space_in_select_mode_never_reaches_the_pane_grip():
             "#library-media-reader-shell", LibraryMediaReaderShell
         )
         assert shell.effective_layout.library_open is before.library_open
-        assert screen._library_media_row_selection.count == 0
+        assert screen._media_state.row_selection.count == 0
 
 
 @pytest.mark.asyncio
@@ -1079,7 +1079,7 @@ async def test_space_in_select_mode_is_claimed_from_rows_and_grips_only():
         await pilot.press("s")
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_select_mode is True
+        assert screen._media_state.select_mode is True
 
         def claim() -> bool | None:
             return screen.check_action("library_media_toggle_row_selection", ())
@@ -1104,7 +1104,7 @@ async def test_space_in_select_mode_is_claimed_from_rows_and_grips_only():
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_select_mode is False
+        assert screen._media_state.select_mode is False
 
 
 # ---------------------------------------------------------------------------
@@ -1153,7 +1153,7 @@ async def test_escape_from_the_reader_lands_on_the_loaded_row_then_the_rail_row(
         await pilot.pause()
         assert screen.focused is not None
         assert screen.focused.has_class("library-media-row"), screen.focused
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         assert screen.check_action("library_media_next_item", ()) is True
 
         await pilot.press("escape")
@@ -1169,7 +1169,7 @@ async def test_escape_closes_the_more_menu_from_any_reader_focus():
 
     Critique #4 (B cap_106): the footer promised "close more" and Escape
     did nothing. Traced to the stale view flag -- "‹ Back" (and the rail's
-    Escape) set ``_library_media_view = "list"`` while the three-pane
+    Escape) set ``_media_state.view = "list"`` while the three-pane
     Reader kept painting the document, and every Reader binding is gated
     on that flag, so Escape/]/[ died on identical pixels.
     """
@@ -1183,7 +1183,7 @@ async def test_escape_closes_the_more_menu_from_any_reader_focus():
         await pilot.press("escape")
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         # The terminus leaves Escape UN-GATED rather than swallowing it
         # (the Conversations seam): no chip, no action, no strand.
         assert screen._library_media_escape_label() == ""
@@ -1196,7 +1196,7 @@ async def test_escape_closes_the_more_menu_from_any_reader_focus():
         await pilot.press("escape")
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_reader_session.more_open is False
+        assert screen._media_state.reader_session.more_open is False
         assert not screen.query("#library-media-reader-more-actions")
 
 
@@ -1368,7 +1368,7 @@ async def test_escape_to_the_row_restores_the_list_keys_beside_the_reader():
         await pilot.press("s")
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_select_mode is True
+        assert screen._media_state.select_mode is True
         # Select mode is the Items pane genuinely taking the keys.
         assert screen._library_footer_shortcuts_for_current_state() == (
             screen.LIBRARY_MEDIA_SELECT_SHORTCUTS
@@ -1381,7 +1381,7 @@ async def test_escape_to_the_row_restores_the_list_keys_beside_the_reader():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_select_mode is False
+                screen._media_state.select_mode is False
                 and "next item"
                 in [label for _key, label in screen._footer_shortcut_registration[1]]
             ),
@@ -1414,7 +1414,7 @@ async def test_escape_cancels_an_items_choice_strip_over_the_reader():
         await pilot.pause()
         await pilot.pause()
         assert not screen.query("#library-media-type-choices")
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
 
 
 @pytest.mark.asyncio
@@ -1442,7 +1442,7 @@ async def test_escape_cancels_a_strip_that_is_open_while_the_reader_has_focus():
         await pilot.pause()
         await pilot.pause()
         assert not screen.query("#library-media-sort-choices")
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
 
 @pytest.mark.asyncio
 async def test_find_is_disabled_with_a_reason_when_the_analysis_tab_has_nothing_to_search():
@@ -1462,7 +1462,7 @@ async def test_find_is_disabled_with_a_reason_when_the_analysis_tab_has_nothing_
         screen.handle_library_media_reader_find(SimpleNamespace(stop=lambda: None))
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_find_open is False
+        assert screen._media_state.find_open is False
         assert not screen.query("#library-media-content-search-controls")
 
 
@@ -1966,7 +1966,7 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
         )
         await pilot.pause()
         assert warnings == [_NO_PROVIDER_REASON]
-        assert screen._library_media_generating_analysis is False
+        assert screen._media_state.generating_analysis is False
 
 
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
@@ -2131,7 +2131,7 @@ async def _enter_media_select_mode(screen, pilot):
     await pilot.press("s")
     await _wait_for_condition(
         pilot,
-        lambda: screen._library_media_select_mode,
+        lambda: screen._media_state.select_mode,
         message="Select mode never engaged after 's'.",
     )
     await pilot.pause()
@@ -2181,7 +2181,7 @@ async def test_select_mode_entry_focuses_a_row_so_down_and_space_work(size):
         await pilot.press("space")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_row_selection.count == 1,
+            lambda: screen._media_state.row_selection.count == 1,
             message="Down then Space did not select a row.",
         )
         await pilot.pause()
@@ -3187,7 +3187,7 @@ async def test_edit_save_mounts_already_gated_while_a_media_write_is_in_flight()
 
         # The shared write interlock, taken exactly as
         # ``_run_library_media_mutation`` takes it.
-        screen._library_media_bulk_delete_in_flight = True
+        screen._media_state.bulk_delete_in_flight = True
         screen.query_one("#library-media-edit", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-edit-save")
         # Let both pumps drain: the gate is a one-shot, so a settle window
@@ -3210,7 +3210,7 @@ async def test_returning_to_read_restores_the_reading_position_once():
 
     ``handle_library_media_reader_mode`` schedules it through the viewer
     seam AND used to re-arm ``_sync_library_media_viewer_state``'s own
-    arm-once guard by nulling ``_library_media_progress_restored_id``, so a
+    arm-once guard by nulling ``_media_state.progress_restored_id``, so a
     single Analysis -> Read press restored twice. Idempotent today only
     because the restore is a ``scroll_to``.
     """
@@ -3218,9 +3218,9 @@ async def test_returning_to_read_restores_the_reading_position_once():
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
         await _open_first_reader_row(screen, pilot)
-        loaded_id = screen._library_media_reader_session.loaded_id
+        loaded_id = screen._media_state.reader_session.loaded_id
         assert loaded_id is not None
-        screen._library_media_read_scroll_by_id[loaded_id] = (0, 3)
+        screen._media_state.read_scroll_by_id[loaded_id] = (0, 3)
 
         restores: list[str] = []
         real_restore = screen._restore_library_media_loaded_progress
@@ -3234,7 +3234,7 @@ async def test_returning_to_read_restores_the_reading_position_once():
         screen.query_one("#library-media-reader-select-analysis", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.mode == "analysis",
+            lambda: screen._media_state.reader_session.mode == "analysis",
             message="The Reader never switched to Analysis.",
         )
         for _ in range(4):
@@ -3268,8 +3268,8 @@ async def test_analysed_secondary_survives_the_36_cell_items_floor():
     host = _review_state_host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_reader_preferences = dataclasses.replace(
-            screen._library_media_reader_preferences,
+        screen._media_state.reader_preferences = dataclasses.replace(
+            screen._media_state.reader_preferences,
             custom_widths_enabled=True,
             items_width=36,
         )
@@ -3382,8 +3382,8 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
         await _apply_media_filter(screen, pilot, "notes")
-        screen._library_media_reader_preferences = dataclasses.replace(
-            screen._library_media_reader_preferences,
+        screen._media_state.reader_preferences = dataclasses.replace(
+            screen._media_state.reader_preferences,
             custom_widths_enabled=True,
             items_width=36,
         )
@@ -3429,8 +3429,8 @@ async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone(
         screen.query_one("#library-media-reader-find", Button).focus()
         await pilot.pause()
 
-        screen._library_media_reader_session = set_more_open(
-            screen._library_media_reader_session, True
+        screen._media_state.reader_session = set_more_open(
+            screen._media_state.reader_session, True
         )
         screen._after_library_media_viewer_sync("#library-media-reader-absent")
         await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
@@ -3709,8 +3709,8 @@ async def test_raising_follow_up_still_runs_the_queued_focus_restore():
         await pilot.pause()
         # A real compose-input flip, so the sync genuinely recomposes and
         # queues task-31567's restore for us to chain behind.
-        screen._library_media_reader_session = set_more_open(
-            screen._library_media_reader_session, True
+        screen._media_state.reader_session = set_more_open(
+            screen._media_state.reader_session, True
         )
 
         def boom() -> None:
@@ -3767,7 +3767,7 @@ async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
         await _wait_for_condition(
             pilot,
             lambda: bool(host.app_instance.media_reading_scope_service.analysis_calls)
-            and not screen._library_media_editing_analysis,
+            and not screen._media_state.editing_analysis,
             message="The analysis save never completed.",
         )
         for _ in range(3):
