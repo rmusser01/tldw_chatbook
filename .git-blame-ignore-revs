@@ -288,3 +288,19 @@ d0ec95b16f17668af9e32725eed788aeeed1d991
 # module end; one bypass-fixture seeding line and the screen size-ratchet
 # re-pin. Zero method bodies touched.
 ec731818132255dbf8b30deb6ba2f9a20ff20ecf
+
+# refactor(library): notes controller + delegators (notes series 2/N)
+# Wave-8 task 2, 2026-09-08 -- pure move, the FINAL controller move of the
+# eight-wave Library decomposition program. 186 of the 285 "note"-named
+# LibraryScreen methods relocated byte-for-byte into LibraryNotesController
+# (UI/Library_Modules/library_notes_controller.py), each replaced on the
+# screen by a one-line delegator; 99 candidates excluded across ten
+# hazard/ownership classes and left full-bodied on the screen. Every moved
+# body is byte-identical to its pre-move source (AST-verified per method, both
+# ends). Also collapses a pre-existing byte-identical DUPLICATE definition of
+# six notes methods that dev shipped twice (7cf89de6c + fd505637f), which is
+# the only reason the method count moves on a pure move. Plus the constructor
+# binding site (103 names), the born-lazy function-local import, the
+# preimport-closure suffix, both size-ratchet re-pins and the relocated
+# production-diagnostic inventory rows. Zero method bodies edited.
+9e13f0207cadb0de5eb7559faa4ada234e3a6f6c
