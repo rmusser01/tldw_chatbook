@@ -35,6 +35,13 @@ from tldw_chatbook.Chat.provider_readiness import (
 #: provider at all. Also the substring the panel hint builds on.
 NO_ANALYSIS_PROVIDER_REASON = "no analysis provider is configured"
 
+#: task-31981: the next step for the no-provider case, appended to the
+#: surfaced reason in the app's "reason · action" grammar (see the
+#: watchlists Generate gate's "Settings ▸ Providers & Models" phrasing).
+#: Only this branch has a single obvious fix; the provider-not-ready
+#: branch's fix depends on the specific readiness gap, so it stays bare.
+NO_ANALYSIS_PROVIDER_NEXT_STEP = "Set one in Settings ▸ Providers & Models"
+
 # ---------------------------------------------------------------------------
 # (task-3301 xhigh review round, F10) The full [analysis_defaults] call
 # shape. Defaults mirror the Media viewer's analysis panel
@@ -247,6 +254,10 @@ def analysis_unavailable_reason(resolution: IngestAnalysisResolution) -> str:
     # seam other gates feed resolutions into.
     reason = (resolution.short_reason or "").strip() or NO_ANALYSIS_PROVIDER_REASON
     sentence = reason[0].upper() + reason[1:]
+    if reason == NO_ANALYSIS_PROVIDER_REASON:
+        # task-31981: a blocked Generate/Analyze must name the next step,
+        # not just the fault -- "reason · action" grammar.
+        return f"{sentence} · {NO_ANALYSIS_PROVIDER_NEXT_STEP}."
     return sentence if sentence.endswith(".") else f"{sentence}."
 
 

@@ -10693,7 +10693,10 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
             generate = screen.query_one("#library-media-analysis-generate", Button)
             assert generate.disabled is True
             assert str(generate.label) == "○ Generate"
-            assert str(generate.tooltip) == "No analysis provider is configured."
+            assert str(generate.tooltip) == (
+                "No analysis provider is configured "
+                "· Set one in Settings ▸ Providers & Models."
+            )
             screen.handle_library_media_analysis_generate(
                 SimpleNamespace(stop=lambda: None)
             )

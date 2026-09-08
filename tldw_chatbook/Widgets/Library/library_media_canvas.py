@@ -1110,6 +1110,17 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 analyze_row.styles.height = "auto"
                 with analyze_row:
                     yield self._analyze_selected_button()
+                if self.analysis_action_reason:
+                    # task-31981: surface the blocker inline (below its own
+                    # row), not only on the hover tooltip -- the same grammar
+                    # the Reader's Generate gate and the Export gate use, so a
+                    # keyboard-first user sees WHY Analyze is off.
+                    yield Static(
+                        self.analysis_action_reason,
+                        id="library-media-analyze-selected-reason",
+                        classes="library-media-action-reason",
+                        markup=False,
+                    )
                 # task-2853's danger-isolation rule, upgraded: Delete gets a
                 # whole row, so it is never adjacent to any other action.
                 danger_row = Horizontal(

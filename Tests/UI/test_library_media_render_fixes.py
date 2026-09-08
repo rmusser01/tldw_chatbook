@@ -73,6 +73,16 @@ from Tests.UI.test_library_shell import (
 )
 
 
+from tldw_chatbook.Library.ingest_analysis import NO_ANALYSIS_PROVIDER_NEXT_STEP
+
+#: task-31981: the full surfaced reason for the no-provider case, derived
+#: from the source's next-step constant so only the reason half is pinned
+#: here (the "reason · action" join and next step live in the source).
+_NO_PROVIDER_REASON = (
+    f"No analysis provider is configured · {NO_ANALYSIS_PROVIDER_NEXT_STEP}."
+)
+
+
 def _host() -> LibraryProductionCSSHarness:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -1947,7 +1957,7 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
         assert str(generate.label) == expected_label
         # The marker is not just on the widget -- it reaches the glass.
         assert expected_label in _painted(host, generate.region)
-        assert str(generate.tooltip) == "No analysis provider is configured."
+        assert str(generate.tooltip) == _NO_PROVIDER_REASON
         # Belt and braces: the handler refuses with the same sentence.
         warnings: list[str] = []
         screen._notify_library_media_analysis_warning = warnings.append
@@ -1955,8 +1965,68 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
             SimpleNamespace(stop=lambda: None)
         )
         await pilot.pause()
-        assert warnings == ["No analysis provider is configured."]
+        assert warnings == [_NO_PROVIDER_REASON]
         assert screen._library_media_generating_analysis is False
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_reader_generate_reason_is_painted_inline_not_hover_only(size):
+    """task-31981 AC#1/#4: the blocked Generate's reason reaches the glass
+    as an always-visible line adjacent to the control, not only as a mouse
+    tooltip a keyboard user can never reach. Painted at both sizes, no hover.
+    AC#2: the reason names the next step (Settings ▸ Providers & Models)."""
+    host = _host()  # the test config configures no analysis provider
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _switch_to_analysis(screen, pilot)
+        reason_line = screen.query_one("#library-media-analysis-generate-reason", Static)
+        painted = _painted(host, reason_line.region).replace("\n", " ")
+        assert "No analysis provider is configured" in painted, painted
+        # AC#2: the next step, not just the fault.
+        assert "Settings" in painted, painted
+        assert "Providers & Models" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_reader_generate_reason_line_is_absent_when_a_provider_is_ready():
+    """task-31981: with a ready provider the inline reason line is gone and
+    Generate is live -- the line is the blocker's carrier, not chrome."""
+    host = _analysed_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            await _open_first_reader_row(screen, pilot)
+            await _switch_to_analysis(screen, pilot)
+            assert not screen.query("#library-media-analysis-generate-reason")
+            generate = screen.query_one("#library-media-analysis-generate", Button)
+            assert generate.disabled is False
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_select_mode_analyze_reason_is_painted_inline_not_hover_only(size):
+    """task-31981 AC#1/#4: the select-mode bulk Analyze gates on the same
+    provider condition, and its reason must paint inline too -- same silence,
+    same fix, at both sizes with no hover."""
+    host = _host()  # the test config configures no analysis provider
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._toggle_library_media_select_mode()
+        await _wait_for_selector(screen, pilot, "#library-media-analyze-selected")
+        await pilot.pause()
+        analyze = screen.query_one("#library-media-analyze-selected", Button)
+        assert analyze.disabled is True
+        reason_line = screen.query_one("#library-media-analyze-selected-reason", Static)
+        painted = _painted(host, reason_line.region).replace("\n", " ")
+        assert "No analysis provider is configured" in painted, painted
+        assert "Providers & Models" in painted, painted
 
 
 @pytest.mark.asyncio

@@ -179,7 +179,11 @@ item in one run, in list order, on its own row under Clear/Export/Review:
 - One run at a time: a second press while one is in flight says "Analysis
   already running" rather than starting a second.
 - With no analysis provider configured the action reads **"○ Analyze"** and
-  its tooltip carries the same reason the Reader's Generate gives.
+  an always-visible line beneath it states the reason and the next step
+  ("No analysis provider is configured · Set one in Settings ▸ Providers &
+  Models."), the same wording the Reader's Generate gives — so a
+  keyboard-first user reads why without hovering. The tooltip still carries
+  it too.
 - The run belongs to the Library screen: leaving Library stops it, and a
   notice says where it got to ("Analysis stopped at 3 of 40 · reopen Select
   ▸ Analyze to continue; finished items are skipped"). Items already
@@ -412,9 +416,11 @@ still spans the pane.
   written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
   once one exists) calls the configured analysis provider without leaving
   the reading flow. With no provider configured it reads **"○ Generate"**
-  and its tooltip names the reason (the same wording the Select-mode bulk
-  **Analyze** tooltip and the Import "Analyze N skipped" gate use), so the
-  gap is visible before you click rather than after.
+  and an always-visible line beneath the button names the reason and the
+  next step ("No analysis provider is configured · Set one in Settings ▸
+  Providers & Models.") — the same wording the Select-mode bulk **Analyze**
+  gate and the Import "Analyze N skipped" gate use — so the gap is readable
+  before you click, without hovering. The tooltip still carries it too.
 - **Highlights** — saved quotes from this item ("No highlights yet." when
   empty). Expand the collapsed **"Add highlight"** section, fill "Quote"
   (required), optionally "Note (optional)" and "Color (optional)", and
@@ -451,6 +457,14 @@ at painted column 98. Find on the Markdown item shows "No matches" with
 for Markdown and transcripts" in the row the Rendered|Raw strip occupies for a
 Markdown item. The failed-list placeholder (item 12) is pinned by test, not
 live: forcing it needs the Media page load to fail.)*
+
+*Verified against fix/media-crit6-blockedreason — 2026-09-07 (task-31981,
+critique #6 P1: with no analysis provider configured, the Reader's blocked
+"○ Generate" and the Select-mode bulk "○ Analyze" each paint their reason
+plus next step ("… · Set one in Settings ▸ Providers & Models.") on an
+always-visible line adjacent to the control — no hover needed. Pinned by
+painted-text tests at 235x52 and 100x30, matching the Export gate's inline
+"No destination chosen" grammar.)*
 
 *Verified against fix/media-wave5-h @ a4682f17e — 2026-09-06 (task-31633
 AC#3: More opened live at 235x52 and at 100x30 over a seeded document.
