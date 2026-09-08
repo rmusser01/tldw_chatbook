@@ -1,8 +1,9 @@
 """The bake-off's DER scorer, against hand-computed values (spec §7).
 
-The only file in `Tests/Audio/bakeoff/` pytest collects: `der.py`, `corpus.py`
-and `run_bakeoff.py` are the harness itself and are never collected (no
-`test_` prefix). This test is what makes the numbers in
+One of the two files in `Tests/Audio/bakeoff/` pytest collects (the other is
+`test_live_coverage.py`): `der.py`, `corpus.py` and `run_bakeoff.py` are the
+harness itself and are never collected (no `test_` prefix). This test is what
+makes the numbers in
 `Docs/STT_Evaluation/task-31827/report.md` worth reading -- an unpinned
 scorer would let a wrong DER decide whether ONNX becomes the default engine.
 """

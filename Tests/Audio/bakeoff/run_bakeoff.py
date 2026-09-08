@@ -10,8 +10,10 @@ Measures, per (engine, embedder, segmentation) and per threshold:
 * **Live purity / coverage** -- 3 s windows that lie entirely inside one
   reference speaker's turn, fed to `assign` in time order. Purity is the
   fraction of windows whose cluster's majority reference speaker is the
-  window's own; coverage the fraction of reference speakers that have at
-  least one such cluster.
+  window's own; coverage the fraction of ALL the file's reference speakers
+  that have at least one such cluster -- including any the window sampler
+  skipped, who are then simply not covered (Qodo 7; each row records its
+  `coverage_basis`, and the committed 2026-09-07 run predates this).
 * **RTF** -- `diarize` wall time / audio duration, after `wait_ready`.
 * **Peak worker RSS** -- `resource.getrusage(RUSAGE_CHILDREN).ru_maxrss`
   after `close()`. Every cell runs in its own child process, so the
@@ -59,6 +61,12 @@ MAX_SPEAKERS = 8
 READY_S = 300.0
 CELL_TIMEOUT_S = 5400.0
 ECAPA = "ecapa"                # the SpeechBrain engine's single "embedder"
+#: What a live row's `coverage` is a fraction OF, recorded on the row itself
+#: (Qodo 7). The committed 2026-09-07 run predates the fix and its coverage
+#: column is the legacy basis -- which is why `write_report` derives this from
+#: the rows rather than printing a constant sentence.
+COVERAGE_BASIS = "all reference speakers"
+COVERAGE_BASIS_LEGACY = "among sampled speakers"
 
 
 # --------------------------------------------------------------------------
@@ -121,7 +129,14 @@ def _live_file(diarizer, entry: dict, reference: list) -> dict:
 
     scored = [(c, s) for c, s in assigned if c is not None]
     pure = sum(1 for c, s in scored if majority.get(c) == s)
-    speakers = {s for _, s in assigned}
+    # Over every speaker in the REFERENCE, not just the ones a window sampled
+    # (Qodo 7): `_live_windows` needs a clean 3 s span inside one turn and caps
+    # a file at MAX_LIVE_WINDOWS, so a short-turn speaker can be absent from
+    # `assigned` entirely -- and dividing by the sampled set then reported
+    # "coverage 1.000" for a speaker the live pass was never once asked about.
+    # The windows themselves stay as sampled, so purity and latency are
+    # unaffected; only the denominator changes.
+    speakers = {spk for _, _, spk in reference}
     covered = {s for s in speakers if any(m == s for m in majority.values())}
     return {
         "windows": len(assigned),
@@ -132,8 +147,13 @@ def _live_file(diarizer, entry: dict, reference: list) -> dict:
         # 120 live rows of the committed run, so no number moves.
         "purity": (pure / len(assigned)) if assigned else 0.0,
         "coverage": (len(covered) / len(speakers)) if speakers else 0.0,
+        # Recorded per row (Qodo 7) so a results.json is self-describing: the
+        # committed run predates this and its coverage column is
+        # `COVERAGE_BASIS_LEGACY`, which `write_report` says out loud.
+        "coverage_basis": COVERAGE_BASIS,
         "clusters": len(counts),
         "ref_speakers": len(speakers),
+        "sampled_speakers": len({s for _, s in assigned}),
         "latency_ms": latencies[1:],
     }
 
@@ -637,6 +657,17 @@ def _report(results: dict) -> str:
             f"+{_fmt(_cell_summary(cell)['cluster_error'], 2)} | "
             f"{_fmt(median, 1)} | {_fmt(p95, 1)} | "
             f"{sum(r.get('windows', 0) for r in rows)} | {len(latencies)} |")
+    bases = sorted({
+        r.get("coverage_basis", COVERAGE_BASIS_LEGACY)
+        for cell in results["cells"] if cell["spec"]["kind"] == "live"
+        for r in cell["rows"] if "error" not in r
+    })
+    if bases:
+        # Derived, never a constant sentence (Qodo 7): a results.json from
+        # before the denominator fix must not be re-rendered under the new
+        # claim, and re-rendering one is exactly what this function is for.
+        add("")
+        add(f"Coverage basis: {', '.join(bases)}.")
     add("")
 
     add("## Self-match separation (VoxConverse speakers)")

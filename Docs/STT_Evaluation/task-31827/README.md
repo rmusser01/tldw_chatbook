@@ -23,15 +23,15 @@ and both machine-dependent gates pass on the M-series with 2-4x of headroom.
   segmentation study, run separately on a three-file subset.
 
 The harness lives in [`Tests/Audio/bakeoff/`](../../../Tests/Audio/bakeoff/).
-Only `test_der.py` is collected by pytest; `der.py`, `corpus.py` and
-`run_bakeoff.py` are the harness itself.
+Only `test_der.py` and `test_live_coverage.py` are collected by pytest;
+`der.py`, `corpus.py` and `run_bakeoff.py` are the harness itself.
 
 ## What is measured
 
 | Metric | Definition |
 | --- | --- |
 | **Stop-pass DER** | `LocalDiarizer.diarize(wav, 0, duration)` over the whole file, scored against the corpus RTTM by `der.der` with a **0.25 s collar**: missed + false alarm + confusion over total reference speech, speakers mapped by the assignment maximising overlap. Overlapping reference speech counts once per speaker. |
-| **Live purity / coverage** | 3 s windows lying entirely inside one reference speaker's turn (no other speaker active in the window), fed to `assign` in time order. Purity = fraction of windows whose cluster's majority reference speaker is the window's own. Coverage = fraction of reference speakers with at least one cluster whose majority is that speaker. `clusters vs speakers` is the mean absolute gap between the live cluster count and the reference speaker count — purity saturates at 1.0 long before the clusterer stops over-splitting, so that column is the honest one. |
+| **Live purity / coverage** | 3 s windows lying entirely inside one reference speaker's turn (no other speaker active in the window), fed to `assign` in time order. Purity = fraction of windows whose cluster's majority reference speaker is the window's own. Coverage = fraction of reference speakers with at least one cluster whose majority is that speaker — over **all** speakers in the RTTM, including any the window sampler skipped (`coverage_basis` on each row). The committed run predates that fix (Qodo 7) and its coverage column is `among sampled speakers`; coverage was not a gate, and no other column is affected. `clusters vs speakers` is the mean absolute gap between the live cluster count and the reference speaker count — purity saturates at 1.0 long before the clusterer stops over-splitting, so that column is the honest one. |
 | **RTF** | `diarize` wall time / audio duration, measured after `wait_ready`. |
 | **Peak worker RSS** | `resource.getrusage(RUSAGE_CHILDREN).ru_maxrss` after `close()`, normalised to MB (macOS reports bytes, Linux kilobytes). Every cell runs in its own child process, so the high-water mark belongs to that cell's workers only. |
 | **Per-window embed latency** | Median and p95 of the `assign` round trip over the live windows, first call dropped. |

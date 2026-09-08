@@ -44,6 +44,14 @@ Gates: DER within 0.02 absolute, purity within 0.03, RTF <= 0.15, embed latency 
 
 ## Live purity / coverage and per-window embed latency
 
+Coverage basis: **among sampled speakers**. This run predates the denominator
+fix (Qodo 7, TASK-31827): its coverage column counts only reference speakers
+that had at least one qualifying 3 s window, so a speaker the sampler skipped
+is missing from both halves of the fraction and cannot lower it. Coverage was
+not one of the gates, and purity, DER, RTF and latency are unaffected — the
+windows fed to `assign` are the same either way. Later runs record
+`coverage_basis: all reference speakers` on every row.
+
 | engine | embedder | live threshold | purity | coverage | clusters vs speakers | latency median (ms) | p95 (ms) | windows | latency samples |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | onnx | titanet_small | 0.45 | 1.000 | 1.000 | +0.54 | 11.8 | 13.5 | 1154 | 1130 |
