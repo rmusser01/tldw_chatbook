@@ -1205,3 +1205,47 @@ remain required. Their actual commands/results are in the task implementation no
 Capture qualification, DB-contained reference discovery, semantic validation,
 relocation, credential sanitization and runtime activation remain explicit owner
 cohort work. This census grants no complete-backup, replacement or release claim.
+
+## Maintenance and native storage producers (TASK-31987)
+
+Admission owns private control-root registry records and persistent lock files; pending remap records are durable recovery evidence, never disposable or imported authority. Capture/relocation remains unsupported until the control owner qualifies. Native creation/publication routines are generic checked boundaries; calling owners must inventory their output, staging, and retained recovery files. The qualification reader reads installed metadata only.
+
+| Module | Qualified symbol | Call | Count | Classification | Cohort |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._create_lock | open | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._open | open | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | open | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | write | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/native_files.py | _flush_private_tree | open | 1 | generic_boundary | backup_native_storage |
+| tldw_chatbook/Backup_Recovery/native_files.py | create_private_directory | mkdir | 1 | generic_boundary | backup_native_storage |
+| tldw_chatbook/Backup_Recovery/native_files.py | create_private_file | open | 1 | generic_boundary | backup_native_storage |
+| tldw_chatbook/Backup_Recovery/native_files.py | pinned_directory | open | 2 | generic_boundary | backup_native_storage |
+| tldw_chatbook/Backup_Recovery/native_files.py | publish_new | open | 1 | generic_boundary | backup_native_storage |
+
+## Native publication census extension (TASK-31987)
+
+The concrete `renameatx_np` callable assignment and `os.replace` seams are now counted, including imported OS aliases. These are cumulative syntactic candidates, not runtime binding inference; ordinary string replace calls do not receive an OS-publication label. Existing publication symbols retain their previously reviewed owner/cohort classifications below; newly surfaced Media, legacy-settings, and TTS symbols remain unsupported. This adds no blanket owner exemption and does not qualify legacy no-replace implementations for recovery.
+
+| Module | Qualified symbol | Call | Count | Classification | Cohort |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.replace | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/native_files.py | _rename_new | renameatx_np | 1 | generic_boundary | backup_native_storage |
+| tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | os.replace | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._create_zip_archive | os.replace | 1 | unsupported | miscellaneous |
+| tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py | ModelCatalogDiskStore.save | os.replace | 1 | disposable | diagnostics |
+| tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._default_url_file_downloader | os.replace | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._copy_payload | os.replace | 1 | unsupported | models |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_file | os.replace | 1 | unsupported | notes |
+| tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._migrate_legacy_blob | os.replace | 1 | unsupported | rag |
+| tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | os.replace | 1 | unsupported | subscriptions |
+| tldw_chatbook/TTS/profile_migration_namespace.py | _rename_noreplace | renameatx_np | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | os.replace | 1 | unsupported | tts |
+| tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._copy_pending_video_external | os.replace | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_databases | os.replace | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_worker | os.replace | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | os.replace | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | os.replace | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/atomic_file_ops.py | atomic_copy | os.replace | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.replace | 1 | generic_boundary | generic |
+| tldw_chatbook/Video_Generation/video_store.py | VideoStore._commit_sibling | os.replace | 1 | process_artifact | process |
+| tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | recursive_scrape.save_progress | os.replace | 1 | unsupported | miscellaneous |

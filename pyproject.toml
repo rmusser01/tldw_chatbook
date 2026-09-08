@@ -503,7 +503,7 @@ exclude = [
 "tldw_chatbook.Image_Generation" = ["workflows/*.json"]
 "tldw_chatbook.Video_Generation" = ["workflows/*.json"]
 "tldw_chatbook.TTS" = ["audio_cpp_artifact_manifest.json"]
-"tldw_chatbook.Backup_Recovery" = ["helper_manifest.json"]
+"tldw_chatbook.Backup_Recovery" = ["helper_manifest.json", "native_qualification.json"]
 "tldw_chatbook.DB" = [
     "migrations/chachanotes_v26_to_v27_citation_provenance.sql",
     "migrations/chachanotes_v27_to_v28_character_authority.sql",

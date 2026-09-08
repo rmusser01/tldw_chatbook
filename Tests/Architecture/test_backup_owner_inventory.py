@@ -47,6 +47,8 @@ PRODUCER_CALLS = frozenset(
         "ZipFile",
         "set_password",
         "delete_password",
+        "renameatx_np",
+        "os.replace",
     }
 )
 
@@ -56,6 +58,22 @@ def census(source: str) -> Counter:
 
     tree = ast.parse(source)
     imported_candidates = {}
+    os_names = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name == "os"
+    }
+
+    def native_candidate(value):
+        if isinstance(value, ast.Attribute):
+            if value.attr == "renameatx_np":
+                return "renameatx_np"
+            if value.attr == "replace" and getattr(value.value, "id", None) in os_names:
+                return "os.replace"
+        return None
+
     # This is a conservative call census, not Python name/signature inference.
     # Gather every imported function alias before walking calls; an import in a
     # different scope can add candidates but can never overwrite/remove one.
@@ -63,8 +81,14 @@ def census(source: str) -> Counter:
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 imported_candidates.setdefault(alias.asname or alias.name, set()).add(
-                    alias.name
+                    "os.replace"
+                    if node.module == "os" and alias.name == "replace"
+                    else alias.name
                 )
+        if isinstance(node, ast.Assign) and (candidate := native_candidate(node.value)):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    imported_candidates.setdefault(target.id, set()).add(candidate)
 
     class Visitor(ast.NodeVisitor):
         def __init__(self):
@@ -92,6 +116,8 @@ def census(source: str) -> Counter:
                 else getattr(node.func, "id", "")
             )
             candidates = {name}
+            if candidate := native_candidate(node.func):
+                candidates.add(candidate)
             if isinstance(node.func, ast.Name):
                 candidates.update(imported_candidates.get(node.func.id, ()))
             # Even literal read-only opens remain candidates: parameters, local
@@ -233,3 +259,31 @@ def test_function_local_import_cannot_hide_module_open_or_imported_alias():
     )
     for source in examples:
         assert census(source)[("<module>", "open")] == 1, source
+
+
+def test_census_tracks_native_publication_callable_alias_and_registry_replace():
+    source = """
+import ctypes
+import os
+
+def publish():
+    libc = ctypes.CDLL(None)
+    native = libc.renameatx_np
+    native(source_fd, source_name, target_fd, target_name, 4)
+
+def register():
+    os.replace(stage, registry, src_dir_fd=parent, dst_dir_fd=parent)
+"""
+    assert census(source)[("publish", "renameatx_np")] == 1
+    assert census(source)[("register", "os.replace")] == 1
+
+
+def test_census_native_replace_is_distinct_from_string_replace():
+    assert census('value.replace("a", "b")') == Counter()
+    source = """
+import os as filesystem
+from os import replace as commit_record
+filesystem.replace(stage, destination)
+commit_record(stage, destination)
+"""
+    assert census(source)[("<module>", "os.replace")] == 2

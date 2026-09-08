@@ -1438,6 +1438,7 @@ def test_built_artifacts_match_distribution_contract(
             "tldw_chatbook/Third_Party/aider/LICENSE.txt",
             "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
             AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+            "tldw_chatbook/Backup_Recovery/native_qualification.json",
         }
         | RUNTIME_MIGRATION_PATHS
         | SAMIRA_RESOURCE_PATHS
@@ -1450,6 +1451,7 @@ def test_built_artifacts_match_distribution_contract(
             "tldw_chatbook/Third_Party/aider/LICENSE.txt",
             "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
             AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+            "tldw_chatbook/Backup_Recovery/native_qualification.json",
         }
         | RUNTIME_MIGRATION_PATHS
         | SAMIRA_RESOURCE_PATHS

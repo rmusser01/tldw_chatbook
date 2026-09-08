@@ -7,6 +7,10 @@ existence, is the liveness signal: locks vanish with the process, so stale
 files never false-positive. The lock file is deliberately never unlinked —
 unlinking races a third instance onto a fresh inode and splits the lock.
 
+Maintenance exclusion is a separate cooperative protocol in
+``Backup_Recovery.admission``. This status is never evidence that a legacy
+process has retired its writers or honors maintenance admission.
+
 This module is intentionally dependency-light (stdlib + portalocker +
 loguru only) and takes a plain ``Path`` rather than importing anything from
 ``tldw_chatbook.config`` or ``tldw_chatbook.app`` -- that keeps its unit

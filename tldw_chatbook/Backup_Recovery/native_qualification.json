@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "evidence": [
+    {
+      "identity": {
+        "os": "Darwin",
+        "release": "25.5.0",
+        "arch": "arm64",
+        "python": "3.12.11",
+        "filesystem": "apfs",
+        "flags": 76583040
+      },
+      "operations": [
+        "publish_new",
+        "publish_file",
+        "publish_directory",
+        "admission"
+      ],
+      "protocol": 1,
+      "tests": [
+        "Tests/Backup_Recovery/test_native_files.py",
+        "Tests/Backup_Recovery/test_admission.py"
+      ],
+      "date": "2026-09-07",
+      "scope": "Native primitive and cooperative admission only; no isolated restore or replacement qualification."
+    }
+  ]
+}
