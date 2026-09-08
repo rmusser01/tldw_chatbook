@@ -1961,6 +1961,38 @@ def test_enrollment_spawns_the_resolved_engine_and_stamps_its_model_id(tmp_path,
     assert store.load().voiceprint.model_id == model_id_for("onnx")   # ... and stamped its id
 
 
+def test_enrollment_waits_out_the_model_fetch_before_starting_the_ready_clock(tmp_path, monkeypatch):
+    """Final review I1/M4: the ONNX model fetch has a 600 s budget of its own
+    while `READY_TIMEOUT_S` is 120 s, so a first explicit enrollment on a
+    fresh install over a slow link gave up MID-DOWNLOAD -- and (before the
+    `_closed` guard) leaked the worker that fetch went on to spawn."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    class Downloading(FakeBackend):
+        """Reports "downloading" for two polls, then warms up and is ready."""
+
+        polls = 0
+
+        @property
+        def warmup_status(self):
+            return "downloading 3 / 44 MB" if self.polls < 2 else "warming up"
+
+        def wait_ready(self, timeout):
+            self.polls += 1
+            return self.polls > 2
+
+    backend = Downloading()
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda **kw: backend)
+    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
+    seen: list[str] = []
+
+    spawned, mine = owner._embedding_diarizer(progress=seen.append)
+
+    assert (spawned, mine) == (backend, True)          # ... waited the fetch out
+    assert backend.closed == 0                         # ... instead of giving up on it
+    assert any(s.startswith("downloading") for s in seen)   # ... and said so
+
+
 def test_enroll_from_mic_reports_a_failed_embed_without_saving(tmp_path, monkeypatch):
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 

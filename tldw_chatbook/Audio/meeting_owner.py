@@ -78,6 +78,9 @@ MIC_SAMPLE_RATE = 16000
 #: Enrollment records in slices this long so a Cancel lands promptly (spec
 #: §3.4's "visible countdown and cancel") instead of after the full sample.
 ENROLL_SLICE_S = 0.25
+#: How often enrollment re-reads the backend's warm-up status while the ONNX
+#: engine is still fetching its models (final review I1/M4).
+ENROLL_FETCH_POLL_S = 0.5
 #: Ceiling on how much of `you.wav` the plain-call-mode learning offer embeds.
 # ponytail: the FIRST minute, not the best minute -- a meeting that opens with
 # silence learns less. Pick the loudest window if that shows up as a real miss.
@@ -1598,7 +1601,7 @@ class MeetingSessionOwner:
         if diarizer is not None and hasattr(diarizer, "enroll_from_pcm"):
             return diarizer, False
         try:
-            from .diarizer_local import READY_TIMEOUT_S, LocalDiarizer
+            from .diarizer_local import MODELS_DOWNLOAD_BUDGET_S, READY_TIMEOUT_S, LocalDiarizer
 
             # The RESOLVED engine, never SpeechBrain unconditionally (spec
             # §6): the centroid this worker produces is stored under
@@ -1614,9 +1617,23 @@ class MeetingSessionOwner:
             logger.warning("meeting: diarizer unavailable for embedding ({})", type(exc).__name__)
             return None, False
         self._report(progress, "warming up")
+        # The ONNX engine fetches its models BEFORE it spawns anything (spec
+        # §3), on a budget of its own that is five times `READY_TIMEOUT_S`.
+        # Waiting only 120 s here gave up mid-download on a first run over a
+        # slow link -- and left the worker the fetch then spawned behind
+        # (final review I1/M4). Wait out the FETCH first, up to its own
+        # budget, and only then start the READY clock. Costs nothing on the
+        # SpeechBrain path, which never reports "downloading".
+        fetch_deadline = time.monotonic() + MODELS_DOWNLOAD_BUDGET_S
+        while str(getattr(spawned, "warmup_status", "")).startswith("downloading"):
+            if time.monotonic() >= fetch_deadline or spawned.wait_ready(ENROLL_FETCH_POLL_S):
+                break
+            self._report(progress, spawned.warmup_status)
         if not spawned.wait_ready(READY_TIMEOUT_S):
-            # First run downloads the ECAPA model; giving up here is the only
-            # honest answer -- the embed op would silently return None anyway.
+            # The models are on disk by now (or the fetch failed and the
+            # backend has already given up), so this bounds only the worker's
+            # own load. Giving up here is the only honest answer -- the embed
+            # op would silently return None anyway.
             self._close_diarizer(spawned)
             return None, False
         return spawned, True
