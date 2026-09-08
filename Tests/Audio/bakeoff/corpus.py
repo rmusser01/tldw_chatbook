@@ -99,8 +99,8 @@ def read_pcm(path: Path, start_s: float, end_s: float) -> bytes:
     with wave.open(str(path), "rb") as handle:
         rate = handle.getframerate()
         total = handle.getnframes()
-        a = min(total, max(0, int(round(start_s * rate))))
-        b = min(total, max(a, int(round(end_s * rate))))
+        a = min(total, max(0, round(start_s * rate)))
+        b = min(total, max(a, round(end_s * rate)))
         handle.setpos(a)
         return handle.readframes(b - a)
 
@@ -120,7 +120,7 @@ def _download(url: str, dest: Path) -> None:
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(url, timeout=120) as response, open(tmp, "wb") as out:  # noqa: S310 - fixed https URLs
+    with urllib.request.urlopen(url, timeout=120) as response, open(tmp, "wb") as out:
         shutil.copyfileobj(response, out, 1 << 20)
     tmp.replace(dest)
 

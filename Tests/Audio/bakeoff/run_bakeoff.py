@@ -48,8 +48,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from Tests.Audio.bakeoff import corpus  # noqa: E402
-from Tests.Audio.bakeoff.der import der, mapping  # noqa: E402
+from Tests.Audio.bakeoff import corpus
+from Tests.Audio.bakeoff.der import der, mapping
 
 WINDOW_S = 3.0
 MAX_LIVE_WINDOWS = 60          # per file; keeps a live cell to ~20 s of assigns
@@ -286,7 +286,7 @@ def _probe(python: str, modules: list[str]) -> list[str]:
         f"print(','.join(m for m in {modules!r} if importlib.util.find_spec(m) is None))"
     )
     try:
-        out = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=180)
+        out = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=180, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         return [f"<{type(exc).__name__}>"]
     if out.returncode != 0:
@@ -341,14 +341,14 @@ def _machine() -> dict:
     }
     try:
         info["commit"] = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30,
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30, check=False,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         info["commit"] = "unknown"
     if sys.platform == "darwin":
         try:
             info["cpu_brand"] = subprocess.run(
-                ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, timeout=30,
+                ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, timeout=30, check=False,
             ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             pass
@@ -359,7 +359,7 @@ def _sherpa_version(python: str) -> str:
     try:
         out = subprocess.run(
             [python, "-c", "import sherpa_onnx;print(sherpa_onnx.__version__)"],
-            capture_output=True, text=True, timeout=180,
+            capture_output=True, text=True, timeout=180, check=False,
         )
         return out.stdout.strip() or "unknown"
     except (OSError, subprocess.SubprocessError):
@@ -431,9 +431,10 @@ def _best_cells(results: dict) -> dict:
         key = (spec["engine"], spec["embedder"])
         summary = _cell_summary(cell)
         slot = best.setdefault(key, {})
-        if spec["kind"] == "stop" and summary["der"] is not None:
-            if slot.get("stop") is None or summary["der"] < slot["stop"]["der"]:
-                slot["stop"] = summary
+        if spec["kind"] == "stop" and summary["der"] is not None and (
+            slot.get("stop") is None or summary["der"] < slot["stop"]["der"]
+        ):
+            slot["stop"] = summary
         if spec["kind"] == "live" and summary["purity"] is not None:
             current = slot.get("live")
             better = current is None or summary["purity"] > current["purity"] or (
@@ -472,8 +473,8 @@ def _gate_rows(results: dict) -> list[list[str]]:
             f"{_fmt(stop and stop['der'])} ({verdict(stop and stop['der'], der_limit)})",
             f"{_fmt(live and live['purity'])} ({verdict(live and live['purity'], purity_floor, False)})",
             f"{_fmt(stop and stop['rtf'])} ({verdict(stop and stop['rtf'], RTF_CEILING)})",
-            f"{_fmt(live and live['latency_median_ms'], 1)} ms "
-            f"({verdict(live and live['latency_median_ms'], LATENCY_CEILING_MS)})",
+            (f"{_fmt(live and live['latency_median_ms'], 1)} ms "
+             f"({verdict(live and live['latency_median_ms'], LATENCY_CEILING_MS)})"),
             f"{_fmt(stop and stop['separation'])} ({verdict(stop and stop['separation'], sep_floor, False)})",
             f"cluster {_fmt(stop and stop['cluster_threshold'], 2)} / live {_fmt(live and live['live_threshold'], 2)}",
         ])
@@ -570,7 +571,7 @@ def _report(results: dict) -> str:
         found = [r["separation"] for r in cell["rows"] if isinstance(r.get("separation"), dict)]
         if not found:
             continue
-        def _mean(key):
+        def _mean(key, found=found):
             values = [f[key] for f in found if isinstance(f.get(key), (int, float))]
             return statistics.mean(values) if values else None
         add(f"| {spec['engine']} | {spec['embedder']} | {_fmt(spec.get('cluster_threshold'), 2)} | "
@@ -719,7 +720,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             done = subprocess.run(
                 [python, str(Path(__file__).resolve()), "--cell", str(spec_path), "--cell-out", str(result_path)],
-                capture_output=True, text=True, timeout=CELL_TIMEOUT_S,
+                capture_output=True, text=True, timeout=CELL_TIMEOUT_S, check=False,
             )
         except subprocess.TimeoutExpired:
             skipped.append(f"{label}: cell timed out after {CELL_TIMEOUT_S:.0f} s")
