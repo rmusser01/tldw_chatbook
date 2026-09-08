@@ -7,6 +7,8 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
+
 from .unified_control_models import UnifiedMCPContext
 
 _UNIFIED_MCP_CONTEXT_FILENAME = "unified_mcp_context.json"
@@ -30,36 +32,32 @@ def _default_unified_mcp_context_path() -> Path:
 
 
 class UnifiedMCPContextStore:
+    @mcp_sources.guarded
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else _default_unified_mcp_context_path()
 
+    @mcp_sources.guarded
     def load(self) -> UnifiedMCPContext:
         payload = self._read_payload()
         if not isinstance(payload, dict):
             return UnifiedMCPContext()
         return UnifiedMCPContext.from_dict(payload)
 
+    @mcp_sources.guarded
     def save(self, context: UnifiedMCPContext) -> None:
-        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-        with acquire_storage(self.path):
-            try:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-                payload = context.to_dict()
-                payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
+        try:
+            payload = context.to_dict()
+            payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
+            mcp_sources.write_json(self, payload)
+        except OSError as exc:
+            logger.warning(
+                f"Unable to persist Unified MCP context to {self.path}: {exc}"
+            )
 
-                with temp_path.open("w", encoding="utf-8") as handle:
-                    json.dump(payload, handle, indent=2, sort_keys=True)
-
-                temp_path.replace(self.path)
-            except OSError as exc:
-                logger.warning(
-                    f"Unable to persist Unified MCP context to {self.path}: {exc}"
-                )
-
+    @mcp_sources.guarded
     def _read_payload(self) -> Any:
         try:
-            with self.path.open("r", encoding="utf-8") as handle:
+            with mcp_sources.reader(self) as handle:
                 return json.load(handle)
         except FileNotFoundError:
             return {}

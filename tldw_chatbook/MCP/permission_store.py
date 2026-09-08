@@ -61,6 +61,8 @@ from typing import Any, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
+
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
 SCHEMA_VERSION = 1
@@ -171,11 +173,13 @@ class MCPPermissionStore:
     applies its change, and saves the full payload back.
     """
 
+    @mcp_sources.guarded
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
 
     # -- raw load/save -----------------------------------------------------
 
+    @mcp_sources.guarded
     def load(self) -> dict[str, Any]:
         """Return the full store payload, always valid.
 
@@ -190,13 +194,15 @@ class MCPPermissionStore:
 
         Returns:
             The payload dict, always shaped so ``profiles["default"]`` and
-            its ``servers`` key are dicts. Never raises.
+            its ``servers`` key are dicts. Admission and uncertain native
+            persistence failures propagate without resetting policy.
         """
         if not self.path.exists():
             return _fresh_payload()
 
         try:
-            raw_text = self.path.read_text(encoding="utf-8")
+            with mcp_sources.reader(self) as handle:
+                raw_text = handle.read()
             payload = json.loads(raw_text)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             logger.warning(
@@ -219,34 +225,27 @@ class MCPPermissionStore:
 
         return _normalize_payload_shape(payload)
 
+    @mcp_sources.guarded
     def save(self, payload: dict[str, Any]) -> None:
         """Atomically write ``payload`` to disk, stamping ``updated_at``.
 
         Args:
             payload: Full store payload to persist. Mutated in place to
-                add/overwrite ``updated_at`` before it is written.
+                add/overwrite ``updated_at`` after successful publication and native close.
         """
-        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-        with acquire_storage(self.path):
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-            payload["updated_at"] = _iso_utc_now()
+        stamp = _iso_utc_now()
+        persisted = dict(payload, updated_at=stamp)
+        mcp_sources.write_json(self, persisted)
+        mcp_sources.stamp_payload(self, payload, stamp)
 
-            with temp_path.open("w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
-
-            temp_path.replace(self.path)
-
+    @mcp_sources.guarded
     def _backup_corrupt_file(self) -> None:
-        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-        with acquire_storage(self.path):
-            backup_path = self.path.with_suffix(f"{self.path.suffix}.bak")
-            try:
-                self.path.replace(backup_path)
-            except OSError as exc:
-                logger.warning(
-                    f"Failed to back up corrupt MCP permission store at '{self.path}': {exc}"
-                )
+        try:
+            mcp_sources.backup_corrupt(self)
+        except OSError as exc:
+            logger.warning(
+                f"Failed to back up corrupt MCP permission store at '{self.path}': {exc}"
+            )
 
     # -- profile helpers -----------------------------------------------------
 
@@ -260,6 +259,7 @@ class MCPPermissionStore:
 
     # -- kill switch -----------------------------------------------------
 
+    @mcp_sources.guarded
     def get_kill_switch(self) -> bool:
         """Return whether the global kill switch is enabled.
 
@@ -270,6 +270,7 @@ class MCPPermissionStore:
         """
         return bool(self.load().get("kill_switch", False))
 
+    @mcp_sources.guarded
     def set_kill_switch(self, value: bool) -> None:
         """Persist the global kill switch.
 
@@ -283,6 +284,7 @@ class MCPPermissionStore:
 
     # -- global default -----------------------------------------------------
 
+    @mcp_sources.guarded
     def get_global_default(self) -> str:
         """Return the profile's global default permission state.
 
@@ -291,6 +293,7 @@ class MCPPermissionStore:
         """
         return self._profile(self.load()).get("global_default", DEFAULT_GLOBAL)
 
+    @mcp_sources.guarded
     def set_global_default(self, state: str) -> None:
         """Persist the profile's global default permission state.
 
@@ -308,6 +311,7 @@ class MCPPermissionStore:
 
     # -- server default -----------------------------------------------------
 
+    @mcp_sources.guarded
     def get_server_entry(self, server_key: str) -> dict[str, Any] | None:
         """Return the raw stored entry for a server, if any.
 
@@ -322,6 +326,7 @@ class MCPPermissionStore:
         servers = self._profile(self.load()).get("servers", {})
         return servers.get(server_key)
 
+    @mcp_sources.guarded
     def set_server_default(self, server_key: str, state: str | None) -> None:
         """Set or clear a server-level default permission state.
 
@@ -357,6 +362,7 @@ class MCPPermissionStore:
 
     # -- tool state -----------------------------------------------------
 
+    @mcp_sources.guarded
     def get_tool_entry(self, server_key: str, tool_name: str) -> dict[str, Any] | None:
         """Return the raw stored entry for one tool, if any.
 
@@ -374,6 +380,7 @@ class MCPPermissionStore:
         tools = entry.get("tools", {})
         return tools.get(tool_name)
 
+    @mcp_sources.guarded
     def set_tool_state(
         self,
         server_key: str,
@@ -437,6 +444,7 @@ class MCPPermissionStore:
 
         self.save(payload)
 
+    @mcp_sources.guarded
     def mark_config_changed(self, server_key: str, tool_name: str) -> bool:
         """Set ``config_changed: true`` on a tool entry.
 

@@ -533,3 +533,51 @@ validated reconciliation; none is invented. Existing phase2 app callbacks, phase
 TTS literals, Task13 Media historical fixture and Task26 diagnostics remain pending.
 Controller performs independent whole-Task10 review. Exact APIs, source-only native
 versus startup evidence, commands and limitations are in task-10-phase10-report.md.
+
+### Phase11 implementation plan — actual MCP stores (Task10 continuation)
+
+1. Read binding brief, actual five source families and caller jobs; establish behavioral RED before production.
+2. Obtain controller approval for exact source/private-helper expansion, then bind full constructor/read/RMW lifetimes and preselect every concrete sidecar/parent.
+3. Verify permission corruption backup, history migration/rotation, native retirement, exact identity and caller-state failure behavior with targeted real files/processes.
+4. Record pending service/job/credential boundaries, update source census/docs, run affected targeted domain/shared guards, self-review and scoped commit.
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md; existing ADR-053 standalone runtime, ADR-032 permission boundary and ADR-080 advisory summaries apply.
+Reason: direct implementation of approved installed-source lifetimes; no new authority or data model. Task remains In Progress, all three ACs unchecked, runtime/startup/responder/Complete unavailable. CLI plan command succeeded; prior plan/notes/design references restored before appending this phase.
+
+### Phase11 implementation notes — partial Task10 continuation
+
+Implemented actual five MCP local-source constructor/read/RMW lifetimes and exact
+history private-helper native resource ownership under controller ruling69 and
+existing ADR-126 (phase11 addendum), ADR-053/032/080. Canonical config/profile/path
+binding refuses retarget/demotion; ordinary custom/subclass/private-platform behavior
+remains. Permission corruption backup, caller timestamp native completion, history
+migration/rotation and owned inode/temp expectations now share complete admitted
+source lifetimes. Partial generation/native uncertainty remains sticky; no imported
+approval or runtime activation, cross-process mutex or automatic repair is added.
+
+Actual source matrix plus seven affected domain modules: **164 passed**; additional
+local/target/context pause and exact-file/None-native boundaries: **5 passed**
+(across two targeted runs after correcting a legacy-target fixture). Shared raw,
+private helper/runtime, startup pending bookkeeping and source census: **153 passed**.
+Late identity RED demonstrated adoption of a foreign published inode; carrying the
+actual owned publication identity made the nine affected edge tests green. Native
+before/after cases and independent rotation observer ran only in private test
+children, with quiescent child startup retired solely for source-only native proof.
+
+Source census and precise remaining MCP service/job/credential routes are documented
+in backlog/docs/backup-recovery-owner-inventory.md. Diagnostic guard ran and remains
+failed on inherited clean-BASE drift; own diagnostics/sinks are AST-equivalent and
+already match checked manifest after old wrapper indentation removal. No unrelated
+manifest refresh. Exact commands/results/fixture corrections and immutable external
+exports are recorded in task-10-phase11-report.md. Full runtime/startup/responder and
+Complete coverage remain unavailable; Task31993 stays In Progress, ACs unchecked,
+and whole Task10 independent review remains controller-owned.
+
+Final self-review added actual REDs for constructor reentry retarget/error clearing
+and history private-posture demotion; bound reinitialization now refuses before
+mutation and private posture is rechecked. Final affected selector/constructor/
+migration/local-target-context matrix: **22 passed**. New/changed Python fatal
+Ruff, new-module format checks and diff whitespace checks passed. A testing lesson
+records the real native-callable fault-injection provenance trap. No additional
+broad sweep or runtime qualification was performed.

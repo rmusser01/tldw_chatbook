@@ -311,3 +311,40 @@ preexisting worker borrowers remain live. Startup plus pending/result bookkeepin
 composition remains distinct from source-only native retirement evidence. Full
 application safe points, startup release/reacquire, responder and Complete product
 qualification remain unavailable until the rest of Task10 is implemented/reviewed.
+
+## Concrete MCP local persistence lifetimes (Task10 phase11)
+
+Actual LocalMCPStore, ConfiguredServerTargetStore, UnifiedMCPContextStore,
+MCPPermissionStore and MCPExecutionLog constructor/read/RMW operations may bind
+only their canonical selected data files to the actual config module/profile.
+Admission precedes default selector IO; later source validation uses the selected
+config cache without new folder effects. Custom/subclass/unqualified sources keep
+ordinary behavior; an installed source cannot retarget or demote to bypass a gate.
+The target class lock and other source instance locks cover complete operation,
+native retirement and caller timestamp publication. This adds no cross-process
+CRUD serialization promise or imported permission/launch authority.
+
+Permission read corruption recovery fixes active/temp/backup before mutation.
+History fixes active/.1 and both exact private temporaries/parent before migration,
+rotation or append. Only installed history extends existing private-helper discovery
+to those fixed binary-read, atomic-write, append-stream and secure-parent routes;
+actual PID/Thread/Task/native checks and existing private posture algorithms remain.
+No generic callback, caller-selected owner, arbitrary companion, directory scan or
+unqualified/None native hold grants post-pause authority. Owned publication updates
+its destination expectation from the positively published inode, never from a new
+path lookup; a foreign replacement or recreated consumed temporary is preserved.
+
+A failed partial-generation publication or uncertain explicit native close leaves
+sticky source failure even after unrelated successful operations. Caller timestamp
+restoration does not claim disk rollback. There is no new automatic repair/journal;
+actual source/archive validation remains necessary. Corruption reset and JSONL
+migration are ordinary runtime behavior, never archive inspection/capture readers.
+
+The five sources do not qualify the surrounding MCP runtime. Permission downgrade
+marker then best-effort history append, tool/process work followed by execution
+history, lifecycle/discovery followed by runtime snapshots, mutable service context
+followed by persistence, and credential value/index operations need their later
+exact service/job boundaries. A cancelled awaiter is not native worker/transport
+completion. Source-only private test children retire only their own quiescent
+startup for independent native evidence; production startup/responder/Complete
+qualification remains unavailable pending whole Task10 implementation and review.

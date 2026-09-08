@@ -498,6 +498,15 @@ def _admitted_file(function):
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
             state = raw._check(operation)
             config = sys.modules.get("tldw_chatbook.config")
+            if raw.mcp_sources.history_operation(state):
+                if not raw.mcp_sources.helper_allowed(state, function.__name__, path):
+                    raise RuntimeError("raw_source_helper_not_supported")
+                if function.__name__ == "atomic_private_write_bytes":
+                    raw.mcp_sources.check_destination(state, path)
+                result = function(path, *args, **kwargs)
+                if function.__name__ == "atomic_private_write_bytes":
+                    raw.mcp_sources.published(state, path)
+                return result
             if config is not None and state.source is config:
                 selected = lexical_path(path)
                 allowed = (
@@ -568,6 +577,32 @@ class _ConfigStream:
         self._retired = True
 
 
+class _MCPAppendStream(_ConfigStream):
+    """The exact history append stream retains FD ownership through close."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def write(self, value):
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        state = raw._check(self._operation, writing=True)
+        state.mcp_effects = True
+        return self._stream.write(value)
+
+    def close(self):
+        if self._retired:
+            return
+        info = os.fstat(self._fd)
+        super().close()
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        state = raw._check(self._operation)
+        state.mcp_publications[state.selected] = (info.st_dev, info.st_ino)
+        raw.mcp_sources.published(state, state.selected)
+
+
 def _operation_temporary(operation, selected):
     raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
     state = raw._check(operation, selected, writing=True)
@@ -583,6 +618,11 @@ def _admitted_stream(function):
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
             state = raw._check(operation, lexical_path(path), writing=True)
             config = sys.modules.get("tldw_chatbook.config")
+            if raw.mcp_sources.history_operation(state):
+                if not raw.mcp_sources.helper_allowed(state, function.__name__, path):
+                    raise RuntimeError("raw_source_helper_not_supported")
+                raw.mcp_sources.check_destination(state, path)
+                return _MCPAppendStream(function(path, *args, **kwargs), operation)
             if state.source is not config or lexical_path(path) != state.selected.with_name(state.selected.name + ".lock"):
                 raise RuntimeError("raw_source_helper_not_supported")
             return _ConfigStream(function(path, *args, **kwargs), operation)
@@ -604,6 +644,12 @@ def _admitted_reader(function):
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
             state = raw._check(operation)
             config = sys.modules.get("tldw_chatbook.config")
+            if raw.mcp_sources.history_operation(state):
+                if not raw.mcp_sources.helper_allowed(state, function.__name__, path):
+                    raise RuntimeError("raw_source_helper_not_supported")
+                raw.mcp_sources.check_destination(state, path)
+                yield from function(path, *args, **kwargs)
+                return
             allowed = (state.selected,)
             if config is not None and state.source is config:
                 allowed += (config._advanced_backup_path(state.selected),)
@@ -883,6 +929,9 @@ def atomic_private_write_bytes(
 
         if operation is not None:
             raw._check_temporary_identity(raw._check(operation), selected.parent / temporary_leaf)
+            state = raw._check(operation)
+            if raw.mcp_sources.history_operation(state):
+                raw.mcp_sources.check_destination(state, selected)
         try:
             os.rename(
                 temporary_leaf,
@@ -912,6 +961,8 @@ def atomic_private_write_bytes(
                     reason="private_file_postcondition_failed",
                 )
             )
+        if operation is not None and raw.mcp_sources.history_operation(raw._check(operation)):
+            raw._states[operation].mcp_publications[selected] = (temporary_stat.st_dev, temporary_stat.st_ino)
         if existing_stat is None:
             status = PrivatePathStatus.CREATED_PRIVATE
         elif prior_mode != _PRIVATE_FILE_MODE:

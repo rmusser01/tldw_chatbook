@@ -11,6 +11,8 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
+
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathError,
     atomic_private_write_bytes,
@@ -146,6 +148,7 @@ def build_record(
 class MCPExecutionLog:
     """Two-generation bounded JSONL store for ExecutionRecords."""
 
+    @mcp_sources.guarded
     def __init__(self, path: Path, *, max_records_per_file: int = 500) -> None:
         self.path = Path(path)
         if max_records_per_file < 1:
@@ -153,6 +156,7 @@ class MCPExecutionLog:
         self.max_records_per_file = max_records_per_file
         self._lock = threading.RLock()
 
+    @mcp_sources.guarded
     def append(self, record: ExecutionRecord) -> None:
         """Append one record, rotating generations at the size cap.
 
@@ -164,36 +168,35 @@ class MCPExecutionLog:
             OSError: If the log file or its parent directory cannot be
                 written (callers treat recording as best-effort).
         """
-        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-        with acquire_storage(self.path):
-            payload = self._metadata_only_payload(asdict(record))
-            encoded_line = (json.dumps(payload) + "\n").encode("utf-8")
-            rotated = self.path.with_name(self.path.name + ".1")
-            with self._lock:
-                self._secure_parent()
-                self._migrate_generation(rotated)
-                active_payload = self._migrate_generation(self.path)
-                line_count = (
-                    len(active_payload.splitlines()) if active_payload is not None else 0
-                )
-                if line_count >= self.max_records_per_file:
-                    atomic_private_write_bytes(
-                        rotated,
-                        active_payload or b"",
-                        application_owned_directory=self.path.parent,
-                    )
-                    atomic_private_write_bytes(
-                        self.path,
-                        encoded_line,
-                        application_owned_directory=self.path.parent,
-                    )
-                    return
-                with open_private_text_append(
-                    self.path,
+        payload = self._metadata_only_payload(asdict(record))
+        encoded_line = (json.dumps(payload) + "\n").encode("utf-8")
+        rotated = self.path.with_name(self.path.name + ".1")
+        with self._lock:
+            self._secure_parent()
+            self._migrate_generation(rotated)
+            active_payload = self._migrate_generation(self.path)
+            line_count = (
+                len(active_payload.splitlines()) if active_payload is not None else 0
+            )
+            if line_count >= self.max_records_per_file:
+                atomic_private_write_bytes(
+                    rotated,
+                    active_payload or b"",
                     application_owned_directory=self.path.parent,
-                ) as handle:
-                    handle.write(encoded_line.decode("utf-8"))
+                )
+                atomic_private_write_bytes(
+                    self.path,
+                    encoded_line,
+                    application_owned_directory=self.path.parent,
+                )
+                return
+            with open_private_text_append(
+                self.path,
+                application_owned_directory=self.path.parent,
+            ) as handle:
+                handle.write(encoded_line.decode("utf-8"))
 
+    @mcp_sources.guarded
     def read_recent(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return recent records, newest first, across both generations.
 
@@ -204,47 +207,46 @@ class MCPExecutionLog:
             Up to ``limit`` record dicts, newest first. Torn or corrupt
             JSONL lines are skipped rather than raising.
         """
-        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-        with acquire_storage(self.path):
-            if limit <= 0:
+        if limit <= 0:
+            return []
+        rows: list[dict[str, Any]] = []
+        rotated = self.path.with_name(self.path.name + ".1")
+        with self._lock:
+            try:
+                self._secure_parent()
+            except PrivatePathError as exc:
+                logger.warning(
+                    "MCP execution log read disabled (status={}).",
+                    exc.result.status.value,
+                )
                 return []
-            rows: list[dict[str, Any]] = []
-            rotated = self.path.with_name(self.path.name + ".1")
-            with self._lock:
+            for source in (rotated, self.path):  # oldest generation first
                 try:
-                    self._secure_parent()
+                    raw = self._migrate_generation(source)
                 except PrivatePathError as exc:
                     logger.warning(
-                        "MCP execution log read disabled (status={}).",
+                        "MCP execution-log generation skipped "
+                        "(status={}, generation={}).",
                         exc.result.status.value,
+                        "rotated" if source == rotated else "active",
                     )
-                    return []
-                for source in (rotated, self.path):  # oldest generation first
+                    continue
+                if raw is None:
+                    continue
+                for line in raw.decode("utf-8", errors="replace").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
                     try:
-                        raw = self._migrate_generation(source)
-                    except PrivatePathError as exc:
-                        logger.warning(
-                            "MCP execution-log generation skipped "
-                            "(status={}, generation={}).",
-                            exc.result.status.value,
-                            "rotated" if source == rotated else "active",
-                        )
+                        decoded = json.loads(line)
+                    except json.JSONDecodeError:
                         continue
-                    if raw is None:
-                        continue
-                    for line in raw.decode("utf-8", errors="replace").splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            decoded = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if isinstance(decoded, dict):
-                            rows.append(decoded)
-            rows.reverse()
-            return rows[:limit]
+                    if isinstance(decoded, dict):
+                        rows.append(decoded)
+        rows.reverse()
+        return rows[:limit]
 
+    @mcp_sources.guarded
     def _secure_parent(self) -> None:
         secure_private_directory(
             self.path.parent,
@@ -345,6 +347,7 @@ class MCPExecutionLog:
             "result_size": result_size,
         }
 
+    @mcp_sources.guarded
     def _migrate_generation(self, path: Path) -> bytes | None:
         """Scrub legacy payload rows and torn lines before further use."""
 

@@ -227,6 +227,11 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/crypto.py | _open_regular | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/crypto.py | _write_all | write | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/inventory.py | discover | open | 1 | generic_boundary | generic |
+| tldw_chatbook/Backup_Recovery/mcp_source_participants.py | backup_corrupt | os.replace | 2 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
+| tldw_chatbook/Backup_Recovery/mcp_source_participants.py | reader | open | 1 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
+| tldw_chatbook/Backup_Recovery/mcp_source_participants.py | write_json | dump | 2 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
+| tldw_chatbook/Backup_Recovery/mcp_source_participants.py | write_json | mkdir | 1 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
+| tldw_chatbook/Backup_Recovery/mcp_source_participants.py | write_json | open | 1 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
 | tldw_chatbook/Character_Chat/Character_Chat_Lib.py | export_character_card_to_png | makedirs | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/Character_Chat_Lib.py | export_character_card_to_png | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/Character_Chat_Lib.py | extract_json_from_image_file | open | 2 | unsupported | files |
@@ -286,6 +291,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Notes/template_store.py | merge_templates | dump | 1 | unsupported | notes.templates phase8 raw source lifetime; runtime composition pending |
+| tldw_chatbook/Utils/private_paths.py | _MCPAppendStream.write | write | 1 | generic_boundary | exact MCP history append native lifetime; other sources ordinary |
 | tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator.__init__ | secure_private_directory | 2 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._add_character_dependency | dump | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
@@ -497,21 +503,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/MCP/execution_log.py | MCPExecutionLog.append | atomic_private_write_bytes | 2 | qualified | mcp.history |
 | tldw_chatbook/MCP/execution_log.py | MCPExecutionLog.append | open_private_text_append | 1 | qualified | mcp.history |
 | tldw_chatbook/MCP/execution_log.py | MCPExecutionLog.append | write | 1 | qualified | mcp.history |
-| tldw_chatbook/MCP/local_store.py | LocalMCPStore._read_payload | open | 1 | qualified | mcp.local |
-| tldw_chatbook/MCP/local_store.py | LocalMCPStore.save | dump | 1 | qualified | mcp.local |
-| tldw_chatbook/MCP/local_store.py | LocalMCPStore.save | mkdir | 1 | qualified | mcp.local |
-| tldw_chatbook/MCP/local_store.py | LocalMCPStore.save | open | 1 | qualified | mcp.local |
-| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore.save | dump | 1 | qualified | mcp.permissions |
-| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore.save | mkdir | 1 | qualified | mcp.permissions |
-| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore.save | open | 1 | qualified | mcp.permissions |
-| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore._read_payload | open | 1 | qualified | mcp.targets |
-| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore.save_targets | dump | 1 | qualified | mcp.targets |
-| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore.save_targets | mkdir | 1 | qualified | mcp.targets |
-| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore.save_targets | open | 1 | qualified | mcp.targets |
-| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore._read_payload | open | 1 | qualified | mcp.context |
-| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore.save | dump | 1 | qualified | mcp.context |
-| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore.save | mkdir | 1 | qualified | mcp.context |
-| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore.save | open | 1 | qualified | mcp.context |
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._build_reading_export_response | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._extract_ebook_text | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._extract_pdf_text | open | 1 | unsupported | miscellaneous |
@@ -2268,3 +2259,94 @@ remaining persistence cohorts and aggregate app shutdown are not retired here.
 Source participants do not qualify payload validation or a Complete archive. The
 phase2 app callback/bootstrap, phase8 TTS profile literals, Task13 Media historical
 fixture and Task26 diagnostic census obligations remain explicit outstanding work.
+
+### Task10 phase11 — actual MCP local stores and execution history
+
+The exact five constructor-selected source families now participate through
+`Backup_Recovery/mcp_source_participants.py`: `LocalMCPStore` (`mcp.local`),
+`ConfiguredServerTargetStore` (`mcp.targets`), `UnifiedMCPContextStore`
+(`mcp.context`), `MCPPermissionStore` (`mcp.permissions`) and `MCPExecutionLog`
+(`mcp.history`). Constructor admission begins before default config/path lookup.
+Binding captures the actual config module, selected profile and canonical data
+path; later verification uses the selected config cache without creating config
+folders. Previously installed path/profile/config/native-posture changes refuse.
+Custom paths and subclasses keep ordinary behavior and cannot borrow installed
+across-pause authority or expand the baseline inventory.
+
+All actual instance read/RMW methods hold the same source operation, through
+serialization, result and native cleanup. Target storage preserves its class RLock;
+other families use their existing or new instance RLock. This does not add a
+cross-process CRUD mutex or change the documented last-writer contract. JSON readers
+and owned fixed-temp publications use retained descriptors for installed sources.
+Permission reads preselect active, `.tmp` and `.bak` because corruption recovery
+moves the source and replaces the prior backup. Missing and corrupt payload policy
+is preserved for ordinary use; admission/native uncertainty propagates without
+resetting policy. Caller `updated_at` is published only after successful native
+retirement, under the source lock. Capture must never call corruption recovery.
+
+History fixes active and `.1`, both private random temporaries and the app-owned
+parent before effects. Only actual installed history discovers the four exact
+private helper routes: secure parent, binary generation read, atomic generation
+write, active append stream. Existing private posture checks remain. Native
+PID/Thread/Task/scope validation and strong FD/stream ownership last until explicit
+successful close. A temp consumed during migration may be used again by rotation
+only if absent; foreign recreation is preserved. Source/destination expectations
+are fixed before IO and update from the positively owned published inode, never
+from a newly discovered pathname. Partial generation failure and uncertain native
+completion retain sticky source error; unrelated reads/success cannot establish
+repair. Metadata sanitization, torn-line migration, two-generation cap and newest
+ordering remain. Capture uses inert bytes and never `read_recent()` migration.
+
+Source-only native evidence runs in isolated test children: each explicitly retires
+only its own known quiescent startup token. Actual permission/history close-before
+and close-after ambiguity retains native exclusion; independent maintenance enters
+after successful rotation's actual resource close. Separate existing startup plus
+pending event-loop bookkeeping evidence remains required. These tests do not retire
+application startup or qualify a whole async service, execution, subprocess,
+credential or UI job. Exact-file native enrollment refuses unowned sidecars; no
+None native hold grants across-pause source authority.
+
+Concrete remaining Task10 boundaries (source observations, **not exclusions**):
+
+- `app._wire_server_context_provider` constructs canonical targets, calls
+  `upsert_legacy_config_target`, then selects the credential backend. Actual
+  `_wire_watchlists_and_notifications_services` composition constructs canonical
+  local/context stores; unified service properties
+  retain history/permissions siblings of `local_service.store.path`.
+  `MCP/server.py::_register_local_agent_tools` constructs canonical standalone
+  permissions. Aggregate startup/shutdown/cancellation and credential selection
+  still need their complete job boundary.
+- `UnifiedMCPControlPlaneService._audit_downgrade_if_fresh` commits
+  `mark_config_changed`, then appends a best-effort history record. If the append
+  fails, the marker persists and the next resolution no longer retries that audit.
+  Five store lifetimes do not solve a pause between these writes. Future concrete
+  source/service integration must preadmit the actual pair or retain known failed
+  publication evidence; no general transaction facade or journal is introduced.
+- `execute_hub_tool`, `test_hub_tool`, `execute_advanced_tool` await real local/server
+  work before `_record_tool_execution`; `LocalMCPControlService.connect_profile`
+  awaits client connection/description before saving discovery, and `_describe_profile`
+  also persists snapshots. Runtime requests/batches/tools/resources/prompts record
+  activity after primary work. `_run_local_lifecycle` times out/cancels awaiting
+  operations and then `_record_local_attempt` separately reads/writes runtime state.
+  Exact pending dispatch, running cancellation, actual worker/transport/process
+  completion, native borrowers and final audit/cache bookkeeping remain required;
+  an awaiter's cancellation is not native completion.
+- `_apply_server_access_context` and source/server/scope/section selectors replace
+  `self.context` before `_persist_context`; service cache truth spans the store call
+  and remains a later service-boundary requirement. Restoring context cannot connect
+  or activate anything. Approval resolution, governance and authority scope values
+  retain their current semantics and imported values never authorize execution.
+- `runtime_policy/server_credentials.py` scoped secret set/delete plus credential
+  index updates and runtime keyring callers remain the credential cohort. Only fake
+  external backends may be used for its runtime tests; archive credential export,
+  exclusion and rollback mapping remain Task14. Server-owned data stays separately
+  excluded, and no live transport, tool execution or real keychain is tested here.
+
+The diagnostic source guard was run and remains **failing on inherited clean-BASE
+drift**. This phase changed only indentation of existing MCP diagnostic/sink call
+segments; AST argument/message comparisons are identical. The three affected owner digests and history sink entries were reviewed against
+the actual AST; after the old save-only wrapper indentation was removed, those
+entries already matched the checked manifest, so no manifest change was needed. BASE/current immutable exports
+and the exact remaining delta are external `/private/tmp/task10-phase11-diagnostic-*.json`.
+This does not waive or claim the full diagnostic census green. Runtime coverage,
+startup release/reacquire, responder and Complete/replacement exposure remain off.

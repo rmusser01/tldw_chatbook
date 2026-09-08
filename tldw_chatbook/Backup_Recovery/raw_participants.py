@@ -21,6 +21,7 @@ from . import settings_file_participants as settings_files
 from . import config_participants as config_files
 from . import chat_source_participants as chat_sources
 from . import dictionary_file_participants as dictionary_files
+from . import mcp_source_participants as mcp_sources
 from ..Utils.private_paths import _open_verified_parent, _posix_guards_available
 
 
@@ -68,6 +69,8 @@ class _RawParticipant:
                 storage._changed.wait(min(remaining, 0.05))
             state = _participant_state(self)
             source = state.source()
+            if mcp_sources.binding(source) is not None:
+                return mcp_sources.drain_ready(source)
             if state.owner == "chat.dictionaries":
                 return dictionary_files.drain_ready(source)
             if chat_sources.binding(source) is not None:
@@ -104,6 +107,10 @@ def _participant_state(participant):
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     if _source_participants.get(source) is not participant:
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+    if state.owner.startswith("mcp."):
+        bound = mcp_sources.binding(source)
+        if bound is None or not bound[2] or bound[1] != state.selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     if state.owner == "chat.dictionaries":
         binding = dictionary_files.binding(source)
         if binding is None or binding[1] != state.selected:
@@ -202,7 +209,8 @@ def _raw_participant(source):
     if not _pinned_io_available():
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     settings_binding = (
-        dictionary_files.binding(source)
+        mcp_sources.binding(source)
+        or dictionary_files.binding(source)
         or chat_sources.binding(source)
         or config_files.binding(source)
         or settings_files.binding(source)
@@ -384,6 +392,8 @@ def _retire(state):
 
 
 def _selection(source, route, template, user_template, selected_read):
+    if route == mcp_sources.ROUTE:
+        return mcp_sources.selection(source)
     if route == dictionary_files.ROUTE:
         return dictionary_files.selection(source)
     if route in chat_sources.ROUTES:
@@ -474,12 +484,14 @@ def _scope(
             "runtime_state",
             "runtime_read",
             "config",
-        } | chat_sources.ROUTES:
+        } | chat_sources.ROUTES | {mcp_sources.ROUTE}:
             selected = (
                 source.store_path
                 if route == "service"
                 else (
-                    chat_sources.selection(source, route, selected_read)[0]
+                    mcp_sources.selection(source)[0]
+                    if route == mcp_sources.ROUTE
+                    else chat_sources.selection(source, route, selected_read)[0]
                     if route in chat_sources.ROUTES
                     else config_files.selection(source, route, selected_read)[0]
                     if route == "config"
@@ -506,6 +518,7 @@ def _scope(
     operation = None
     source_lock = None
     locked = False
+    body_completed = False
     try:
         attempt = storage._Acquisition()  # before selectors, authority or path IO
         pinned = _pinned_io_available()
@@ -513,12 +526,14 @@ def _scope(
             source, route, template, user_template, selected_read
         )
         if (
-            route in config_files.ROUTES | chat_sources.ROUTES | {dictionary_files.ROUTE}
+            route in config_files.ROUTES | chat_sources.ROUTES | {dictionary_files.ROUTE, mcp_sources.ROUTE}
             and source in _source_participants
             and not pinned
         ):
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         installed = installed and pinned
+        if route == mcp_sources.ROUTE and not installed:
+            pinned = False
         paths = () if directory_only else (selected,)
         if (
             route
@@ -541,6 +556,8 @@ def _scope(
             paths, temporaries = config_files.members(
                 source, selected, route, selected_read
             )
+        if route == mcp_sources.ROUTE:
+            paths, temporaries = mcp_sources.members(source, selected)
         temporary = None
         if route == "runtime_state" and writing:
             temporary = selected.parent / f".{selected.name}.{secrets.token_hex(8)}.tmp"
@@ -577,6 +594,8 @@ def _scope(
                     and base not in directories
                 ):
                     directories += (base,)
+        if route == mcp_sources.ROUTE and mcp_sources.binding(source)[0] == "mcp.history":
+            directories += (parent,) if parent not in directories else ()
         if route == "runtime_read":
             directories = ()
         if route == "runtime_state":
@@ -620,6 +639,8 @@ def _scope(
             )
             else None
         )
+        if route == mcp_sources.ROUTE:
+            source_lock = source._mcp_source_lock
         if route in config_files.ROUTES:
             source_lock = source._config_file_lock()
         with storage._changed:
@@ -693,6 +714,8 @@ def _scope(
             # Ordinary path IO cannot prove a pinned recovery/source boundary.
             # Keep the actual admission result, even if native exclusion exists.
             state.identities[anchor] = anchor_identity
+        if route == mcp_sources.ROUTE:
+            mcp_sources.preflight(state)
         if route == dictionary_files.ROUTE:
             dictionary_files.pin_inputs(state)
         if route == "theme_directory" or (route == "pet" and writing):
@@ -712,6 +735,7 @@ def _scope(
         settings_files.check_members(state)
         try:
             yield operation
+            body_completed = True
         except BaseException:
             if state.created_files:
                 # Failed cleanup or interruption must preserve unpublished bytes
@@ -725,6 +749,8 @@ def _scope(
                 state = _states[operation]
                 state.active = False
                 if _retire(state):
+                    if state.route == mcp_sources.ROUTE and body_completed:
+                        mcp_sources.complete(state)
                     with storage._changed:
                         del _states[operation]
                         storage._raw_operations.discard(operation)
@@ -866,6 +892,8 @@ def _replace(operation, temporary, destination):
             if identity != state.observed_files.get(destination):
                 raise bootstrap.RecoveryRequired("raw_entry_identity_changed")
         _check_temporary_identity(state, temporary)
+        if state.route == mcp_sources.ROUTE:
+            mcp_sources.check_destination(state, destination)
         if state.pinned:
             os.replace(
                 temporary.name,
@@ -877,7 +905,10 @@ def _replace(operation, temporary, destination):
             os.replace(temporary, destination)
         # Publication consumes this exact temporary object. A following process
         # may now create its own same-name sidecar; our cleanup cannot own it.
-        state.created_files.pop(temporary)
+        identity = state.created_files.pop(temporary)
+        if state.route == mcp_sources.ROUTE:
+            state.mcp_publications[destination] = identity
+            mcp_sources.published(state, destination)
     except BaseException:
         # An interrupted/ambiguous publication is unresolved source evidence.
         # Keep both the actual lease and any sidecar until explicit recovery.
@@ -1018,6 +1049,9 @@ def _runtime_operation(path=None):
     cls = getattr(module, "RuntimeSourceStateStore", None)
     if state is None:
         return None
+    if mcp_sources.history_operation(state) and state.participant is not None:
+        _check(operation, path, writing=True)
+        return operation
     if config_files.binding(state.source) is None and (
         cls is None or not isinstance(state.source, cls)
     ):

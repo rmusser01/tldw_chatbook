@@ -5822,3 +5822,19 @@ close-success tracking now retains stream/descriptor evidence on either exceptio
 and an independent native maintainer remains blocked until the child exits. Test
 both outcomes; neither a closed flag nor a completed context manager body proves
 successful resource retirement.
+
+## Fault injection can change native capability identity (TASK-31993)
+
+**Incident.** Phase11's first eight MCP native-close fault cases patched
+`os.rename` to observe history publication. Raw qualification checks that the actual
+callable is a member of `os.supports_dir_fd`; replacing it made the installed
+source correctly refuse as `raw_source_selection_changed` before any close fault.
+The eight failures were fixture/provenance failures, not evidence of unsafe
+retirement. Hooking the actual private `_native_close`/source stream boundary
+instead kept the real platform callable identity; all eight before/after native
+cases then exercised their intended failures and independent maintenance exclusion.
+
+Inject at a source-owned boundary when capability checks identify native functions.
+Do not modify capability sets to make a fault wrapper look qualified. Confirm the
+stack reaches the intended real IO/close and distinguish an earlier safety refusal
+from the behavioral regression being tested.
