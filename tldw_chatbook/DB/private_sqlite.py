@@ -18,6 +18,20 @@ from typing import Any, cast
 from urllib.parse import quote
 
 from tldw_chatbook.DB import private_sqlite_files
+from tldw_chatbook.DB.private_sqlite_process import (
+    HELPER_ADMISSION,
+    HelperLease,
+    HelperProtocolError,
+    HelperReservation,
+    HelperTimeoutError,
+    HelperUnavailableError,
+    OperationDeadline,
+)
+from tldw_chatbook.DB.private_sqlite_protocol import (
+    FileIdentity,
+    PrepareRequest,
+    PrepareResult,
+)
 from tldw_chatbook.Utils import private_paths
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathStatus,
@@ -551,8 +565,8 @@ def _prepare_artifact(
     optional: bool = False,
     enforce_private_mode: bool = True,
 ) -> bool:
-    # Keep the current orchestration and local fault-injection seams while the
-    # one raw implementation moves behind the exec boundary in the next stage.
+    # Compatibility for explicitly closed artifact inspection only. Normal
+    # connections and online source pins must use the operation-owned helper.
     return private_sqlite_files._prepare_artifact(
         selected,
         writable=writable,
@@ -636,6 +650,98 @@ def _classify_target(
     )
 
 
+@contextlib.contextmanager
+def _helper_operation(
+    transient: int,
+    deadline: OperationDeadline,
+    reservation: HelperReservation | None = None,
+) -> Iterator[HelperReservation]:
+    """Own a whole public operation, or borrow its explicit internal envelope."""
+    if reservation is not None:
+        with reservation.operation_scope():
+            yield reservation
+        return
+    with (
+        HELPER_ADMISSION.reserve(
+            transient=transient, retained=0, deadline=deadline
+        ) as owned,
+        owned.operation_scope(),
+    ):
+        yield owned
+
+
+def _helper_result(selected: Path, response: dict[str, object]) -> PrepareResult:
+    """Translate validated, source-free helper refusals at the parent boundary."""
+    status = response["status"]
+    if status == "private_path_error":
+        raise _failure(
+            selected,
+            PrivatePathStatus(response["privacy_status"]),
+            str(response["reason"]),
+        )
+    if status == "timeout":
+        raise HelperTimeoutError()
+    if status == "protocol_error":
+        raise HelperProtocolError()
+    if status != "ok":
+        raise HelperUnavailableError()
+    return PrepareResult.from_payload(response["result"])
+
+
+@contextlib.contextmanager
+def _owned_helper(lease: HelperLease) -> Iterator[HelperLease]:
+    """Close a captured helper without replacing active control-flow exceptions."""
+    try:
+        yield lease
+    finally:
+        primary = sys.exception()
+        try:
+            lease.close()
+        except BaseException as cleanup:
+            if primary is not None and (
+                not isinstance(primary, Exception) or isinstance(cleanup, Exception)
+            ):
+                primary.add_note("private_sqlite_helper_cleanup_failed")
+            else:
+                raise
+
+
+def prepare_in_helper(
+    request: PrepareRequest,
+    *,
+    reservation: HelperReservation,
+    deadline: OperationDeadline,
+) -> PrepareResult:
+    """Validate all four fixed artifacts without opening their inodes locally."""
+    with _owned_helper(
+        HelperLease.start(
+            request, operation="prepare", reservation=reservation, deadline=deadline
+        )
+    ) as lease:
+        return _helper_result(Path(request.path), lease.initial_response)
+
+
+def verify_expected_named_identity(
+    selected: Path, expected_identity: os.stat_result | FileIdentity | None
+) -> None:
+    """Keep the last stat-only check; SQLite's pathname-open race still exists."""
+    if expected_identity is None:
+        return
+    observed = selected.lstat()
+    matches = (
+        (observed.st_dev, observed.st_ino)
+        == (expected_identity.dev, expected_identity.ino)
+        if isinstance(expected_identity, FileIdentity)
+        else private_paths._same_identity(observed, expected_identity)
+    )
+    if not matches:
+        raise _failure(
+            selected,
+            PrivatePathStatus.OPERATION_FAILED,
+            "private_sqlite_expected_identity_changed",
+        )
+
+
 def _connect_registered_sqlite(
     owner_id: str,
     database: str | os.PathLike[str],
@@ -643,8 +749,10 @@ def _connect_registered_sqlite(
     read_only: bool = False,
     must_exist: bool = False,
     immutable: bool = False,
-    expected_identity: os.stat_result | None = None,
+    expected_identity: os.stat_result | FileIdentity | None = None,
     _verified_descriptor_fd: int | None = None,
+    operation_deadline: float | None = None,
+    reservation: HelperReservation | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
     if "uri" in kwargs:
@@ -653,7 +761,7 @@ def _connect_registered_sqlite(
         raise ValueError("Immutable SQLite connections must be read-only")
     if expected_identity is not None and not isinstance(
         expected_identity,
-        os.stat_result,
+        (os.stat_result, FileIdentity),
     ):
         raise TypeError("expected_identity must be an os.stat_result")
     policy = _validated_owner_policy(owner_id)
@@ -693,35 +801,6 @@ def _connect_registered_sqlite(
             selected.parent,
             allow_shared_sticky=False,
         )
-        _prepare_artifact(
-            selected,
-            writable=not read_only,
-            create_if_missing=not read_only and not must_exist,
-            enforce_private_mode=not (
-                read_only and policy.preserve_read_only_source_mode
-            ),
-        )
-        if expected_identity is not None:
-            observed_identity = selected.lstat()
-            if not private_paths._same_identity(
-                observed_identity,
-                expected_identity,
-            ):
-                raise _failure(
-                    selected,
-                    PrivatePathStatus.OPERATION_FAILED,
-                    "private_sqlite_expected_identity_changed",
-                )
-        for suffix in _SIDECAR_SUFFIXES:
-            _prepare_artifact(
-                Path(f"{selected}{suffix}"),
-                writable=not read_only,
-                create_if_missing=False,
-                optional=True,
-                enforce_private_mode=not (
-                    read_only and policy.preserve_read_only_source_mode
-                ),
-            )
         connection_target = os.fspath(selected)
         if read_only:
             connection_target = _build_read_only_uri(
@@ -738,6 +817,26 @@ def _connect_registered_sqlite(
             use_uri = True
         if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
             _warn_unverified_platform(owner_id)
+        deadline = OperationDeadline(operation_deadline)
+        with _helper_operation(1, deadline, reservation) as envelope:
+            request = PrepareRequest(
+                path=str(selected),
+                writable=not read_only,
+                create_if_missing=not read_only and not must_exist,
+                preserve_source_mode=(
+                    read_only and policy.preserve_read_only_source_mode
+                ),
+            )
+            if private_paths._WINDOWS_PLATFORM:
+                # Preserve the explicit unverified Windows policy. POSIX pipe
+                # readiness and lock-isolation guarantees do not apply there.
+                deadline.remaining(5.0)
+                private_sqlite_files.prepare_batch(request)
+            else:
+                prepare_in_helper(request, reservation=envelope, deadline=deadline)
+            deadline.remaining(5.0)
+            verify_expected_named_identity(selected, expected_identity)
+            return sqlite3.connect(connection_target, uri=use_uri, **kwargs)
 
     return sqlite3.connect(connection_target, uri=use_uri, **kwargs)
 
@@ -750,9 +849,19 @@ def connect_private_sqlite(
     must_exist: bool = False,
     immutable: bool = False,
     expected_identity: os.stat_result | None = None,
+    operation_deadline: float | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
-    """Open SQLite only after enforcing the registered target policy."""
+    """Open SQLite after private preparation within an optional monotonic budget.
+
+    The absolute deadline bounds helper admission/IPC, not SQLite's lock timeout.
+    The returned connection and any custom factory result remain caller-owned.
+    """
+
+    if expected_identity is not None and not isinstance(
+        expected_identity, os.stat_result
+    ):
+        raise TypeError("expected_identity must be an os.stat_result")
 
     return _connect_registered_sqlite(
         owner_id,
@@ -761,6 +870,7 @@ def connect_private_sqlite(
         must_exist=must_exist,
         immutable=immutable,
         expected_identity=expected_identity,
+        operation_deadline=operation_deadline,
         **kwargs,
     )
 
@@ -801,18 +911,13 @@ def connect_private_sqlite_descriptor(
 @dataclass(slots=True)
 class _PinnedSQLiteSource:
     selected: Path
-    identity: os.stat_result
-    parent_fd: int = -1
-    file_fd: int = -1
-    enforce_private_mode: bool = True
+    identity: FileIdentity
+    enforce_private_mode: bool
+    lease: HelperLease | None
 
     def close(self) -> None:
-        if self.file_fd >= 0:
-            os.close(self.file_fd)
-            self.file_fd = -1
-        if self.parent_fd >= 0:
-            os.close(self.parent_fd)
-            self.parent_fd = -1
+        if self.lease is not None:
+            self.lease.close()
 
 
 def _validate_backup_owner(
@@ -849,85 +954,27 @@ def _source_selection(
     return raw, lexical_path(raw)
 
 
-def _prepare_source_artifacts(
-    owner_id: str,
-    selected: Path,
-    *,
-    enforce_private_mode: bool,
+def _reverify_source(
+    source: _PinnedSQLiteSource, *, deadline: OperationDeadline
 ) -> None:
-    directory_result = verify_trusted_directory(
-        selected.parent,
-        allow_shared_sticky=False,
+    if source.lease is None:
+        deadline.remaining(5.0)
+        named = source.selected.lstat()
+        if (
+            source.identity.same_inode(FileIdentity.from_stat(named))
+            and stat.S_ISREG(named.st_mode)
+            and named.st_nlink == 1
+        ):
+            return
+        raise _failure(
+            source.selected,
+            PrivatePathStatus.OPERATION_FAILED,
+            "private_sqlite_source_identity_changed",
+        )
+    result = _helper_result(
+        source.selected, source.lease.request("recheck_source", deadline=deadline)
     )
-    _prepare_artifact(
-        selected,
-        writable=False,
-        create_if_missing=False,
-        enforce_private_mode=enforce_private_mode,
-    )
-    for suffix in _SIDECAR_SUFFIXES:
-        _prepare_artifact(
-            Path(f"{selected}{suffix}"),
-            writable=False,
-            create_if_missing=False,
-            optional=True,
-            enforce_private_mode=enforce_private_mode,
-        )
-    if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
-        _warn_unverified_platform(owner_id)
-
-
-def _source_postcondition_holds(source: _PinnedSQLiteSource) -> bool:
-    if source.file_fd < 0:
-        try:
-            named = source.selected.lstat()
-        except OSError:
-            return False
-        if private_paths._WINDOWS_PLATFORM:
-            return (
-                private_paths._same_identity(named, source.identity)
-                and stat.S_ISREG(named.st_mode)
-                and named.st_nlink == 1
-            )
-        return (
-            private_paths._same_identity(named, source.identity)
-            and private_paths._classify_private_file_stat(
-                named,
-                expected_uid=os.geteuid(),
-            )
-            is None
-        )
-    try:
-        opened = os.fstat(source.file_fd)
-        named = os.stat(
-            source.selected.name,
-            dir_fd=source.parent_fd,
-            follow_symlinks=False,
-        )
-    except OSError:
-        return False
-    return (
-        private_paths._same_identity(opened, source.identity)
-        and private_paths._same_identity(named, source.identity)
-        and private_paths._classify_private_file_stat(
-            opened,
-            expected_uid=os.geteuid(),
-        )
-        is None
-        and private_paths._classify_private_file_stat(
-            named,
-            expected_uid=os.geteuid(),
-        )
-        is None
-        and (
-            not source.enforce_private_mode
-            or stat.S_IMODE(opened.st_mode) == _PRIVATE_FILE_MODE
-        )
-    )
-
-
-def _reverify_source(source: _PinnedSQLiteSource) -> None:
-    if not _source_postcondition_holds(source):
+    if not source.identity.same_inode(result.main_identity):
         raise _failure(
             source.selected,
             PrivatePathStatus.OPERATION_FAILED,
@@ -941,6 +988,8 @@ def _pin_sqlite_source(
     database: str | os.PathLike[str],
     *,
     allow_memory: bool,
+    reservation: HelperReservation,
+    deadline: OperationDeadline,
 ) -> Iterator[_PinnedSQLiteSource | None]:
     _raw, selected = _source_selection(database, allow_memory=allow_memory)
     if selected is None:
@@ -949,54 +998,39 @@ def _pin_sqlite_source(
 
     policy = _validated_owner_policy(owner_id)
     enforce_private_mode = not policy.preserve_read_only_source_mode
-    _prepare_source_artifacts(
-        owner_id,
-        selected,
-        enforce_private_mode=enforce_private_mode,
+    directory_result = verify_trusted_directory(
+        selected.parent, allow_shared_sticky=False
     )
-    if private_paths._posix_guards_available():
-        parent_fd, leaf = private_paths._open_verified_parent(
-            selected,
-            missing_leaf_allowed=False,
+    if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+        _warn_unverified_platform(owner_id)
+    if private_paths._WINDOWS_PLATFORM:
+        deadline.remaining(5.0)
+        result = private_sqlite_files.prepare_batch(
+            PrepareRequest(str(selected), False, False, not enforce_private_mode)
         )
-        file_fd = -1
-        try:
-            file_fd = _open_artifact_fd(
-                parent_fd,
-                leaf,
-                writable=False,
-                create=False,
-            )
-            identity = os.fstat(file_fd)
-            source = _PinnedSQLiteSource(
-                selected=selected,
-                identity=identity,
-                parent_fd=parent_fd,
-                file_fd=file_fd,
-                enforce_private_mode=enforce_private_mode,
-            )
-            parent_fd = -1
-            file_fd = -1
-            try:
-                _reverify_source(source)
-                yield source
-            finally:
-                source.close()
-        finally:
-            if file_fd >= 0:
-                os.close(file_fd)
-            if parent_fd >= 0:
-                os.close(parent_fd)
+        source = _PinnedSQLiteSource(
+            selected, result.main_identity, enforce_private_mode, None
+        )
+        _reverify_source(source, deadline=deadline)
+        yield source
         return
-
-    identity = selected.lstat()
-    source = _PinnedSQLiteSource(
-        selected=selected,
-        identity=identity,
-        enforce_private_mode=enforce_private_mode,
-    )
-    _reverify_source(source)
-    yield source
+    with _owned_helper(
+        HelperLease.start(
+            PrepareRequest(str(selected), False, False, not enforce_private_mode),
+            operation="pin_source",
+            reservation=reservation,
+            deadline=deadline,
+        )
+    ) as lease:
+        result = _helper_result(selected, lease.initial_response)
+        source = _PinnedSQLiteSource(
+            selected=selected,
+            identity=result.main_identity,
+            enforce_private_mode=enforce_private_mode,
+            lease=lease,
+        )
+        _reverify_source(source, deadline=deadline)
+        yield source
 
 
 def _private_destination(database: str | os.PathLike[str]) -> Path:
@@ -1038,9 +1072,8 @@ def _reject_unsafe_or_aliased_destination(
     )
     if rejected is not None:
         raise _failure(destination, rejected, "unsafe_sqlite_backup_target")
-    if source is not None and private_paths._same_identity(
-        source.identity,
-        destination_stat,
+    if source is not None and source.identity.same_inode(
+        FileIdentity.from_stat(destination_stat)
     ):
         raise ValueError("SQLite source and destination cannot be the same file")
 
@@ -2021,6 +2054,7 @@ def backup_connection_to_private(
     target: str | os.PathLike[str],
     *,
     progress_guard: Callable[[], None] | None = None,
+    operation_deadline: float | None = None,
 ) -> None:
     """Back up a caller-owned connection to a checked private target."""
 
@@ -2030,18 +2064,26 @@ def backup_connection_to_private(
             "Finish the source transaction before starting a backup"
         )
     destination_path = _private_destination(target)
-    with _pin_sqlite_source(
-        owner_id,
-        source_database,
-        allow_memory=True,
-    ) as source_pin:
+    deadline = OperationDeadline(operation_deadline)
+    with (
+        _helper_operation(2, deadline) as reservation,
+        _pin_sqlite_source(
+            owner_id,
+            source_database,
+            allow_memory=True,
+            reservation=reservation,
+            deadline=deadline,
+        ) as source_pin,
+    ):
         _reject_unsafe_or_aliased_destination(source_pin, destination_path)
         if source_pin is not None:
-            _reverify_source(source_pin)
+            _reverify_source(source_pin, deadline=deadline)
         destination = _connect_registered_sqlite(
             owner_id,
             destination_path,
             timeout=0,
+            operation_deadline=operation_deadline,
+            reservation=reservation,
         )
         try:
             journal_mode = _guard_destination(destination, restore=False)
@@ -2051,7 +2093,7 @@ def backup_connection_to_private(
                 restore=False,
             )
             if source_pin is not None:
-                _reverify_source(source_pin)
+                _reverify_source(source_pin, deadline=deadline)
             _backup_pages(
                 source_connection,
                 destination,
@@ -2059,7 +2101,7 @@ def backup_connection_to_private(
                 progress_guard=progress_guard,
             )
             if source_pin is not None:
-                _reverify_source(source_pin)
+                _reverify_source(source_pin, deadline=deadline)
         finally:
             _close_owned_connections((("backup destination", destination),))
 
@@ -2078,6 +2120,7 @@ def backup_open_connections_to_private(
     destination_connection: sqlite3.Connection,
     *,
     progress_guard: Callable[[], None] | None = None,
+    operation_deadline: float | None = None,
 ) -> None:
     """Back up two caller-owned file connections through the checked boundary."""
 
@@ -2086,32 +2129,36 @@ def backup_open_connections_to_private(
         raise sqlite3.OperationalError(
             "Finish the source transaction before starting a backup"
         )
-    source_database = _connection_main_database(source_connection)
-    destination_path = _private_destination(
-        _connection_main_database(destination_connection)
-    )
-    with _pin_sqlite_source(
-        owner_id,
-        source_database,
-        allow_memory=False,
-    ) as source_pin:
-        assert source_pin is not None
-        _reject_unsafe_or_aliased_destination(source_pin, destination_path)
-        _reverify_source(source_pin)
-        journal_mode = _guard_destination(destination_connection, restore=False)
-        _restore_destination_mode(
-            destination_connection,
-            journal_mode,
-            restore=False,
+    deadline = OperationDeadline(operation_deadline)
+    with _helper_operation(2, deadline) as reservation:
+        source_database = _connection_main_database(source_connection)
+        destination_path = _private_destination(
+            _connection_main_database(destination_connection)
         )
-        _reverify_source(source_pin)
-        _backup_pages(
-            source_connection,
-            destination_connection,
-            restore=False,
-            progress_guard=progress_guard,
-        )
-        _reverify_source(source_pin)
+        with _pin_sqlite_source(
+            owner_id,
+            source_database,
+            allow_memory=False,
+            reservation=reservation,
+            deadline=deadline,
+        ) as source_pin:
+            assert source_pin is not None
+            _reject_unsafe_or_aliased_destination(source_pin, destination_path)
+            _reverify_source(source_pin, deadline=deadline)
+            journal_mode = _guard_destination(destination_connection, restore=False)
+            _restore_destination_mode(
+                destination_connection,
+                journal_mode,
+                restore=False,
+            )
+            _reverify_source(source_pin, deadline=deadline)
+            _backup_pages(
+                source_connection,
+                destination_connection,
+                restore=False,
+                progress_guard=progress_guard,
+            )
+            _reverify_source(source_pin, deadline=deadline)
 
 
 def copy_private_sqlite(
@@ -2120,6 +2167,7 @@ def copy_private_sqlite(
     target_path: str | os.PathLike[str],
     *,
     progress_guard: Callable[[], None] | None = None,
+    operation_deadline: float | None = None,
 ) -> None:
     """Copy a checked file source to a checked private target via SQLite."""
 
@@ -2128,26 +2176,37 @@ def copy_private_sqlite(
         required_kinds=_PRIVATE_AND_READ_ONLY,
     )
     destination_path = _private_destination(target_path)
-    with _pin_sqlite_source(
-        owner_id,
-        source_path,
-        allow_memory=False,
-    ) as source_pin:
+    deadline = OperationDeadline(operation_deadline)
+    with (
+        _helper_operation(2, deadline) as reservation,
+        _pin_sqlite_source(
+            owner_id,
+            source_path,
+            allow_memory=False,
+            reservation=reservation,
+            deadline=deadline,
+        ) as source_pin,
+    ):
         assert source_pin is not None
         _reject_unsafe_or_aliased_destination(source_pin, destination_path)
-        _reverify_source(source_pin)
+        _reverify_source(source_pin, deadline=deadline)
         source = _connect_registered_sqlite(
             owner_id,
             source_pin.selected,
+            expected_identity=source_pin.identity,
             read_only=True,
             timeout=0,
+            operation_deadline=operation_deadline,
+            reservation=reservation,
         )
         try:
-            _reverify_source(source_pin)
+            _reverify_source(source_pin, deadline=deadline)
             destination = _connect_registered_sqlite(
                 owner_id,
                 destination_path,
                 timeout=0,
+                operation_deadline=operation_deadline,
+                reservation=reservation,
             )
             try:
                 journal_mode = _guard_destination(destination, restore=False)
@@ -2156,14 +2215,14 @@ def copy_private_sqlite(
                     journal_mode,
                     restore=False,
                 )
-                _reverify_source(source_pin)
+                _reverify_source(source_pin, deadline=deadline)
                 _backup_pages(
                     source,
                     destination,
                     restore=False,
                     progress_guard=progress_guard,
                 )
-                _reverify_source(source_pin)
+                _reverify_source(source_pin, deadline=deadline)
             finally:
                 _close_owned_connections((("copy destination", destination),))
         finally:
@@ -2176,6 +2235,8 @@ def restore_private_sqlite(
     source_path: str | os.PathLike[str],
     destination_path: str | os.PathLike[str],
     pre_restore_path: str | os.PathLike[str],
+    *,
+    operation_deadline: float | None = None,
 ) -> None:
     """Restore a live database after a private safety snapshot and quiescence."""
 
@@ -2189,12 +2250,16 @@ def restore_private_sqlite(
     )
     selected_destination = _private_destination(destination_path)
     selected_pre_restore = _private_destination(pre_restore_path)
+    deadline = OperationDeadline(operation_deadline)
     with (
         _RESTORE_LOCK,
+        _helper_operation(2, deadline) as reservation,
         _pin_sqlite_source(
             owner_id,
             source_path,
             allow_memory=False,
+            reservation=reservation,
+            deadline=deadline,
         ) as source_pin,
     ):
         assert source_pin is not None
@@ -2212,12 +2277,15 @@ def restore_private_sqlite(
             selected_destination,
             selected_pre_restore,
         )
-        _reverify_source(source_pin)
+        _reverify_source(source_pin, deadline=deadline)
         source = _connect_registered_sqlite(
             owner_id,
             source_pin.selected,
+            expected_identity=source_pin.identity,
             read_only=True,
             timeout=0,
+            operation_deadline=operation_deadline,
+            reservation=reservation,
         )
         destination: sqlite3.Connection | None = None
         pre_restore: sqlite3.Connection | None = None
@@ -2225,11 +2293,13 @@ def restore_private_sqlite(
         mode_restored = False
         final_backup_completed = False
         try:
-            _reverify_source(source_pin)
+            _reverify_source(source_pin, deadline=deadline)
             destination = _connect_registered_sqlite(
                 owner_id,
                 selected_destination,
                 timeout=0,
+                operation_deadline=operation_deadline,
+                reservation=reservation,
             )
             original_mode = _guard_destination(destination, restore=True)
             mode_restored = original_mode != "wal"
@@ -2238,6 +2308,8 @@ def restore_private_sqlite(
                 pre_restore_owner_id,
                 selected_pre_restore,
                 timeout=0,
+                operation_deadline=operation_deadline,
+                reservation=reservation,
             )
             pre_mode = _guard_destination(pre_restore, restore=False)
             _restore_destination_mode(
@@ -2257,7 +2329,7 @@ def restore_private_sqlite(
                 restore=True,
             )
             mode_restored = True
-            _reverify_source(source_pin)
+            _reverify_source(source_pin, deadline=deadline)
             try:
                 mode_restored = False
                 _backup_pages(source, destination, restore=True)
@@ -2268,7 +2340,7 @@ def restore_private_sqlite(
                     restore=True,
                 )
                 mode_restored = True
-                _reverify_source(source_pin)
+                _reverify_source(source_pin, deadline=deadline)
             except BaseException as restore_exc:
                 if final_backup_completed:
                     try:

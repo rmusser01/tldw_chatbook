@@ -549,10 +549,11 @@ def _assert_raw_connection_census(
         assert current == documented_legacy
         return
 
-    # The seam owns one ordinary path connection and one descriptor-bound
-    # immutable connection; no raw SQLite open exists outside this function.
-    assert current[seam_site] == 2
-    assert current == Counter({seam_site: 2})
+    # The seam owns a prepared file open, a filesystem-free memory open, and
+    # the exclusive descriptor view. The ordinary file open keeps sqlite3's
+    # factory seam; only descriptor views use the captured original callable.
+    assert current[seam_site] == 3
+    assert current == Counter({seam_site: 3})
 
 
 def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
@@ -642,13 +643,13 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({seam_site: 2}),
+        Counter({seam_site: 3}),
         seam_exists=True,
     )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({legacy_site: 7, seam_site: 2}),
+            Counter({seam_site: 4}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
