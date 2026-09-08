@@ -361,7 +361,6 @@ from tldw_chatbook.TTS.audio_cpp_guided_config import (
 )
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
-from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 
@@ -373,6 +372,7 @@ from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 # annotations on attribute targets ARE evaluated at runtime).
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
+    from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
     from tldw_chatbook.TTS.voice_bundle_service import (
         TTSVoiceBundlePortabilityService,
     )
@@ -7731,7 +7731,10 @@ class TldwCli(
             self._instance_lock_status = InstanceLockStatus(acquired=True)
         self.tts_service = build_default_tts_service(self.app_config)
         self._tts_binding_active = False
-        self._tts_profile_repository = TTSProfileRepository(get_tts_profiles_db_path())
+        self._tts_profile_repository_path = get_tts_profiles_db_path()
+        # Attribute annotations are evaluated at runtime in this module.
+        self._tts_profile_repository: "TTSProfileRepository | None" = None  # noqa: UP037
+        self._tts_profile_repository_close_requested = False
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
         self._tts_profile_service: TTSProfileService | None = None
@@ -14401,12 +14404,17 @@ class TldwCli(
 
     async def _ensure_tts_profile_repository(
         self,
-    ) -> TTSProfileRepository | None:
+    ) -> "TTSProfileRepository | None":
         """Open and return the one app-owned profile repository on first use."""
 
+        if getattr(self, "_tts_profile_repository_close_requested", False):
+            return None
         repository = getattr(self, "_tts_profile_repository", None)
         if repository is None:
-            return None
+            from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+
+            repository = TTSProfileRepository(self._tts_profile_repository_path)
+            self._tts_profile_repository = repository
         if getattr(self, "_tts_profile_repository_close_task", None) is not None:
             return None
         if repository.state is ProfileRepositoryState.OPEN:
@@ -14456,6 +14464,7 @@ class TldwCli(
         if (
             not opened
             or repository.state is not ProfileRepositoryState.OPEN
+            or getattr(self, "_tts_profile_repository_close_requested", False)
             or getattr(self, "_tts_profile_repository_close_task", None) is not None
         ):
             return None
@@ -14722,6 +14731,7 @@ class TldwCli(
     async def _close_tts_profile_repository(self) -> None:
         """Definitively close the app-owned profile repository once."""
 
+        self._tts_profile_repository_close_requested = True
         repository = getattr(self, "_tts_profile_repository", None)
         if repository is None:
             return
