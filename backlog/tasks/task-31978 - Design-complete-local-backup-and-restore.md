@@ -1,10 +1,11 @@
 ---
 id: TASK-31978
 title: Design complete local backup and restore
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-07 22:24'
+updated_date: '2026-09-08 00:05'
 labels: []
 dependencies: []
 ---
@@ -20,7 +21,7 @@ Define a user-facing, complete local backup and recovery contract covering both 
 - [x] #1 The design records approved scope and all accepted review corrections.
 - [x] #2 The specification defines archive, profile isolation, rollback, security, UI, and verification contracts without unresolved placeholders.
 - [x] #3 A canonical ADR records ownership and recovery decisions and is linked from the design and task.
-- [ ] #4 The written specification receives user approval before implementation planning.
+- [x] #4 The written specification receives user approval before implementation planning.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,7 +44,8 @@ This is a design-only task. Implementation work will be decomposed after spec ap
 
 <!-- SECTION:NOTES:BEGIN -->
 Design-only work: wrote the [complete local backup and restore specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
-and [ADR-126](../decisions/126-complete-local-backup-and-recovery.md). No production code or implementation plan was added.
+and [ADR-126](../decisions/126-complete-local-backup-and-recovery.md). The user approved
+revision 4 on 2026-09-07. No production code was added.
 
 The specification includes the approved local-data baseline, both restore destinations,
 opt-in encrypted credential transfer, and all accepted review corrections. It defers
@@ -94,8 +96,12 @@ renumbered to 31978 before references were published, following the existing col
 lesson. ADR-126 was allocated from the same sweep; both allocations need merge-time
 rechecking. Existing unrelated working-tree and staged changes were left alone.
 
-Acceptance criterion 4 remains unchecked and status remains In Progress pending
-the user's review of the written specification. After approval, transition through
-writing-plans and create atomic implementation tasks; do not implement from this
-design task alone. No new general lesson was necessary.
+Acceptance criterion 4 is complete following the user's explicit approval. ADR-126
+is Accepted and revision 4 is the implementation baseline. The writing-plans handoff
+is recorded in the [implementation roadmap](../../Docs/superpowers/plans/2026-09-07-complete-local-backup-restore.md),
+which links six component plans and 26 implementation tasks. Those tasks remain To Do
+with unchecked acceptance criteria; no implementation or runtime qualification is
+claimed. Documentation verification checks local links/anchors, dependencies, file
+targets, code-example syntax, revision status, and whitespace. No new general lesson
+was necessary.
 <!-- SECTION:NOTES:END -->

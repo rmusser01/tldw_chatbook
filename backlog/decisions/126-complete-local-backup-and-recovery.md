@@ -1,6 +1,6 @@
 # ADR-126: Complete local backup and recovery
 
-Status: Proposed — conversational decisions approved; written specification awaiting review
+Status: Accepted — revision 4 approved by the user on 2026-09-07
 Date: 2026-09-07
 
 Revision: 4 — incorporates the fourth user-requested design review.
@@ -8,6 +8,8 @@ Revision: 4 — incorporates the fourth user-requested design review.
 Task: [TASK-31978](../tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
 
 Design: [Complete local backup and restore](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
+
+Implementation: [Roadmap and component plans](../../Docs/superpowers/plans/2026-09-07-complete-local-backup-restore.md)
 
 Extends: ADR-004, ADR-029, ADR-030, ADR-036, ADR-059, ADR-060
 
@@ -242,10 +244,10 @@ proof that an unknown custom profile or remote server has been backed up. Restor
 data is intentionally inactive until reviewed, so recovery is not a clone of live
 execution state. The design preserves this distinction in UI and verification.
 
-Implementation is decomposed after written-spec approval. This ADR does not grant
-permission to write production code, run a full test sweep, or claim the feature
-implemented. Platform qualification can restrict destructive replacement while
-inspection and safe extraction remain available.
+The approved implementation is decomposed into component plans and atomic tasks.
+This decision does not claim the feature implemented or authorize a full test sweep.
+Platform qualification can restrict destructive replacement while inspection and
+safe extraction remain available.
 
 ## Related contracts
 
