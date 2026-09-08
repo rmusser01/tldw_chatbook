@@ -3264,6 +3264,11 @@ def _trash_view_fake(
             else None
         ),
     )
+
+    async def recompose():
+        refresh_calls.append({"recompose": True})
+        trash_controller_calls.append(("recompose", trash_controller.state))
+
     fake = SimpleNamespace(
         _media_state=SimpleNamespace(
             select_mode=False,
@@ -3293,6 +3298,7 @@ def _trash_view_fake(
         _after_refresh=after_refresh,
         is_mounted=True,
         refresh=lambda **k: refresh_calls.append(k),
+        recompose=recompose,
         run_worker=lambda coro, **k: worker_calls.append((coro, k)),
         call_after_refresh=lambda fn, *a: after_refresh.append(fn),
         _focus_library_media_trash_entry=lambda: None,
@@ -3466,7 +3472,8 @@ def test_media_trash_mutation_focus_falls_to_same_position_then_previous_then_ba
     )
 
 
-def test_trash_open_enters_view_resets_state_and_kicks_fetch():
+@pytest.mark.asyncio
+async def test_trash_open_enters_view_resets_state_and_kicks_fetch():
     """Entering Trash clears the stale receipt (the Trash view IS the
     durable path the receipt points at), resets the fetch/session state,
     recomposes, and schedules exactly one fetch worker."""
@@ -3474,16 +3481,20 @@ def test_trash_open_enters_view_resets_state_and_kicks_fetch():
 
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_trash_open(fake, event)
+    await LibraryScreen.handle_library_media_trash_open(fake, event)
 
     assert fake._media_state.view == "trash"
     assert fake._media_state.delete_receipt_ids == ()
-    assert fake._library_media_trash_browse_controller.state == MediaTrashBrowseState()
+    loading = begin_media_trash_request(
+        MediaTrashBrowseState(), MediaTrashScope(), origin="entry"
+    )
+    assert fake._library_media_trash_browse_controller.state == loading
     assert fake._media_state.trash_query_draft == ""
     assert fake._media_state.trash_input_error == ""
     assert fake._refresh_calls == [{"recompose": True}]
     assert fake._trash_controller_calls == [
         ("invalidate",),
+        ("recompose", loading),
         (
             "request",
             MediaTrashScope(),
@@ -4654,13 +4665,14 @@ async def test_trash_status_fold_recaps_the_list_so_actions_stay_inside():
     """
     from Tests.UI.test_library_shell import _wait_for_condition, _wait_for_selector
 
-    long_copy = (
-        "Could not load this Trash page. The local source stayed available "
-        "but its full recovery detail does not fit in the compact status area."
-    )
     host = _trash_production_host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_trash_production(host, pilot, _forty_trash_items())
+        status = screen.query_one("#library-media-trash-status", Static)
+        status_width = status.content_size.width or status.region.width
+        assert status_width > 0
+        fragment = "Recovery detail "
+        long_copy = (fragment * ((3 * status_width // len(fragment)) + 1)).strip()
         controller = screen._library_media_trash_browse_controller
         scope = controller.state.requested_scope
         controller.state = fail_media_trash_request(

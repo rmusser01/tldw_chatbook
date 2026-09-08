@@ -1102,3 +1102,57 @@ records the capture repair and non-vacuous privacy requirements. New dev
 `e38b44acee` also requires reconciliation; its two review-created Backlog ID
 collisions need the requested user exception before renumbering. No merge-ready
 claim is made at this checkpoint.
+
+Checkpoint `8fe8c40e79` publishes the reviewed Qodo/navigation/Reader fixes.
+Qodo comments 3959841194/3959841197/3959841205/3959841211 now have inline
+implementation and test evidence; their four threads are resolved. Latest dev
+has since advanced to `2c6a7de490` (ONNX diarization, bulk-reader pilot and the
+Media zero-selection explanation); final rebase and shared guards remain open.
+
+Native shell attribution narrows the resource leak to the test-only
+_LibraryIngestCanvasHarness: two passing ingest pilots retain thirteen regular
+SQLite/WAL/SHM descriptors and a progress-drain thread. Temporary exact-owner
+unmount cleanup reduces their process to zero regular DB descriptors and only
+MainThread alive. The harness omitted its inherited ingest shutdown and
+main-thread database close. Step 42 records the permanent scoped repair and
+real-SQLite error-path control; the full shell still requires a native-observed
+rerun after final source freeze. See
+`/private/tmp/pr2427-library-shell-fd-attribution.md`.
+
+The three Trash initial-focus failures reproduce with correct existing
+assertions. Both immediate and fast-result publication precede destination
+canvas mount; the ensuing fallback recomposes lose the focus settlement.
+Steps 38–39 prime the initial loading state, await recompose before the one
+guarded request, and scale the fold test's message from actual mounted width.
+Focused RED is **4 failed / 1 passed**; GREEN is **6 passed**, including direct
+loading-before-mount/request-after-mount ordering. Independent review passes;
+Screen remains exactly **35,393 lines**, with no cap increase. Complete Trash,
+Reader and local Live qualification is running on frozen production sources.
+
+The Live harness separately needed keyboard-focus settlement (native observer
+proved the queued page update steals focus before Enter) and separate capture
+buffers for direct Loguru versus production's stdlib forwarding. Exact mutation
+event counts are required independently in both channels, with canaries and all
+privacy assertions retained. These fixes are not yet declared passing; see
+`/private/tmp/pr2427-live-harness-report.md` for intermediate failure evidence.
+
+The complete Reader/Trash/Live group finishes **180 passed / 1 failed in
+187.93s**: all 84 Reader and 92 Trash cases pass, as do the four pure Live
+controls. Its only failure is an obsolete Live expectation that normal Media
+stays stale after Restore. TASK-31275 deliberately replaced that manual-Retry
+policy with an authoritative page refresh. Step 44 compares the real page-2
+service result, exact count/membership, new result identity and retained
+selection, then preserves every Back/scroll/focus assertion. The corrected
+160x50 walkthrough now passes its full privacy/path/zero-DB-handle proof.
+The complete Live file still fails at the next 120x35 posture oracle (expects
+compact, runtime reports wide), so it is explicitly **not** final qualification
+(`/private/tmp/pr2427-live-qualified.log`: 4 passed / 1 failed in 28.01s).
+
+The permanent ingest-harness cleanup and its error-path control pass four
+focused native-observed cases in **3.91s**. Only the expected one-time FIFO and
+socket pair remain (5 to 8 descriptors); zero regular SQLite descriptors and
+only MainThread remain. Independent review passes the control's corrected
+setup/fallback cleanup boundary. The final diff adds 63 lines and changes no
+pre-existing executable AST. The full 848-case shell remains pending. These
+reviewed fixes are checkpointed before the latest-dev rebase; incomplete Live
+posture and final resource/CI/review gates remain open.

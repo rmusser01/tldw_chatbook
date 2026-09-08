@@ -5,6 +5,7 @@ import asyncio
 import dataclasses
 import queue
 import re
+import sqlite3
 import statistics
 import threading
 import time
@@ -25653,6 +25654,68 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         await self.push_screen(LibraryScreen(self))
+
+    async def on_unmount(self) -> None:
+        try:
+            teardown = self._shutdown_ingest_parse_pool()
+            if teardown is not None:
+                await asyncio.to_thread(teardown.join, 5.0)
+                assert not teardown.is_alive()
+        finally:
+            if self.media_db is not None:
+                self.media_db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shutdown_fails", [False, True], ids=("normal", "shutdown-error")
+)
+async def test_library_ingest_harness_unmount_retires_owned_sqlite(
+    monkeypatch, tmp_path, shutdown_fails
+):
+    """Harness teardown closes its real database without hiding shutdown errors."""
+    shutdown_error = RuntimeError("shutdown failed") if shutdown_fails else None
+    database = None
+    real_shutdown = None
+    progress_thread = None
+    try:
+        database = MediaDatabase(
+            tmp_path / "harness-lifecycle.db", client_id="lifecycle"
+        )
+        harness = _LibraryIngestCanvasHarness(database)
+        saved_connection = database.get_connection()
+        real_shutdown = harness._shutdown_ingest_parse_pool
+        if shutdown_error is None:
+            harness._ensure_ingest_parse_pool()
+            progress_thread = harness._ingest_parse_progress_thread
+        else:
+
+            def fail_shutdown():
+                raise shutdown_error
+
+            monkeypatch.setattr(harness, "_shutdown_ingest_parse_pool", fail_shutdown)
+
+        caught = None
+        try:
+            await harness.on_unmount()
+        except BaseException as exc:
+            caught = exc
+
+        assert caught is shutdown_error
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            saved_connection.execute("SELECT 1")
+        if progress_thread is not None:
+            assert not progress_thread.is_alive()
+    finally:
+        try:
+            if real_shutdown is not None:
+                teardown = real_shutdown()
+                if teardown is not None:
+                    await asyncio.to_thread(teardown.join, 5.0)
+                    assert not teardown.is_alive()
+        finally:
+            if database is not None:
+                database.close_connection()
 
 
 def _library_ingest_mixin_state_reads() -> set[str]:

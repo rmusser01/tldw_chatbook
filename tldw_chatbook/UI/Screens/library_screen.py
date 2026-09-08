@@ -189,6 +189,7 @@ from ...Library.library_media_state import (
     MediaBrowseScope,
     MediaTrashBrowseState,
     MediaTrashScope,
+    begin_media_trash_request,
     build_library_media_trash_state,
     library_media_int_backing_id,
 )
@@ -8050,10 +8051,9 @@ class LibraryScreen(BaseAppScreen):
         task-2237/3302: ``i`` opens Ingest from any canvas; ``n`` creates a
         note from the landing only. Both use the dirty-edit row-switch guard.
 
-        task-2856: Up/Down move only genuinely focused list rows, leaving
-        rail/forms/palette untouched. Any key disarms pending entry focus
-        before the text-field early return. Descendant focus handles mouse
-        interaction; settlement timers are a last resort for idle requests.
+        task-2856: Up/Down move only focused list rows, leaving rail/forms/palette
+        untouched; any key disarms pending entry focus before the text-field return.
+        Descendant focus handles mouse interaction; timers cover idle requests.
         """
         emergency_tab = bool(
             event.key in {"tab", "shift+tab", "backtab"}
@@ -22535,7 +22535,7 @@ class LibraryScreen(BaseAppScreen):
     # ------------------------------------------------------------------
 
     @on(Button.Pressed, "#library-media-trash-open")
-    def handle_library_media_trash_open(self, event: Button.Pressed) -> None:
+    async def handle_library_media_trash_open(self, event: Button.Pressed) -> None:
         """Capture normal Media identity and enter independent Trash page 1."""
         event.stop()
         if self._media_state.bulk_delete_in_flight:
@@ -22555,9 +22555,11 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.trash_focus_request_key = None
         controller = self._library_media_trash_browse_controller
         controller.invalidate()
-        controller.state = MediaTrashBrowseState()
+        controller.state = begin_media_trash_request(
+            MediaTrashBrowseState(), MediaTrashScope(), origin="entry"
+        )
         self._media_state.view = "trash"
-        self.refresh(recompose=True)
+        await self.recompose()
         controller.request(
             MediaTrashScope(),
             origin="entry",
