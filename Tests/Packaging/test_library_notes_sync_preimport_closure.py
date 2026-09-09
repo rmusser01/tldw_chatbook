@@ -1,9 +1,16 @@
 """ADR-097: Library discovery must not load Notes synchronization execution."""
 
+from pathlib import Path
+
 from Tests.Packaging.test_chat_persistence_import_closure import _run_isolated_python
 
 
-def test_library_defers_notes_sync_until_screen_construction(tmp_path):
+def test_library_defers_notes_sync_until_screen_construction(tmp_path: Path) -> None:
+    """Defer Notes sync imports until Library binds the app-owned runtime.
+
+    Args:
+        tmp_path: Scratch root for the subprocess's isolated config and data.
+    """
     result = _run_isolated_python(
         tmp_path,
         """

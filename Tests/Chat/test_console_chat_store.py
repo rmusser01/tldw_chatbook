@@ -8005,7 +8005,8 @@ def test_character_roleplay_swap_persists_only_the_final_projection_and_context(
     ]
 
 
-def test_fake_promotion_refuses_unimplemented_trace_boundaries():
+def test_fake_promotion_refuses_unimplemented_trace_boundaries() -> None:
+    """Reject unsupported fake trace promotion before creating a conversation."""
     persistence = FakePersistence()
     with pytest.raises(RuntimeError, match="does not persist trace boundaries"):
         persistence.promote_console_conversation_bundle(

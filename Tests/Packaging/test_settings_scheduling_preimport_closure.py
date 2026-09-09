@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from Tests.Packaging.test_chat_persistence_import_closure import _run_isolated_python
 
 
-def test_console_settings_defers_failure_diagnostics(tmp_path):
+def test_console_settings_defers_failure_diagnostics(tmp_path: Path) -> None:
+    """Keep failure-only diagnostics outside the settings-controller import path.
+
+    Args:
+        tmp_path: Scratch root for the subprocess's isolated config and data.
+    """
     result = _run_isolated_python(
         tmp_path,
         """
@@ -65,8 +72,16 @@ else:
     ids=["settings", "scheduling"],
 )
 def test_route_preimport_defers_feature_implementations(
-    tmp_path, route_module, deferred, first_use
-):
+    tmp_path: Path, route_module: str, deferred: tuple[str, ...], first_use: str
+) -> None:
+    """Defer route features until first use without changing lazy-export identity.
+
+    Args:
+        tmp_path: Scratch root for the subprocess's isolated config and data.
+        route_module: Settings or Scheduling module imported during discovery.
+        deferred: Feature modules that must remain unloaded after discovery.
+        first_use: Subprocess source exercising the route's lazy exports.
+    """
     result = _run_isolated_python(
         tmp_path,
         f"""

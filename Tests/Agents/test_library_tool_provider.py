@@ -141,7 +141,8 @@ def _error_payload(tool_result: ToolResult) -> dict:
 # --------------------------------------------------------------------------
 
 
-def test_direct_catalog_lists_all_descriptor_tools():
+def test_direct_catalog_lists_all_descriptor_tools() -> None:
+    """List every descriptor in order with stable IDs and untrusted-data copy."""
     provider = LibraryToolProvider(FakeLibraryService())
     catalog = provider.list_catalog()
     assert len(catalog) == len(LIBRARY_TOOL_DESCRIPTORS)
