@@ -239,6 +239,18 @@ class LibraryRailSearchInput(SelectAllOnFocusingClickInput):
     def __init__(
         self, *args: Any, swallow_slash_on_focus: bool = True, **kwargs: Any
     ) -> None:
+        """Build the search box, optionally opting out of "/" swallowing.
+
+        Args:
+            *args: Positional arguments forwarded to ``Input.__init__``.
+            swallow_slash_on_focus: When ``True`` (the default rail-search
+                behavior), a focused box intercepts "/" and selects all
+                text instead of typing it, per the class docstring. Pass
+                ``False`` for a box whose content legitimately contains
+                "/" (e.g. the Notes filter), where "/" must type normally
+                once the box already has focus.
+            **kwargs: Keyword arguments forwarded to ``Input.__init__``.
+        """
         super().__init__(*args, **kwargs)
         self._swallow_slash_on_focus = swallow_slash_on_focus
 

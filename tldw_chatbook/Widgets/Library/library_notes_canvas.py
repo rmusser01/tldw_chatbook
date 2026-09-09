@@ -53,6 +53,16 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
+
+def _library_note_back_label(compact: bool) -> str:
+    """The single Back wording (task-32139), sized by ``compact``.
+
+    PR #2547 review (Qodo finding 1): compose time and state-apply time
+    each inlined this same ternary; a wording change could update one
+    rendering path and leave the other stale. One function, both callers.
+    """
+    return "‹ Back to list" if compact else "‹ Notes"
+
 #: The storage authority every Database Notes surface answers to. Painted once
 #: per screen: the mounted list pane owns it, and a work pane beside it drops
 #: it rather than repeating the same sentence (task-32063).
@@ -1275,7 +1285,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # and BOTH said "‹ Notes" on a compact terminal where the guide
         # documents "‹ Back to list" (60x24). One label now, sized by
         # ``self.compact`` like the guide's own compact-vs-wide split.
-        back_label = "‹ Back to list" if self.compact else "‹ Notes"
+        back_label = _library_note_back_label(self.compact)
         with Horizontal(id="library-note-heading"):
             yield Button(
                 back_label,
@@ -1802,7 +1812,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.set_class(state.validation, "library-note-validation")
         # task-32139: one Back label, sized by compact -- see the matching
         # compose-time comment above.
-        back_label = "‹ Back to list" if state.compact else "‹ Notes"
+        back_label = _library_note_back_label(state.compact)
         back_button = self.query_one("#library-note-back", Button)
         if str(back_button.label) != back_label:
             back_button.label = back_label
