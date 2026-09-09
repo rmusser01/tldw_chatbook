@@ -1,0 +1,10 @@
+{"event": "setup_enter", "at": 2173276.473276666, "pid": 460, "engine": "vits"}
+{"event": "setup_exit", "at": 2173276.755215958, "pid": 460, "model": "vits - tts_models--en--vctk--vits", "loaded": true, "device": "cpu", "dtype": "torch.float32"}
+{"event": "generation_enter", "at": 2173278.362820125, "pid": 460, "id": "460:1", "device": "cpu", "dtype": "torch.float32", "generation_count": 1}
+{"event": "generation_exit", "at": 2173279.170970833, "pid": 460, "id": "460:1", "samples": 101136}
+{"event": "generation_enter", "at": 2173285.150490375, "pid": 460, "id": "460:2", "device": "cpu", "dtype": "torch.float32", "generation_count": 2}
+{"event": "generation_exit", "at": 2173285.840762833, "pid": 460, "id": "460:2", "samples": 97552}
+{"event": "generation_enter", "at": 2173290.467065041, "pid": 460, "id": "460:3", "device": "cpu", "dtype": "torch.float32", "generation_count": 3}
+{"event": "generation_exit", "at": 2173294.748367333, "pid": 460, "id": "460:3", "samples": 395840}
+{"event": "generation_enter", "at": 2173294.80237375, "pid": 460, "id": "460:4", "device": "cpu", "dtype": "torch.float32", "generation_count": 4}
+{"event": "generation_exit", "at": 2173296.790603208, "pid": 460, "id": "460:4", "samples": 100112}

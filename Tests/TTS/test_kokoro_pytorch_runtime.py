@@ -42,6 +42,7 @@ def upstream(tmp_path, monkeypatch):
         pipelines=[],
         pipeline_exit=False,
         pipeline_import_error=False,
+        pipeline_runtime_error=None,
         phoneme_count=20,
     )
 
@@ -64,6 +65,8 @@ def upstream(tmp_path, monkeypatch):
 
     class Pipeline:
         def __init__(self, *, lang_code, model, repo_id):
+            if state.pipeline_runtime_error:
+                raise state.pipeline_runtime_error
             if state.pipeline_exit:
                 raise SystemExit(1)
             if state.pipeline_import_error:
@@ -77,7 +80,7 @@ def upstream(tmp_path, monkeypatch):
         def g2p(self, text):
             return "a" * state.phoneme_count, []
 
-        def __call__(self, text, *, voice, speed):
+        def __call__(self, text, *, voice, speed, model=None):
             assert text == state.text
             assert speed == state.speed
             assert voice.dtype == torch.float32 and voice.device.type == "cpu"
@@ -210,11 +213,178 @@ def test_invalid_pipeline_audio_fails_without_replacement_noise(upstream, chunks
         kokoro_pytorch.generate(model, state.text, state.voices)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timestamps", [False, True])
+@pytest.mark.parametrize("stop_kind", ["cancel", "close"])
+async def test_stop_joins_current_pytorch_segment_without_starting_another(
+    backend, monkeypatch, timestamps, stop_kind
+):
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+    outputs = []
+
+    class Pipeline:
+        lang_code = "a"
+
+        def __call__(self, text, *, voice, speed, model=None):
+            calls.append(1)
+            entered.set()
+            assert release.wait(5), "Test must release the native segment"
+            yield SimpleNamespace(audio=torch.ones(100), phonemes="first")
+            calls.append(2)
+            yield SimpleNamespace(audio=torch.ones(100), phonemes="second")
+
+    model = kokoro_pytorch.KokoroModel("unused")
+    monkeypatch.setattr(model, "pipeline", lambda language: Pipeline())
+    backend.model_loaded = True
+    backend.kokoro_model_pt = model
+    backend._kokoro_pt_modules = {"generate": kokoro_pytorch.generate}
+    monkeypatch.setattr(backend, "_download_voice_if_needed", AsyncMock())
+    monkeypatch.setattr(backend, "_load_voice_pack", lambda _: torch.ones(510, 1, 256))
+
+    async def consume():
+        if timestamps:
+            outputs.append(
+                await backend.generate_with_timestamps("Two segments", "af_heart")
+            )
+        else:
+            request = OpenAISpeechRequest(
+                input="Two segments",
+                model="kokoro",
+                voice="af_heart",
+                response_format="pcm",
+            )
+            async for chunk in backend.generate_speech_stream(request):
+                outputs.append(chunk)
+
+    generation = asyncio.create_task(consume())
+    closing = None
+    try:
+        async with asyncio.timeout(5):
+            while not entered.is_set():
+                await asyncio.sleep(0.001)
+        if stop_kind == "cancel":
+            generation.cancel()
+            await asyncio.sleep(0.01)
+            generation.cancel()
+        else:
+            closing = asyncio.create_task(backend.close())
+        await asyncio.sleep(0.03)
+        assert not generation.done()
+        assert backend.kokoro_model_pt is model
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(generation, 5)
+        assert calls == [1], "Stop must prevent the next upstream segment"
+        assert outputs == []
+        if stop_kind == "cancel":
+            await consume()
+            assert calls == [1, 1, 2]
+            assert outputs, "The next request must receive complete audio"
+    finally:
+        release.set()
+        await asyncio.gather(generation, return_exceptions=True)
+        if closing is not None:
+            await closing
+        await backend.close()
+
+
 def test_unknown_language_is_rejected_before_inference(upstream):
     checkpoint, state = upstream
     model = kokoro_pytorch.build_model(str(checkpoint))
     with pytest.raises(ValueError, match="language"):
         kokoro_pytorch.generate(model, state.text, state.voices, lang="not-a-language")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["pcm", "wav", "timestamps"])
+@pytest.mark.parametrize("stop_kind", ["cancel", "close"])
+async def test_stop_during_pytorch_g2p_prevents_model_entry(
+    backend, monkeypatch, route, stop_kind
+):
+    entered, release = threading.Event(), threading.Event()
+    forwards, outputs, closed = [], [], []
+
+    class NativeModel:
+        device = "cpu"
+
+        def __call__(self, phonemes, style, speed, *, return_output):
+            forwards.append(phonemes)
+            assert speed == 1.0 and return_output is True
+            return SimpleNamespace(audio=torch.ones(100), phonemes=phonemes)
+
+    native_model = NativeModel()
+
+    class Pipeline:
+        lang_code = "j"
+        model = native_model
+
+        def g2p(self, text):
+            return "safe phonemes", None
+
+        def __call__(self, text, *, voice, speed, model=None):
+            try:
+                selected_model = model or self.model
+                assert selected_model.device == "cpu"
+                entered.set()
+                assert release.wait(5), "Test must release phonemization"
+                phonemes, _ = self.g2p(text)
+                # Match KPipeline.infer's actual optional model-call seam.
+                yield selected_model(phonemes, voice[0], speed, return_output=True)
+            finally:
+                closed.append(True)
+
+    pipeline = Pipeline()
+    wrapper = kokoro_pytorch.KokoroModel("unused")
+    wrapper.model = native_model
+    monkeypatch.setattr(wrapper, "pipeline", lambda _: pipeline)
+    backend.model_loaded = True
+    backend.kokoro_model_pt = wrapper
+    backend._kokoro_pt_modules = {"generate": kokoro_pytorch.generate}
+    monkeypatch.setattr(backend, "_download_voice_if_needed", AsyncMock())
+    monkeypatch.setattr(backend, "_load_voice_pack", lambda _: torch.ones(510, 1, 256))
+
+    async def consume():
+        if route == "timestamps":
+            outputs.append(await backend.generate_with_timestamps("日本語", "jf_alpha"))
+        else:
+            request = OpenAISpeechRequest(
+                input="日本語", model="kokoro", voice="jf_alpha", response_format=route
+            )
+            async for chunk in backend.generate_speech_stream(request):
+                outputs.append(chunk)
+
+    generation = asyncio.create_task(consume())
+    closing = None
+    try:
+        async with asyncio.timeout(5):
+            while not entered.is_set():
+                await asyncio.sleep(0.001)
+        if stop_kind == "cancel":
+            generation.cancel()
+            await asyncio.sleep(0.01)
+            generation.cancel()
+        else:
+            closing = asyncio.create_task(backend.close())
+        await asyncio.sleep(0.03)
+        assert not generation.done() and backend._native_tasks
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(generation, 5)
+        assert forwards == [], "Completed G2P must not start a model call after Stop"
+        assert outputs == [] and closed == [True]
+        assert wrapper.model is native_model and pipeline.model is native_model
+        if stop_kind == "cancel":
+            await consume()
+            assert forwards == ["safe phonemes"]
+            assert outputs and closed == [True, True]
+    finally:
+        release.set()
+        await asyncio.gather(generation, return_exceptions=True)
+        if closing is not None:
+            await closing
+        await backend.close()
 
 
 def test_upstream_language_installer_exit_becomes_recoverable_error(upstream):
@@ -223,6 +393,21 @@ def test_upstream_language_installer_exit_becomes_recoverable_error(upstream):
     model = kokoro_pytorch.build_model(str(checkpoint))
     with pytest.raises(RuntimeError, match=r"(?s)language.*spacy"):
         kokoro_pytorch.generate(model, state.text, state.voices)
+
+
+def test_japanese_dictionary_failure_has_actionable_setup_guidance(upstream):
+    checkpoint, state = upstream
+    state.language = "j"
+    state.pipeline_runtime_error = RuntimeError(
+        "Failed initializing MeCab: /PRIVATE/unidic/dicdir/mecabrc"
+    )
+    model = kokoro_pytorch.build_model(str(checkpoint))
+    with pytest.raises(TTSOperationError) as caught:
+        kokoro_pytorch.generate(model, state.text, state.voices, lang="ja")
+    assert caught.value.code == "configuration_invalid"
+    assert not caught.value.retryable
+    assert "python -m unidic download" in str(caught.value)
+    assert "PRIVATE" not in str(caught.value)
 
 
 def test_oversized_non_english_phonemes_fail_instead_of_truncating(upstream):
@@ -510,7 +695,9 @@ async def test_backend_voice_language_is_consistent_for_all_generation_paths(
         calls.append((voice, lang))
         yield samples, 24000
 
-    def generate(model, text, voice_pack, *, lang, speed, voice_dir=None):
+    def generate(
+        model, text, voice_pack, *, lang, speed, voice_dir=None, is_cancelled=None
+    ):
         calls.append((voice, lang))
         return samples, "speech"
 
@@ -702,7 +889,7 @@ async def test_timestamp_cancellation_joins_inference_before_close(
             await task
         await closing
         assert finished.is_set() and backend.kokoro_model_pt is None
-        assert not backend._pytorch_tasks
+        assert not backend._native_tasks
     finally:
         release.set()
         await asyncio.gather(

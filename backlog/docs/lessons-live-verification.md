@@ -2351,3 +2351,62 @@ series ended with one failed sample and no valid timing.
 TLDW_CANVAS_CHROMIUM_EXECUTABLE override explicitly in both compared arms and
 record the binary hash. Keep test-state isolation; do not restore the real home
 or install another browser to work around a missing invocation parameter.
+
+## Observe each native segment when validating speech cancellation
+
+**TASK-32148 / TASK-32150 / TASK-32162, 2026-09-09.** Kokoro cancellation had
+passing outer-worker ownership tests. A real CPU run observing unchanged
+`KModel.forward` calls showed that Stop joined the active segment but the retained
+pipeline started another segment before returning. Separately, the actual
+kokoro-onnx 0.6.1 producer cancelled its executor future while its native thread
+continued running. Async task completion alone established neither native
+completion nor cooperative stopping between segments.
+
+Record entry and exit around the actual delegated model calls, issue Stop while
+one is active, and assert that ownership lasts through its exit and no later
+segment begins. Then send and play a successor through the same service. Keep
+native joining and between-segment cancellation as separate assertions.
+
+The new mounted Lab harness also initially omitted `STTS_Window`'s
+`_seed_axis_defaults`, producing a false voice-default failure. Reproduce the
+owner's normal initialization before diagnosing a child pane; manually setting
+selectors cannot establish that saved defaults work.
+
+## Complete audio and empty model-owner counts do not prove sink shutdown
+
+**TASK-32151 / TASK-32165, 2026-09-09.** Two real Higgs CPU runs generated
+complete speech with exact full-content transcripts. The Console device callback
+rendered the expected PCM, the sink reported a terminal state, and tracked model
+owners reached zero. Nevertheless, `SinkDrained` never arrived and the process
+stalled at exit. Native samples showed the sink notify thread and CoreAudio IO
+thread in the inverse locks described by [PortAudio #1174](https://github.com/PortAudio/portaudio/issues/1174).
+Changing sounddevice from 0.5.5 to 0.5.6 did not fix it; the newer environment
+loaded the same bundled PortAudio binary as the passing Kokoro environment.
+
+Require terminal sink-event delivery, actual stream/notify completion and a
+clean worker exit in addition to generated audio and model-owner counters.
+Resolve the loaded native library path and hash when comparing environments;
+the Python package version alone does not identify the native implementation.
+
+## Wheel identity includes deleted files, and dependency checks can open profiles
+
+**PR #2545, TTS qualification, 2026-09-09.** After rebasing onto the Library
+reader split, setuptools reused an ignored `build/lib` copy of the deleted
+`library_media_reader_shell.py`. The wheel built and installed successfully,
+but complete source/wheel file-set comparison rejected the extra module. A
+controller launched despite that failed prerequisite; its successful playback
+was retained as excluded evidence. Archiving the owned build directory and
+rebuilding produced an exact 2,275-file source/wheel/install match, followed by
+a fresh serial playback run with an explicit identity gate.
+
+In the same review, routing standalone ASR discovery through `optional_deps`
+imported application configuration outside pytest. A private temporary profile
+must be selected before that lookup, then removed and the environment restored.
+The final five real ASR runs used a profile-access audit with a denied-open
+positive control, and the real user configuration hash remained unchanged.
+
+Check complete file sets as well as hashes, and make failed prerequisite checks
+stop dependent controllers. Qualify standalone dependency discovery outside the
+test suite's profile fixtures; a missing-dependency guard can itself initialize
+configuration before model loading begins. Receipts are retained in
+`Docs/QA/tts-macos-burndown-2026-09-09/review/`.

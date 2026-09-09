@@ -1,0 +1,37 @@
+{
+  "scope": "Separate targeted runs with overlapping tests; do not add counts or infer a full-suite sweep. Exact selectors are retained separately from quiet logs. The stale broader-run failure remains a failure, followed by narrower successful corrections. The 107-pass run deselects all Speech UI tests; six exact fresh-default cases are verified separately.",
+  "runs": [
+    {
+      "log": "tests/post-rebase-targeted.log",
+      "scope": "Targeted post-rebase compatibility selection",
+      "summary": "197 passed, 2 skipped, 1 warning in 8.96s",
+      "full_selector_command_retained_in_log": false,
+      "exact_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.:packages/tldw_profile_core/src /private/tmp/tts-macos-burndown/runtime-python312/bin/python -m pytest Tests/TTS/test_kokoro_languages.py Tests/TTS/test_kokoro_onnx_lifecycle.py Tests/TTS/test_kokoro_pytorch_runtime.py Tests/TTS/test_kokoro_validation.py Tests/TTS/test_live_validation_harness.py Tests/TTS/test_local_provider_contracts.py Tests/UI/test_speech_kokoro_defaults.py -q",
+      "command_receipt": "tests/test-command-receipts.json"
+    },
+    {
+      "log": "tests/final-targeted-regressions.log",
+      "scope": "Broader targeted TTS/Speech UI selection; original stale-AllTalk test failure retained",
+      "summary": "1 failed, 658 passed, 2 skipped, 3 warnings in 204.90s (0:03:24)",
+      "full_selector_command_retained_in_log": false,
+      "exact_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.:packages/tldw_profile_core/src /private/tmp/tts-macos-burndown/runtime-python312/bin/python -m pytest Tests/TTS/test_kokoro*.py Tests/TTS/test_legacy_bridge.py Tests/TTS/test_live_validation_harness.py Tests/TTS/test_local_provider_contracts.py Tests/UI/test_speech_playground*.py Tests/UI/test_speech_settings*.py Tests/UI/test_speech_kokoro_defaults.py Tests/UI/test_kokoro_playground_generation.py -q",
+      "command_receipt": "tests/test-command-receipts.json"
+    },
+    {
+      "log": "tests/final-corrections-targeted.log",
+      "scope": "TTS correction selection; -k not test_speech deselects the entire Speech UI module (140 tests); UI is qualified separately",
+      "summary": "107 passed, 1 skipped, 140 deselected, 1 warning in 4.71s",
+      "full_selector_command_retained_in_log": false,
+      "exact_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.:packages/tldw_profile_core/src /private/tmp/tts-macos-burndown/runtime-python312/bin/python -m pytest Tests/TTS/test_kokoro_pytorch_runtime.py Tests/TTS/test_local_provider_contracts.py Tests/UI/test_speech_playground_pane_lifecycle.py -k 'not test_speech' -q",
+      "command_receipt": "tests/test-command-receipts.json"
+    },
+    {
+      "log": "tests/final-alltalk-ui-correction.log",
+      "scope": "Six cases of the corrected fresh-provider default/label UI test",
+      "summary": "6 passed in 3.68s",
+      "full_selector_command_retained_in_log": false,
+      "exact_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.:packages/tldw_profile_core/src /private/tmp/tts-macos-burndown/runtime-python312/bin/python -m pytest Tests/UI/test_speech_playground_pane_lifecycle.py::test_legacy_provider_defaults_and_labels_are_preserved -q",
+      "command_receipt": "tests/test-command-receipts.json"
+    }
+  ]
+}

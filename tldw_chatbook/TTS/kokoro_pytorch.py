@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
+from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +15,7 @@ import numpy as np
 import torch
 
 from tldw_chatbook.TTS.adapter_types import TTSOperationError
+from tldw_chatbook.TTS.kokoro_languages import japanese_dictionary_error
 from tldw_chatbook.Utils.optional_deps import check_dependency
 from tldw_chatbook.Utils.path_validation import (
     validate_filename,
@@ -58,7 +62,7 @@ def require_runtime() -> tuple[Any, Any]:
             code="dependency_missing",
             message=(
                 "Kokoro PyTorch requires the optional kokoro runtime. "
-                "On Python 3.11 or 3.12, install 'tldw_chatbook[local_tts]'. "
+                "On Python 3.12, install 'tldw_chatbook[local_tts]'. "
                 "Python 3.13+ is not supported by kokoro 0.9.4; select ONNX instead."
             ),
             retryable=False,
@@ -162,6 +166,15 @@ class KokoroModel:
                     model=self.model,
                     repo_id=MODEL_REPO,
                 )
+            except RuntimeError as error:
+                setup_error = (
+                    japanese_dictionary_error(error, operation_id="kokoro_pytorch")
+                    if language == "j"
+                    else None
+                )
+                if setup_error is not None:
+                    raise setup_error from error
+                raise
             except ImportError as error:
                 if language not in {"j", "z"}:
                     raise
@@ -292,6 +305,23 @@ def mix_voices(
     return (stacked * factors).sum(dim=0)
 
 
+class _RequestModel:
+    """Check one request's Stop after pipeline G2P and before model entry."""
+
+    def __init__(self, model: Any, is_cancelled: Callable[[], bool]) -> None:
+        self._model = model
+        self._is_cancelled = is_cancelled
+
+    @property
+    def device(self) -> Any:
+        return self._model.device
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if self._is_cancelled():
+            raise asyncio.CancelledError
+        return self._model(*args, **kwargs)
+
+
 def generate(
     model: KokoroModel,
     text: str,
@@ -299,6 +329,7 @@ def generate(
     lang: str = "a",
     speed: float = 1.0,
     voice_dir: str | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
     **kwargs: Any,
 ) -> tuple[np.ndarray, str]:
     """Synthesize every upstream segment, preserving its waveform and speed.
@@ -310,6 +341,7 @@ def generate(
         lang: Kokoro language code or supported locale alias.
         speed: Duration multiplier consumed once by the neural model.
         voice_dir: Directory for named local voice packs.
+        is_cancelled: Cooperative stop checked before model entry and between segments.
         **kwargs: Reserved compatibility options from existing callers.
 
     Returns:
@@ -321,6 +353,7 @@ def generate(
         TypeError: The voice is neither a pack nor a supported name/mix.
         TTSOperationError: Runtime setup or the text's phoneme length is invalid.
         RuntimeError: Upstream model inference fails.
+        asyncio.CancelledError: Stop was requested before the next segment.
     """
     if not math.isfinite(speed) or speed <= 0:
         raise ValueError("Kokoro speed must be finite and positive")
@@ -356,10 +389,31 @@ def generate(
     # KPipeline's tensor detection requires a CPU FloatTensor; it moves the
     # selected style to the actual model device itself, including MPS.
     voice = voice.detach().to(device="cpu", dtype=torch.float32)
+    # KPipeline accepts a per-call model. Keep its chunking/G2P intact while
+    # guarding the point after phonemization where it would enter inference.
+    # A fresh guard never changes the shared model or cached pipeline.
+    pipeline_options = (
+        {"model": _RequestModel(model.model, is_cancelled)}
+        if is_cancelled is not None
+        else {}
+    )
     chunks = []
     phonemes = []
-    with torch.inference_mode():
-        for result in pipeline(text, voice=voice, speed=speed):
+    with (
+        torch.inference_mode(),
+        closing(
+            pipeline(text, voice=voice, speed=speed, **pipeline_options)
+        ) as results,
+    ):
+        while True:
+            if is_cancelled is not None and is_cancelled():
+                raise asyncio.CancelledError
+            try:
+                result = next(results)
+            except StopIteration:
+                break
+            if is_cancelled is not None and is_cancelled():
+                raise asyncio.CancelledError
             if result.audio is None:
                 raise ValueError("Kokoro returned no audio")
             samples = result.audio.detach().cpu().numpy()
