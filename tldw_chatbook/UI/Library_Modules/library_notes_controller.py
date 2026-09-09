@@ -1,22 +1,13 @@
 """Library Notes canvas controller.
 
-Controller PR of the Notes extraction series (wave-8 task 2 of
-``.superpowers/sdd/2026-09-08-library-decomposition-wave8-notes``; notes
-series 2/N; recipe: ``backlog/docs/library-decomposition-recipe.md``;
-``library_media_controller.py`` -- the newest and largest prior
-single-cluster move -- is the template this mirrors in shape). Owns the
-Notes cluster: the database-notes list canvas and its editor/work pane, the
-Folder-Files workspace seams the screen owns, the note-import canvas, the
-lasting-sync ("Add from files" / sync roots) canvases, the notes footer and
-stage/responsive presentation, and the notes focus/scroll restore
-machinery. This is the FINAL controller move of the eight-wave Library
-decomposition program.
+Wave-8 task 2: ``.superpowers/sdd/2026-09-08-library-decomposition-wave8-notes``.
+Follows ``backlog/docs/library-decomposition-recipe.md`` and the Media controller.
+Final Library move: Database Notes list/editor, screen-owned Folder-Files seams,
+note import, lasting sync, footer, responsive stages and focus/scroll restoration.
 
-**Cluster derivation.** An ``ast`` census of every ``LibraryScreen``
-class-body method whose name contains ``"note"`` (case-insensitive), run
-fresh at this task's own execution time (the recipe's "never trust a
-carried-over count" rule, SS6): **291 raw ``FunctionDef`` matches, 285
-unique names**. The 6-name gap is NOT a property/setter pair, as in every
+**Cluster derivation.** A fresh SS6 ``ast`` census of ``LibraryScreen``
+class-body methods containing ``"note"`` (case-insensitive) found **291 raw
+``FunctionDef`` matches, 285 unique names**. The 6-name gap is NOT a property/setter pair, as in every
 prior series -- it is a **byte-identical DUPLICATE block dev shipped twice**
 (see the duplicate-block paragraph below). Of the 285, 93 carry an ``@on``
 decorator, 6 are ``action_*``, 7 are ``@staticmethod``, 5 are ``@property``,
@@ -615,6 +606,7 @@ from .screen_support_types import (
 )
 
 if TYPE_CHECKING:
+    from ...Notes.note_import_executor import NoteImportExecutor
     from ...Notes.note_import_receipts import NoteImportReceiptRepository
     from ..Screens.library_screen import LibraryScreen
 
@@ -630,13 +622,8 @@ LibraryNotesTreeMutationReconciler = Callable[..., Awaitable[None]]
 class LibraryNotesController:
     """Owns the Library Notes cluster (185 methods).
 
-    Holds no state of its own beyond what it reads and writes through
-    ``LibraryNotesState`` (via the injected accessor) and the shared
-    shell/framework/wiring bindings below. ``LibraryScreen`` constructs
-    exactly one of these, in ``__init__`` right after
-    ``self._media_controller``, and keeps a one-line delegator for every one
-    of the 185 original names this cluster moved -- task 3 (the cleanup PR,
-    notes series 3/N) prunes the ones nothing external reaches.
+    Uses injected NotesState and named shell/framework bindings. LibraryScreen
+    constructs one after MediaController; externally used delegators remain.
     """
 
     def __init__(
@@ -5644,7 +5631,25 @@ class LibraryNotesController:
 
             if restored_record is not None:
                 self._append_library_note_source_record(restored_record)
-                await self._screen._reconcile_library_notes_tree_mutation(
+                # task-32124: the folder tree is projected from paged
+                # branch state, not from the flat source records the
+                # restore just patched, so re-syncing the canvas alone
+                # brought the rail count back without the row. Reuse the
+                # seam a create already commits through -- a restore is
+                # "this note exists again" -- rather than adding a second
+                # refresh mechanism. It reloads exactly the affected
+                # branches (the note's folders, plus Unfiled) and selects
+                # the restored placement.
+                #
+                # NOT the deep-link locator: repainting the canvas here
+                # removes the receipt the pressed Undo button lives in,
+                # and the focus move that follows is read as user intent
+                # (`on_descendant_focus`), which supersedes the locator's
+                # navigation before its first await returns. Proved live:
+                # the count returned to 10 and the row never came back.
+                # Reconcile once while mutation admission is still held;
+                # the final sync below only restores presentation and focus.
+                await self._reconcile_library_notes_tree_mutation(
                     "note_create",
                     {"note_id": receipt.note_id},
                     before=None,
@@ -5665,28 +5670,6 @@ class LibraryNotesController:
             self._library_notes_mutation_in_flight = False
             if self.is_mounted:
                 if restored_record is not None:
-                    # task-32124: the folder tree is projected from paged
-                    # branch state, not from the flat source records the
-                    # restore just patched, so re-syncing the canvas alone
-                    # brought the rail count back without the row. Reuse the
-                    # seam a create already commits through -- a restore is
-                    # "this note exists again" -- rather than adding a second
-                    # refresh mechanism. It reloads exactly the affected
-                    # branches (the note's folders, plus Unfiled) and selects
-                    # the restored placement.
-                    #
-                    # NOT the deep-link locator: repainting the canvas here
-                    # removes the receipt the pressed Undo button lives in,
-                    # and the focus move that follows is read as user intent
-                    # (`on_descendant_focus`), which supersedes the locator's
-                    # navigation before its first await returns. Proved live:
-                    # the count returned to 10 and the row never came back.
-                    await self._reconcile_library_notes_tree_mutation(
-                        "note_create",
-                        {"note_id": receipt.note_id},
-                        before=None,
-                        result=restored_record,
-                    )
                     identity = LibraryNotesFocusIdentity(
                         stage="notes",
                         region="navigator",

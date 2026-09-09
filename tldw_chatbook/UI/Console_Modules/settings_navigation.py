@@ -40,7 +40,6 @@ from ...Chat.provider_test_evidence import (
     ProviderProbeResult,
 )
 from ...Constants import TAB_SETTINGS
-from .settings_diagnostics import log_settings_failure
 
 
 if TYPE_CHECKING:
@@ -386,6 +385,8 @@ class ConsoleSettingsNavigationController:
                     else _on_transfer_committed() is True
                 )
             except Exception as exc:
+                from .settings_diagnostics import log_settings_failure
+
                 log_settings_failure("transfer_commit", exc, session_id=session_id)
                 transfer_outcome = False
             if not transfer_outcome:

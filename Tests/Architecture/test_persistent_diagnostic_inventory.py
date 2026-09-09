@@ -207,6 +207,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         # exceptions.
         "Failed to restore a Library note": ("type(exc).__name__",),
     },
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
+        "canvas sync failed": ("kind",),
+    },
     # "canvas sync failed" was dropped from this registry in 51533602c4
     # (TASK-32089): that diagnostic now deliberately keeps its traceback
     # (`logger.opt(exception=True)`) because discarding it left an

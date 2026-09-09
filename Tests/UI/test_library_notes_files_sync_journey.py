@@ -1334,12 +1334,17 @@ async def test_lasting_attention_survives_a_fresh_screen_and_prioritizes_review(
             retarget = screen.query_one("#notes-sync-root-retarget-0", Button)
             assert retarget.disabled
             assert screen.query_one("#notes-sync-root-disconnect-0", Button).disabled
+            assert review in host.screen._compositor.visible_widgets
+            retarget.scroll_visible(animate=False)
+            await pilot.pause()
             _assert_legible_painted_text(
                 host,
                 retarget,
                 "○ Retarget",
                 theme_name="textual-dark",
             )
+            review.scroll_visible(animate=False)
+            await pilot.pause()
             assert review in host.screen._compositor.visible_widgets
             assert (
                 screen.query_one("#notes-sync-roots-back", Button)
@@ -1522,6 +1527,13 @@ async def test_folder_files_and_session_git_use_supported_40x20_navigator(
             session_git = workspace.query_one("#file-notes-session-changes", Button)
             assert "Folder files" in _painted_text(pilot.app)
             assert authority in pilot.app.screen._compositor.visible_widgets
+            workspace.query_one("#file-notes-manage", Button).press()
+            await _wait_until(
+                pilot, lambda: workspace.work_mode == "manage",
+                "Folder Files Manage mode did not open at 40x20",
+            )
+            session_git.scroll_visible(animate=False)
+            await pilot.pause()
             assert session_git in pilot.app.screen._compositor.visible_widgets
 
             session_git.focus()

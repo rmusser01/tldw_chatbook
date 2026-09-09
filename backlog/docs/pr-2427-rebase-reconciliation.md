@@ -1341,3 +1341,157 @@ a59536eb70 base, with Notes decomposition and TTS/trace/Media changes. Rebase an
 affected-file verification remain required before final-head review and normal
 merge. The earlier 850-case native result remains evidence for its recorded
 source, not for this incoming runtime delta.
+
+## 2026-09-08 wave-8 reconciliation and startup paydown
+
+The 209-commit rebase onto dev `7e81ed55db` completed at `c646154a61`.
+The published lease is still `fc4ea45cef651a320868ecc91c1de4c79456e646`;
+`codex/pr2427-before-wave8-rebase-20260908` preserves that checkpoint.
+The three approved ID moves are complete, not awaiting further approval.
+The post-rebase guard reports 3,626 unique Windows-compatible task records.
+
+Task 31932 steps 52–60 record the qualification repairs before implementation:
+
+- Preserve wave-8 Notes ownership: pass Undo tree reconciliation through a named
+  late-bound port, retain Files admission's `render=False`, remove the obsolete
+  unreachable placement patch, and retarget retired Notes fields. NotesState has
+  99 fields after the already-reviewed inert timer removal. The Notes controller
+  stays within its unchanged 5,276-line ceiling; LibraryScreen tightens to
+  31,901 lines / 1,229 methods.
+- Correct the overlapping Media zero-result branch's stale `controller` local
+  to `browse`. Retarget 17 incoming test reads to the ADR-128 browse-state owner,
+  retaining exact empty-list, Reader placeholder and hidden bulk-reason checks.
+- Attribute the 973/974/975 readiness variation to the existing scheduler's
+  first-tick imports of `emergency_stop` and `scheduler_heartbeat`. Defer settings
+  diagnostics to the same five failure branches and cache the real row-action
+  controller on first use via stdlib `cached_property`. No scheduler delay,
+  readiness timing change, custom proxy or raised cap. Both cold-import controls
+  fail before the change; complete first-use/wiring/failure/ownership guards pass.
+- Bring fixtures into parity with real lifecycle/state: seed provider settings
+  for a manually created inactive chat; discover controller mock slots across
+  sibling wiring builders; drive flat Notes fixtures through their existing
+  editor helper; wait for exact compact File Notes paint after layout changes;
+  treat hidden retained conflict UI as hidden while preserving exact autosave
+  state, one-save and stored-version assertions.
+- Move the metadata-only Undo diagnostic pin to its new Notes-controller owner,
+  without permitting new fields or exception capture.
+
+Independent review found no actionable production/ownership/privacy issue in
+the lazy-owner, settings diagnostic, Notes and Media changes, and approved the
+row-switch, retained-conflict and responsiveness fixture repairs pending GREEN
+qualification. The prior incoming diagnostic/trace audit confirmed accepted
+TASK-32047 behavior, not a reason to reinstate the superseded logging policy.
+
+Completed evidence on the reconciled source:
+
+- Incoming non-live TTS complete files: **240 passed**, 3 existing warnings,
+  34.18 s; no inference, audio-device or model-download qualification claimed.
+- Ten complete logging/trace files: **370 passed**, 2 existing warnings,
+  119.70 s, including credential filtering and rendered/discarded trace paths.
+- Complete first-use, settings failure, controller wiring/ownership, Screen size
+  and startup cohort: **161 passed**, 4 warnings, 31.00 s. Census **971/973**.
+- Complete Reader/render/viewer/multiselect and Library guard cohort:
+  **460 passed**, 5 warnings, 326.64 s; repeated census **971/973**, boot CSS
+  **803,291/804,000**. Log: `/private/tmp/pr2427-wave8-media-guards-third.log`.
+- Complete adaptive Reader file: **14 passed**, 3 existing warnings, 55.06 s.
+  Log: `/private/tmp/pr2427-adaptive-complete-final.log`.
+- All six derived-artifact preflight checks pass: diagnostic summary is 600
+  owners / 7,667 TASK-494 calls; other reviewed diagnostic row digests are
+  unchanged. Scoped Ruff and `git diff --check` pass.
+
+The first current-source native shell run stopped at **503 passed / 1 failed**
+on the retained hidden conflict DOM assertion. It is failure evidence, not a
+clean resource qualification: its final frame still retained the failed test's
+SQLite descriptors. Log/report: `/private/tmp/pr2427-wave8-shell-native.SHQelx/`.
+The corrected full **851-case** run is now observed at
+`/private/tmp/pr2427-wave8-shell-native.bMHrar/`; its `native.jsonl` records exact
+package provenance, HEAD, diff and shell hashes, native per-test additions and
+the final exit/descriptor snapshot. The runner registers only the native
+observer, not the diagnostic helper's connection-patching fixture; it performs
+no GC, global close or descriptor-limit change. Final qualification, remaining
+Notes/navigation and diagnostic files, publication and final-head Qodo/CI review
+remain open at this checkpoint. Do not merge from the partial results above.
+
+Subsequent completed evidence: all **349** remaining Notes characterization,
+reuse, selection, modal and navigation cases pass (236.48 s; 3 warnings,
+`/private/tmp/pr2427-wave8-notes-remaining.log`); all **171** diagnostic/privacy
+and token-preparation cases pass (178.28 s; 8 warnings,
+`/private/tmp/pr2427-diagnostic-guards-final.log`); the complete responsiveness
+file plus the exact repaired autosave case pass **17** cases (5.03 s; 3 warnings,
+`/private/tmp/pr2427-final-focused-controls.log`). The prior File Notes run
+completed that entire file before stopping at the now-repaired next-file
+characterization selector; its preserved log is
+`/private/tmp/pr2427-wave8-notes-complete-third.log`.
+
+The other 21 incoming changed UI files are being qualified in two complete-file
+cohorts: **575** cases in `/private/tmp/pr2427-wave8-notes-inventory.log`, and
+**470** in `/private/tmp/pr2427-wave8-shell-inventory.log`. The real-local SQLite
+tree walkthrough and ProductionApp File Notes owner lifecycle run separately at
+`/private/tmp/pr2427-wave8-local-tree.log` and
+`/private/tmp/pr2427-wave8-file-owner.log`; independent review confirmed both are
+offline, and the ProductionApp process owns its collection-time environment
+isolation. No inference, device, download or remote Git operation is authorized
+by these runs. While these frozen-source tests execute, the shared origin/dev
+ref advanced to `565dc49921` with an eight-file TTS-only increment. Integrating
+and qualifying that accepted increment, then final-head review/CI, remains
+required after the active tests stop.
+
+The incoming inventory is now fully exercised, not wholly green: the 575-case
+Notes group has **568 passed / 7 failed** (543.26 s), and the 470-case shell group
+has **460 passed / 10 failed** (491.29 s). Exact failure lists/tracebacks are in
+the two logs above. Remaining investigation covers disabled-CSS ownership,
+visible toolbar/copy/harness expectations, one conversations fake and row-factory
+census, exact Trash return settlement, recompose/Tab query counts, two Notes
+journey paint checks, four sync-authority metadata preconditions, and the Notes
+unmount ordering guard. Existing caps and filesystem security checks stay intact.
+These are open qualification findings, not waived checks or completed work.
+
+The separate ProductionApp owner file passed **12** cases (20.94 s). Native
+observation of the passing real-local Notes walkthrough found **24** retained
+handles for its directly created database. Step 61 adds an exact-owner yielding
+fixture and failure-unwind control; independent review required unconditional
+cleanup of the manually driven control too, which is included. The final
+complete file passes **2** cases (10.75 s), with final `exit_code: 0` and
+`sqlite_paths: []` in
+`/private/tmp/pr2427-wave8-local-tree-native-final.6hMpND/native.jsonl`.
+All 37 original walkthrough assertions are preserved. The fresh 851-case shell
+run is still in progress; this checkpoint is intentionally not merge-ready.
+
+Wave 8 subsequent evidence: the complete native shell run finished **851 passed,
+10 warnings in 1540.57 seconds**, with final `exit_code: 0` and
+`sqlite_paths: []` at
+`/private/tmp/pr2427-wave8-shell-native.bMHrar/native.jsonl`. Intermediate
+factory-app auxiliary handles were released by final pytest cleanup; independent
+resource review found no persistent leak. This qualifies the source before
+step 65, not the later performance repairs. Complete Notes journey/folder files
+now pass **147** cases in 98.57 seconds using the verified per-user temporary
+root (`/private/tmp/pr2427-journey-final.log`). The honesty/multiselect/toolbar
+cohort passes 55 cases with three remaining fixture/action failures
+(`/private/tmp/pr2427-honesty-final.log`), under investigation.
+
+Step 65 independently identified three runtime defects: uncached ordinary rail
+lookups, detail/browse callbacks preceding the initial Media structural mount,
+and Trash-return settlement armed after the replacement owner's first geometry.
+The focused RED reproduces five recomposes against one and three DOM queries
+against one; the Trash case passes isolated but failed the complete inventory.
+The fixes reuse existing seams and preserve all limits and exact-settlement
+assertions. Complete affected-file qualification and independent review remain
+in progress. Fresh dev also includes the accepted Library keyboard increment
+at `38f7fe63d4`; rebasing and qualifying that increment remains open. This is a
+progress checkpoint, not a completed review or merge claim.
+
+Steps 65–66 are now independently reviewed and qualified: all **182** cases in
+the complete performance, focus/return-settlement, honesty, Conversations
+multiselect, toolbar-adaptation and both size-ratchet files pass (119.10 s;
+`/private/tmp/pr2427-step65-refined.log`). The first unconditional pre-arm
+attempt failed fourteen retained-viewer settlement cases; the final fix
+pre-arms only structural Trash returns and preserves post-mount arming for
+retained viewers. New RED/GREEN controls pin same-kind owner identity and
+post-await navigation admission. The cross-kind cap measures exactly one actual
+awaited recompose plus zero queued refresh fallbacks. Existing Screen
+31901-line/1229-method and MediaController 4669-line ceilings remain unchanged.
+All six derived-artifact preflight checks pass
+(`/private/tmp/pr2427-wave8-preflight-final.log`), scoped undefined-name checks
+pass, and `git diff --check` is clean. The 17 incoming-inventory failures are
+addressed; final-source lifecycle verification, the newer dev increment and
+final-head PR review/checks still remain. Do not mark the owning task Done yet.

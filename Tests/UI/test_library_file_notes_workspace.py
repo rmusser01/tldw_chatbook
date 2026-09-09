@@ -8288,6 +8288,13 @@ async def test_production_compact_folder_files_disclosure_and_states_are_painted
         await pilot.pause()
         export.focus()
         await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: "Export exact copy" in _painted_text_in_region(
+                pilot.app, export.region
+            ),
+            "compact exact-export action did not finish painting after disclosure change",
+        )
         assert export.display and not export.disabled and export.has_focus
         assert "Export exact copy" in _painted_text_in_region(
             pilot.app,

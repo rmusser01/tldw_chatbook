@@ -3139,11 +3139,7 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._push_library_note_import_picker(*a, **k)
             ),
             reconcile_library_notes_tree_mutation=(
-                # task-32124: an unbound call, like every other
-                # `LibraryScreen.<x>(self, ...)` target in this cluster.
-                lambda *a, **k: LibraryScreen._reconcile_library_notes_tree_mutation(
-                    self, *a, **k
-                )
+                lambda *a, **k: self._reconcile_library_notes_tree_mutation(*a, **k)
             ),
             refresh_library_note_detail=(
                 lambda *a, **k: self._refresh_library_note_detail(*a, **k)
@@ -4466,10 +4462,8 @@ class LibraryScreen(BaseAppScreen):
             rail = shell.library if shell is not None else None
             if isinstance(rail, LibraryRail) and rail.is_attached:
                 return rail
-        try:
-            return self.query_one("#library-rail", LibraryRail)
-        except (NoMatches, QueryError):
-            return None
+        rail = self._library_layout_ref("#library-rail")
+        return rail if isinstance(rail, LibraryRail) else None
 
     def _remember_library_notes_authority_focus(self, focused: Widget | None) -> None:
         return self._notes_controller._remember_library_notes_authority_focus(focused)
@@ -15684,7 +15678,7 @@ class LibraryScreen(BaseAppScreen):
             # the loaded item merely isn't on is a page turn, not a removal).
             if (
                 not applied_selection_id
-                and not controller.retained_items
+                and not browse.retained_items
                 and not self._media_state.reader_session.external_detail
                 and (
                     self._media_state.reader_session.selected_id
@@ -19783,36 +19777,6 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(record, Mapping) and str(record.get("id")) == target:
                 return str(record.get("title", "") or "")
         return None
-
-        def patch_placement(item: Any) -> Any:
-            if not isinstance(item, NotePlacementRecord):
-                return item
-            if self._source_record_id(item.note) != baseline.note_id:
-                return item
-            return dataclasses.replace(
-                item,
-                note={
-                    **item.note,
-                    "title": persisted_title,
-                    "last_modified": baseline.modified_at,
-                },
-            )
-
-        self._library_notes_tree_branches = {
-            key: dataclasses.replace(
-                state,
-                items=tuple(patch_placement(item) for item in state.items),
-            )
-            for key, state in self._library_notes_tree_branches.items()
-        }
-        filter_state = self._library_notes_tree_filter_state
-        if filter_state is not None:
-            self._library_notes_tree_filter_state = dataclasses.replace(
-                filter_state,
-                placements=tuple(
-                    patch_placement(item) for item in filter_state.placements
-                ),
-            )
 
     def _focus_library_note_validation_field(self, field: str) -> None:
         return self._notes_controller._focus_library_note_validation_field(field)
@@ -33470,14 +33434,16 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.editing_analysis = False
             self._close_library_media_find()
             self._media_state.content_mode = "raw"
-            # task-32065: the row path reclaims the Reader's width the moment
-            # the view flips (see ``_restore_library_media_reader_width_on_open``
-            # in the selection seam), and this branch claims to mirror that
-            # state-set exactly -- it did not. With task-31979 the gap cost a
-            # few columns; below the single-stage floor it costs the whole
-            # stage, leaving a deep-linked item in an 18-cell Reader beside the
-            # list it was opened from. After the refresh, because the surface
-            # this width belongs to is composed by the callers below.
+            if not entry_origin:
+                if self.query("#library-media-reader-shell"):
+                    await self._apply_library_media_active_surface()
+                else:
+                    await self._apply_library_open_item_surface(
+                        self._build_library_media_active_child
+                    )
+                if not entry_is_current():
+                    return LibraryEntryReconcileResult.SUPERSEDED
+            # task-32065: reclaim the Reader width after its surface is composed.
             self.call_after_refresh(self._restore_library_media_reader_width_on_open)
             self.run_worker(
                 self._refresh_library_media_detail(
@@ -33489,21 +33455,14 @@ class LibraryScreen(BaseAppScreen):
             )
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
-            # task-31797: the ingest "Open in Library" deep-link (and the
-            # sibling Search/RAG evidence + landing-hub "Open" routes) jump
-            # straight to the media viewer but -- unlike the rail-row path in
-            # _select_library_rail_row_after_source_admission -- never asked
-            # the browse controller to load a page, leaving the middle Items
-            # pane stuck on "0 of 0 · type: None / No page loaded". Mirror the
-            # rail's browse+facets request so the list lands populated
-            # alongside the opened item. focus_identity=None keeps focus on the
-            # just-opened viewer rather than yanking it to the first list row.
+            # task-31797: ingest, Search/RAG and landing-hub deep links jump
+            # to the viewer; also populate Items through the rail's browse/facet
+            # requests, preserving viewer focus with focus_identity=None.
             self._request_library_media_browse(
                 self._library_media_browse_controller.state.mutation_refresh_scope,
                 focus_identity=None,
             )
             self._request_library_media_facets()
-            await self._apply_library_media_active_surface()
             return None
 
         if source_type == "notes":

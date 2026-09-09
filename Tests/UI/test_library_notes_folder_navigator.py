@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 from contextlib import contextmanager
 from dataclasses import replace
 from html import unescape
 import inspect
+import textwrap
 from types import SimpleNamespace
 
 from loguru import logger as loguru_logger
@@ -793,10 +795,15 @@ def test_branch_pager_handler_routes_only_semantic_button_metadata():
 
 
 def test_unmount_invalidates_notes_authority_before_first_await():
-    source = inspect.getsource(LibraryScreen.on_unmount)
-    first_await = source.index("await ")
-
-    assert source.index("_invalidate_library_notes_tree_for_unmount") < first_await
+    tree = ast.parse(textwrap.dedent(inspect.getsource(LibraryScreen.on_unmount)))
+    invalidations = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_invalidate_library_notes_tree_for_unmount"
+    ]
+    assert len(invalidations) == 1
+    first_await = min(node.lineno for node in ast.walk(tree) if isinstance(node, ast.Await))
+    assert invalidations[0].lineno < first_await
 
 
 def _screen_fake(service: _FolderService):

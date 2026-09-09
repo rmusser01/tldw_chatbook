@@ -19680,8 +19680,8 @@ async def test_library_note_coordinator_pending_detail_keeps_back_action():
             screen.query_one("#library-note-back", Button).press()
             await _wait_for_condition_while_worker_pending(
                 lambda: (
-                    screen._library_notes_view == "list"
-                    and screen._selected_note_id == ""
+                    screen._notes_state.view == "list"
+                    and screen._notes_state.selected_note_id == ""
                     and screen._library_note_session.snapshot is None
                 ),
                 message="Back did not close the pending note-detail session.",
@@ -19720,8 +19720,8 @@ async def test_library_note_coordinator_pending_load_keeps_back_and_discards_lat
             screen.query_one("#library-note-back", Button).press()
             await _wait_for_condition_while_worker_pending(
                 lambda: (
-                    screen._library_notes_view == "list"
-                    and screen._selected_note_id == ""
+                    screen._notes_state.view == "list"
+                    and screen._notes_state.selected_note_id == ""
                     and screen._library_note_session.snapshot is None
                 ),
                 message="Back did not close the keyword-enrichment session.",
@@ -21067,7 +21067,10 @@ async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
         # No spurious self-conflict: nobody else touched the note, so the
         # flush must not have raced its own save against the autosave with a
         # stale version.
-        assert not screen.query("#library-note-conflict-overwrite"), (
+        # Back may publish list state before removing the retained editor DOM.
+        assert not any(
+            region.display for region in screen.query("#library-note-conflict-region")
+        ), (
             "A spurious self-conflict was raised even though nobody else "
             "touched the note."
         )
@@ -24111,7 +24114,7 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_note_autosave_state == "saved"
+                screen._notes_state.autosave_state == "saved"
                 and any(
                     str(row.get("id")) == created_id
                     and row.get("title") == "Untitled"
@@ -32171,9 +32174,9 @@ async def test_library_note_compact_deep_link_intent_opens_notes_stage(
         )
         await _wait_for_condition_while_worker_pending(
             lambda: (
-                screen._library_notes_compact is True
+                screen._notes_state.compact is True
                 and bool(screen.query(selector))
-                and screen._library_notes_stage == "notes"
+                and screen._notes_state.stage == "notes"
                 and screen._library_notes_focus_region() == expected_region
                 and screen.query_one("#library-rail").display is False
                 and screen.query_one("#library-canvas").display is items_visible

@@ -3276,7 +3276,7 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
     assert refresh_calls == [True]
     assert len(focus_calls) == 1
     focus_calls[0]()
-    assert restored_identities == [screen._library_notes_pending_focus_identity]
+    assert restored_identities == [screen._notes_state.pending_focus_identity]
 
 
 @pytest.mark.asyncio

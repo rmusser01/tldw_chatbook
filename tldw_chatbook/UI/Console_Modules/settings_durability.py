@@ -53,7 +53,6 @@ from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     normalize_chat_display_name,
 )
-from .settings_diagnostics import log_settings_failure
 
 
 if TYPE_CHECKING:
@@ -1208,6 +1207,8 @@ class ConsoleSettingsDurabilityController:
                     policy_failure_label=policy_failure_label,
                 )
             except Exception as exc:
+                from .settings_diagnostics import log_settings_failure
+
                 log_settings_failure(
                     "conversation_persist",
                     exc,
@@ -1230,6 +1231,8 @@ class ConsoleSettingsDurabilityController:
                         submission
                     )
                 except Exception as exc:
+                    from .settings_diagnostics import log_settings_failure
+
                     log_settings_failure(
                         "default_reserve",
                         exc,
@@ -1256,6 +1259,8 @@ class ConsoleSettingsDurabilityController:
                     intent,
                 )
             except Exception as exc:
+                from .settings_diagnostics import log_settings_failure
+
                 log_settings_failure(
                     "default_apply",
                     exc,
@@ -1274,6 +1279,8 @@ class ConsoleSettingsDurabilityController:
                     outcome,
                 )
             except Exception as exc:
+                from .settings_diagnostics import log_settings_failure
+
                 log_settings_failure(
                     "default_publish",
                     exc,

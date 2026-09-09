@@ -916,14 +916,14 @@ async def test_zero_result_filter_clears_the_reader_it_was_painting():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope is not None
-                and screen._library_media_browse_controller.applied_scope.query
+                screen._library_media_browse_controller.state.applied_scope is not None
+                and screen._library_media_browse_controller.state.applied_scope.query
                 == "no-media-matches-this-query-xyzzy"
-                and not screen._library_media_browse_controller.loading
+                and not screen._library_media_browse_controller.state.loading
             ),
             message="Zero-result filter did not apply.",
         )
-        assert len(screen._library_media_browse_controller.retained_items) == 0
+        assert len(screen._library_media_browse_controller.state.retained_items) == 0
 
         # The Reader no longer paints the now-absent item.
         assert screen._media_state.reader_session.loaded_id is None
@@ -959,17 +959,17 @@ async def test_zero_result_filter_repaints_the_mounted_reader_placeholder():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope is not None
-                and screen._library_media_browse_controller.applied_scope.query
+                screen._library_media_browse_controller.state.applied_scope is not None
+                and screen._library_media_browse_controller.state.applied_scope.query
                 == "Media item 03"
-                and not screen._library_media_browse_controller.loading
+                and not screen._library_media_browse_controller.state.loading
             ),
             message="Matching filter did not apply.",
         )
         match_id = str(
-            screen._library_media_browse_controller.retained_items[0]["id"]
+            screen._library_media_browse_controller.state.retained_items[0]["id"]
         )
-        for match in screen._library_media_browse_controller.retained_items:
+        for match in screen._library_media_browse_controller.state.retained_items:
             service.release(int(str(match["id"]).rsplit(":", 1)[-1]))
         await _wait_for_condition(
             pilot,
@@ -986,14 +986,14 @@ async def test_zero_result_filter_repaints_the_mounted_reader_placeholder():
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope is not None
-                and screen._library_media_browse_controller.applied_scope.query
+                screen._library_media_browse_controller.state.applied_scope is not None
+                and screen._library_media_browse_controller.state.applied_scope.query
                 == "Media item 03zzz"
-                and not screen._library_media_browse_controller.loading
+                and not screen._library_media_browse_controller.state.loading
             ),
             message="Zero-result filter did not apply.",
         )
-        assert len(screen._library_media_browse_controller.retained_items) == 0
+        assert len(screen._library_media_browse_controller.state.retained_items) == 0
         assert screen._media_state.reader_session.loaded_id is None
 
         # The MOUNTED Reader stops painting the filtered-out item and shows

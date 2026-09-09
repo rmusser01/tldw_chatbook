@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
 import contextlib
-from functools import partial
+from functools import cached_property, partial
 import inspect
 import json
 import os
@@ -84,8 +84,8 @@ from ..Console_Modules.status_row import (
 )
 
 # The Console controller classes themselves are deliberately NOT imported
-# here: `..Console_Modules.wiring.build_console_controllers` constructs every
-# one of them, so this module needs only the handful of helper symbols its own
+# here: `..Console_Modules.wiring` constructs them, with row actions cached
+# on first use, so this module needs only the handful of helper symbols its own
 # body actually uses. Tests that steer a controller patch it on the module
 # that defines it (`..Console_Modules.dictation` and friends) rather than
 # through this module's namespace -- see task-3023, which repointed them.
@@ -138,8 +138,11 @@ from ..Console_Modules.retrieval import (
     sanitize_console_library_rag_query as _sanitize_console_library_rag_query,
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
-from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules.submission import _ConsolePendingSend
+from ..Console_Modules.wiring import (
+    build_console_controllers,
+    build_console_row_actions_controller,
+)
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules.session import (
     _has_selected_text,
@@ -1359,6 +1362,8 @@ class ChatScreen(BaseAppScreen):
     #: same value — a warm revisit is promised the same settle window as a
     #: cold mount (task-31808 / Qodo #2449 review).
     CONSUMER_SETTLE_HEDGE_SECONDS = 0.15
+
+    _row_actions = cached_property(build_console_row_actions_controller)
 
     #: TASK-25812: the Console-owned rules split out of
     #: ``components/_agentic_terminal.tcss``. Unlike the library/settings

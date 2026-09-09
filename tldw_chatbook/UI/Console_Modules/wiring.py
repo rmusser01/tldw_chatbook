@@ -95,7 +95,6 @@ from .provider_selection import ConsoleProviderSelectionController
 from .commands import ConsoleCommandsController
 from .context_cost import ConsoleContextCostController
 from .submission import ConsoleSubmissionController
-from .row_actions import ConsoleRowActionsController
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
@@ -137,6 +136,7 @@ from .workspace import (
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Widgets.Console.console_voice_preview import VoicePreviewProjection
     from ..Screens.chat_screen import ChatScreen
+    from .row_actions import ConsoleRowActionsController
 
 __all__ = ["build_console_controllers"]
 
@@ -1066,43 +1066,20 @@ def build_console_submission_controller(screen: Any) -> None:
     )
 
 
-def build_console_controllers(
+def build_console_row_actions_controller(
     screen: "ChatScreen",
-    *,
-    rag_source_types_accessor: Callable[[], tuple[str, ...]],
-    rag_top_k_accessor: Callable[[], int],
-) -> None:
-    """Construct the Console screen's controllers and coordinators.
-
-    Assigns, in this order, `screen._image`, `screen._video`,
-    `screen._retrieval`, `screen._library_policy`, `screen._library_activity`,
-    `screen._skill`, `screen._workspace`, `screen._character`,
-    `screen._character_context`, `screen._fleet`,
-    `screen._session`, `screen._dictation`, `screen._hands_free`,
-    `screen._realtime`, `screen._message`, `screen._console_auto_speak`,
-    `screen._prompts`, `screen._agent`, `screen._terminal`, `screen._raw_cli`,
-    `screen._prompt_queue`, `screen._review_selection`, and
-    `screen._send_price`. The order is documentation, not a constraint:
-    every cross-controller dependency below is resolved at call time (see the
-    module docstring), so no controller reads a sibling that does not exist
-    yet.
-
-    `ChatScreen.__init__` calls this at exactly the point the first
-    construction used to occupy. That position matters: the ~250 attribute
-    assignments around it in `__init__` include names these lambdas read, and
-    none of these constructors reads mutable state off `screen` eagerly
-    (each stores its inputs and callables), so the call needs to sit where it
-    can see everything the pre-move constructions could.
+) -> "ConsoleRowActionsController":
+    """Build the cached row-action owner on first use, with late-bound ports.
 
     Args:
-        screen: The Console screen (`ChatScreen`) to wire. Mutated in place;
-            taken as a parameter rather than imported so this module has no
-            import cycle with `Screens/chat_screen.py`.
+        screen: Console screen supplying the existing action dependencies.
 
     Returns:
-        None. The controllers are reachable as attributes of `screen`.
+        The real row-action controller, cached by ChatScreen.
     """
-    screen._row_actions = ConsoleRowActionsController(
+    from .row_actions import ConsoleRowActionsController
+
+    return ConsoleRowActionsController(
         app_instance_accessor=lambda: screen.app_instance,
         _activate_workspace=lambda workspace_id: (
             screen._workspace.activate_workspace_id(workspace_id)
@@ -1150,6 +1127,43 @@ def build_console_controllers(
         ),
     )
 
+
+def build_console_controllers(
+    screen: "ChatScreen",
+    *,
+    rag_source_types_accessor: Callable[[], tuple[str, ...]],
+    rag_top_k_accessor: Callable[[], int],
+) -> None:
+    """Construct the Console screen's controllers and coordinators.
+
+    Assigns, in this order, `screen._image`, `screen._video`,
+    `screen._retrieval`, `screen._library_policy`, `screen._library_activity`,
+    `screen._skill`, `screen._workspace`, `screen._character`,
+    `screen._character_context`, `screen._fleet`,
+    `screen._session`, `screen._dictation`, `screen._hands_free`,
+    `screen._realtime`, `screen._message`, `screen._console_auto_speak`,
+    `screen._prompts`, `screen._agent`, `screen._terminal`, `screen._raw_cli`,
+    `screen._prompt_queue`, `screen._review_selection`, and
+    `screen._send_price`. The order is documentation, not a constraint:
+    every cross-controller dependency below is resolved at call time (see the
+    module docstring), so no controller reads a sibling that does not exist
+    yet. Row actions are separately cached on first use by ChatScreen.
+
+    `ChatScreen.__init__` calls this at exactly the point the first
+    construction used to occupy. That position matters: the ~250 attribute
+    assignments around it in `__init__` include names these lambdas read, and
+    none of these constructors reads mutable state off `screen` eagerly
+    (each stores its inputs and callables), so the call needs to sit where it
+    can see everything the pre-move constructions could.
+
+    Args:
+        screen: The Console screen (`ChatScreen`) to wire. Mutated in place;
+            taken as a parameter rather than imported so this module has no
+            import cycle with `Screens/chat_screen.py`.
+
+    Returns:
+        None. The controllers are reachable as attributes of `screen`.
+    """
     build_console_submission_controller(screen)
 
     screen._context_cost = ConsoleContextCostController(
