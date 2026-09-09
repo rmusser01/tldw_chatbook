@@ -425,7 +425,21 @@ TASK-32089-labelled commit: `_sync_library_canvas` gains an explicit
 **route-ownership guard** (sync only the canvas whose kind owns
 `_library_selected_row_id`) ahead of the `try`, and the blanket `except` is
 narrowed so a genuinely unexpected failure raises instead of being converted
-into a whole-screen recompose. Without the guard, residency silently doubles
+into a whole-screen recompose.
+
+*The dispatcher's OTHER known hazard is untouched by residency.* Whether
+`_sync_library_canvas` is handed a screen or a controller as its `screen`
+argument is decided by the caller; residency changes what the DOM query finds,
+not who calls it, so the two-receiver dimension recipe §3 earned is neither
+helped nor worsened here. Re-derived at this record rather than quoted from
+`canvas_sync.py`'s own comments (which name only the notes movers and the RAG
+kind): **seven** of the program's controllers forward a bare `self` to this
+dispatcher — conversations, ingest, media, notes, prompts, rag_search, skills —
+and **all seven reference `_library_selected_row_id`**, which is exactly why it,
+and not a DOM query, is the right predicate for the route-ownership guard. That
+guard must be written to read through whichever receiver it is given.
+
+Without the guard, residency silently doubles
 the sync storm onto invisible canvases.
 
 ### Decision
