@@ -4030,6 +4030,13 @@ class LibraryNotesController:
             self._library_notes_browse_return_receipt = (
                 self._capture_library_notes_browse_return_receipt()
             )
+        # task-32142 AC#4: a delete-undo receipt is scoped to the Database
+        # Notes list session -- it survived a whole Add-from-files/Folder-
+        # files journey in the critique, stale by the time the user got
+        # back to it (its Undo target may no longer even be the visible
+        # list). Leaving the list for another workflow dismisses it, same
+        # as pressing Dismiss would.
+        self._library_note_delete_receipt = None
         self._evacuate_library_notes_authority_focus("database")
         self._supersede_library_notes_navigation()
         # Database Notes and Folder Files are independent retained authorities.
@@ -4417,6 +4424,10 @@ class LibraryNotesController:
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         self._supersede_library_notes_navigation()
+        # task-32142 AC#4: see the matching comment in
+        # ``_show_library_file_notes`` -- Add from files is the other
+        # workflow the critique caught a stale delete receipt surviving.
+        self._library_note_delete_receipt = None
         self._library_notes_lasting_origin = "setup"
         self._library_notes_view = "lasting_add"
         self._apply_library_notes_footer_context()

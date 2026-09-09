@@ -215,7 +215,20 @@ def test_editor_state_builds_fields_and_meta_line():
     assert state.keywords_text == "retro, q3"
     assert state.version == 2
     assert state.has_note is True
-    assert "Created 6d" in state.meta_line and "Modified 3m" in state.meta_line
+    # task-32142 AC#3: the relative age alone decays into an unverifiable
+    # guess -- an absolute local timestamp now sits beside it. Computed the
+    # same way the source does (astimezone()), so this holds regardless of
+    # the machine's local timezone.
+    created_absolute = (
+        datetime.fromisoformat(detail["created_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
+    )
+    modified_absolute = (
+        datetime.fromisoformat(detail["last_modified"])
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M")
+    )
+    assert f"Created {created_absolute} · 6d ago" in state.meta_line
+    assert f"Modified {modified_absolute} · 3m ago" in state.meta_line
     assert "v2" in state.meta_line
 
 

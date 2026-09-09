@@ -1375,6 +1375,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             yield TextArea(content, id="library-note-body")
 
         with VerticalScroll(id="library-note-preview-region", can_focus=True):
+            # task-32142 AC#1: the shared heading row's title Static (above)
+            # sits in a crowded strip with the mode buttons and Back --
+            # easy to miss, and NOT part of the scrolling content, so it
+            # never reads as the document's own title the way Edit's Title
+            # field does. This one renders INSIDE the preview, immediately
+            # above the rendered body, like a document heading.
+            yield Static(
+                ellipsize_note_title_cells(title, 72),
+                id="library-note-preview-body-title",
+                classes="destination-section",
+                markup=False,
+            )
             yield Markdown(
                 content,
                 id="library-note-preview-body",
@@ -1740,6 +1752,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-editor-title",
             "#library-note-preview-title",
             "#library-note-context-title",
+            "#library-note-preview-body-title",
         ):
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != title:
@@ -1806,7 +1819,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             bulk_status.update(bulk_copy)
         self.query_one("#library-note-editor-region").display = show_editor
         self.query_one("#library-note-preview-region").display = show_preview
-        self.query_one("#library-note-context-status").display = show_context
+        # task-32142 AC#2: this Static repeats the identical text
+        # ``#library-note-status`` (the header-second-row status, visible
+        # in every mode) already shows -- Info printed "Saved" twice, once
+        # in the header and once again immediately above the panel.
+        self.query_one("#library-note-context-status").display = False
         self.query_one("#library-note-context-region").display = show_context
         self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
         self.query_one("#library-note-preview", Button).set_class(

@@ -312,16 +312,16 @@ here."
 
 | Control | What it does |
 |---|---|
-| "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). |
+| "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
-| **Preview** | Shows the body as rendered Markdown without replacing your draft. |
+| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
 | **Info** | Shows Properties (including comma-separated keywords and note dates/version), Reuse & Export, and Danger sections. |
-| Status line | Shows the word count and autosave state: "N words · saved", "saving…", "changed elsewhere", or "save failed". Created/Modified/version details are under Info → Properties. |
+| Status line | Shows the word count and autosave state: "N words · saved", "saving…", "changed elsewhere", or "save failed". Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age (e.g. "Created 2026-09-08 21:14 · 3m ago"). "Saved" appears once per view, not repeated in Info. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
 | **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
-| **Delete** (Info → Danger) | Asks inline first: "Delete this note? Undo will be available in the Notes list." Confirm with "Delete" or back out with "Cancel". A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
+| **Delete** (Info → Danger) | Asks inline, in place — Info stays open, the prompt renders where Delete was pressed: "Delete this note? Undo will be available in the Notes list." Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
 Opening a note shows "Loading note…" only while the note is being read. If a
 read takes longer than about three seconds the editor stops waiting and shows
@@ -364,8 +364,15 @@ to leave. A successful return restores the Database/Files source, filter,
 sort, selected note or placement, Notes-list scroll, Library-rail scroll, and
 semantic keyboard focus instead of starting over at the first row.
 
+If a save is blocked — most commonly a title that starts or ends with a
+space — Escape does not leave silently: it notifies "Can't leave yet — fix
+the title or press Discard new note." so there is always a visible way
+forward, either fixing the field or discarding a still-new note.
+
 After a confirmed delete, the receipt stays in the Notes list until you
-choose **Undo**, choose **Dismiss**, or complete a newer note deletion.
+choose **Undo**, choose **Dismiss**, complete a newer note deletion, or leave
+the list for **Add from files** or **Folder files** — either of those also
+dismisses a still-open receipt, since it is scoped to this list session.
 **Undo** restores that exact database note and immediately returns its row
 and the Notes rail count. **Dismiss** removes only the receipt; the note
 remains deleted. Notes do not currently expose a separate Trash browser, so
@@ -374,9 +381,12 @@ the receipt is the in-Library recovery action.
 ### New note view
 
 "Blank note" drops you straight into the editor with an empty title (shown
-as an "Untitled" placeholder — just start typing) and an empty body. If you
-leave again via "‹ Back to list" without typing anything, the blank note is
-quietly discarded rather than left behind as a stray "Untitled" row.
+as an "Untitled" placeholder — just start typing) and an empty body. Its
+status reads "Draft — not saved yet" until you type the first character or
+press **Save**, rather than "Saved" before anything you have written is
+actually kept. If you leave again via "‹ Back to list" without typing
+anything, the blank note is quietly discarded rather than left behind as a
+stray "Untitled" row.
 Pressing "Save" keeps it, and so does typing anything **that is not only
 whitespace** — a title of nothing but spaces, with an empty body and no
 keywords, still counts as blank and is discarded on the way out. That includes naming it "Untitled"
@@ -537,8 +547,8 @@ automatic-sync setting.
 
 | Key | Action |
 |---|---|
-| **Ctrl+N** | New note |
-| **/** | Focus the note filter ("find note") |
+| **Ctrl+N** | New note. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** still works too, but the footer advertises Ctrl+N in both places now. |
+| **/** | Focus the note filter ("find note"). Pressed again while the filter already has focus, it re-arms (selects the current text) instead of typing a literal "/" — the same behaviour the rail search box uses. |
 | **Escape** | Focus the rail |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
 | ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
@@ -693,3 +703,18 @@ New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
 rows with a visible cursor, the footer's "enter create note" follows the
 focused control, and Tab no longer leaves the Library screen for the
 navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*
+
+*Verified against fix/library-notes-editor-keys — 2026-09-09 (task-32131: `/`
+no longer types itself into the filter it focuses, and a second `/` while the
+filter already has focus re-arms instead of typing a literal slash.
+task-32132: Delete's confirmation now renders in place — Info stays open, Tab
+is trapped between Cancel and Delete, and the footer names the focused
+button. task-32133: a refused Escape now notifies "Can't leave yet — fix the
+title or press Discard new note.", and a fresh blank note reads "Draft — not
+saved yet" instead of "Saved" until the first save lands. task-32138: ctrl+n
+now works on the Library landing too (the footer advertises it there instead
+of a bare `n`). task-32139: Edit, Preview, and Info share one back-cue
+wording, sized by terminal width. task-32142: Preview shows the title above
+the body, Info shows "Saved" once and an absolute timestamp beside each
+relative age, and a delete receipt no longer survives into Add from files or
+Folder files.)*

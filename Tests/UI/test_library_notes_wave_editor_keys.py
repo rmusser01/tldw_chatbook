@@ -357,3 +357,156 @@ async def test_back_cue_reads_back_to_list_when_compact():
         assert str(edit_back.label) == "‹ Back to list", edit_back.label
 
 
+# --- task-32142: Preview title, one Saved, absolute timestamp, receipts ----
+
+
+@pytest.mark.asyncio
+async def test_preview_shows_the_title_above_the_rendered_body():
+    """AC#1: Preview must show the note's own title, not just the body."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        screen.query_one("#library-note-preview", Button).press()
+        await pilot.pause()
+
+        preview_region = screen.query_one("#library-note-preview-region")
+        title = screen.query_one("#library-note-preview-body-title", Static)
+        body = screen.query_one("#library-note-preview-body")
+        assert str(title.renderable) == "Research Note"
+        assert title in preview_region.children
+        assert list(preview_region.children).index(
+            title
+        ) < list(preview_region.children).index(body), (
+            "The title must render above the body, inside Preview's own "
+            "scrolling region"
+        )
+
+
+@pytest.mark.asyncio
+async def test_info_shows_saved_only_once():
+    """AC#2: Info must not print the same status text twice."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        screen.query_one("#library-note-context", Button).press()
+        await pilot.pause()
+
+        status_static = screen.query_one("#library-note-status", Static)
+        context_status_static = screen.query_one(
+            "#library-note-context-status", Static
+        )
+        assert str(status_static.renderable) == "Saved"
+        assert status_static.display is True
+        assert context_status_static.display is False, (
+            "Info showed 'Saved' a second time, right above the panel"
+        )
+
+
+@pytest.mark.asyncio
+async def test_info_properties_show_an_absolute_timestamp_beside_the_relative_one():
+    """AC#3: the relative age alone ("Created 3m") decays into a guess."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[
+            {
+                "title": "Research Note",
+                "id": "note-1",
+                "created_at": "2026-07-01T10:00:00+00:00",
+                "last_modified": "2026-07-07T11:57:00+00:00",
+            }
+        ],
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        screen.query_one("#library-note-context", Button).press()
+        await pilot.pause()
+
+        meta = str(screen.query_one("#library-note-context-meta", Static).renderable)
+        assert "Created" in meta
+        # An absolute local timestamp ("YYYY-MM-DD HH:MM"), not just a bare
+        # relative age -- and never the raw ISO string reaching the user.
+        import re
+
+        assert re.search(r"Created \d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+ ago", meta), (
+            f"No absolute timestamp beside the relative age: {meta!r}"
+        )
+        assert "T" not in meta.split("Created ", 1)[1].split(" · ")[0], (
+            f"A raw ISO timestamp leaked into the meta line: {meta!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_receipt_is_dismissed_leaving_the_list_for_add_from_files():
+    """AC#4: a stale delete receipt must not survive into another workflow."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+
+        screen._notes_state.delete_receipt = LibraryNoteDeleteReceipt(
+            note_id="ghost-1", title="Deleted note", expected_version=1
+        )
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-notes-delete-receipt")
+
+        screen.query_one("#library-notes-add-from-files", Button).press()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.view == "lasting_add",
+            message="Add from files never took over the view.",
+        )
+        assert screen._notes_state.delete_receipt is None, (
+            "The delete receipt survived leaving the list for Add from files"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_receipt_is_dismissed_leaving_the_list_for_folder_files():
+    """AC#4, the other named workflow: Folder files."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+
+        screen._notes_state.delete_receipt = LibraryNoteDeleteReceipt(
+            note_id="ghost-1", title="Deleted note", expected_version=1
+        )
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-notes-delete-receipt")
+
+        screen.query_one("#library-notes-source-files", Button).press()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._file_notes_active(),
+            message="Folder files never took over the view.",
+        )
+        assert screen._notes_state.delete_receipt is None, (
+            "The delete receipt survived leaving the list for Folder files"
+        )
