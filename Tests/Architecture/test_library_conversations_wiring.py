@@ -59,6 +59,8 @@ _READER_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
 #: owns and uses them) but are excluded from the delegation check below.
 _READER_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        # TASK-31932 step 141: the live Screen call reads its current owner.
+        "_conversation_reader_list_summary",
         "_bootstrap_library_conversation_reader",
         "_conversation_reader_bootstrap_is_current",
         "_conversation_reader_record",

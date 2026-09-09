@@ -15,6 +15,66 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
     ("caller", "owner", "method"),
     (
         (
+            "_flush_library_note_save",
+            "_notes_controller",
+            "_read_library_note_editor_fields",
+        ),
+        (
+            "_transition_library_notes_presentation",
+            "_notes_controller",
+            "_sync_library_notes_source_controls",
+        ),
+        (
+            "_return_to_library_database_notes",
+            "_notes_controller",
+            "_sync_library_notes_source_controls",
+        ),
+        (
+            "_library_note_conflict_snapshot",
+            "_notes_controller",
+            "_library_note_editor_state",
+        ),
+        (
+            "_library_note_preview_snapshot",
+            "_notes_controller",
+            "_library_note_editor_state",
+        ),
+        (
+            "_flush_library_note_save",
+            "_notes_controller",
+            "_gc_pending_blank_note",
+        ),
+        (
+            "_create_library_note",
+            "_notes_controller",
+            "_reconcile_library_notes_list_canvas",
+        ),
+        (
+            "_delete_library_note_claimed",
+            "_notes_controller",
+            "_notify_library_note_delete_warning",
+        ),
+        (
+            "compose_content",
+            "_conversation_reader_controller",
+            "_conversation_reader_list_summary",
+        ),
+        (
+            "_refresh_library_media_detail",
+            "_media_controller",
+            "_schedule_library_media_image_preview",
+        ),
+        (
+            "handle_library_media_trash_back",
+            "_media_controller",
+            "_cancel_library_media_trash_delete_confirmation",
+        ),
+        (
+            "_run_library_export_worker",
+            "_export_controller",
+            "_marshal_library_export_success",
+        ),
+        (
             "_delete_library_note_claimed",
             "_notes_controller",
             "_remove_library_note_source_record",
@@ -51,7 +111,10 @@ def test_retired_private_calls_read_the_current_controller(
         owner: Current controller attribute that owns the implementation.
         method: Private implementation whose Screen wrapper is retired.
     """
-    tree = ast.parse(dedent(inspect.getsource(getattr(LibraryScreen, caller))))
+    implementation = getattr(LibraryScreen, caller)
+    if isinstance(implementation, property):
+        implementation = implementation.fget
+    tree = ast.parse(dedent(inspect.getsource(implementation)))
     calls = [
         node.func
         for node in ast.walk(tree)

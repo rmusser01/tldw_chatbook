@@ -450,6 +450,9 @@ _MEDIA_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: 37/140 = 26.43%.
 _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        # TASK-31932 step 141: live Screen calls read their current owner.
+        "_schedule_library_media_image_preview",
+        "_cancel_library_media_trash_delete_confirmation",
         "_patch_local_media_record",
         "_library_media_exact_return_candidate",
         "_library_media_semantic_row_is_current",

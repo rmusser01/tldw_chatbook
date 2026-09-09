@@ -3466,3 +3466,100 @@ Source blob `44481d578c2bd29a3703553c8f21a6ea1f0d11f8` stayed unchanged througho
 Scoped Ruff and whitespace pass; two inherited whole-file formatting differences
 outside the edited ranges are unchanged. Both resource-repair runs are terminal;
 new dev reconciliation can proceed without altering a running test's sources.
+
+### Notes-list rebase and current qualification scope
+
+Saved the verified resource fixes as `14b8ea3bb8`, then rebased all 244 commits
+onto dev `4d921397b9680d580cb2957d669f5b7990bf8785`. Current rebased checkpoint:
+`c4415548de4fd498bffa43a4f827ac497e357593`. The executor test blob remains exactly
+`44481d578c2bd29a3703553c8f21a6ea1f0d11f8`; the import-flow test adds only the
+incoming removal of the retired tree Sort control to its two verified finalizers.
+The 24-file union retains both lessons entries, bracket-title/whitespace assertions,
+typed late-bound controller ports, exactly-once gated Undo reconciliation, and
+layout-before-kwargs while preserving ADR-141 follow-up ownership. No commit was
+skipped and the unrelated untracked plan is preserved.
+
+The unchanged Screen guard now fails at 31,712 lines / 1,210 methods, versus
+31,689 / 1,213. Cap run: one failed, four passed, 0.77s
+(`/private/tmp/pr2427-list-rebase-caps-red.log`). Step 141 records eight audited
+redundant-wrapper removals and nine direct current-owner calls to pay down 24
+lines without dropping incoming lifecycle code or raising limits. Independent
+integration review and that regression-first repair are in progress.
+
+Complete adaptive-reader-state and Notes-tree-state tests pass 400 cases, two
+warnings, in 12.69s (`/private/tmp/pr2427-notes-list-state.log`). Four isolated
+widget-test sync calls still omit the new required `pane_width` input; step 140
+limits their migration to the existing constructor/current width contract, with
+all geometry, identity and focus assertions retained. The remaining complete
+Notes list/folder-navigation/rename/scoped-sync/canvas-sync/import-flow/shell/
+reader/residency and affected non-Notes wrapper-caller files still require stable
+source qualification. Published `0b5ee22306` is not yet updated with this rebase.
+
+Steps 140–144 follow-up: the four widget sync calls now pass their existing
+`pane_width`; complete Notes/import canvas files pass 68 tests (two warnings,
+16.71s), preserving geometry, input identity and focus assertions. Logs:
+`/private/tmp/pr2427-pane-width-{red,green}.log`.
+
+Eight audited wrappers (step 141) and two more (step 143) were retired in favor
+of their current existing controllers. Exact dispatch/inventory RED controls and
+the real threaded export-success control precede the change. Complete affected
+architecture/wiring/assembly/Screen guards and success control pass 76 tests,
+three warnings, in 2.12s (`/private/tmp/pr2427-two-wrappers-green.log`). Screen
+size is 31,688 lines / 1,200 methods: the line cap remains 31,689 and the earned
+method cap is tightened to 1,200. Independent receiver/AST review is clear.
+
+Step 142 reproduced three stale-visit failures at the final slice, filter and
+locator awaits, with the current-visit control passing. Six guard lines reuse
+the existing captured-generation predicate after those awaits. The first complete
+wave-list run passed 25 and failed two newly incoming layout fakes that still
+used a flat preferences port; that controller receiver already existed before
+the wrapper changes. Updating only the fake's owner nesting preserves all width
+assertions. Final complete native wave-list run: 27 passed, three warnings, 7.35s;
+six final standard descriptors and no SQLite retention. Log:
+`/private/tmp/pr2427-plan142-wave-list-native-green.log`; receipt:
+`$TMPDIR/pr2427-plan142-wave-list.lKZpo4/fd_identity.jsonl`. Independent guard
+and fake review is clear; original RED evidence remains recorded.
+
+Step 144 shortens only the Notes controller's historical module docstring:
+5,274 lines under the unchanged 5,276 cap. Executable AST, all bytes from imports
+onward, and the live contract section are identical. Independent documentation
+review is clear. Complete Notes wiring/module-cap run passes 61 and fails only
+the separate import-controller cap (`/private/tmp/pr2427-notes-doc-paydown.log`).
+That controller remains unchanged at 647/587; its entire docstrings total only
+53 lines, so a documentation-only repair cannot recover 60 lines. The proposed
+bounded-preview projection split requires user design approval and the written
+spec/ADR review before implementation; it is not a waived merge gate.
+
+The remaining eight Notes UI files and four non-Notes wrapper-caller files are
+qualifying in three source-frozen native cohorts. Fresh preflight, final-head
+publication/review/checks and protected merge are still pending. None of these
+running checks is represented as a pass.
+
+The four non-Notes caller files are terminal: 175 passed, three warnings, in
+218.96s (Conversation Reader 52, image preview 25, Media Trash 92, export 6).
+Final native inventory has only the three process baseline descriptors, zero
+added descriptors, no SQLite/locks and no observer errors. Log:
+`/private/tmp/pr2427-four-callers-native.log`; receipt:
+`$TMPDIR/pr2427-four-callers-native.IumOp5/fd_identity.jsonl`.
+Fresh preflight passes all seven derived-artifact checks and 3,734 unique task
+IDs (`/private/tmp/pr2427-list-final-preflight.log`). Scoped Ruff passes for
+the new lifecycle, dispatch, export, Notes-canvas and documentation changes.
+
+The folder-navigation/rename/scoped-sync/canvas-defect cohort finishes 149
+passed / three failed, three warnings, 137.66s. Two filter-clear fake variants
+lack the current settled-focus queue collaborator. The mounted topology Back
+case checks exact scroll before its queued restoration completes; its exact
+receipt offset remains the required oracle. Native final inventory also retains
+24 SQLite handles from two uniquely test-owned databases, `screen-status.db`
+and `mounted-folder-authority.db`, whose thread-local close does not retire
+worker-thread handles. Step 145 scopes current-collaborator/readiness test
+repairs and exact-owner finalization, with no production/global cleanup.
+Original evidence: `/private/tmp/pr2427-plan142-notes-cohort-native.log` and
+`$TMPDIR/pr2427-plan142-notes-cohort.CHLQEr/fd_identity.jsonl`.
+
+The separate shell/import-flow/Notes-reader/residency cohort remains running;
+its first failures are in the custom-preference width matrix. These are not
+classified or waived before terminal traces and diagnosis. At the current
+published head, all 54 GitHub review threads are resolved (no further page),
+but this does not substitute for fresh review/checks after publishing the
+rebased checkpoint. Protected merge remains blocked.

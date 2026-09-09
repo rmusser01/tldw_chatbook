@@ -312,9 +312,15 @@ def test_the_four_member_list_entry_focus_family_stays_screen_owned() -> None:
 #: + 4 ``action_*``) are exempt from the census outright; SS4's third member,
 #: ``on_<message>`` NAME dispatch, contributes ZERO for notes and
 #: ``test_no_notes_handler_is_name_dispatched_by_textual`` keeps that proven.
-#: Original 26 plus TASK-31932 steps 68/70/73/76/137: 39 of 185 = 21.08%.
+#: Original 26 plus TASK-31932 steps 68/70/73/76/137/141/143: 45 of 185 = 24.32%.
 _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     (
+        "_read_library_note_editor_fields",
+        "_sync_library_notes_source_controls",
+        "_library_note_editor_state",
+        "_gc_pending_blank_note",
+        "_reconcile_library_notes_list_canvas",
+        "_notify_library_note_delete_warning",
         "_remove_library_note_source_record",
         "_append_library_note_source_record",
         "_focus_library_note_validation_field",

@@ -108,6 +108,8 @@ _EXPORT_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
 #: `_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 9).
 _EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        # TASK-31932 step 141: the worker reads the current export owner.
+        "_marshal_library_export_success",
         "_library_export_is_server_mode",
     }
 )
