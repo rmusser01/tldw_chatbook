@@ -5846,3 +5846,17 @@ Locate the failing primitive and test it independently before changing product
 code, weakening a regression, deleting files, or attributing the error solely to
 the sandbox. Record these cases as unverified environment prerequisites; neither
 the passing neighbors nor an escalated rerun that also fails certifies them.
+
+## Typed tool outcomes must survive the complete native route (TASK-32117, 2026-09-09)
+
+**Incident.** Native goal dispatch had typed script results and final MCP authority checks, with 378 targeted tests passing. Independent review drove the real controller through a denied script confirmation and still received `DONE`: the bridge returned an untyped failure and the model supplied another final answer. MCP's existing provider/worker wrappers likewise stringified the new authority exceptions. A second real-resolution probe disabled goals during provider readiness and found an accepted generation despite zero model/tool dispatch.
+
+**What worked.** Keep typed refusal/unknown-effect metadata through the actual bridge, provider and worker wrappers, and check live enablement at durable acceptance. The regression tests drive those routes and count provider/tool calls and consumed generations, including the adjacent skill-install denial. MCP timeout coverage holds the actual client-call coroutine open and proves ownership remains held until its local cleanup settles; it does not claim cancellation proves a remote command stopped.
+
+**Rule.** A helper returning the right type or raising the right exception is not evidence that an outer runtime acts on it. Verify the decision after every wrapper and asynchronous wait that can erase the type or stale the policy, with effect counts and accounting as well as the final status.
+
+## A fresh old success can still be superseded (TASK-32118, 2026-09-09)
+
+**Incident.** Goal completion initially searched retained evidence for any passing, current observation of a selected verifier. A later failed check could be skipped when a subsequent model report referenced the old success, even though the verifier and declared input bytes were unchanged. Actual native regressions reproduced this across three iterations and within one tool batch.
+
+**What worked.** Select the latest runtime-owned observation for each launch-bound verifier first, then test its result, freshness and report reference. Preserve native observation order through durable storage. A valid evidence ID and an unchanged artifact do not make an earlier success authoritative over newer contradictory evidence.

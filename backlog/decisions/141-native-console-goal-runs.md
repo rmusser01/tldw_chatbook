@@ -44,7 +44,10 @@ requirement to build CLI support or postpone verification first.
    objective. Bind objective checks to a launch-approved verifier and input
    scope. Record typed process outcomes before rendering tool text;
    `ToolResult.ok` does not mean exit zero. Invalidate checks after artifact or
-   verifier changes, including changes before human review.
+   verifier changes, including changes before human review. The immutable
+   `human_review_required` launch flag defaults to true. Explicit false requires
+   at least one selected verifier and makes those checks sufficient for objective
+   completion; neither prose nor the model can infer or alter this choice.
 5. Snapshot provider, resource bindings, criteria and finite policy at launch.
    Revalidate authority on each iteration and after waits. Tool allowlists narrow
    existing permissions; they do not grant them. Enforce the goal's scope on
