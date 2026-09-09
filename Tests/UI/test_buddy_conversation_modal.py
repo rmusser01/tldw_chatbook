@@ -150,6 +150,67 @@ async def test_buddy_rendered_typed_head_spends_one_visible_allowance(kind):
 
 
 @pytest.mark.asyncio
+async def test_completed_buddy_release_fences_inflight_expiry_snapshot(monkeypatch):
+    import threading
+
+    from Tests.UI.test_console_headless_approval import _DecisionClock
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+
+    app = Harness()
+    controller = app.controller
+    clock = _DecisionClock()
+    controller.decision_monotonic_clock = clock
+    controller.mcp_approval_timeout_seconds = lambda: 5.0
+    monkeypatch.setattr(controller._interrupt_host, "POLL_SECONDS", 60)
+    async with app.run_test(size=(100, 36)) as pilot:
+        modal = open_buddy_conversation(
+            app, BuddyBinding.for_session(app.target), allow_voice=False
+        )
+        await pilot.pause()
+        pending = asyncio.create_task(
+            asyncio.to_thread(_request_retained_round, app, "approval", app.target.id)
+        )
+        captured, release = threading.Event(), threading.Event()
+        original = controller._interrupt_host.rendered_decision_ids
+
+        def snapshot(session_id):
+            result = original(session_id)
+            if threading.current_thread() is refresher:
+                captured.set()
+                assert release.wait(3), "test failed to release expiry snapshot"
+            return result
+
+        refresher = threading.Thread(target=controller.expire_pending_decisions)
+        try:
+            await until(lambda: controller.pending_decision_projection(app.target.id))
+            modal.refresh_projection()
+            head = controller.pending_decision_projection(app.target.id)
+            monkeypatch.setattr(
+                controller._interrupt_host, "rendered_decision_ids", snapshot
+            )
+            clock.advance(1)
+            refresher.start()
+            await until(captured.is_set)
+            modal.on_screen_suspend()
+            state = controller._pending_approval_rounds[head.decision_id]
+            assert state["active_since"] is None
+            assert state["remaining_active_seconds"] == 4.0
+            release.set()
+            await asyncio.to_thread(refresher.join, 3)
+            assert not refresher.is_alive()
+            assert state["active_since"] is None
+            assert app.target.id not in controller._answerable_decision_by_session
+            clock.advance(600)
+            assert controller.expire_pending_decisions() == ()
+            assert state["remaining_active_seconds"] == 4.0
+            assert not pending.done()
+        finally:
+            release.set()
+            controller._cancel_pending_decisions_for_session(app.target.id)
+            await asyncio.wait_for(pending, 3)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("later_kind", ("skill_install", "skill_script"))
 async def test_buddy_typed_mixed_head_blocks_later_or_other_owner_resolution(
     later_kind,

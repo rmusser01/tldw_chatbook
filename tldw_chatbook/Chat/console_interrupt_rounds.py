@@ -219,6 +219,7 @@ class InterruptRoundHost:
         # None preserves the setter-based contract for non-Textual callers.
         # A reused screen explicitly reports suspend/resume, including modals.
         self.view_visible: bool | None = None
+        self.decision_view_revision = 0
         self._decision_views: dict[
             object,
             tuple[
@@ -289,6 +290,7 @@ class InterruptRoundHost:
         )
         with self.lock:
             previous = self._decision_views.get(owner)
+            self.decision_view_revision += 1
             if session_id is None:
                 self._decision_views.pop(owner, None)
             else:
@@ -358,18 +360,26 @@ class InterruptRoundHost:
             return
         with self.lock:
             pending = []
+            typed_pending = []
             for kind, states in self.registries.items():
                 for state in states.values():
-                    if (
-                        state.get("decision_type")
-                        or state.get("attention_announced")
-                        or state.get("revoked")
-                    ):
+                    if state.get("decision_type"):
+                        typed_pending.append(
+                            (
+                                kind,
+                                state.get("session_id", ""),
+                                state.get("decision_id", ""),
+                            )
+                        )
+                        continue
+                    if state.get("attention_announced") or state.get("revoked"):
                         continue
                     state["attention_announced"] = True
                     pending.append((state.get("session_id", ""), kind))
         for session_id, kind in pending:
             announce(session_id, kind)
+        for kind, session_id, decision_id in typed_pending:
+            self._seams._announce_hidden_decision(kind, session_id, decision_id)
 
     # -- setter / app access (always late-bound) -----------------------
 

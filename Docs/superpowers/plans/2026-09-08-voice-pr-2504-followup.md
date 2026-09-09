@@ -269,6 +269,22 @@ Mechanical lint completion removes only the now-unused `use_human_input_wait`
 import and the unused result binding of the unchanged `host.run_round` call;
 existing delayed-import E402 debt remains outside this integration scope.
 
+Post-freeze spec review correction (before implementation): fence a worker's
+rendered-claim snapshot against completed Console/Buddy claim changes before
+either pausing or starting the existing typed allowance. Prove the exact
+expiry/suspend interleaving with a deterministic barrier, keeping callbacks
+outside the shared non-reentrant lock and introducing no second ledger. Restore
+host-scan first delivery and retry for a typed decision initially rendered then
+hidden: dispatch exact live stable IDs through the existing sanitized announcer
+outside the lock; retain question/worktree behavior. Scope is controller/host,
+focused Buddy/headless tests and these notes. Existing ADR ownership is unchanged.
+The deterministic expiry/suspend RED observed `active_since=101.0` after release;
+the visible-to-hidden notice RED observed zero delivery attempts for all three
+kinds, including retry cases. Shared claim revision fencing and exact typed scan
+dispatch pass the final 21-case focused gate (3 existing dependency warnings,
+9.03s), with scoped lint/format/diff checks. Startup diagnostics remain root-owned;
+this gate is not a boot census, native run or full-suite result.
+
 Policy review disposition before fixture adaptation: ADR-094 already retains
 approval/install/script decisions through no-view runtime domain routers; the
 incoming blanket None-setter/immediate-refusal assumption is obsolete for those

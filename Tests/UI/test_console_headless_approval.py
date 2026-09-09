@@ -1556,6 +1556,66 @@ async def test_a_round_armed_with_a_view_attached_does_not_double_announce():
     await _leave(runtime)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ("approval", "skill_install", "skill_script"))
+@pytest.mark.parametrize("fail_first", (False, True))
+async def test_visible_typed_round_gets_first_hidden_scan_notice_and_retry(
+    kind, fail_first
+):
+    runtime, controller, _store, session, app = _detached_rig(timeout_seconds=60)
+    controller.skill_install_confirm_timeout_seconds = lambda: 60
+    controller.skill_script_confirm_timeout_seconds = lambda: 60
+    await _leave(runtime)
+    view = _View({"set_pending_decision": lambda projection: True})
+    generation = runtime.attach_view(view)
+    assert runtime.finish_view_reconciliation(view, generation)
+    controller.on_console_view_visibility_changed(True)
+    arm = {
+        "approval": lambda owner, sid: _arm(owner, sid, call=_risk_row()),
+        "skill_install": _arm_install,
+        "skill_script": _arm_script,
+    }[kind]
+    worker, _box = arm(controller, session.id)
+    try:
+        assert await _settle(
+            lambda: session.id in controller._answerable_decision_by_session
+        )
+        decision_id = controller.pending_decision_projection(session.id).decision_id
+        assert app.notifications == []
+        assert controller._announced_pending_decision_ids == set()
+        delivered = app.notify
+        attempts = 0
+
+        def notify(message, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if fail_first and attempts == 1:
+                raise RuntimeError("injected delivery failure")
+            delivered(message, **kwargs)
+
+        app.notify = notify
+        controller.on_console_view_visibility_changed(False)
+        controller.set_answerable_decision(session.id, None)
+        assert attempts == 1
+        if fail_first:
+            assert app.notifications == []
+            assert controller._announced_pending_decision_ids == set()
+            controller._interrupt_host.announce_hidden_decisions()
+        assert len(app.notifications) == 1
+        assert controller._announced_pending_decision_ids == {decision_id}
+        message = app.notifications[0][0]
+        assert "Return to Console" in message
+        assert session.title not in message
+        assert decision_id not in message
+        controller._interrupt_host.announce_hidden_decisions()
+        assert attempts == (2 if fail_first else 1)
+    finally:
+        controller._cancel_pending_decisions_for_session(session.id)
+        worker.join(timeout=3)
+        assert not worker.is_alive()
+        await _leave(runtime)
+
+
 # ---------------------------------------------------------------------------
 # Attach mounts the card (plan Task 5 bullet 3)
 # ---------------------------------------------------------------------------

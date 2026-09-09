@@ -13441,13 +13441,23 @@ class ConsoleChatController:
         return event if isinstance(event, threading.Event) else None
 
     def _pause_answerable_decision(
-        self, session_id: str, decision_id: str, *, now: float
+        self,
+        session_id: str,
+        decision_id: str,
+        *,
+        now: float,
+        claim_revision: int | None = None,
     ) -> bool:
         """Pause one exact head, terminally timing it out at zero."""
         expired = False
 
         def _pause(state: dict[str, Any]) -> threading.Event | None:
             nonlocal expired
+            if (
+                claim_revision is not None
+                and claim_revision != self._interrupt_host.decision_view_revision
+            ):
+                return None
             if self._answerable_decision_by_session.get(session_id) != decision_id:
                 return None
             self._pause_pending_decision_state_locked(state, now=now)
@@ -13463,6 +13473,11 @@ class ConsoleChatController:
             event.set()
         if event is None:
             with self._approval_state_lock:
+                if (
+                    claim_revision is not None
+                    and claim_revision != self._interrupt_host.decision_view_revision
+                ):
+                    return expired
                 if self._answerable_decision_by_session.get(session_id) == decision_id:
                     self._answerable_decision_by_session.pop(session_id, None)
         return expired
@@ -13572,6 +13587,7 @@ class ConsoleChatController:
         with self._approval_state_lock:
             answerable = tuple(self._answerable_decision_by_session.items())
             self._console_answerable_decision_by_session.clear()
+            self._interrupt_host.decision_view_revision += 1
         for answerable_session_id, decision_id in answerable:
             self._refresh_answerable_decision(answerable_session_id)
         session_id = self.store.active_session_id
@@ -13636,6 +13652,7 @@ class ConsoleChatController:
     def set_answerable_decision(self, session_id: str, decision_id: str | None) -> bool:
         """Update Console's claim without erasing another visible owner's claim."""
         with self._approval_state_lock:
+            self._interrupt_host.decision_view_revision += 1
             self._console_answerable_decision_by_session.pop(session_id, None)
             if decision_id is not None and session_id == self.store.active_session_id:
                 self._console_answerable_decision_by_session[session_id] = decision_id
@@ -13646,6 +13663,8 @@ class ConsoleChatController:
 
     def _refresh_answerable_decision(self, session_id: str) -> str | None:
         """Reconcile rendered Console/Buddy claims against one typed FIFO clock."""
+        with self._approval_state_lock:
+            claim_revision = self._interrupt_host.decision_view_revision
         rendered = self._interrupt_host.rendered_decision_ids(session_id)
         projection = self.pending_decision_projection(session_id)
         with self._approval_state_lock:
@@ -13665,7 +13684,9 @@ class ConsoleChatController:
         if current_id == decision_id:
             return current_id
         if current_id is not None:
-            self._pause_answerable_decision(session_id, current_id, now=now)
+            self._pause_answerable_decision(
+                session_id, current_id, now=now, claim_revision=claim_revision
+            )
         if decision_id is None:
             return None
 
@@ -13673,6 +13694,8 @@ class ConsoleChatController:
 
         def _start(state: dict[str, Any]) -> None:
             nonlocal started
+            if claim_revision != self._interrupt_host.decision_view_revision:
+                return
             if state.get("settled"):
                 return
             if state.get("session_id") != session_id:
