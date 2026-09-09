@@ -705,3 +705,125 @@ async def test_preview_cancellation_drains_selected_decode_before_release(
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await preview
+
+
+@pytest.mark.parametrize("operation", ("import", "replace", "edit"))
+async def test_editor_save_publishes_profile_owned_sources_with_real_sqlite(
+    monkeypatch, mock_app_instance, stub_characters, local_scope, tmp_path, operation
+):
+    from Tests.Persona_Visual.test_persona_visual_importer import _write_archive
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Persona_Visual.authoring import (
+        persona_visual_draft_publication_snapshot,
+    )
+    from tldw_chatbook.Persona_Visual.importer import (
+        cleanup_persona_visual_import_review,
+        import_persona_visual_pack,
+        persona_visual_import_source_root,
+    )
+    from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
+    from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+    from tldw_chatbook.Persona_Visual.runtime import resolve_active_persona_visual
+
+    profile = tmp_path / "profile"
+    profile.mkdir(mode=0o700)
+    monkeypatch.setattr(personas_screen_module, "get_user_data_dir", lambda: profile)
+    db = CharactersRAGDB(tmp_path / "editor.db", "editor-save")
+    mock_app_instance.chachanotes_db = db
+    repository = PersonaVisualRepository(db)
+    archive = _write_archive(tmp_path / "states.tldw-persona-vpack")
+    previous = None
+    if operation == "edit":
+        staging = tmp_path / "seed-import"
+        review = import_persona_visual_pack(
+            archive,
+            staging_root=staging,
+            persona_id="p-1",
+            persona_revision=2,
+            expected_identity=None,
+        )
+        previous = publish_persona_visual(
+            repository,
+            persona_visual_draft_publication_snapshot(review.draft),
+            source_root=persona_visual_import_source_root(review, staging_root=staging),
+            profile_root=profile,
+            authority_guard=lambda: True,
+        ).new_identity
+        assert cleanup_persona_visual_import_review(review, staging_root=staging)
+    app = PersonasTestApp(mock_app_instance)
+    notifications = []
+    app.notify = lambda message, **_kwargs: notifications.append(str(message))
+    try:
+        async with app.run_test() as pilot:
+            screen = await _open_editor(pilot)
+            if operation == "import":
+                assert await screen._import_persona_visual_from_path(str(archive))
+            elif operation == "replace":
+                for state in ("idle", "listening", "thinking", "speaking", "error"):
+                    assert await screen._stage_persona_visual_replacement(state, _png())
+            else:
+                assert await screen._stage_persona_visual_custom(
+                    "deep_focus", "Deep focus", "mood"
+                )
+            draft = screen._persona_visual_authoring
+            assert draft.dirty
+            assert draft.source_root == profile or draft.source_root.is_relative_to(
+                profile
+            )
+            assert (repository.get_active_persona_pack("p-1") is None) == (
+                previous is None
+            )
+            assert await screen._save_persona_visual_pack(), notifications
+            graph = repository.get_active_persona_pack("p-1")
+            assert graph.identity.version_number == (2 if previous else 1)
+            assert not screen._persona_visual_authoring.dirty
+            for state in ("idle", "listening", "thinking", "speaking", "error"):
+                visual = resolve_active_persona_visual(
+                    repository, "p-1", profile, state
+                )
+                assert visual.source == "persona_visual"
+                assert visual.frames
+            assert not tuple(profile.rglob(".import-*"))
+            assert not tuple(profile.rglob(".staging-*"))
+            if previous:
+                assert graph.identity.pack_id == previous.pack_id
+                assert graph.identity != previous
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("size", [(140, 45), (80, 24)])
+async def test_saved_local_buddy_action_paints_and_clicks_in_full_editor(
+    monkeypatch, mock_app_instance, stub_characters, local_scope, size
+):
+    from html import unescape
+
+    from textual.widgets import Button
+
+    from Tests.UI.test_personas_persona_visual_pack import _inventory
+    from Tests.UI.test_personas_workbench import StyledPersonasTestApp
+
+    monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    selected = []
+
+    async def use_persona(persona_id, *, source):
+        selected.append((persona_id, source))
+        return True
+
+    mock_app_instance.use_persona_for_buddy = use_persona
+    app = StyledPersonasTestApp(mock_app_instance)
+    async with app.run_test(size=size) as pilot:
+        screen = await _open_editor(pilot)
+        pack = screen.query_one(PersonasPersonaVisualPackWidget)
+        pack.show_inventory(_inventory(), dirty=False)
+        button = pack.query_one("#personas-persona-visual-buddy", Button)
+        button.scroll_visible(force=True, immediate=True)
+        await pilot.pause()
+        body = screen.query_one("#personas-editor-body").content_region
+        assert body.contains_region(button.region)
+        painted = unescape(app.export_screenshot()).replace("\xa0", " ")
+        assert "Use for Buddy" in painted
+        assert not button.disabled
+        await pilot.click(button)
+        await pilot.pause()
+        assert selected == [("p-1", "local")]

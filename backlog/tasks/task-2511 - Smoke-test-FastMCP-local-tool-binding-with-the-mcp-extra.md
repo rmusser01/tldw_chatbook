@@ -4,7 +4,7 @@ title: Smoke-test FastMCP local-tool binding with the mcp extra
 status: Done
 assignee: []
 created_date: '2026-08-06 07:12'
-updated_date: '2026-08-10 08:58'
+updated_date: '2026-09-05 03:04'
 labels: []
 dependencies: []
 ---
@@ -23,6 +23,7 @@ Phase-4 follow-up (task-2828 notes): the FastMCP binding path in MCP/server.py::
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Confirm TASK-2512 proves the replacement `mcp-unified` boundary from
    independently installed wheel and sdist artifacts.
 2. Record the original FastMCP smoke as obsolete and close this duplicate
@@ -32,6 +33,7 @@ ADR required: no
 ADR path: N/A
 Reason: task supersession records an already-decided runtime boundary; it does
 not introduce an architectural decision.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
@@ -40,4 +42,6 @@ Original FastMCP acceptance criterion: superseded, not completed. No FastMCP
 smoke was performed. TASK-2512 replaces it with GREEN independent wheel and
 sdist installs of `tldw_chatbook[mcp]` that exercise the shipped `mcp-unified`
 stdio boundary from site-packages only.
+
+2026-09-05 follow-up: approved missing scalar catalog restored; complete vocabulary guard added. Fresh token, CSS bundle reproduction, ratchet and ownership group passed all 12; broader architecture/token/realtime group passed 87. No source-to-bundle drift. This verifies the catalog repair and bundle AC, but does not audit the historical exemplar/constitution rollout claims; original task remains In Progress. ADR042 applies. Evidence: qa/buddy-uat-2026-09-04/followup-report.md.
 <!-- SECTION:NOTES:END -->

@@ -1,6 +1,6 @@
 ---
 id: TASK-15460
-title: Watchlists: replace per-keystroke pane teardowns with in-place updates
+title: 'Watchlists: replace per-keystroke pane teardowns with in-place updates'
 status: Done
 assignee:
   - '@claude'

@@ -216,7 +216,7 @@ async def test_typed_draft_defers_the_hidden_coordinators_due_wake(tmp_path):
         with wake._registry_lock:
             wake._pending[hidden_session.id] = {"r-held": "done"}
         wake._attempt(hidden_session.id)
-        assert wake.delivering_conversation_id() is None, (
+        assert wake.delivering_conversation_ids() == (), (
             "a wake must defer while the user holds a typed draft -- "
             "delivering here is the live 'wake fired straight through a "
             "held draft' failure"

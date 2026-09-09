@@ -31,6 +31,7 @@ from .speech_playground_model import params_for_provider
 #: which is what happened for every Chatterbox and Higgs generation while
 #: the rebuild mounted them as bare `Input(id=param)`.
 PARAM_DEFAULTS: dict[str, dict[str, object]] = {
+    "tts-kokoro-use-onnx": {"value": True},
     "tts-stability-input": {"value": "0.5", "placeholder": "0.0-1.0", "type": "number"},
     "tts-similarity-input": {
         "value": "0.8",

@@ -41,6 +41,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
+from tldw_chatbook.UI.Console_Modules import realtime as realtime_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -358,21 +359,21 @@ def _patch_realtime_config(
     `hands_free_module`'s separate copy -- a test exercising the fallback
     path needs both to agree.
     """
-    monkeypatch.setattr(chat_screen_module, "get_api_key", lambda _name: api_key)
+    monkeypatch.setattr(realtime_module, "get_api_key", lambda _name: api_key)
     monkeypatch.setattr(
         hands_free_module, "resolve_handsfree_engine", lambda: engine
     )
     monkeypatch.setattr(hands_free_module, "realtime_enabled", lambda: enabled)
-    monkeypatch.setattr(chat_screen_module, "realtime_provider", lambda: provider)
-    monkeypatch.setattr(chat_screen_module, "realtime_model", lambda: "gpt-realtime")
-    monkeypatch.setattr(chat_screen_module, "realtime_voice", lambda: "marin")
+    monkeypatch.setattr(realtime_module, "realtime_provider", lambda: provider)
+    monkeypatch.setattr(realtime_module, "realtime_model", lambda: "gpt-realtime")
+    monkeypatch.setattr(realtime_module, "realtime_voice", lambda: "marin")
     monkeypatch.setattr(
-        chat_screen_module,
+        realtime_module,
         "realtime_idle_timeout_seconds",
         lambda: idle_timeout_seconds,
     )
     monkeypatch.setattr(
-        chat_screen_module, "acoustic_barge_in_enabled", lambda: acoustic
+        realtime_module, "acoustic_barge_in_enabled", lambda: acoustic
     )
     monkeypatch.setattr(
         hands_free_module, "acoustic_barge_in_enabled", lambda: acoustic
@@ -565,10 +566,10 @@ async def test_turn_detection_settings_reach_the_session_on_connect_and_reconnec
     bring the symptom back mid-conversation."""
     _patch_realtime_config(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module, "realtime_turn_detection", lambda: "server_vad"
+        realtime_module, "realtime_turn_detection", lambda: "server_vad"
     )
-    monkeypatch.setattr(chat_screen_module, "realtime_vad_threshold", lambda: 0.6)
-    monkeypatch.setattr(chat_screen_module, "realtime_vad_silence_ms", lambda: 700)
+    monkeypatch.setattr(realtime_module, "realtime_vad_threshold", lambda: 0.6)
+    monkeypatch.setattr(realtime_module, "realtime_vad_silence_ms", lambda: 700)
     app = _build_test_app()
     rig = _install_realtime_fakes(app)
     host = ConsoleHarness(app)
@@ -669,7 +670,7 @@ async def test_seed_strips_the_interrupted_ui_marker(monkeypatch):
             role=ConsoleMessageRole.ASSISTANT,
             content=(
                 "Half a sentence"
-                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+                + realtime_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
             ),
         )
 
@@ -1456,7 +1457,7 @@ async def test_a_stale_playback_completion_never_ends_the_next_reply(monkeypatch
         await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 4800)
         stale_token = state.reply_token - 1
 
-        console._console_realtime_playback_finished(state, stale_token)
+        console._realtime._console_realtime_playback_finished(state, stale_token)
         await pilot.pause()
 
         assert state.controller.state == "speaking"
@@ -1644,7 +1645,7 @@ async def test_connect_timeout_is_bounded_and_falls_back(monkeypatch):
     _install_streaming_session(monkeypatch, service)
     _patch_realtime_config(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module, "CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS", 0.05
+        realtime_module, "CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS", 0.05
     )
     app = _build_test_app()
     rig = _install_realtime_fakes(app)
@@ -1964,7 +1965,7 @@ async def test_ready_that_never_arrives_times_out_instead_of_hanging(monkeypatch
     unforeseen no-ready path may hang the entry."""
     _patch_realtime_config(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module, "CONSOLE_REALTIME_READY_TIMEOUT_SECONDS", 0.05
+        realtime_module, "CONSOLE_REALTIME_READY_TIMEOUT_SECONDS", 0.05
     )
     monkeypatch.setattr(
         hands_free_module.console_voice_input,
@@ -2356,7 +2357,7 @@ async def test_realtime_rows_carry_engine_provenance(monkeypatch):
         # how its usage (spoken-audio duration) is attributed.
         assert (
             user.metadata.model
-            == chat_screen_module.CONSOLE_REALTIME_TRANSCRIPTION_MODEL
+            == realtime_module.CONSOLE_REALTIME_TRANSCRIPTION_MODEL
         )
         assert assistant.metadata is not None
         assert assistant.metadata.engine == "realtime"
@@ -2447,7 +2448,7 @@ async def test_seed_trims_the_marker_from_a_flagged_interrupted_reply(monkeypatc
             role=ConsoleMessageRole.ASSISTANT,
             content=(
                 "Half a sentence"
-                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+                + realtime_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
             ),
             metadata=MessageMetadata(engine="realtime", interrupted=True),
         )
@@ -2544,7 +2545,7 @@ async def test_an_empty_transcript_records_why_the_row_is_empty(monkeypatch):
         )
 
         user = _messages(console)[0]
-        assert user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        assert user.content == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
         assert user.metadata.engine == "realtime"
 
 
@@ -2569,7 +2570,7 @@ async def test_a_second_empty_transcript_does_not_double_mark_the_row(monkeypatc
         session.fire_input_transcript("")
         await _wait_for(
             lambda: _messages(console)[0].content
-            == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
             pilot,
         )
         session.fire_input_transcript("   ")
@@ -2577,7 +2578,7 @@ async def test_a_second_empty_transcript_does_not_double_mark_the_row(monkeypatc
         await pilot.pause()
 
         user = _messages(console)[0]
-        assert user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        assert user.content == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
         assert user.metadata.transcript_status == "empty"
 
 
@@ -2626,7 +2627,7 @@ async def test_an_empty_transcript_retries_the_status_after_a_swallowed_metadata
         session.fire_input_transcript("")
         await _wait_for(
             lambda: _messages(console)[0].content
-            == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
             pilot,
         )
         # Partial state reached: content landed, status write was swallowed.
@@ -2643,7 +2644,7 @@ async def test_an_empty_transcript_retries_the_status_after_a_swallowed_metadata
 
         user = _messages(console)[0]
         assert (
-            user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+            user.content == realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
         )
 
         from tldw_chatbook.Chat.console_chat_controller import _is_empty_transcript_row
@@ -2669,7 +2670,7 @@ async def test_seed_excludes_a_row_whose_transcript_came_back_empty(monkeypatch)
         store.append_message(
             session_id,
             role=ConsoleMessageRole.USER,
-            content=chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            content=realtime_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
             metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
         )
         store.append_message(
@@ -2756,7 +2757,7 @@ async def test_seed_still_trims_a_marker_suffix_on_a_row_without_metadata(monkey
             role=ConsoleMessageRole.ASSISTANT,
             content=(
                 "Half a sentence"
-                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+                + realtime_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
             ),
         )
 
@@ -2784,7 +2785,7 @@ async def test_seed_trims_a_marker_suffix_even_when_the_flag_says_otherwise(monk
             role=ConsoleMessageRole.ASSISTANT,
             content=(
                 "Half a sentence"
-                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+                + realtime_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
             ),
             metadata=MessageMetadata(engine="realtime", interrupted=False),
         )

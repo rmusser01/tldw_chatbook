@@ -1,0 +1,596 @@
+[
+  {
+    "review_id": "181ef02b7caafc870148659a",
+    "question": "What is the practice ferry's pet fee?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "Based on the supplied source evidence, the practice ferry’s pet fee is not stated. The source says only that the practice ferry carries bicycles, that tandem bicycles need advance booking, and that “Pets are not discussed.” Therefore, the evidence cannot establish a pet fee.",
+    "essential_facts": [
+      "The source does not specify a pet fee"
+    ],
+    "critical_error_definition": "Inventing any fee or pet policy.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 1,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "fef8105b4c9ca00f566c721f",
+    "question": "When does the practice garden open on Wednesday?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5",
+        "revision": "1",
+        "title": "Practice garden hours",
+        "text": "The practice garden opens at 09:00. On Wednesdays it opens at 11:00 for maintenance."
+      }
+    ],
+    "answer": "Based on the provided evidence, the practice garden opens at **11:00** on Wednesdays for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5, quote: “On Wednesdays it opens at 11:00 for maintenance.”",
+    "essential_facts": [
+      "11:00 on Wednesday",
+      "09:00 is the ordinary opening"
+    ],
+    "critical_error_definition": "Answering 09:00 for Wednesday.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "38bcb823719ef00b70232711",
+    "question": "What is the practice ferry's pet fee?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "Based on the supplied source evidence, the practice ferry’s pet fee is not stated. The source says only that the ferry carries bicycles, that tandem bicycles need advance booking, and that “Pets are not discussed” (`media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl`). Therefore, the evidence cannot establish a pet fee.",
+    "essential_facts": [
+      "The source does not specify a pet fee"
+    ],
+    "critical_error_definition": "Inventing any fee or pet policy.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 1,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "ca0cc1ccb4798f7f2f373013",
+    "question": "Which sign colour did the committee approve?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:MTZlNjNmYzgtMTFkNy00ODQ1LWJhZTMtZjQ5MDRiZDYwNmM4",
+        "revision": "1",
+        "title": "Practice minutes",
+        "text": "Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval."
+      }
+    ],
+    "answer": "Based on the supplied evidence, the committee did not approve any sign colour. The source states: “Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval.” Therefore, no colour was approved by the committee.",
+    "essential_facts": [
+      "No vote occurred",
+      "Green and blue were proposals only"
+    ],
+    "critical_error_definition": "Claiming a colour was approved.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "455472ce18b4079ca639bf87",
+    "question": "Can tandem bicycles use the practice ferry?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "Based on the supplied evidence, yes — tandem bicycles can use the practice ferry, but they require advance booking.\n\nThe source states:\n\n> “The practice ferry carries bicycles. Tandem bicycles need advance booking.”\n\nSource: media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl, revision 1, characters 0–74.",
+    "essential_facts": [
+      "Yes",
+      "Advance booking is required"
+    ],
+    "critical_error_definition": "Omitting the booking requirement.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "705c59e0b8d233d1452a0491",
+    "question": "What is the practice ferry's pet fee?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "The source does not specify a pet fee"
+    ],
+    "critical_error_definition": "Inventing any fee or pet policy.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 1,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "8e424adc225223f02d7ae74d",
+    "question": "Which sign colour did the committee approve?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:MTZlNjNmYzgtMTFkNy00ODQ1LWJhZTMtZjQ5MDRiZDYwNmM4",
+        "revision": "1",
+        "title": "Practice minutes",
+        "text": "Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "No vote occurred",
+      "Green and blue were proposals only"
+    ],
+    "critical_error_definition": "Claiming a colour was approved.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "52103201e7a8741ba44feb17",
+    "question": "What is the practice ferry's pet fee?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "The source does not specify a pet fee"
+    ],
+    "critical_error_definition": "Inventing any fee or pet policy.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 1,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "d8a6dc0250c09ec4d8e98fe2",
+    "question": "When does the practice garden open on Wednesday?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5",
+        "revision": "1",
+        "title": "Practice garden hours",
+        "text": "The practice garden opens at 09:00. On Wednesdays it opens at 11:00 for maintenance."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "11:00 on Wednesday",
+      "09:00 is the ordinary opening"
+    ],
+    "critical_error_definition": "Answering 09:00 for Wednesday.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "ef2c0c9e9fc6560ff314cee3",
+    "question": "When does the practice garden open on Wednesday?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5",
+        "revision": "1",
+        "title": "Practice garden hours",
+        "text": "The practice garden opens at 09:00. On Wednesdays it opens at 11:00 for maintenance."
+      }
+    ],
+    "answer": "Based on the supplied evidence, the practice garden opens at **11:00** on Wednesdays for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5, revision 1, characters 36–84: “On Wednesdays it opens at 11:00 for maintenance.”",
+    "essential_facts": [
+      "11:00 on Wednesday",
+      "09:00 is the ordinary opening"
+    ],
+    "critical_error_definition": "Answering 09:00 for Wednesday.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "eab009cf58f1927ae699e8ad",
+    "question": "Which sign colour did the committee approve?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:MTZlNjNmYzgtMTFkNy00ODQ1LWJhZTMtZjQ5MDRiZDYwNmM4",
+        "revision": "1",
+        "title": "Practice minutes",
+        "text": "Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "No vote occurred",
+      "Green and blue were proposals only"
+    ],
+    "critical_error_definition": "Claiming a colour was approved.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "2678a4f73bdafc1cd261e3c0",
+    "question": "Which sign colour did the committee approve?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:MTZlNjNmYzgtMTFkNy00ODQ1LWJhZTMtZjQ5MDRiZDYwNmM4",
+        "revision": "1",
+        "title": "Practice minutes",
+        "text": "Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval."
+      }
+    ],
+    "answer": "Based on the supplied evidence, the committee did not approve any sign colour. The source states: “Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval.” Therefore, no sign colour was approved by the committee.",
+    "essential_facts": [
+      "No vote occurred",
+      "Green and blue were proposals only"
+    ],
+    "critical_error_definition": "Claiming a colour was approved.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "0e4b1c679527996ed3c58253",
+    "question": "When does the practice garden open on Wednesday?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5",
+        "revision": "1",
+        "title": "Practice garden hours",
+        "text": "The practice garden opens at 09:00. On Wednesdays it opens at 11:00 for maintenance."
+      }
+    ],
+    "answer": "Based on the evidence, the practice garden opens at 11:00 on Wednesdays for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5 — \"On Wednesdays it opens at 11:00 for maintenance.\"",
+    "essential_facts": [
+      "11:00 on Wednesday",
+      "09:00 is the ordinary opening"
+    ],
+    "critical_error_definition": "Answering 09:00 for Wednesday.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "c1667e5c12158efd3881272d",
+    "question": "Can tandem bicycles use the practice ferry?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "Yes",
+      "Advance booking is required"
+    ],
+    "critical_error_definition": "Omitting the booking requirement.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "3a03c0a48acd3ea71294c66b",
+    "question": "When does the practice garden open on Wednesday?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5",
+        "revision": "1",
+        "title": "Practice garden hours",
+        "text": "The practice garden opens at 09:00. On Wednesdays it opens at 11:00 for maintenance."
+      }
+    ],
+    "answer": "Based on the evidence, the practice garden opens at **11:00 on Wednesdays** for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5 — “On Wednesdays it opens at 11:00 for maintenance.”",
+    "essential_facts": [
+      "11:00 on Wednesday",
+      "09:00 is the ordinary opening"
+    ],
+    "critical_error_definition": "Answering 09:00 for Wednesday.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "f2eecc032cfc435078b64810",
+    "question": "Can tandem bicycles use the practice ferry?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "Based on the supplied evidence, yes — tandem bicycles can use the practice ferry, but they require advance booking.\n\nThe source states:\n\n> “The practice ferry carries bicycles. Tandem bicycles need advance booking.”  \n> — source_id: media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl, revision 1, characters 0–74\n\nThis directly supports the claim that tandem bicycles are permitted on the practice ferry, with the qualification that advance booking is needed.",
+    "essential_facts": [
+      "Yes",
+      "Advance booking is required"
+    ],
+    "critical_error_definition": "Omitting the booking requirement.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "3e80192ed49cd3ac701cf181",
+    "question": "Can tandem bicycles use the practice ferry?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "Yes",
+      "Advance booking is required"
+    ],
+    "critical_error_definition": "Omitting the booking requirement.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "2a0b262249df2a6357130d9d",
+    "question": "What is the practice ferry's pet fee?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "The source does not specify a pet fee"
+    ],
+    "critical_error_definition": "Inventing any fee or pet policy.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 1,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "d84762f6428a23aed37192df",
+    "question": "What is the practice ferry's pet fee?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "The source does not specify a pet fee"
+    ],
+    "critical_error_definition": "Inventing any fee or pet policy.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 1,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "32c31d713177d5e5fd48b90d",
+    "question": "Which sign colour did the committee approve?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:MTZlNjNmYzgtMTFkNy00ODQ1LWJhZTMtZjQ5MDRiZDYwNmM4",
+        "revision": "1",
+        "title": "Practice minutes",
+        "text": "Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "No vote occurred",
+      "Green and blue were proposals only"
+    ],
+    "critical_error_definition": "Claiming a colour was approved.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "774507805ea83a23cba8ac9d",
+    "question": "Which sign colour did the committee approve?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:MTZlNjNmYzgtMTFkNy00ODQ1LWJhZTMtZjQ5MDRiZDYwNmM4",
+        "revision": "1",
+        "title": "Practice minutes",
+        "text": "Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "No vote occurred",
+      "Green and blue were proposals only"
+    ],
+    "critical_error_definition": "Claiming a colour was approved.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "44663c61c7e986ed2384b0aa",
+    "question": "Can tandem bicycles use the practice ferry?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "Based on the supplied evidence, tandem bicycles can use the practice ferry, but they need advance booking.\n\nThe source states: “The practice ferry carries bicycles. Tandem bicycles need advance booking.” (media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl)\n\nSo the answer is yes, with the condition that advance booking is required.",
+    "essential_facts": [
+      "Yes",
+      "Advance booking is required"
+    ],
+    "critical_error_definition": "Omitting the booking requirement.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "a3551f1d4ce4572431341723",
+    "question": "Can tandem bicycles use the practice ferry?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+        "revision": "1",
+        "title": "Practice ferry",
+        "text": "The practice ferry carries bicycles. Tandem bicycles need advance booking. Pets are not discussed."
+      }
+    ],
+    "answer": "Based on the supplied evidence, tandem bicycles can use the practice ferry, but they need advance booking.\n\nThe source states: “The practice ferry carries bicycles. Tandem bicycles need advance booking.” (media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl)\n\nSo the answer is yes, with the condition that advance booking is required.",
+    "essential_facts": [
+      "Yes",
+      "Advance booking is required"
+    ],
+    "critical_error_definition": "Omitting the booking requirement.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  },
+  {
+    "review_id": "ca1e241bdbb96ef5ab6cf241",
+    "question": "When does the practice garden open on Wednesday?",
+    "original_selected_sources": [
+      {
+        "source_id": "media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5",
+        "revision": "1",
+        "title": "Practice garden hours",
+        "text": "The practice garden opens at 09:00. On Wednesdays it opens at 11:00 for maintenance."
+      }
+    ],
+    "answer": "",
+    "essential_facts": [
+      "11:00 on Wednesday",
+      "09:00 is the ordinary opening"
+    ],
+    "critical_error_definition": "Answering 09:00 for Wednesday.",
+    "success": null,
+    "critical_error": null,
+    "essential_correct": null,
+    "essential_total": 2,
+    "contradiction_handling": null,
+    "citation_support": null,
+    "review_notes": ""
+  }
+]

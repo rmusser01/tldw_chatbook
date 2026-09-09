@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -96,6 +97,8 @@ WORKER_THRESHOLD = 5000
 #: DataTable row key of the "load earlier" control row.
 LOAD_EARLIER_ROW_KEY = "__load_earlier__"
 
+_TURN_SEGMENT_ROW_PREFIX = "turn-segment:"
+
 _COLUMNS = (
     ("#", 5),
     ("Kind", 11),
@@ -127,6 +130,14 @@ def _fmt_span(start: float | None, end: float | None) -> str | None:
     if start is None or end is None:
         return None
     return f"{end - start:.2f}s"
+
+
+def _number_logical_turns(turns: tuple[TrajectoryTurn, ...]) -> dict[str, int]:
+    """Assign one display number per logical turn, in first-seen order."""
+    numbers: dict[str, int] = {}
+    for turn in turns:
+        numbers.setdefault(turn.turn_id, len(numbers) + 1)
+    return numbers
 
 
 class TrajectoryScreen(ModalScreen[None]):
@@ -226,9 +237,7 @@ class TrajectoryScreen(ModalScreen[None]):
         #: in-flight ``f`` before its deferred ``scroll_end`` lands.
         self._follow_grace_until = 0.0
         self._turns: tuple[TrajectoryTurn, ...] = snapshot.turns
-        self._turn_numbers: dict[str, int] = {
-            turn.turn_id: index + 1 for index, turn in enumerate(self._turns)
-        }
+        self._turn_numbers: dict[str, int] = _number_logical_turns(self._turns)
         self._collapsed: set[str] = set()
         self._query = ""
         #: Active brush time range from the timeline strip (None = no
@@ -348,9 +357,7 @@ class TrajectoryScreen(ModalScreen[None]):
             return
         self._snapshot = snapshot
         self._turns = snapshot.turns
-        self._turn_numbers = {
-            turn.turn_id: index + 1 for index, turn in enumerate(self._turns)
-        }
+        self._turn_numbers = _number_logical_turns(self._turns)
         # Feed the strip the same data the ledger renders. set_snapshot
         # resets the widget's brush/selection WITHOUT posting, so keep an
         # active brush alive across the swap (a 0.5s revision tick must
@@ -477,19 +484,40 @@ class TrajectoryScreen(ModalScreen[None]):
 
         query = self._query.lower()
         brush_seqs = self._brush_active_seqs()
+        turn_occurrences: Counter[str] = Counter()
+        segment_header_keys: dict[int, str] = {}
+        for turn in self._turns:
+            turn_occurrences[turn.turn_id] += 1
+            if turn_occurrences[turn.turn_id] > 1:
+                segment_header_keys[id(turn)] = (
+                    f"{_TURN_SEGMENT_ROW_PREFIX}{turn_occurrences[turn.turn_id]}:"
+                    f"{turn.turn_id}"
+                )
         open_turn: TrajectoryTurn | None = None
         turn_records: list[TrajectoryRecord] = []
         for turn, record in self._flat_slice():
             if open_turn is not None and turn.turn_id != open_turn.turn_id:
                 specs.extend(
-                    self._turn_row_specs(open_turn, turn_records, query, brush_seqs)
+                    self._turn_row_specs(
+                        open_turn,
+                        turn_records,
+                        query,
+                        brush_seqs,
+                        segment_header_keys.get(id(open_turn)),
+                    )
                 )
                 turn_records = []
             open_turn = turn
             turn_records.append(record)
         if open_turn is not None:
             specs.extend(
-                self._turn_row_specs(open_turn, turn_records, query, brush_seqs)
+                self._turn_row_specs(
+                    open_turn,
+                    turn_records,
+                    query,
+                    brush_seqs,
+                    segment_header_keys.get(id(open_turn)),
+                )
             )
         return specs
 
@@ -514,6 +542,7 @@ class TrajectoryScreen(ModalScreen[None]):
         records: list[TrajectoryRecord],
         query: str,
         brush_seqs: frozenset[int] | None = None,
+        header_key: str | None = None,
     ) -> list[tuple[str, tuple[Text, ...]]]:
         """Header row + child rows for one turn under the current filter.
 
@@ -532,7 +561,7 @@ class TrajectoryScreen(ModalScreen[None]):
         filtering = bool(query) or brush_seqs is not None
         if filtering and not matching:
             return []  # nothing in this turn is visible: header included, hidden
-        header_key = f"turn:{turn.turn_id}"
+        header_key = header_key or f"turn:{turn.turn_id}"
         collapsed = turn.turn_id in self._collapsed
         number = self._turn_numbers.get(turn.turn_id, 0)
         marker = "▸" if collapsed else "▾"
@@ -646,7 +675,9 @@ class TrajectoryScreen(ModalScreen[None]):
         for key, cells in specs:
             table.add_row(*cells, key=key)
             self._visible_keys.append(key)
-            if key.startswith("turn:"):
+            if key.startswith(_TURN_SEGMENT_ROW_PREFIX):
+                self._row_turn_ids[key] = key.split(":", 2)[2]
+            elif key.startswith("turn:"):
                 self._row_turn_ids[key] = key.removeprefix("turn:")
             elif key != LOAD_EARLIER_ROW_KEY:
                 self._row_records[key] = None  # resolved below
@@ -766,8 +797,8 @@ class TrajectoryScreen(ModalScreen[None]):
     def _inspector_text_for_turn(self, turn_id: str) -> str:
         number = self._turn_numbers.get(turn_id, 0)
         state = "collapsed" if turn_id in self._collapsed else "expanded"
-        count = next(
-            (len(turn.records) for turn in self._turns if turn.turn_id == turn_id), 0
+        count = sum(
+            len(turn.records) for turn in self._turns if turn.turn_id == turn_id
         )
         return f"Turn {number} · {count} records · {state} · id {turn_id}"
 

@@ -88,7 +88,7 @@ async def test_a_survivor_only_teardown_is_reported_as_continuing_not_cancelled(
     app, screen, notifications = _screen_with_notify_capture()
     try:
         # The exact ChatScreen.on_unmount recording, via its extracted seam.
-        await screen._record_console_fleet_teardown(controller)
+        await screen._fleet._record_console_fleet_teardown(controller)
         screen._notify_console_fleet_teardown_if_any()
     finally:
         gate.set()
@@ -138,7 +138,7 @@ async def test_a_streaming_teardown_keeps_the_cancelled_copy(tmp_path):
     )
     assert controller.in_flight_run_count() == 1
     app, screen, notifications = _screen_with_notify_capture()
-    await screen._record_console_fleet_teardown(controller)
+    await screen._fleet._record_console_fleet_teardown(controller)
     screen._notify_console_fleet_teardown_if_any()
     assert [
         (message, severity) for message, severity in notifications
@@ -162,7 +162,7 @@ async def test_a_mixed_teardown_reports_both_truthfully(tmp_path):
         assert controller.busy_fleet_session_count() == 2, (
             "the split must partition the same union the old count reported"
         )
-        await screen._record_console_fleet_teardown(controller)
+        await screen._fleet._record_console_fleet_teardown(controller)
         screen._notify_console_fleet_teardown_if_any()
     finally:
         gate.set()

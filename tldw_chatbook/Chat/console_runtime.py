@@ -450,6 +450,9 @@ class ConsoleRuntime:
                 `console_provider_gateway_factory` test seam — never
                 mutated.
         """
+        from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
+        self.execution_capacity = RuntimeCapacity.from_settings()
         self._app = app
         # -- setters, for the screen handles that now READ THROUGH here ----
         # `ChatScreen._console_chat_store`/`_console_provider_gateway`/
@@ -523,6 +526,15 @@ class ConsoleRuntime:
 
     def set_agent_bridge(self, value: Any) -> None:
         """Replace the agent-bridge handle."""
+        from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+        if (
+            isinstance(value, ConsoleAgentBridge)
+            and value.runtime_capacity is not self.execution_capacity
+        ):
+            if value.runtime_capacity.snapshot().executions:
+                raise ValueError("cannot replace capacity of an active bridge")
+            value.runtime_capacity = self.execution_capacity
         self._agent_bridge = value
 
     def set_chat_controller(self, value: Any) -> None:
@@ -665,7 +677,11 @@ class ConsoleRuntime:
             return self._agent_bridge
         db = getattr(self._app, "chachanotes_db", None)
         db_path = getattr(db, "db_path", None) if db is not None else None
-        if not db_path or str(db_path) == ":memory:":
+        if (
+            not db_path
+            or str(db_path) == ":memory:"
+            or str(db_path).startswith("file:")
+        ):
             self._agent_bridge = None
             return None
         from pathlib import Path
@@ -682,6 +698,7 @@ class ConsoleRuntime:
         change_tracker = ChangeTurnTracker()
         self._agent_bridge = ConsoleAgentBridge(
             agent_runs_db=runs_db,
+            runtime_capacity=self.execution_capacity,
             store=store_factory(),
             provider_gateway=provider_gateway_factory(),
             skills_service=skills_service,
@@ -743,6 +760,11 @@ class ConsoleRuntime:
             self._clear_view_hooks(only="wake")
         else:
             self._bind_view_hooks()
+        # ADR-135: the native controller's birth owns recovery. View remounts
+        # and repeated ensure/read calls return above without auditing owners.
+        wake = self._chat_controller.fleet_wake
+        wake.wire(app=self._app)
+        wake.start_recovery()
         return self._chat_controller
 
     # -- the view seam -----------------------------------------------------
@@ -827,20 +849,21 @@ class ConsoleRuntime:
         wake = self._hook_target("wake")
         if wake is None:
             return
-        reader = getattr(wake, "delivering_session_id", None)
-        session_id = reader() if callable(reader) else None
-        if not session_id:
+        reader = getattr(wake, "delivering_session_ids", None)
+        session_ids = reader() if callable(reader) else ()
+        if not session_ids:
             return
         hook = getattr(wake, "delivery_ui_hook", None)
         if not callable(hook):
             return
-        try:
-            hook(session_id)
-        except Exception as exc:  # noqa: BLE001 -- UI freshness is best-effort
-            logger.debug(
-                "wake delivery UI hook re-arm raised (exception_type={})",
-                type(exc).__name__,
-            )
+        for session_id in session_ids:
+            try:
+                hook(session_id)
+            except Exception as exc:  # noqa: BLE001 -- UI freshness is best-effort
+                logger.debug(
+                    "wake delivery UI hook re-arm raised (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def remount_pending_approval(self) -> None:
         """Mount the card for a round armed while nothing was attached.
@@ -985,6 +1008,7 @@ class ConsoleRuntime:
         is exactly the right answer at exit.
         """
         self._disposed = True
+        self.execution_capacity.close()
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
         self.generation += 1

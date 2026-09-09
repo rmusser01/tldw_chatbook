@@ -7,6 +7,7 @@ agent_service. Thread-safe: every public method holds a Lock.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import json
 import threading
@@ -40,6 +41,11 @@ RETAINED_TRANSCRIPT_STATUSES = frozenset({RUN_DONE, RUN_STUCK, RUN_ERROR})
 #: below) retains nothing.
 DEFAULT_RETAINED_TRANSCRIPTS = 5
 DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS = 200_000
+
+# ADR-129: refuse new admission instead of dropping accepted corrections.
+MAX_QUEUED_STEERING_ENTRIES = 32
+MAX_QUEUED_STEERING_CHARS = 64_000
+MAX_PRUNED_IDENTITIES = 256
 
 
 @dataclasses.dataclass(frozen=True)
@@ -75,16 +81,11 @@ class FleetHandle:
         error: Error message on failure (empty until finish).
         started_at: Timestamp when handle was created.
         finished_at: Timestamp when handle reached terminal status.
-        total_tokens: PR2b Task 5 (cost rollup). This child's measured
-            cumulative prompt+completion token spend, from its own
-            ``RunOutcome.total_tokens`` -- 0 until ``finish()`` records it
-            (a running child's spend is not final, so it is never reported
-            mid-flight rather than showing a partial/misleading number).
-            This is the ONLY place per-child spend is threaded to the
-            live rail today -- it is not persisted to the ``agent_runs``
-            DB row, so a resumed/historical fleet row (no live coordinator
-            in THIS process) shows no token figure; see
-            ``Console_Modules/agent.py``'s row builders for the consumer.
+        total_tokens: This child's run-budget counter from its own
+            ``RunOutcome.total_tokens``; may include estimates and cache
+            weighting. Zero until ``finish()`` records it. The service
+            separately persists known completed counters as
+            ``agent_runs.budget_tokens`` for historical inspection.
     """
 
     handle_id: str
@@ -104,6 +105,20 @@ class FleetHandle:
     # this field is COMPUTED onto the copies ``get()``/``snapshot()``
     # return, so a stale handle copy can never disagree with the mailbox.
     queued_steering: int = 0
+    # Number left unread when the child finished; survives retention claiming
+    # the mailbox. Availability is computed on snapshots because eviction can
+    # make a previously recoverable transcript unavailable.
+    undelivered_steering: int = 0
+    can_resume: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class PrunedFleetIdentity:
+    """Payload-free terminal identity for an honest, non-resuming refusal."""
+
+    handle_id: str
+    run_id: str | None
+    status: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -194,6 +209,7 @@ class FleetCoordinator:
         self._retained_transcripts_cap = retained_transcripts
         self._retained_transcript_max_chars = retained_transcript_max_chars
         self._retained: dict[str, RetainedTranscript] = {}
+        self._pruned_identities: dict[str, PrunedFleetIdentity] = {}
 
     def reserve(self, task: str, agent: str | None) -> FleetHandle | None:
         """Reserve a slot for a new task, returning a handle or None if at cap.
@@ -279,7 +295,7 @@ class FleetCoordinator:
             text: The steering message body (raw, unlabeled).
 
         Returns:
-            True when queued. False for an unknown handle or a TERMINAL
+            True when queued. False for a full queue, unknown handle or a TERMINAL
             one -- a finished child has no next model turn to deliver at,
             and the caller must say so instead of queueing into a void
             (Task 2's terminal branch upgrades that refusal into
@@ -287,6 +303,13 @@ class FleetCoordinator:
         """
         with self._lock:
             if handle_id not in self._handles or handle_id not in self._live_ids:
+                return False
+            pending = self._steering.get(handle_id, ())
+            if (
+                len(pending) >= MAX_QUEUED_STEERING_ENTRIES
+                or sum(len(body) for _, body in pending) + len(text)
+                > MAX_QUEUED_STEERING_CHARS
+            ):
                 return False
             self._steering.setdefault(handle_id, []).append((source, text))
             return True
@@ -377,6 +400,7 @@ class FleetCoordinator:
             handle.error = error
             handle.finished_at = finished_at
             handle.total_tokens = total_tokens
+            handle.undelivered_steering = len(self._steering.get(handle_id, ()))
             self._live_ids.discard(handle_id)
 
             # Emit event with current run_id and agent
@@ -435,6 +459,7 @@ class FleetCoordinator:
         return dataclasses.replace(
             handle,
             queued_steering=len(self._steering.get(handle.handle_id, ())),
+            can_resume=handle.handle_id in self._retained,
         )
 
     @property
@@ -568,10 +593,20 @@ class FleetCoordinator:
         if self._retained_transcript_max_chars <= 0:
             return False
         try:
-            size = len(json.dumps(messages, default=str))
-        except Exception:  # noqa: BLE001 — an unmeasurable transcript
-            return False  # cannot be size-bounded, so it is not kept
-        if size > self._retained_transcript_max_chars:
+            size = len(
+                json.dumps(
+                    {
+                        "messages": messages,
+                        "steering": self._steering.get(handle_id, ()),
+                    },
+                    default=str,
+                )
+            )
+            if size > self._retained_transcript_max_chars:
+                return False
+            retained_messages = tuple(copy.deepcopy(messages))
+        except Exception:  # noqa: BLE001 — unmeasurable or uncopyable history
+            # Refuse before claiming any unread steering or replacing history.
             return False
         steering = tuple(self._steering.pop(handle_id, []))
         self._retained[handle_id] = RetainedTranscript(
@@ -580,7 +615,7 @@ class FleetCoordinator:
             agent=handle.agent,
             task=handle.task,
             status=handle.status,
-            messages=tuple(dict(m) for m in messages),
+            messages=retained_messages,
             steering=steering,
             retained_at=self._clock(),
         )
@@ -616,7 +651,26 @@ class FleetCoordinator:
             if entry is None:
                 return None
             return dataclasses.replace(
-                entry, messages=tuple(dict(m) for m in entry.messages)
+                entry, messages=copy.deepcopy(entry.messages)
+            )
+
+    def get_pruned_identity(self, target_id: str) -> PrunedFleetIdentity | None:
+        """Resolve recent pruned identity by handle ID, then run ID.
+
+        Records are immutable and bounded to the last 256 pruned handles.
+        They contain no transcript and never authorize continuation.
+        """
+        with self._lock:
+            identity = self._pruned_identities.get(target_id)
+            if identity is not None:
+                return identity
+            return next(
+                (
+                    entry
+                    for entry in self._pruned_identities.values()
+                    if entry.run_id == target_id
+                ),
+                None,
             )
 
     def prune_terminal(self) -> int:
@@ -647,12 +701,23 @@ class FleetCoordinator:
                 if handle_id not in self._live_ids
             ]
             for handle_id in terminal:
-                del self._handles[handle_id]
+                handle = self._handles.pop(handle_id)
+                self._pruned_identities[handle_id] = PrunedFleetIdentity(
+                    handle_id, handle.run_id, handle.status
+                )
                 # PR3b Task 1: the mailbox dies with its handle. An
                 # undelivered remnant is claimed BEFORE this point by Task
                 # 4's retention (retain_transcript runs at finish time,
                 # from run_child's finally); by prune time it is garbage.
                 self._steering.pop(handle_id, None)
+            while len(self._pruned_identities) > MAX_PRUNED_IDENTITIES:
+                del self._pruned_identities[next(iter(self._pruned_identities))]
+            # No production consumer drains these advisory events. Their
+            # lifetime follows the handles, not the whole conversation.
+            pruned = set(terminal)
+            self._events = [
+                event for event in self._events if event.handle_id not in pruned
+            ]
             return len(terminal)
 
     def live_count(self) -> int:

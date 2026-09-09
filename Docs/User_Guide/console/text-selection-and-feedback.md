@@ -1,10 +1,10 @@
-# Text selection & feedback — quote, ask, and review agent output
+# Text selection & feedback — copy, quote, ask, and review agent output
 
 ## What this is for
 
 Pick out a phrase, a stack trace, or a chunk of a diff in the transcript and
 do something with *just that part*. Drag-select any text and a small menu
-appears with two families of actions: **bring it into the conversation**
+appears with actions to **copy it to the clipboard**, **bring it into the conversation**
 (quote it, or ask about it in a throwaway side chat that never touches your
 history), and — when the text came from the agent — **review it** the way
 you'd review a pull request, with Request changes / LGTM / Comment.
@@ -15,10 +15,11 @@ supervising an agent run and want your verdict on a specific step recorded.
 
 ## Getting there
 
-Everything here starts from a **mouse drag across transcript text** — there
-is no keyboard entry point yet. Press and hold on the first character, drag
-to the last, and release; the selection highlights and the menu opens just
-below where you released.
+Start with a **mouse drag across transcript text**: press and hold on the
+first character, drag to the last, and release. The selection highlights
+and the menu opens just below where you released. For keyboard selection,
+select a message with **j/k**, press **s**, adjust the selection, then press
+**Enter** to open the same menu.
 
 Two settings feed the side chat (**Settings ▸ Console**, "Side chat model"
 and "Side chat prompt template") — see [Console](../console.md) for the
@@ -31,6 +32,7 @@ point. Which buttons appear depends on what you selected:
 
 | Button | When it appears |
 |---|---|
+| **Copy selection** | Always |
 | **Add to chat** | When the selection can be quoted into the composer |
 | **More Details** | Always |
 | **Ask in Side Chat** | Always |
@@ -41,11 +43,31 @@ point. Which buttons appear depends on what you selected:
 
 If the menu would run off the bottom of the screen it flips to sit entirely
 *above* the selected row, so your highlight stays visible.
+When the transcript is too short to show every action at once, the menu
+scrolls within it; **↑/↓** bring the focused action into view.
 
 The first button takes focus on open: **↑/↓** cycle, **Enter** activates,
 **Esc** closes and returns focus wherever it was before.
 
 ## Features & controls
+
+### Copy selection
+
+Copies the highlighted text to the clipboard, closes the menu, and returns
+focus to where it was before the menu opened. Your composer draft and
+whole-message selection stay unchanged. This is the first menu action, so
+pressing **Enter** after opening the menu activates it.
+
+Copy selection preserves whitespace and copies the full selection without
+the 4000-character quote limit. Markdown selections use the selected source
+text; diff selections copy the highlighted whole diff lines.
+
+Copying uses the terminal's clipboard support (OSC 52), the same as the
+whole-message Copy button. The notification confirms the request was sent;
+it cannot confirm that your terminal accepted it. If the clipboard stays
+empty, use your terminal's native selection and Copy action. In GNOME
+Terminal, hold **Shift while dragging**, then press **Ctrl+Shift+C**. Pressing
+Ctrl+Shift+C after an ordinary Chatbook drag does not copy Chatbook's selection.
 
 ### Add to chat
 
@@ -197,7 +219,8 @@ Inside the menu itself:
   if streaming replaces the row you selected, the quote clamps to the last
   stable text rather than following the new content.
 - **Quotes are capped at 4000 characters.** Longer selections are truncated
-  with a marker before they leave the transcript.
+  with a marker for chat, side chat, notes, and feedback. **Copy selection**
+  copies the full highlighted text.
 - **Request changes / LGTM look broken with no run.** They're disabled on
   purpose — hover for the hint, or use **Comment**.
 - **Keyboard selection always starts at the text's beginning.** Use `o` to

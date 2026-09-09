@@ -52,9 +52,11 @@ from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
 
+from ...Chat.console_runtime import leave_console_runtime
 from .agent import ConsoleAgentController
 from .character import ConsoleCharacterController
 from .dictation import ConsoleDictationController
+from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
 from .image import ConsoleImageController
 from .message import ConsoleMessageController
@@ -64,6 +66,7 @@ from .prompt_queue import (
 )
 from .prompts import ConsolePromptsController
 from .reaction_preview import get_console_reaction_preview_coordinator
+from .realtime import ConsoleRealtimeController
 from .retrieval import ConsoleRetrievalController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
@@ -327,10 +330,10 @@ def build_console_controllers(
         schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
         screen_running_accessor=lambda: screen.is_running,
         current_chat_controller_accessor=lambda: screen._console_chat_controller,
-        fleet_unseen_ids_accessor=lambda: screen._console_fleet_unseen_ids(),
+        fleet_unseen_ids_accessor=lambda: screen._fleet._console_fleet_unseen_ids(),
         run_marker_with_unseen=(
             lambda controller, session, unseen_ids: (
-                screen._console_run_marker_with_unseen(
+                screen._fleet._console_run_marker_with_unseen(
                     controller,
                     session,
                     unseen_ids,
@@ -350,9 +353,13 @@ def build_console_controllers(
         conversation_browser_collapse_preferences=(
             lambda: screen._console_conversation_browser_collapse_preferences()
         ),
+        # Measured rail body height drives the browser's adaptive
+        # visible-row cap (fill-the-space Workspaces/Chats sections);
+        # late-binding like every sibling above.
+        rail_body_height_accessor=lambda: screen._console_rail_body_height(),
         # task-15864 AC#2: session-open (the resume flow) is a wake retry
         # trigger -- late-binding like every sibling above.
-        wake_retry_poke=lambda: screen._poke_console_wake_retry(),
+        wake_retry_poke=lambda: screen._fleet._poke_console_wake_retry(),
         sync_workspace_context=lambda: screen._sync_console_workspace_context(),
     )
     screen._character = ConsoleCharacterController(
@@ -551,7 +558,9 @@ def build_console_controllers(
         # was the same "temporary exception" shape as the four above,
         # for the same staleness reason, now closed out the same way.
         realtime_adopt_transcript=(
-            lambda transcript: screen._console_realtime_adopt_transcript(transcript)
+            lambda transcript: screen._realtime._console_realtime_adopt_transcript(
+                transcript
+            )
         ),
         # Same screen-owned realtime engine, read as a live session rather
         # than called: `_handle_console_dictation_button` (wave-4 task 2)
@@ -601,7 +610,7 @@ def build_console_controllers(
         ),
         realtime_session_accessor=lambda: screen._console_realtime,
         enter_realtime_loop=(
-            lambda capture_live: screen._enter_console_realtime_loop(
+            lambda capture_live: screen._realtime._enter_console_realtime_loop(
                 capture_live=capture_live
             )
         ),
@@ -943,4 +952,53 @@ def build_console_controllers(
             )
         ),
         sync_ui=lambda: screen._sync_native_console_chat_ui(),
+    )
+
+    screen._realtime = ConsoleRealtimeController(
+        screen,
+        app_instance=screen.app_instance,
+        ensure_active_console_session_settings=lambda: (
+            screen._session._ensure_active_console_session_settings()
+        ),
+        ensure_console_chat_store=lambda: screen._ensure_console_chat_store(),
+        dictation_state=lambda: screen._console_dictation_state,
+        request_console_dictation_stop=lambda *args, **kwargs: (
+            screen._request_console_dictation_stop(*args, **kwargs)
+        ),
+        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        repaint_console_realtime_chip=lambda: screen._repaint_console_realtime_chip(),
+        restore_console_voice_chip=lambda: screen._restore_console_voice_chip(),
+        console_pipeline_hands_free_blocker=lambda: (
+            screen._hands_free._console_pipeline_hands_free_blocker()
+        ),
+        enter_console_hands_free_pipeline_loop=lambda *args, **kwargs: (
+            screen._hands_free._enter_console_hands_free_pipeline_loop(*args, **kwargs)
+        ),
+    )
+
+    screen._fleet = ConsoleFleetLifecycleController(
+        screen,
+        app_instance=screen.app_instance,
+        ensure_console_chat_store=lambda: screen._ensure_console_chat_store(),
+        ensure_console_agent_bridge=lambda: screen._ensure_console_agent_bridge(),
+        ensure_console_chat_controller=lambda: screen._ensure_console_chat_controller(),
+        set_active_workspace_for_console_session=lambda session_id: (
+            screen._workspace._set_active_workspace_for_console_session(session_id)
+        ),
+        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        record_ui_timer_created=lambda name: screen._record_ui_timer_created(name),
+        record_ui_timer_stopped=lambda name: screen._record_ui_timer_stopped(name),
+        start_console_transcript_sync_timer=lambda: (
+            screen._start_console_transcript_sync_timer()
+        ),
+        console_screen_displayed=lambda: screen._console_screen_displayed(),
+        console_user_draft_text=lambda: screen._console_user_draft_text(),
+        leave_console_runtime=lambda: leave_console_runtime(
+            screen.app_instance, view=screen
+        ),
+        console_chat_controller_accessor=lambda: screen._console_chat_controller,
+        console_chat_store_accessor=lambda: screen._console_chat_store,
+        console_transcript_sync_timer_accessor=lambda: (
+            screen._console_transcript_sync_timer
+        ),
     )

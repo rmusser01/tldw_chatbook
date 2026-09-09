@@ -3,12 +3,14 @@
 from .conversation_browser_state import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+    CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT,
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserInputRow,
     ConsoleConversationBrowserRow,
     ConsoleConversationBrowserSection,
     ConsoleConversationBrowserState,
     build_console_conversation_browser_state,
+    console_conversation_browser_group_row_limit,
     console_persisted_row_updated_sort,
 )
 from .display_state import (
@@ -47,6 +49,7 @@ from .registry_service import BindingNotFound, LocalWorkspaceRegistryService
 __all__ = [
     "CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT",
     "CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT",
+    "CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT",
     "CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT",
     "BindingNotFound",
     "ConsoleConversationBrowserGroup",
@@ -79,6 +82,7 @@ __all__ = [
     "build_library_workspace_depth_state",
     "library_item_context_handoff",
     "build_console_workspace_state",
+    "console_conversation_browser_group_row_limit",
     "console_persisted_row_updated_sort",
     "console_workspace_conversation_result_copy",
     "console_workspace_conversation_visible_rows",

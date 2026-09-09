@@ -81,7 +81,7 @@ from .audio_cpp_runtime_card import (
 from .speech_catalog_mixin import SpeechCatalogMixin
 from .speech_clone_setup import SpeechCloneSetup
 from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
-from .speech_playground_model import AXIS_CONTROLS
+from .speech_playground_model import AXIS_CONTROLS, KOKORO_LANGUAGE_OPTIONS
 from .speech_profile_mixin import (
     AdoptStudioPreferencesRequested,
     SpeechProfileMixin,
@@ -1340,6 +1340,10 @@ class SpeechPlaygroundPane(
         cell.set_class(not applicable, "hidden")
         cell.display = applicable
         if applicable:
+            language = self.axis_values.get("tts-language-select", "")
+            choices = {value for _label, value in KOKORO_LANGUAGE_OPTIONS}
+            select.set_options(KOKORO_LANGUAGE_OPTIONS)
+            select.value = language if language in choices else ""
             select.disabled = False
             return
         label = AXIS_EMPTY_PROMPTS["tts-language-select"]

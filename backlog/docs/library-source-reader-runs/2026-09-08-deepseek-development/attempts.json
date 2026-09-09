@@ -1,0 +1,1206 @@
+[
+  {
+    "case_id": "dev-01",
+    "repeat": 1,
+    "arm": "retrieval",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "index_unavailable",
+    "cost_usd": null,
+    "latency_seconds": 1.959037035703659e-06,
+    "calls": [],
+    "fallbacks": 0,
+    "retries": 0,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "known_cost_usd": 0
+  },
+  {
+    "case_id": "dev-01",
+    "repeat": 1,
+    "arm": "reader",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.00042,
+    "latency_seconds": 3.4882750001270324,
+    "calls": [
+      {
+        "leg": "worker",
+        "model": "deepseek-v4-flash",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 217,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 53,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-flash",
+          "partial": false
+        },
+        "cost_usd": 8.3e-05,
+        "started_at": "2026-09-08T05:55:51.917226+00:00",
+        "completed_at": "2026-09-08T05:55:52.850538+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "{\"findings\":[{\"statement\":\"The practice garden opens at 11:00 on Wednesdays for maintenance.\",\"evidence\":[{\"packet_id\":\"p1\",\"quote\":\"On Wednesdays it opens at 11:00 for maintenance.\"}]}]}"
+      },
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 250,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 87,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000337,
+        "started_at": "2026-09-08T05:55:52.851324+00:00",
+        "completed_at": "2026-09-08T05:55:55.404528+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the supplied evidence, the practice garden opens at **11:00** on Wednesdays for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5, revision 1, characters 36–84: “On Wednesdays it opens at 11:00 for maintenance.”"
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "validated_evidence": {
+      "status": "ok",
+      "selected_sources": 1,
+      "submitted_sources": 1,
+      "accepted": 1,
+      "rejected": 0,
+      "omitted": 0,
+      "quote_location": "validated",
+      "claim_support": "unchecked",
+      "findings": [
+        {
+          "statement": "The practice garden opens at 11:00 on Wednesdays for maintenance.",
+          "evidence": [
+            {
+              "packet_id": "p1",
+              "source_id": "media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5",
+              "revision": "1",
+              "start": 36,
+              "end": 84,
+              "quote": "On Wednesdays it opens at 11:00 for maintenance."
+            }
+          ]
+        }
+      ]
+    },
+    "answer": "Based on the supplied evidence, the practice garden opens at **11:00** on Wednesdays for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5, revision 1, characters 36–84: “On Wednesdays it opens at 11:00 for maintenance.”",
+    "known_cost_usd": 0.00042
+  },
+  {
+    "case_id": "dev-01",
+    "repeat": 1,
+    "arm": "direct",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000269,
+    "latency_seconds": 1.8353872920852154,
+    "calls": [
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 180,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 76,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000269,
+        "started_at": "2026-09-08T05:55:55.405883+00:00",
+        "completed_at": "2026-09-08T05:55:57.240360+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the evidence, the practice garden opens at **11:00 on Wednesdays** for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5 — “On Wednesdays it opens at 11:00 for maintenance.”"
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "answer": "Based on the evidence, the practice garden opens at **11:00 on Wednesdays** for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5 — “On Wednesdays it opens at 11:00 for maintenance.”",
+    "known_cost_usd": 0.000269
+  },
+  {
+    "case_id": "dev-02",
+    "repeat": 1,
+    "arm": "reader",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000388,
+    "latency_seconds": 2.9809288328979164,
+    "calls": [
+      {
+        "leg": "worker",
+        "model": "deepseek-v4-flash",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 82,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 49,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-flash",
+          "partial": false
+        },
+        "cost_usd": 5.1e-05,
+        "started_at": "2026-09-08T05:55:57.241526+00:00",
+        "completed_at": "2026-09-08T05:55:58.044229+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "{\"findings\":[{\"statement\":\"Tandem bicycles can use the practice ferry but require advance booking.\",\"evidence\":[{\"packet_id\":\"p1\",\"quote\":\"The practice ferry carries bicycles. Tandem bicycles need advance booking.\"}]}]}"
+      },
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 244,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 89,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000337,
+        "started_at": "2026-09-08T05:55:58.044904+00:00",
+        "completed_at": "2026-09-08T05:56:00.221588+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the supplied evidence, yes — tandem bicycles can use the practice ferry, but they require advance booking.\n\nThe source states:\n\n> “The practice ferry carries bicycles. Tandem bicycles need advance booking.”\n\nSource: media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl, revision 1, characters 0–74."
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "validated_evidence": {
+      "status": "ok",
+      "selected_sources": 1,
+      "submitted_sources": 1,
+      "accepted": 1,
+      "rejected": 0,
+      "omitted": 0,
+      "quote_location": "validated",
+      "claim_support": "unchecked",
+      "findings": [
+        {
+          "statement": "Tandem bicycles can use the practice ferry but require advance booking.",
+          "evidence": [
+            {
+              "packet_id": "p1",
+              "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+              "revision": "1",
+              "start": 0,
+              "end": 74,
+              "quote": "The practice ferry carries bicycles. Tandem bicycles need advance booking."
+            }
+          ]
+        }
+      ]
+    },
+    "answer": "Based on the supplied evidence, yes — tandem bicycles can use the practice ferry, but they require advance booking.\n\nThe source states:\n\n> “The practice ferry carries bicycles. Tandem bicycles need advance booking.”\n\nSource: media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl, revision 1, characters 0–74.",
+    "known_cost_usd": 0.000388
+  },
+  {
+    "case_id": "dev-02",
+    "repeat": 1,
+    "arm": "direct",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000291,
+    "latency_seconds": 2.344392708968371,
+    "calls": [
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 171,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 90,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000291,
+        "started_at": "2026-09-08T05:56:00.222780+00:00",
+        "completed_at": "2026-09-08T05:56:02.566379+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the supplied evidence, tandem bicycles can use the practice ferry, but they need advance booking.\n\nThe source states: “The practice ferry carries bicycles. Tandem bicycles need advance booking.” (media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl)\n\nSo the answer is yes, with the condition that advance booking is required."
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "answer": "Based on the supplied evidence, tandem bicycles can use the practice ferry, but they need advance booking.\n\nThe source states: “The practice ferry carries bicycles. Tandem bicycles need advance booking.” (media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl)\n\nSo the answer is yes, with the condition that advance booking is required.",
+    "known_cost_usd": 0.000291
+  },
+  {
+    "case_id": "dev-02",
+    "repeat": 1,
+    "arm": "retrieval",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "index_unavailable",
+    "cost_usd": null,
+    "latency_seconds": 1.459149643778801e-06,
+    "calls": [],
+    "fallbacks": 0,
+    "retries": 0,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "known_cost_usd": 0
+  },
+  {
+    "case_id": "dev-03",
+    "repeat": 1,
+    "arm": "retrieval",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "index_unavailable",
+    "cost_usd": null,
+    "latency_seconds": 6.66128471493721e-07,
+    "calls": [],
+    "fallbacks": 0,
+    "retries": 0,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "known_cost_usd": 0
+  },
+  {
+    "case_id": "dev-03",
+    "repeat": 1,
+    "arm": "direct",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000296,
+    "latency_seconds": 2.279686334077269,
+    "calls": [
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 172,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 92,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000296,
+        "started_at": "2026-09-08T05:56:02.568369+00:00",
+        "completed_at": "2026-09-08T05:56:04.847133+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the supplied source evidence, the practice ferry’s pet fee is not stated. The source says only that the ferry carries bicycles, that tandem bicycles need advance booking, and that “Pets are not discussed” (`media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl`). Therefore, the evidence cannot establish a pet fee."
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "answer": "Based on the supplied source evidence, the practice ferry’s pet fee is not stated. The source says only that the ferry carries bicycles, that tandem bicycles need advance booking, and that “Pets are not discussed” (`media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl`). Therefore, the evidence cannot establish a pet fee.",
+    "known_cost_usd": 0.000296
+  },
+  {
+    "case_id": "dev-03",
+    "repeat": 1,
+    "arm": "reader",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "no_evidence_found",
+    "cost_usd": 2.3e-05,
+    "latency_seconds": 0.8798185840714723,
+    "calls": [
+      {
+        "leg": "worker",
+        "model": "deepseek-v4-flash",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 83,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 6,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-flash",
+          "partial": false
+        },
+        "cost_usd": 2.3e-05,
+        "started_at": "2026-09-08T05:56:04.848462+00:00",
+        "completed_at": "2026-09-08T05:56:05.727306+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "{\"findings\":[]}"
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "validated_evidence": {
+      "status": "no_evidence_found",
+      "selected_sources": 1,
+      "submitted_sources": 1,
+      "accepted": 0,
+      "rejected": 0,
+      "omitted": 0,
+      "quote_location": "validated",
+      "claim_support": "unchecked",
+      "findings": []
+    },
+    "known_cost_usd": 2.3e-05
+  },
+  {
+    "case_id": "dev-04",
+    "repeat": 1,
+    "arm": "retrieval",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "index_unavailable",
+    "cost_usd": null,
+    "latency_seconds": 1.209089532494545e-06,
+    "calls": [],
+    "fallbacks": 0,
+    "retries": 0,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "known_cost_usd": 0
+  },
+  {
+    "case_id": "dev-04",
+    "repeat": 1,
+    "arm": "reader",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "no_evidence_found",
+    "cost_usd": 2.5e-05,
+    "latency_seconds": 0.8643709579482675,
+    "calls": [
+      {
+        "leg": "worker",
+        "model": "deepseek-v4-flash",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 89,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 6,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-flash",
+          "partial": false
+        },
+        "cost_usd": 2.5e-05,
+        "started_at": "2026-09-08T05:56:05.729302+00:00",
+        "completed_at": "2026-09-08T05:56:06.592689+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "{\"findings\":[]}"
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "validated_evidence": {
+      "status": "no_evidence_found",
+      "selected_sources": 1,
+      "submitted_sources": 1,
+      "accepted": 0,
+      "rejected": 0,
+      "omitted": 0,
+      "quote_location": "validated",
+      "claim_support": "unchecked",
+      "findings": []
+    },
+    "known_cost_usd": 2.5e-05
+  },
+  {
+    "case_id": "dev-04",
+    "repeat": 1,
+    "arm": "direct",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000226,
+    "latency_seconds": 1.856631709029898,
+    "calls": [
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 178,
+          "cache_read": 0,
+          "cache_write": 0,
+          "output": 55,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000226,
+        "started_at": "2026-09-08T05:56:06.594579+00:00",
+        "completed_at": "2026-09-08T05:56:08.449988+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the supplied evidence, the committee did not approve any sign colour. The source states: “Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval.” Therefore, no colour was approved by the committee."
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "answer": "Based on the supplied evidence, the committee did not approve any sign colour. The source states: “Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval.” Therefore, no colour was approved by the committee.",
+    "known_cost_usd": 0.000226
+  },
+  {
+    "case_id": "dev-01",
+    "repeat": 2,
+    "arm": "retrieval",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "index_unavailable",
+    "cost_usd": null,
+    "latency_seconds": 1.9171275198459625e-06,
+    "calls": [],
+    "fallbacks": 0,
+    "retries": 0,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "known_cost_usd": 0
+  },
+  {
+    "case_id": "dev-01",
+    "repeat": 2,
+    "arm": "direct",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000186,
+    "latency_seconds": 1.879288166994229,
+    "calls": [
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 52,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 75,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000186,
+        "started_at": "2026-09-08T05:56:08.451896+00:00",
+        "completed_at": "2026-09-08T05:56:10.330299+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the evidence, the practice garden opens at 11:00 on Wednesdays for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5 — \"On Wednesdays it opens at 11:00 for maintenance.\""
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "answer": "Based on the evidence, the practice garden opens at 11:00 on Wednesdays for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5 — \"On Wednesdays it opens at 11:00 for maintenance.\"",
+    "known_cost_usd": 0.000186
+  },
+  {
+    "case_id": "dev-01",
+    "repeat": 2,
+    "arm": "reader",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000296,
+    "latency_seconds": 3.330845542019233,
+    "calls": [
+      {
+        "leg": "worker",
+        "model": "deepseek-v4-flash",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 89,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 53,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-flash",
+          "partial": false
+        },
+        "cost_usd": 5.6e-05,
+        "started_at": "2026-09-08T05:56:10.331986+00:00",
+        "completed_at": "2026-09-08T05:56:11.602227+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "{\"findings\":[{\"statement\":\"The practice garden opens at 11:00 on Wednesdays for maintenance.\",\"evidence\":[{\"packet_id\":\"p1\",\"quote\":\"On Wednesdays it opens at 11:00 for maintenance.\"}]}]}"
+      },
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 122,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 79,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.00024,
+        "started_at": "2026-09-08T05:56:11.603129+00:00",
+        "completed_at": "2026-09-08T05:56:13.661648+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the provided evidence, the practice garden opens at **11:00** on Wednesdays for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5, quote: “On Wednesdays it opens at 11:00 for maintenance.”"
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "validated_evidence": {
+      "status": "ok",
+      "selected_sources": 1,
+      "submitted_sources": 1,
+      "accepted": 1,
+      "rejected": 0,
+      "omitted": 0,
+      "quote_location": "validated",
+      "claim_support": "unchecked",
+      "findings": [
+        {
+          "statement": "The practice garden opens at 11:00 on Wednesdays for maintenance.",
+          "evidence": [
+            {
+              "packet_id": "p1",
+              "source_id": "media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5",
+              "revision": "1",
+              "start": 36,
+              "end": 84,
+              "quote": "On Wednesdays it opens at 11:00 for maintenance."
+            }
+          ]
+        }
+      ]
+    },
+    "answer": "Based on the provided evidence, the practice garden opens at **11:00** on Wednesdays for maintenance.\n\nSource: media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5, quote: “On Wednesdays it opens at 11:00 for maintenance.”",
+    "known_cost_usd": 0.000296
+  },
+  {
+    "case_id": "dev-02",
+    "repeat": 2,
+    "arm": "reader",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000363,
+    "latency_seconds": 3.5037701670080423,
+    "calls": [
+      {
+        "leg": "worker",
+        "model": "deepseek-v4-flash",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 82,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 49,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-flash",
+          "partial": false
+        },
+        "cost_usd": 5.1e-05,
+        "started_at": "2026-09-08T05:56:13.663408+00:00",
+        "completed_at": "2026-09-08T05:56:14.614930+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "{\"findings\":[{\"statement\":\"Tandem bicycles can use the practice ferry but require advance booking.\",\"evidence\":[{\"packet_id\":\"p1\",\"quote\":\"The practice ferry carries bicycles. Tandem bicycles need advance booking.\"}]}]}"
+      },
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 116,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 117,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000312,
+        "started_at": "2026-09-08T05:56:14.615684+00:00",
+        "completed_at": "2026-09-08T05:56:17.166127+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the supplied evidence, yes — tandem bicycles can use the practice ferry, but they require advance booking.\n\nThe source states:\n\n> “The practice ferry carries bicycles. Tandem bicycles need advance booking.”  \n> — source_id: media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl, revision 1, characters 0–74\n\nThis directly supports the claim that tandem bicycles are permitted on the practice ferry, with the qualification that advance booking is needed."
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "validated_evidence": {
+      "status": "ok",
+      "selected_sources": 1,
+      "submitted_sources": 1,
+      "accepted": 1,
+      "rejected": 0,
+      "omitted": 0,
+      "quote_location": "validated",
+      "claim_support": "unchecked",
+      "findings": [
+        {
+          "statement": "Tandem bicycles can use the practice ferry but require advance booking.",
+          "evidence": [
+            {
+              "packet_id": "p1",
+              "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+              "revision": "1",
+              "start": 0,
+              "end": 74,
+              "quote": "The practice ferry carries bicycles. Tandem bicycles need advance booking."
+            }
+          ]
+        }
+      ]
+    },
+    "answer": "Based on the supplied evidence, yes — tandem bicycles can use the practice ferry, but they require advance booking.\n\nThe source states:\n\n> “The practice ferry carries bicycles. Tandem bicycles need advance booking.”  \n> — source_id: media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl, revision 1, characters 0–74\n\nThis directly supports the claim that tandem bicycles are permitted on the practice ferry, with the qualification that advance booking is needed.",
+    "known_cost_usd": 0.000363
+  },
+  {
+    "case_id": "dev-02",
+    "repeat": 2,
+    "arm": "direct",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000209,
+    "latency_seconds": 2.493744415929541,
+    "calls": [
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 43,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 90,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000209,
+        "started_at": "2026-09-08T05:56:17.168005+00:00",
+        "completed_at": "2026-09-08T05:56:19.660664+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the supplied evidence, tandem bicycles can use the practice ferry, but they need advance booking.\n\nThe source states: “The practice ferry carries bicycles. Tandem bicycles need advance booking.” (media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl)\n\nSo the answer is yes, with the condition that advance booking is required."
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "answer": "Based on the supplied evidence, tandem bicycles can use the practice ferry, but they need advance booking.\n\nThe source states: “The practice ferry carries bicycles. Tandem bicycles need advance booking.” (media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl)\n\nSo the answer is yes, with the condition that advance booking is required.",
+    "known_cost_usd": 0.000209
+  },
+  {
+    "case_id": "dev-02",
+    "repeat": 2,
+    "arm": "retrieval",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "index_unavailable",
+    "cost_usd": null,
+    "latency_seconds": 1.0409858077764511e-06,
+    "calls": [],
+    "fallbacks": 0,
+    "retries": 0,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "known_cost_usd": 0
+  },
+  {
+    "case_id": "dev-03",
+    "repeat": 2,
+    "arm": "direct",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000141,
+    "latency_seconds": 1.6792071668896824,
+    "calls": [
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 44,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 55,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000141,
+        "started_at": "2026-09-08T05:56:19.663208+00:00",
+        "completed_at": "2026-09-08T05:56:21.341251+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the supplied source evidence, the practice ferry’s pet fee is not stated. The source says only that the practice ferry carries bicycles, that tandem bicycles need advance booking, and that “Pets are not discussed.” Therefore, the evidence cannot establish a pet fee."
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "answer": "Based on the supplied source evidence, the practice ferry’s pet fee is not stated. The source says only that the practice ferry carries bicycles, that tandem bicycles need advance booking, and that “Pets are not discussed.” Therefore, the evidence cannot establish a pet fee.",
+    "known_cost_usd": 0.000141
+  },
+  {
+    "case_id": "dev-03",
+    "repeat": 2,
+    "arm": "retrieval",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "index_unavailable",
+    "cost_usd": null,
+    "latency_seconds": 1.791166141629219e-06,
+    "calls": [],
+    "fallbacks": 0,
+    "retries": 0,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "known_cost_usd": 0
+  },
+  {
+    "case_id": "dev-03",
+    "repeat": 2,
+    "arm": "reader",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "no_evidence_found",
+    "cost_usd": 2.3e-05,
+    "latency_seconds": 0.9647354169283062,
+    "calls": [
+      {
+        "leg": "worker",
+        "model": "deepseek-v4-flash",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 83,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 6,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-flash",
+          "partial": false
+        },
+        "cost_usd": 2.3e-05,
+        "started_at": "2026-09-08T05:56:21.343641+00:00",
+        "completed_at": "2026-09-08T05:56:22.307381+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "{\"findings\":[]}"
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "validated_evidence": {
+      "status": "no_evidence_found",
+      "selected_sources": 1,
+      "submitted_sources": 1,
+      "accepted": 0,
+      "rejected": 0,
+      "omitted": 0,
+      "quote_location": "validated",
+      "claim_support": "unchecked",
+      "findings": []
+    },
+    "known_cost_usd": 2.3e-05
+  },
+  {
+    "case_id": "dev-04",
+    "repeat": 2,
+    "arm": "reader",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "no_evidence_found",
+    "cost_usd": 2.5e-05,
+    "latency_seconds": 1.0396418329328299,
+    "calls": [
+      {
+        "leg": "worker",
+        "model": "deepseek-v4-flash",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 89,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 6,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-flash",
+          "partial": false
+        },
+        "cost_usd": 2.5e-05,
+        "started_at": "2026-09-08T05:56:22.309073+00:00",
+        "completed_at": "2026-09-08T05:56:23.347777+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "{\"findings\":[]}"
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "validated_evidence": {
+      "status": "no_evidence_found",
+      "selected_sources": 1,
+      "submitted_sources": 1,
+      "accepted": 0,
+      "rejected": 0,
+      "omitted": 0,
+      "quote_location": "validated",
+      "claim_support": "unchecked",
+      "findings": []
+    },
+    "known_cost_usd": 2.5e-05
+  },
+  {
+    "case_id": "dev-04",
+    "repeat": 2,
+    "arm": "retrieval",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "index_unavailable",
+    "cost_usd": null,
+    "latency_seconds": 7.920898497104645e-07,
+    "calls": [],
+    "fallbacks": 0,
+    "retries": 0,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "known_cost_usd": 0
+  },
+  {
+    "case_id": "dev-04",
+    "repeat": 2,
+    "arm": "direct",
+    "split": "development",
+    "scenario": "single_question",
+    "status": "ok",
+    "cost_usd": 0.000147,
+    "latency_seconds": 1.8596422499977052,
+    "calls": [
+      {
+        "leg": "main",
+        "model": "deepseek-v4-pro",
+        "status": "ok",
+        "usage": {
+          "uncached_input": 50,
+          "cache_read": 128,
+          "cache_write": 0,
+          "output": 56,
+          "audio_input": 0,
+          "audio_output": 0,
+          "transcription_seconds": 0.0,
+          "provider": "deepseek",
+          "model": "deepseek-v4-pro",
+          "partial": false
+        },
+        "cost_usd": 0.000147,
+        "started_at": "2026-09-08T05:56:23.349959+00:00",
+        "completed_at": "2026-09-08T05:56:25.208327+00:00",
+        "pricing": {
+          "tier": "off_peak",
+          "exact_pricing": true,
+          "cost_status": "exact",
+          "effective_date": "2026-08-16",
+          "verified_on": "2026-09-08",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/?article_id=article_1779470751466_8",
+          "news_url": "https://api-docs.deepseek.com/news/news260813/",
+          "peak_intervals_utc": [
+            "[01:00,04:00)",
+            "[06:00,10:00)"
+          ]
+        },
+        "response": "Based on the supplied evidence, the committee did not approve any sign colour. The source states: “Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval.” Therefore, no sign colour was approved by the committee."
+      }
+    ],
+    "fallbacks": 0,
+    "retries": 0,
+    "answer": "Based on the supplied evidence, the committee did not approve any sign colour. The source states: “Mira proposed a green sign. Ivo preferred blue. The committee did not vote. A proposal is not an approval.” Therefore, no sign colour was approved by the committee.",
+    "known_cost_usd": 0.000147
+  }
+]

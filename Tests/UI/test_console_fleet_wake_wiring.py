@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
 
 
 def _attach_real_dbs(app, tmp_path):
@@ -53,7 +54,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
     app = _build_test_app()
     _attach_real_dbs(app, tmp_path)
     order: list[str] = []
-    real_claim = ChatScreen._claim_console_fleet_wake_marks
+    real_claim = ConsoleFleetLifecycleController._claim_console_fleet_wake_marks
     real_sync = ChatScreen._sync_console_native_session_tabs
 
     def recording_claim(self):
@@ -64,7 +65,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
         order.append("sync")
         return await real_sync(self)
 
-    ChatScreen._claim_console_fleet_wake_marks = recording_claim
+    ConsoleFleetLifecycleController._claim_console_fleet_wake_marks = recording_claim
     ChatScreen._sync_console_native_session_tabs = recording_sync
     try:
         host = ConsoleHarness(app)
@@ -75,7 +76,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
             await _wait_for_selector(console, pilot, "#console-session-surface")
             await pilot.pause()
     finally:
-        ChatScreen._claim_console_fleet_wake_marks = real_claim
+        ConsoleFleetLifecycleController._claim_console_fleet_wake_marks = real_claim
         ChatScreen._sync_console_native_session_tabs = real_sync
     assert "claim" in order, "the mount never ran the wake mark claim"
     assert "sync" in order, (
@@ -123,8 +124,10 @@ async def test_the_mount_claim_seeds_pending_from_mark_and_runs_db(tmp_path):
         marks.set_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN)
         runs_db.set_status(child_id, "done", "staged answer")
 
-        console._claim_console_fleet_wake_marks()
-        assert controller.fleet_wake.has_pending(session.id), (
+        console._fleet._claim_console_fleet_wake_marks()
+        from Tests.UI.test_console_fleet_wake_ui_freshness import _settle
+
+        assert await _settle(pilot, lambda: controller.fleet_wake.has_pending(session.id)), (
             "the mount-claim seam must turn mark + runs-DB state into a "
             "pending wake"
         )

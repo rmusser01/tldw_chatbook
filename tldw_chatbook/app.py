@@ -9828,8 +9828,39 @@ class TldwCli(
             )
         raise primary_error
 
+    def _start_persona_buddy(self) -> None:
+        """Create the profile-local Buddy owner once, without selecting a Persona."""
+        if getattr(self, "_persona_buddy_host", None) is not None:
+            return
+        from .Persona_Visual.buddy import BuddyController
+        from .Persona_Visual.repository import PersonaVisualRepository
+        from .UI.Navigation.persona_buddy_host import PersonaBuddyHost
+
+        controller = BuddyController(
+            self.local_character_persona_service,
+            PersonaVisualRepository(self.chachanotes_db),
+            get_user_data_dir(),
+        )
+        self._persona_buddy_host = PersonaBuddyHost(self, controller)
+        self._persona_buddy_host.start()
+
+    async def use_persona_for_buddy(
+        self, persona_id: str, *, source: str = "local"
+    ) -> bool:
+        """Explicitly select an eligible local Persona without changing Console."""
+        self._start_persona_buddy()
+        return await self._persona_buddy_host.select(persona_id, source=source)
+
+    async def on_buddy_preferences_requested(self, message: Any) -> None:
+        """Handle only the current floating view's window preferences."""
+        message.stop()
+        host = getattr(self, "_persona_buddy_host", None)
+        if host is not None and message.control is host.current_view:
+            await host.update_preferences(**message.changes)
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
+        self._start_persona_buddy()
         self._bind_tts_service()
         mount_start = time.perf_counter()
 
@@ -11045,22 +11076,12 @@ class TldwCli(
         self._schedule_launch_wake()
 
     def _schedule_launch_wake(self) -> None:
-        """Deliver a supervisor wake this install already owed at launch.
+        """Discover saved child results in existing history and audit before waking.
 
-        task-15860 Task 6. A background sub-agent that finished while the
-        app was closed -- or one whose delivery the user quit out from
-        under -- used to wait for the next Console visit. It no longer
-        does, under the owner's mark-gated ruling: only a conversation
-        that already carries a durable ``FLEET_UNSEEN`` mark AND an owed
-        ``agent_runs`` row is delivered, behind the existing ``[agents]
-        autowake_enabled`` (there is no separate launch switch).
-
-        **The common path costs one indexed read and constructs nothing.**
-        With no marks -- every install that has never run a background
-        sub-agent, and every one whose results have all been seen -- this
-        returns before touching the Console store, provider gateway, agent
-        bridge (so ``agent_runs.db`` is not even opened) or controller.
-        That is pinned in ``Tests/UI/test_console_launch_wake.py``.
+        ADR-135 makes durable attempts and causal lineage the authority. Unseen
+        badges are only a projection. An absent or empty runs database does not
+        construct the Console runtime; the existing autowake switch still gates
+        automatic launch work.
         """
         try:
             from tldw_chatbook.Chat.console_launch_wake import (
@@ -11531,6 +11552,9 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        buddy = getattr(self, "_persona_buddy_host", None)
+        if buddy is not None:
+            await buddy.shutdown()
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()

@@ -14,12 +14,9 @@ failed twice, plus one recorded window needing a ruling:
    keystroke;
 3. (AC#3) a wake deferred while its conversation is VIEWED view-cleared
    the mark while the ledger still owed -- restart in that window leaves
-   an owed, UNMARKED run, and the mount-claim is marks-indexed
-   (``seed_from_marks``: the mark names WHICH conversations to claim),
-   so it never seeds. Verified here as a limit of the marks-indexed
-   claim; fixed by making the view-clear YIELD while the coordinator
-   still owes the conversation, so the mark -- the restart staging bit --
-   survives every deferral window.
+   an owed, UNMARKED run. ADR135 now discovers pending results from the
+   durable ledger independently of badges. The tests preserve visible
+   attention through deferral and verify unmarked results are discovered.
 """
 
 from __future__ import annotations
@@ -290,25 +287,14 @@ async def test_view_clear_yields_while_a_wake_is_still_owed(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_marks_indexed_mount_claim_alone_misses_an_unmarked_owed_run(
-    tmp_path,
-):
-    """The verified limit the AC#3 ruling records: ``seed_from_marks`` is
-    marks-INDEXED -- the ledger defines WHAT is owed, but only for
-    conversations the mark names. An owed, unmarked run seeds nothing.
-    This is why the fix above keeps the mark alive through every deferral
-    window instead of trying to claim from the ledger globally (which
-    would also sweep in restart-orphans the corrected spec §3 deliberately
-    leaves to next-turn handling)."""
+async def test_mount_claim_discovers_an_unmarked_owed_run(tmp_path):
+    """ADR135: durable completion discovery is independent of UI badges."""
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
         tmp_path
     )
     try:
         _parent, _run_id = _terminal_subagent_run(runs_db, "conv-unmarked")
-        assert controller.fleet_wake.seed_from_marks() == 0, (
-            "documented limit: an owed but UNMARKED conversation is "
-            "invisible to the marks-indexed mount-claim"
-        )
-        assert not controller.fleet_wake.has_pending("conv-unmarked")
+        assert controller.fleet_wake.seed_from_marks() == 1
+        assert controller.fleet_wake.has_pending("conv-unmarked")
     finally:
         chacha.close()

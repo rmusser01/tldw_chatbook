@@ -627,7 +627,15 @@ class MCPToolProvider:
             length-capped, always-non-empty `error` on refusal or
             failure. Never raises.
         """
+        from .automatic_work_runtime import current_automatic_work
+
         with self._invoke_lock:
+            automatic_work = current_automatic_work()
+            if automatic_work is not None:
+                try:
+                    automatic_work.check()
+                except Exception as exc:  # noqa: BLE001 -- no authority, no approval or tool work
+                    return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
             return self._invoke_locked(tool_id, args)
 
     def _invoke_locked(self, tool_id: str, args: dict) -> ToolResult:
@@ -888,20 +896,39 @@ class MCPToolProvider:
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
         try:
+            from .automatic_work_runtime import current_automatic_work
+
+            automatic_work = current_automatic_work()
+            if automatic_work is not None:
+                # An approval may have arrived after this chain stopped.
+                automatic_work.check()
             timeout = self._service._tool_call_timeout() + _RESULT_WAIT_SLACK_SECONDS
             # Task 4 (PR-T3): the same schema `tool.input_schema` the Hub
             # workbench's Test Tool form renders from -- named argument
             # NAMES only, never values, so an agent-initiated run is
             # audited with real provenance instead of the pre-Task-4
             # always-empty `argument_names: []`.
-            execution_coroutine = self._service.execute_hub_tool(
-                tool.server_key,
-                tool.name,
-                args,
-                initiator="agent",
-                decision=decision,
-                registered_argument_names=schema_argument_names(tool.input_schema),
-            )
+            def create_execution():
+                return self._service.execute_hub_tool(
+                    tool.server_key,
+                    tool.name,
+                    args,
+                    initiator="agent",
+                    decision=decision,
+                    registered_argument_names=schema_argument_names(tool.input_schema),
+                )
+
+            if automatic_work is not None:
+                async def execute_authorized():
+                    # Scheduling on the main loop can itself wait. Bind the
+                    # captured authority and check again at actual dispatch.
+                    with automatic_work.scope():
+                        automatic_work.check()
+                        return await create_execution()
+
+                execution_coroutine = execute_authorized()
+            else:
+                execution_coroutine = create_execution()
             future = asyncio.run_coroutine_threadsafe(
                 execution_coroutine,
                 self._main_loop,

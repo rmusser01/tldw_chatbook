@@ -95,8 +95,7 @@ class InspectorSectionRow:
 
 @dataclass(frozen=True)
 class ConsoleInspectorSectionState:
-    """Atomic snapshot of everything ``sync_state`` can change: rows plus
-    the header summary.
+    """Atomic rows, header summary, and optional wrapped notice.
 
     Passed as ONE value so the two dimensions can never drift independently
     -- a caller that wants to refresh only the rows still passes the
@@ -106,7 +105,7 @@ class ConsoleInspectorSectionState:
     ``ConsoleInspectorState`` (`console_display_state.py`), the same
     full-snapshot-per-sync pattern ``ConsoleRunInspector`` already uses.
 
-    **Both fields are REQUIRED -- neither has a default** (task-3 review
+    **Rows and summary are REQUIRED -- neither has a default** (task-3 review
     round 3 finding, HIGH: round 1's fix kept per-field defaults, which
     meant ``ConsoleInspectorSectionState(rows=updated_rows)`` -- omitting
     ``summary`` -- reproduced the exact same "silently wipes the other
@@ -120,10 +119,12 @@ class ConsoleInspectorSectionState:
         rows: Rows to render.
         summary: Right-aligned header summary; ``""`` hides it (an
             explicit, deliberate choice -- not an omitted argument).
+        notice: Optional wrapped explanation after the preview rows.
     """
 
     rows: tuple[InspectorSectionRow, ...]
     summary: str
+    notice: str = ""
 
 
 class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
@@ -210,9 +211,12 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         section_id: str,
         rows: Sequence[InspectorSectionRow] = (),
         summary: str = "",
+        notice: str = "",
         collapsible: bool = True,
         open: bool = True,
         view_all_label: str = "",
+        max_visible_rows: int | None = None,
+        scroll_on_expand: bool = False,
         **kwargs: Any,
     ) -> None:
         """Create an Inspector section.
@@ -225,10 +229,15 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             rows: Initial rows to render.
             summary: Initial right-aligned header summary; ``""`` renders
                 no summary.
+            notice: Optional wrapped text after the preview rows.
             collapsible: Whether the header shows a collapse/expand
                 chevron. ``False`` forces the section permanently open.
             open: Initial open/collapsed state (ignored, forced ``True``,
                 when ``collapsible`` is ``False``).
+            max_visible_rows: Optional cap on mounted preview rows; full
+                state and summary remain available. None mounts all rows.
+            scroll_on_expand: Reveal the action (or section) after opening;
+                state refreshes never change the reading position.
             view_all_label: Label for an optional "View all" tail button;
                 ``""`` renders no tail.
             **kwargs: Forwarded to ``Vertical`` (e.g. ``id``, ``classes``).
@@ -238,9 +247,16 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         self.section_id = section_id
         self.rows: tuple[InspectorSectionRow, ...] = tuple(rows)
         self.summary = summary
+        self.notice = notice
         self.collapsible = collapsible
         self.open = True if not collapsible else bool(open)
         self.view_all_label = view_all_label
+        if max_visible_rows is not None and (
+            type(max_visible_rows) is not int or max_visible_rows < 1
+        ):
+            raise ValueError("max_visible_rows must be a positive integer")
+        self.max_visible_rows = max_visible_rows
+        self.scroll_on_expand = scroll_on_expand
         self.styles.height = "auto"
         self.styles.min_height = 0
         self.add_class("console-inspector-section")
@@ -267,6 +283,10 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
     @property
     def _body_id(self) -> str:
         return f"console-inspector-section-{self.section_id}-body"
+
+    @property
+    def _notice_id(self) -> str:
+        return f"console-inspector-section-{self.section_id}-notice"
 
     @property
     def _view_all_id(self) -> str:
@@ -339,8 +359,13 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         if not self.open:
             body.styles.display = "none"
         with body:
-            for index, row in enumerate(self.rows):
+            for index, row in enumerate(self.rows[: self.max_visible_rows]):
                 yield self._build_row_widget(row, index)
+            if self.notice:
+                notice = Static(self.notice, id=self._notice_id, markup=False)
+                notice.styles.height = "auto"
+                notice.styles.text_wrap = "wrap"
+                yield notice
 
         if self.view_all_label:
             view_all = Button(
@@ -400,6 +425,17 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 toggle.label = self._toggle_label()
                 toggle.tooltip = self._toggle_tooltip()
         self.post_message(self.CollapseToggled(self.section_id, open))
+        if open and self.is_mounted and self.scroll_on_expand:
+            self.call_after_refresh(self._reveal_expanded_section)
+
+    def _reveal_expanded_section(self) -> None:
+        """Reveal the actionable tail inside any enclosing capped scroll area."""
+        if not self.is_mounted or not self.open:
+            return
+        target = (
+            self.query_one(f"#{self._view_all_id}") if self.view_all_label else self
+        )
+        target.scroll_visible(animate=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route the chevron toggle and the "View all" tail button."""
@@ -414,7 +450,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
 
     @staticmethod
     def _structural_key(
-        rows: tuple[InspectorSectionRow, ...], summary: str
+        rows: tuple[InspectorSectionRow, ...], summary: str, notice: str = ""
     ) -> tuple:
         """Return a key identifying the mounted widget structure for a state.
 
@@ -436,6 +472,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             rows: Row sequence to fingerprint.
             summary: Header summary text to fingerprint (only its presence
                 matters, not its content).
+            notice: Explanation text (only its presence matters).
 
         Returns:
             A hashable structure key.
@@ -443,6 +480,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         return (
             tuple(row.row_id for row in rows),
             bool(summary),
+            bool(notice),
         )
 
     def sync_state(self, state: ConsoleInspectorSectionState) -> None:
@@ -468,19 +506,26 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         """
         rows = tuple(state.rows)
         summary = state.summary
-        if rows == self.rows and summary == self.summary:
+        notice = state.notice
+        if rows == self.rows and summary == self.summary and notice == self.notice:
             return
         previous_rows = self.rows
         previous_summary = self.summary
-        same_structure = self._structural_key(rows, summary) == self._structural_key(
-            previous_rows, previous_summary
+        previous_notice = self.notice
+        same_structure = self._structural_key(
+            rows[: self.max_visible_rows], summary, notice
+        ) == self._structural_key(
+            previous_rows[: self.max_visible_rows], previous_summary, previous_notice
         )
         self.rows = rows
         self.summary = summary
+        self.notice = notice
         if (
             not self.is_mounted
             or not same_structure
-            or not self._apply_state_updates(previous_rows, previous_summary)
+            or not self._apply_state_updates(
+                previous_rows, previous_summary, previous_notice
+            )
         ):
             self.recompose_count += 1
             self.refresh(recompose=True)
@@ -489,6 +534,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         self,
         previous_rows: tuple[InspectorSectionRow, ...],
         previous_summary: str,
+        previous_notice: str,
     ) -> bool:
         """Patch changed summary/row Statics in place.
 
@@ -496,6 +542,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             previous_rows: The row sequence that produced the mounted rows.
             previous_summary: The summary text that produced the mounted
                 summary Static (or the fact it was absent).
+            previous_notice: Text that produced the mounted notice.
 
         Returns:
             ``True`` when every changed widget was found and patched;
@@ -505,8 +552,13 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         try:
             if self.summary and self.summary != previous_summary:
                 self.query_one(f"#{self._summary_id}", Static).update(self.summary)
+            if self.notice and self.notice != previous_notice:
+                self.query_one(f"#{self._notice_id}", Static).update(self.notice)
             for index, (row, previous_row) in enumerate(
-                zip(self.rows, previous_rows)
+                zip(
+                    self.rows[: self.max_visible_rows],
+                    previous_rows[: self.max_visible_rows],
+                )
             ):
                 self._apply_row_update(index, row, previous_row)
         except (NoMatches, QueryError):

@@ -1,0 +1,304 @@
+{
+  "manifest_sha256": "de780141a7bb09c8007c8f93ab24cf38924cfe4fd68b8f26a60c30ae761f35e5",
+  "dry_run": false,
+  "matrix": [
+    {
+      "case_id": "dev-01",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    }
+  ],
+  "request_artifact_boundary": "Exact auxiliary messages before the canonical provider adapter; not a capture of provider-final wire payload",
+  "provider_transformations": "Unsupported provider transformations and effective transport timeout require live qualification",
+  "prompt_sha256": {
+    "answer": "5c9bd791677c06ba4a571a3270146b1de66aafef1c5049533cfab15e15112e2f",
+    "reader": "9f384a25d5151d743f600f14fa8ca0986df5e8c7845cba4e63bd62e1bf097e62"
+  },
+  "resolutions": [
+    {
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-v4-pro",
+      "ready": true,
+      "visible_copy": "",
+      "readiness_key": "deepseek",
+      "execution_key": "deepseek",
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "min_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "seed": null,
+      "presence_penalty": null,
+      "frequency_penalty": null,
+      "reasoning_effort": null,
+      "reasoning_summary": null,
+      "verbosity": null,
+      "thinking_effort": null,
+      "thinking_budget_tokens": 0,
+      "streaming": false,
+      "prompt_caching": null,
+      "api_mode": null,
+      "continuation_protocol": null,
+      "request_timeout": null,
+      "request_retries": null,
+      "request_retry_delay": null
+    },
+    {
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-v4-flash",
+      "ready": true,
+      "visible_copy": "",
+      "readiness_key": "deepseek",
+      "execution_key": "deepseek",
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "min_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "seed": null,
+      "presence_penalty": null,
+      "frequency_penalty": null,
+      "reasoning_effort": null,
+      "reasoning_summary": null,
+      "verbosity": null,
+      "thinking_effort": null,
+      "thinking_budget_tokens": 0,
+      "streaming": false,
+      "prompt_caching": null,
+      "api_mode": null,
+      "continuation_protocol": null,
+      "request_timeout": null,
+      "request_retries": null,
+      "request_retry_delay": null
+    }
+  ],
+  "provider": "deepseek",
+  "execution_key": "deepseek",
+  "base_url": "https://api.deepseek.com",
+  "main_model": "deepseek-v4-pro",
+  "worker_model": "deepseek-v4-flash",
+  "credential_ownership": "operator_environment",
+  "served_identity": "unavailable; gateway labels configured identity",
+  "temperature": 0.0,
+  "top_p": 1.0,
+  "seed": null,
+  "reasoning_effort": null,
+  "thinking_budget_tokens": 0,
+  "reasoning_policy": "Thinking explicitly disabled via native Chat Completions",
+  "thinking_mode": "disabled",
+  "pricing_policy": "Peak rates reserve spend; actual UTC request intervals select peak/off-peak rates; mixed intervals have upper bounds only",
+  "request_retries": 0,
+  "retry_policy": "existing sensitive_llm_request disables adapter retries",
+  "result_deadline_seconds": 60,
+  "transport_timeout": "adapter-configured; not qualified by this experiment",
+  "cache_policy": "No explicit cache controls; provider-reported cache buckets retained",
+  "limits": {
+    "input_limit": 8000,
+    "output_limit": 2000,
+    "context_limit": 32768
+  },
+  "request_cap": 24,
+  "token_cap": 240000,
+  "spend_cap_usd": 1.0,
+  "reserved_requests": 24,
+  "reserved_tokens": 240000,
+  "reserved_spend_usd": 0.9504,
+  "pricing": {
+    "deepseek-v4-pro": {
+      "input_per_mtok": 1.32,
+      "output_per_mtok": 3.96,
+      "cache_read_per_mtok": 0.044,
+      "cache_write_per_mtok": null,
+      "as_of": "2026-08-16",
+      "audio_in_per_mtok": null,
+      "audio_out_per_mtok": null,
+      "cached_audio_in_per_mtok": null,
+      "transcription_per_minute": null
+    },
+    "deepseek-v4-flash": {
+      "input_per_mtok": 0.44,
+      "output_per_mtok": 1.32,
+      "cache_read_per_mtok": 0.014,
+      "cache_write_per_mtok": null,
+      "as_of": "2026-08-16",
+      "audio_in_per_mtok": null,
+      "audio_out_per_mtok": null,
+      "cached_audio_in_per_mtok": null,
+      "transcription_per_minute": null
+    }
+  },
+  "retrieval": {
+    "status": "index_unavailable",
+    "profile": "semantic",
+    "top_k": 6,
+    "excerpt_char_limit": 8000,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "index_build_cost_usd": null
+  }
+}

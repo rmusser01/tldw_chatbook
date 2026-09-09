@@ -5966,7 +5966,7 @@ class LibraryScreen(BaseAppScreen):
             try:
                 await lifecycle_worker.wait()
             except Exception:
-                logger.opt(exception=True).warning(
+                logger.warning(
                     "Pending Library lifecycle write failed during unmount."
                 )
         if self._library_lifecycle_pending_persist is not None:

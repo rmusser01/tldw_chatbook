@@ -1038,13 +1038,19 @@ def secure_private_directory(
                             reason="missing_component_in_shared_sticky_parent",
                         )
                     ) from None
-                os.mkdir(
-                    component,
-                    mode=_PRIVATE_DIRECTORY_MODE,
-                    dir_fd=current_fd,
-                )
+                try:
+                    os.mkdir(
+                        component,
+                        mode=_PRIVATE_DIRECTORY_MODE,
+                        dir_fd=current_fd,
+                    )
+                    created_component = True
+                except FileExistsError:
+                    # Another caller may have created this entry after our
+                    # open. Reopen without following links and apply the same
+                    # owner/type/mode checks below; existence is not trust.
+                    pass
                 next_fd = _open_directory_component(current_fd, component)
-                created_component = True
             except OSError as exc:
                 current_fd, symlink_hops = _follow_trusted_symlink(
                     current_fd=current_fd,

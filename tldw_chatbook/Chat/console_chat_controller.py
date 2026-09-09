@@ -12,11 +12,13 @@ import re
 import stat
 import threading
 import time
+from contextlib import nullcontext
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from sqlite3 import Error as SQLiteError
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -31,12 +33,14 @@ from uuid import uuid4
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
 from tldw_chatbook.Chat.attachment_core import (
     image_url_part,
     max_history_images,
     vision_block_reason,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
     ConsoleChatMessage,
@@ -152,6 +156,8 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     expand_character_template,
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
@@ -3324,6 +3330,68 @@ class ConsoleChatController:
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
     ) -> ConsoleSubmitResult:
+        """Submit work, explicitly identifying a wake's proven preflight refusal."""
+        scope = (
+            nullcontext()
+            if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            else manual_work_scope()
+        )
+        try:
+            with scope:
+                result = await self._submit_draft_inner(
+                    draft,
+                    session_id=session_id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    queue_authorization=queue_authorization,
+                    wake_authorization=wake_authorization,
+                )
+        except BaseException as exc:
+            # A wake may stop while preparation is still awaiting a helper,
+            # before the streaming layer owns its terminal-state cleanup.
+            if (
+                origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                and self._fleet_wake.authorizes(wake_authorization, session_id)
+            ):
+                self._signal_stop(session_id=session_id)
+                if (
+                    self.run_state_for(session_id).status
+                    in FEEDBACK_ACTIVE_RUN_STATUSES
+                ):
+                    status = (
+                        ConsoleRunStatus.STOPPED
+                        if isinstance(exc, asyncio.CancelledError)
+                        else ConsoleRunStatus.FAILED
+                    )
+                    self._set_run_state(
+                        ConsoleRunState(
+                            status, "Automatic follow-up paused. Results are saved."
+                        ),
+                        session_id=session_id,
+                    )
+            raise
+
+        if (
+            origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            and self._fleet_wake.authorizes(
+                wake_authorization, result.session_id or session_id
+            )
+            and not wake_authorization.acceptance_started
+            and not result.accepted
+        ):
+            wake_authorization.preflight_refused = True
+        return result
+
+    async def _submit_draft_inner(
+        self,
+        draft: str,
+        *,
+        session_id: str | None = None,
+        origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id: str | None = None,
+        queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
+    ) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution.
 
         PR3a-2 Task 5: ``origin=AGENT_WAKE`` (requires a coordinator-issued
@@ -3586,6 +3654,19 @@ class ConsoleChatController:
                 self.store.mark_message_send_blocked(echoed_user.id)
             return self._block(session.id, visible_copy)
 
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            try:
+                accepted = await self._fleet_wake.accept(wake_authorization, session.id)
+            except (SQLiteError, OSError, AutomaticWorkRefused):
+                return self._block(
+                    session.id,
+                    "Automatic work paused. Results are saved; send a message to continue.",
+                )
+            if not accepted:
+                return self._block(
+                    session.id,
+                    "Manual work has priority. Background results are saved.",
+                )
         if pendings:
             self.store.clear_pending_attachments(session.id)
         citation_context: str | None = None
@@ -3778,6 +3859,16 @@ class ConsoleChatController:
             )
             stream_result = await self._stream_assistant_response(
                 resolution=resolution,
+                work_origin=(
+                    WorkOrigin.AUTOMATIC
+                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    else WorkOrigin.MANUAL
+                ),
+                work_chain_id=(
+                    wake_authorization.work_chain_id
+                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    else None
+                ),
                 provider_messages=provider_messages,
                 assistant_message_id=assistant.id,
                 prefill=prefill,
@@ -3787,6 +3878,11 @@ class ConsoleChatController:
                 citation_repair_session=citation_repair_session,
                 turn_context=turn_context,
             )
+            if (
+                not stream_result.accepted
+                and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            ):
+                self.store.mark_message_send_blocked(echoed_user.id)
             return replace(
                 stream_result,
                 session_id=session.id,
@@ -10247,21 +10343,31 @@ class ConsoleChatController:
         skill_bundle_block: str = "",
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
     ) -> ConsoleSubmitResult:
+        scope = (
+            nullcontext()
+            if work_origin is WorkOrigin.AUTOMATIC
+            else manual_work_scope()
+        )
         try:
-            return await self._stream_assistant_response_inner(
-                resolution=resolution,
-                provider_messages=provider_messages,
-                assistant_message_id=assistant_message_id,
-                prepare_retry=prepare_retry,
-                variant_mode=variant_mode,
-                prefill=prefill,
-                prefill_from_one_shot=prefill_from_one_shot,
-                skill_bindings=skill_bindings,
-                skill_bundle_block=skill_bundle_block,
-                citation_repair_session=citation_repair_session,
-                turn_context=turn_context,
-            )
+            with scope:
+                return await self._stream_assistant_response_inner(
+                    resolution=resolution,
+                    work_origin=work_origin,
+                    work_chain_id=work_chain_id,
+                    provider_messages=provider_messages,
+                    assistant_message_id=assistant_message_id,
+                    prepare_retry=prepare_retry,
+                    variant_mode=variant_mode,
+                    prefill=prefill,
+                    prefill_from_one_shot=prefill_from_one_shot,
+                    skill_bindings=skill_bindings,
+                    skill_bundle_block=skill_bundle_block,
+                    citation_repair_session=citation_repair_session,
+                    turn_context=turn_context,
+                )
         finally:
             if citation_repair_session is not None:
                 citation_repair_session.clear_governed_state()
@@ -10280,6 +10386,8 @@ class ConsoleChatController:
         skill_bundle_block: str = "",
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -10483,6 +10591,36 @@ class ConsoleChatController:
                 "trajectory_step_start_failed"
             )
         try:
+            runs_db = getattr(self._agent_bridge, "runs_db", None)
+            ledger = getattr(runs_db, "automatic_work", None)
+            try:
+                if ledger is not None:
+                    if work_origin is WorkOrigin.MANUAL:
+                        work_chain_id = await asyncio.to_thread(
+                            ledger.create_chain,
+                            self._agent_conversation_id(owner_id),
+                            root_submission_id=uuid4().hex,
+                        )
+                    elif work_chain_id is not None:
+                        snapshot = await asyncio.to_thread(
+                            ledger.snapshot, work_chain_id
+                        )
+                        if snapshot.conversation_id != self._agent_conversation_id(
+                            owner_id
+                        ):
+                            raise ValueError(
+                                "Automatic work chain does not own this conversation."
+                            )
+            except (SQLiteError, OSError):
+                self.store.mark_message_failed(assistant_message_id)
+                return self._block(
+                    owner_id, "Run history could not be saved. Try again."
+                )
+            if self._disposed or owner_id not in {
+                session.id for session in self.store.sessions()
+            }:
+                return self._session_closed_result()
+            stream_signals.automatic_work_chain_id = work_chain_id
             if (
                 bool(
                     turn_context.tool_configuration.get(
@@ -10495,6 +10633,8 @@ class ConsoleChatController:
             ):
                 return await self._run_agent_reply(
                     resolution=resolution,
+                    work_origin=work_origin,
+                    work_chain_id=work_chain_id,
                     provider_messages=provider_messages,
                     assistant_message_id=assistant_message_id,
                     prepare_retry=prepare_retry,
@@ -10692,12 +10832,13 @@ class ConsoleChatController:
         self._fleet_wake.capture_loop_if_running()
         if bridge is None:
             return
-        register = getattr(bridge, "on_fleet_drained", None)
+        register = getattr(bridge, "on_fleet_child_settled", None)
         if callable(register):
-            register(
-                ConsoleFleetWakeCoordinator.NAME,
-                self._fleet_wake.on_fleet_drained,
-            )
+            register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled)
+        else:
+            register = getattr(bridge, "on_fleet_drained", None)
+            if callable(register):
+                register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained)
 
     def _on_fleet_drained_reattach_usage(self, event: Any) -> None:
         """``FleetDrained`` consumer: hop off the child's thread and fold.
@@ -11472,6 +11613,17 @@ class ConsoleChatController:
             selected_body=selected.selected_body,
         )
 
+    def _refuse_project_instruction_setup(
+        self, session_id: str, assistant_message_id: str, visible_copy: str
+    ) -> ConsoleSubmitResult:
+        """End an unsent setup attempt and preserve the draft for retry."""
+        result = self._block_context_preflight(
+            session_id=session_id,
+            assistant_message_id=assistant_message_id,
+            visible_copy=visible_copy,
+        )
+        return replace(result, accepted=False, should_clear_draft=False)
+
     async def _run_agent_reply(
         self,
         *,
@@ -11493,6 +11645,8 @@ class ConsoleChatController:
         resume_provider_continuation: bool = False,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_history_target: ContinuationRestoreTarget | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -11521,7 +11675,10 @@ class ConsoleChatController:
         confirm_project_dispatch = None
         project_authority_guard = None
         project_activation_callback = None
-        if session is not None and session.project_instruction_state.project_instructions_enabled:
+        if (
+            session is not None
+            and session.project_instruction_state.project_instructions_enabled
+        ):
             try:
                 registry = getattr(self.app, "workspace_registry_service", None)
             except Exception:
@@ -11533,32 +11690,36 @@ class ConsoleChatController:
             except ProjectInstructionBindingRecovery as exc:
                 callback = self._select_project_instruction_binding
                 if callback is None:
-                    return ConsoleSubmitResult(False, False, str(exc))
+                    return self._refuse_project_instruction_setup(
+                        session_id, assistant_message_id, str(exc)
+                    )
                 expected_setup_state = session.project_instruction_state
                 try:
                     options = list_project_instruction_bindings(session, registry)
                 except ProjectInstructionBindingRecovery:
                     options = ()
                 action, binding_id = await callback(session_id, options, str(exc))
-                action, project_selection = (
-                    commit_project_instruction_setup_decision(
-                        store=self.store,
-                        session_id=session_id,
-                        registry=registry,
-                        expected_state=expected_setup_state,
-                        expected_options=options,
-                        action=action,
-                        binding_id=binding_id,
-                    )
+                action, project_selection = commit_project_instruction_setup_decision(
+                    store=self.store,
+                    session_id=session_id,
+                    registry=registry,
+                    expected_state=expected_setup_state,
+                    expected_options=options,
+                    action=action,
+                    binding_id=binding_id,
                 )
                 if action == "disable":
                     self._clear_project_instruction_delivery(session_id)
-                    return ConsoleSubmitResult(
-                        False, False, "project_instructions_disabled"
+                    return self._refuse_project_instruction_setup(
+                        session_id,
+                        assistant_message_id,
+                        "Project instructions disabled. Send again to continue.",
                     )
                 if action != "select" or project_selection is None:
                     self._clear_project_instruction_delivery(session_id)
-                    return ConsoleSubmitResult(False, False, str(exc))
+                    return self._refuse_project_instruction_setup(
+                        session_id, assistant_message_id, str(exc)
+                    )
             if project_selection is not None:
                 state = session.project_instruction_state
                 if state.working_folder_binding_id is None:
@@ -11572,9 +11733,7 @@ class ConsoleChatController:
                         ),
                         project_instruction_notice_key=None,
                     )
-                    self.store.set_session_project_instruction_state(
-                        session_id, state
-                    )
+                    self.store.set_session_project_instruction_state(session_id, state)
                 startup_candidate = ProjectInstructionResolver().resolve_startup(
                     binding_id=project_selection.binding.binding_id,
                     binding_root=project_selection.root,
@@ -11839,6 +11998,8 @@ class ConsoleChatController:
             # completion (the load-bearing write for resume marker anchoring).
             run_id, outcome = await asyncio.to_thread(
                 self._agent_bridge.run_reply,
+                work_origin=work_origin,
+                work_chain_id=work_chain_id,
                 conversation_id=conversation_id,
                 session_id=session_id,
                 resolution=resolution,
@@ -11906,6 +12067,8 @@ class ConsoleChatController:
                 ),
             )
         except asyncio.CancelledError:
+            if work_origin is WorkOrigin.AUTOMATIC:
+                cancel_event.set()
             if cancel_event.is_set():
                 # Whatever the provider already billed for this turn's
                 # completed steps is real money -- record it (partial)

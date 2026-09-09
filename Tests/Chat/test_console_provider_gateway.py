@@ -2107,6 +2107,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
 
     signal_fields = dataclasses.fields(signals)
     assert [item.name for item in signal_fields] == [
+        "automatic_work_chain_id",
         "_synthetic_fallback",
         "usage_payload",
         "completed_usage_payloads",
@@ -2115,6 +2116,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     ]
     assert isinstance(signals._synthetic_fallback, threading.Event)
     assert signals.__class__.__slots__ == (
+        "automatic_work_chain_id",
         "_synthetic_fallback",
         "usage_payload",
         "completed_usage_payloads",
@@ -2134,6 +2136,8 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     # business landing in a log line, so every field stays repr=False.
     rendered = repr(signals)
     assert rendered == "ConsoleProviderStreamSignals()"
+    signals.automatic_work_chain_id = "private-chain-identity"
+    assert repr(signals) == "ConsoleProviderStreamSignals()"
     signals.record_usage_payload({"prompt_tokens": 4242})
     assert repr(signals) == "ConsoleProviderStreamSignals()"
     for governed_text in (

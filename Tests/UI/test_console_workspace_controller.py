@@ -38,6 +38,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.Workspaces import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
@@ -117,6 +118,7 @@ def _workspace_controller(
         ensure_agent_bridge=_noop,
         subagent_counts_for_rows=lambda _bridge, _rows: {},
         conversation_browser_collapse_preferences=lambda: {},
+        rail_body_height_accessor=lambda: None,
     )
     dependencies.update(overrides)
     return ConsoleWorkspaceController(screen or _NoMountScreen(), **dependencies)
@@ -596,6 +598,76 @@ def test_workspace_controller_workspace_change_resets_before_rich_browser_snapsh
     assert browser_rows == ()
     assert state.conversation_section is not None
     assert state.conversation_section.query == ""
+
+
+def test_browser_row_cap_expands_evenly_to_fill_measured_rail_height():
+    """The browser's visible-row cap follows the measured rail body height.
+
+    Both peer row surfaces -- the Workspaces section's expanded group and
+    the Chats bucket -- must grow together: with 200 terminal lines
+    available each shows (200 // 2) // 3 = 33 rows instead of the historical
+    12-row default, so the two sections fill the available space evenly.
+    """
+    workspace = SimpleNamespace(workspace_id="workspace-7")
+    app = SimpleNamespace(
+        workspace_registry_service=SimpleNamespace(
+            ensure_default_workspace=lambda: workspace
+        )
+    )
+    controller = _workspace_controller(
+        app_instance=app,
+        rail_body_height_accessor=lambda: 200,
+    )
+    # Pin the workspace so the section builder's workspace-change reset does
+    # not clear the seeded rows before the browser state is built.
+    controller._console_workspace_conversation_workspace_id = "workspace-7"
+    controller._console_conversation_browser_rows = tuple(
+        (
+            *(
+                _browser_row(f"chat-{i}", f"Chat {i}", workspace_id=None)
+                for i in range(40)
+            ),
+            *(_browser_row(f"ws-{i}", f"Workspace chat {i}") for i in range(40)),
+        )
+    )
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+
+    browser = state.conversation_browser
+    assert browser is not None
+    sections = {section.section_id: section for section in browser.sections}
+    chats = sections["chats"]
+    assert len(chats.rows) == 33
+    assert chats.hidden_count == 7
+    workspaces = sections["workspaces"]
+    (group,) = workspaces.groups
+    assert len(group.rows) == 33
+    assert group.hidden_count == 7
+
+
+def test_browser_row_cap_falls_back_to_default_without_a_measurement():
+    """Unmeasured rails keep the 12-row default cap on both sections."""
+    controller = _workspace_controller(rail_body_height_accessor=lambda: None)
+    # Pin the workspace so the section builder's workspace-change reset does
+    # not clear the seeded rows before the browser state is built.
+    controller._console_workspace_conversation_workspace_id = str(
+        controller._current_console_workspace_context().active_workspace_id or ""
+    )
+    controller._console_conversation_browser_rows = tuple(
+        _browser_row(f"chat-{i}", f"Chat {i}", workspace_id=None)
+        for i in range(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3)
+    )
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+
+    browser = state.conversation_browser
+    assert browser is not None
+    chats = next(
+        section
+        for section in browser.sections
+        if section.section_id == "chats"
+    )
+    assert len(chats.rows) == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
 
 
 def test_workspace_controller_clear_transition_stops_once_and_syncs_and_focuses():

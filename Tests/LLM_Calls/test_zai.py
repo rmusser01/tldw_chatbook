@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -22,6 +23,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecord
 from tldw_chatbook.LLM_Calls.zai import (
     ZAIFinishPolicy,
     ZAIResolution,
+    ZAIStream,
     build_zai_chat_payload,
     chat_with_zai,
     normalize_zai_response,
@@ -389,6 +391,40 @@ def test_zai_terminal_error_finishes_are_safe_provider_errors(
         )
     assert exc_info.value.provider == "zai"
     assert finish_reason not in str(exc_info.value)
+
+
+def test_zai_reasoning_and_control_frames_do_not_become_console_fallback_copy():
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderStreamSignals,
+    )
+
+    payloads = [
+        {"choices": [{"index": 0, "delta": {"role": "assistant", "content": None}}]},
+        {"choices": [{"index": 0, "delta": {"reasoning_content": "PRIVATE"}}]},
+        {"choices": [{"index": 0, "delta": {"content": "Evidence."}}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+        {"choices": [], "usage": {"prompt_tokens": 8, "completion_tokens": 4}},
+    ]
+    hosted = HostedChatStream(
+        iter(
+            [SSERecord(event=None, data=json.dumps(payload)) for payload in payloads]
+            + [SSERecord(event=None, data="[DONE]")]
+        ),
+        finish_policy=ZAIFinishPolicy(),
+    )
+    response = ZAIStream(hosted)
+    signals = ConsoleProviderStreamSignals()
+
+    chunks = list(
+        ConsoleProviderGateway.normalize_provider_response(response, signals=signals)
+    )
+
+    assert chunks == ["Evidence."]
+    assert signals.synthetic_fallback_emitted is False
+    assert signals.usage_payloads() == [{"prompt_tokens": 8, "completion_tokens": 4}]
+    assert response.terminal_turn.reasoning_content == "PRIVATE"
+    assert response.terminal_turn.finish_reason == "stop"
 
 
 def test_zai_stream_preserves_safe_terminal_provider_error_type() -> None:

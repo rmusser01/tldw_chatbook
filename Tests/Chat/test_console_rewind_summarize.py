@@ -121,7 +121,7 @@ async def test_summarize_span_excludes_an_empty_transcript_placeholder():
     SUMMARIZER's context too -- the same defect `_provider_message_
     payloads` had before its fix, one layer removed."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -151,7 +151,7 @@ async def test_summarize_nothing_before_target_when_only_prior_is_empty_transcri
     absent too -- otherwise it would proceed to send an empty span to the
     provider instead of the honest block."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 

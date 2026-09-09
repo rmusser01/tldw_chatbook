@@ -136,6 +136,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any, Dict, Iterable, TYPE_CHECKING
 
@@ -187,6 +188,37 @@ _AGENT_STATUS_GLYPHS: Dict[str, str] = {
 #: constant so the two sides can never drift apart.
 CONSOLE_AGENT_FLEET_SECTION_ID = "agent-fleet"
 
+
+def _automatic_work_pause_notice(reason: str, *, results_saved: bool = True) -> str:
+    """Explain body-free pause codes beside the existing history action."""
+    limits = {
+        "generation_budget": "turn limit",
+        "child_launch_budget": "agent limit",
+        "model_call_budget": "call limit",
+        "tokens_budget": "token limit",
+        "output_tokens_budget": "reply limit",
+        "wall_budget": "time limit",
+        "autowake_disabled": "auto off",
+    }
+    review = {
+        "usage_unknown": "usage unclear",
+        "interrupted_work": "work may have run",
+        "completion_unrecorded": "work may have run",
+        "legacy_lineage": "earlier work",
+        "history_unavailable": "history error",
+        "clock_unknown": "time unclear",
+        "clock_reversed": "time unclear",
+    }
+    explanation = limits.get(reason) or review.get(reason, "review needed")
+    next_step = "Send a message to continue"
+    if reason == "history_unavailable":
+        next_step = "Retry Run history"
+    elif reason not in limits:
+        next_step = "Review Run history"
+    saved_copy = "Results saved. " if results_saved else ""
+    return f"Paused: {explanation}. {saved_copy}{next_step}."
+
+
 #: The "Cancel all agents" button's DOM id (PR3b Task 5) -- constructed
 #: in ``left_rail.py``'s ``compose()``, matched by ``chat_screen.py``'s
 #: ``@on`` selector, and written by its ``_sync_console_agent_section``
@@ -223,10 +255,9 @@ def _format_fleet_elapsed(seconds: float | None) -> str:
 
     Mirrors ``Library.library_ingest_state._format_elapsed``'s exact
     grammar, but takes a precomputed duration instead of two raw
-    endpoints -- the one fleet row source that can compute elapsed at all
-    (live ``FleetHandle``s) uses ``time.monotonic()`` floats, so the
-    "compute a duration" step happens once, at the call site, before
-    reaching this shared formatter.
+    endpoints. Live rows use monotonic timestamps; historical rows use
+    approximate saved timestamp spans. Each caller computes its duration
+    before reaching this shared formatter.
 
     Args:
         seconds: The duration to format, or ``None``/negative when there is
@@ -365,7 +396,7 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
             primary = f"{primary} · {elapsed}"
     secondary = (handle.error or handle.result or handle.task or "").strip()
     if handle.total_tokens:
-        token_segment = f"{format_token_count(handle.total_tokens)} tok"
+        token_segment = _budget_token_label(handle.total_tokens)
         secondary = f"{secondary} · {token_segment}" if secondary else token_segment
     # PR3b Task 3 (spec §6 latency honesty): a posted steering entry is
     # QUEUED until the child's next drain boundary consumes it, and the
@@ -384,6 +415,15 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
         secondary = (
             f"{secondary} · {steering_segment}" if secondary else steering_segment
         )
+    unread = int(getattr(handle, "undelivered_steering", 0) or 0)
+    if unread and status in TERMINAL_RUN_STATUSES:
+        recovery = (
+            "ask supervisor to resume"
+            if getattr(handle, "can_resume", False)
+            else "cannot resume"
+        )
+        segment = f"steering unread ({unread}); {recovery}"
+        secondary = f"{secondary} · {segment}" if secondary else segment
     return InspectorSectionRow(
         row_id=handle.handle_id,
         primary_text=primary,
@@ -394,14 +434,18 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
     )
 
 
+def _budget_token_label(budget_tokens: int | None) -> str:
+    """Name the run-budget unit, preserving the difference between zero and unknown."""
+    if budget_tokens is None:
+        return "Budget unavailable"
+    return f"{format_token_count(budget_tokens)} budget tok"
+
+
 def _fleet_row_from_summary(summary: "SubAgentSummary", index: int) -> InspectorSectionRow:
     """Build one fleet row from a HISTORICAL/resumed ``SubAgentSummary``.
 
-    No elapsed segment: unlike a live ``FleetHandle``,
-    ``AgentLiveSnapshot.subagents`` carries no timestamps (only
-    ``text``/``status``/``run_id``/``handle_id`` -- see
-    ``SubAgentSummary``'s own docstring), so there is nothing honest to
-    compute a duration from here.
+    Saved timestamp spans are approximate: later bookkeeping may update
+    ``updated_at``. Only terminal rows with valid endpoints show a ~ span.
 
     ``row_id`` prefers ``run_id`` (populated for every REAL resumed row by
     ``ConsoleAgentBridge._derive_historical_snapshot``), falling back to
@@ -412,10 +456,25 @@ def _fleet_row_from_summary(summary: "SubAgentSummary", index: int) -> Inspector
     status = summary.status or "running"
     glyph = _AGENT_STATUS_GLYPHS.get(status, "●")
     row_id = summary.run_id or summary.handle_id or f"idx-{index}"
+    elapsed = ""
+    if status in TERMINAL_RUN_STATUSES and summary.created_at and summary.updated_at:
+        try:
+            start = datetime.fromisoformat(summary.created_at)
+            end = datetime.fromisoformat(summary.updated_at)
+            start = start if start.tzinfo else start.replace(tzinfo=UTC)
+            end = end if end.tzinfo else end.replace(tzinfo=UTC)
+            elapsed = _format_fleet_elapsed((end - start).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            pass
+    primary = (
+        f"{glyph} ~{elapsed} · {summary.text}" if elapsed else f"{glyph} {summary.text}"
+    )
+    budget = _budget_token_label(summary.budget_tokens)
+    secondary = f"{summary.detail} · {budget}" if summary.detail else budget
     return InspectorSectionRow(
         row_id=row_id,
-        primary_text=f"{glyph} {summary.text}".strip(),
-        secondary_text="",
+        primary_text=primary.strip(),
+        secondary_text=secondary,
         status=status,
         clickable=bool(summary.run_id),
     )
@@ -430,16 +489,10 @@ def _fleet_row_from_record(record: dict) -> InspectorSectionRow:
     ``row_id`` is the record's own permanent id, so this is always
     clickable when it has one.
     """
-    status = str(record.get("status") or "running")
-    glyph = _AGENT_STATUS_GLYPHS.get(status, "●")
-    name = str(record.get("task") or "sub-agent")
-    row_id = str(record.get("id") or "")
-    return InspectorSectionRow(
-        row_id=row_id,
-        primary_text=f"{glyph} {name}",
-        secondary_text="",
-        status=status,
-        clickable=bool(row_id),
+    from ...Chat.console_agent_bridge import ConsoleAgentBridge
+
+    return _fleet_row_from_summary(
+        ConsoleAgentBridge.historical_subagent_summary(record), 0
     )
 
 
@@ -817,6 +870,22 @@ class ConsoleAgentController:
                 header = f"Sub-agent · {record.get('status')}"
                 if resumed_from:
                     header += f" · resumed from {resumed_from}"
+                accounting = (
+                    f"This run: {_budget_token_label(record.get('budget_tokens'))}"
+                )
+                chain = record.get("continuation_budget")
+                if chain is not None:
+                    chain_label = _budget_token_label(chain["budget_tokens"])
+                    if chain["complete"]:
+                        accounting += (
+                            f"\nChain: {chain_label} across {chain['run_count']} runs"
+                        )
+                    else:
+                        accounting += (
+                            f"\nChain: {chain_label} recorded (partial; "
+                            f"{chain['recorded_run_count']}/{chain['run_count']} runs)"
+                        )
+                steps = f"{accounting}\n{steps}" if steps else accounting
                 return (
                     f"{header} (Back)",
                     steps,
@@ -1064,6 +1133,38 @@ class ConsoleAgentController:
         """
         self.push_screen(ConsoleRunLogModal(run_id=run_id, log_text=log_text))
 
+    def open_fleet_history(self) -> None:
+        """Open conversation-scoped history and recheck scope on selection."""
+        from ...Widgets.Console.console_agent_history_modal import (
+            ConsoleAgentHistoryModal,
+        )
+
+        bridge = self._ensure_console_agent_bridge()
+        conversation_id = self._current_console_rail_conversation_id()
+        if bridge is None or not conversation_id:
+            return
+
+        def selected(run_id: str | None) -> None:
+            if (
+                self._screen.is_mounted
+                and run_id
+                and self._current_console_rail_conversation_id() == conversation_id
+            ):
+                record = bridge.subagent_run(run_id)
+                if (
+                    record
+                    and record.get("agent_kind") == "subagent"
+                    and record.get("conversation_id") == conversation_id
+                ):
+                    self._drill_into_console_agent_subagent(run_id)
+
+        self.push_screen(
+            ConsoleAgentHistoryModal(
+                load_page=partial(bridge.subagent_history_page, conversation_id)
+            ),
+            selected,
+        )
+
     def _console_agent_section_payload(
         self,
     ) -> tuple[
@@ -1237,7 +1338,7 @@ class ConsoleAgentController:
         return tuple(_fleet_row_from_record(record) for record in subagent_runs(conversation_id))
 
     def _console_agent_fleet_token_total(self) -> int:
-        """Sum the active conversation's LIVE fleet's measured token spend.
+        """Sum the active conversation's LIVE fleet's run-budget counters.
 
         PR2b Task 5 (cost rollup): the aggregate the Console cost ticker
         reaches for -- feeds ``build_cost_snapshot``'s ``fleet_tokens``
@@ -1254,10 +1355,9 @@ class ConsoleAgentController:
         Returns 0 -- never raises -- when there is no bridge, no active
         conversation, or (the common historical/resumed case) no LIVE
         fleet for it: this deliberately does NOT fall back to the
-        historical/DB-derived tiers `_console_agent_fleet_rows` also reads,
-        since per-child spend is not persisted there (see `FleetHandle.
-        total_tokens`'s docstring) -- there is nothing honest to sum for a
-        resumed conversation this process has never run.
+        historical/DB-derived tiers `_console_agent_fleet_rows` also reads.
+        Durable budget counters are for run inspection; feeding them back
+        here would duplicate usage already attached through ProviderUsage.
         """
         bridge = self._ensure_console_agent_bridge()
         if bridge is None:
@@ -1453,28 +1553,62 @@ class ConsoleAgentController:
         show that one child's own detail (state 3, unchanged -- see
         ``_console_agent_section_lines``), so the aggregate fleet list
         would be redundant right beside it. ``_sync_console_agent_section``
-        hides the mounted section entirely whenever this returns no rows,
+        hides the mounted section entirely when both rows and summary are empty,
         via the same visibility toggle the Back/View-full-log buttons
         already use.
 
-        The header summary is a glyph cluster (one glyph per row, in row
-        order) plus ``"N working, M done"`` (spec §7 state 1) -- "working"
+        The header shows ``"N working, M done"``, prefixed with individual
+        glyphs only for four or fewer rows (spec §7 state 1). "Working"
         is ``status not in TERMINAL_RUN_STATUSES`` (i.e. still
         ``"running"``; every other status this codebase's fleet vocabulary
         uses -- ``done``/``error``/``stuck``/``cancelled`` -- is terminal
         per ``SubAgentSummary.status``'s own docstring), "done" is
-        everything else. Returns an empty state when there are zero rows
-        (never a hollow "0 working, 0 done" summary).
+        everything else. With no current rows, a real history provider keeps
+        a "Run history" entry available for the selected conversation.
         """
         if self._console_agent_drilldown_run_id:
             return ConsoleInspectorSectionState(rows=(), summary="")
-        rows = self._console_agent_fleet_rows()
+        controller = self._console_chat_controller
+        wake = getattr(controller, "fleet_wake", None)
+        pause_read = getattr(wake, "pause_reason", None)
+        conversation_id = self._current_console_rail_conversation_id()
+        pause_reason = (
+            pause_read(conversation_id)
+            if conversation_id and callable(pause_read)
+            else None
+        )
+        rows = (
+            ()
+            if pause_reason == "history_unavailable"
+            else self._console_agent_fleet_rows()
+        )
+        if pause_reason:
+            return ConsoleInspectorSectionState(
+                rows=rows,
+                summary="Paused",
+                notice=_automatic_work_pause_notice(
+                    pause_reason,
+                    results_saved=(
+                        pause_reason != "history_unavailable"
+                        or wake.has_pending(conversation_id)
+                    ),
+                ),
+            )
         if not rows:
-            return ConsoleInspectorSectionState(rows=(), summary="")
+            bridge = self._ensure_console_agent_bridge()
+            has_history_picker = bool(
+                self._current_console_rail_conversation_id()
+                and callable(getattr(bridge, "subagent_history_page", None))
+            )
+            return ConsoleInspectorSectionState(
+                rows=(), summary="Run history" if has_history_picker else ""
+            )
         working = sum(1 for row in rows if row.status not in TERMINAL_RUN_STATUSES)
         done = len(rows) - working
         glyphs = "".join(_AGENT_STATUS_GLYPHS.get(row.status, "●") for row in rows)
         summary = f"{glyphs} {working} working, {done} done"
+        if len(rows) > 4:
+            summary = f"{working} working, {done} done"
         return ConsoleInspectorSectionState(rows=rows, summary=summary)
 
     def _console_agent_drilldown_target_run_id(self, row_id: str) -> str | None:

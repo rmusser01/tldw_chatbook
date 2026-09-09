@@ -2944,7 +2944,11 @@ def chat_with_deepseek(
     logit_bias: Optional[Dict[str, float]] = None,  # If supported
     custom_prompt_arg: Optional[str] = None,  # Legacy
     api_base_url: Optional[str] = None,
+    thinking_mode: Optional[str] = None,
 ):
+    # Omission preserves existing callers' provider-default behavior.
+    if thinking_mode not in (None, "enabled", "disabled"):
+        raise ValueError("invalid_deepseek_thinking_mode")
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     deepseek_config = cli_api_settings.get(
@@ -3001,6 +3005,8 @@ def chat_with_deepseek(
         "messages": api_messages,
         "stream": current_streaming,
     }
+    if thinking_mode is not None:
+        data["thinking"] = {"type": thinking_mode}
     if current_temp is not None:
         data["temperature"] = current_temp
     if current_top_p is not None:

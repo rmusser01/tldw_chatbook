@@ -2124,7 +2124,7 @@ def test_provider_payloads_exclude_an_empty_transcript_placeholder():
     conversation. An ordinary user row in the same session must still ride
     through untouched."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -2166,7 +2166,7 @@ async def test_impersonate_excludes_an_empty_transcript_placeholder():
     voice" from this exact transcript -- a fabricated empty-transcript
     placeholder here is arguably worse than in the ordinary send path."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 

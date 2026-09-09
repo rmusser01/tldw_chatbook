@@ -1,0 +1,122 @@
+{
+  "d8a6dc0250c09ec4d8e98fe2": {
+    "case_id": "dev-01",
+    "repeat": 1,
+    "arm": "retrieval"
+  },
+  "ef2c0c9e9fc6560ff314cee3": {
+    "case_id": "dev-01",
+    "repeat": 1,
+    "arm": "reader"
+  },
+  "3a03c0a48acd3ea71294c66b": {
+    "case_id": "dev-01",
+    "repeat": 1,
+    "arm": "direct"
+  },
+  "455472ce18b4079ca639bf87": {
+    "case_id": "dev-02",
+    "repeat": 1,
+    "arm": "reader"
+  },
+  "44663c61c7e986ed2384b0aa": {
+    "case_id": "dev-02",
+    "repeat": 1,
+    "arm": "direct"
+  },
+  "3e80192ed49cd3ac701cf181": {
+    "case_id": "dev-02",
+    "repeat": 1,
+    "arm": "retrieval"
+  },
+  "52103201e7a8741ba44feb17": {
+    "case_id": "dev-03",
+    "repeat": 1,
+    "arm": "retrieval"
+  },
+  "38bcb823719ef00b70232711": {
+    "case_id": "dev-03",
+    "repeat": 1,
+    "arm": "direct"
+  },
+  "2a0b262249df2a6357130d9d": {
+    "case_id": "dev-03",
+    "repeat": 1,
+    "arm": "reader"
+  },
+  "8e424adc225223f02d7ae74d": {
+    "case_id": "dev-04",
+    "repeat": 1,
+    "arm": "retrieval"
+  },
+  "eab009cf58f1927ae699e8ad": {
+    "case_id": "dev-04",
+    "repeat": 1,
+    "arm": "reader"
+  },
+  "ca0cc1ccb4798f7f2f373013": {
+    "case_id": "dev-04",
+    "repeat": 1,
+    "arm": "direct"
+  },
+  "ca1e241bdbb96ef5ab6cf241": {
+    "case_id": "dev-01",
+    "repeat": 2,
+    "arm": "retrieval"
+  },
+  "0e4b1c679527996ed3c58253": {
+    "case_id": "dev-01",
+    "repeat": 2,
+    "arm": "direct"
+  },
+  "fef8105b4c9ca00f566c721f": {
+    "case_id": "dev-01",
+    "repeat": 2,
+    "arm": "reader"
+  },
+  "f2eecc032cfc435078b64810": {
+    "case_id": "dev-02",
+    "repeat": 2,
+    "arm": "reader"
+  },
+  "a3551f1d4ce4572431341723": {
+    "case_id": "dev-02",
+    "repeat": 2,
+    "arm": "direct"
+  },
+  "c1667e5c12158efd3881272d": {
+    "case_id": "dev-02",
+    "repeat": 2,
+    "arm": "retrieval"
+  },
+  "181ef02b7caafc870148659a": {
+    "case_id": "dev-03",
+    "repeat": 2,
+    "arm": "direct"
+  },
+  "d84762f6428a23aed37192df": {
+    "case_id": "dev-03",
+    "repeat": 2,
+    "arm": "retrieval"
+  },
+  "705c59e0b8d233d1452a0491": {
+    "case_id": "dev-03",
+    "repeat": 2,
+    "arm": "reader"
+  },
+  "774507805ea83a23cba8ac9d": {
+    "case_id": "dev-04",
+    "repeat": 2,
+    "arm": "reader"
+  },
+  "32c31d713177d5e5fd48b90d": {
+    "case_id": "dev-04",
+    "repeat": 2,
+    "arm": "retrieval"
+  },
+  "2678a4f73bdafc1cd261e3c0": {
+    "case_id": "dev-04",
+    "repeat": 2,
+    "arm": "direct"
+  }
+}

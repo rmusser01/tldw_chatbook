@@ -38,8 +38,8 @@ import time
 import pytest
 
 from Tests.Chat.test_console_fleet_wake import (
-    _RecordingWakeGateway,
     _drain,
+    _RecordingWakeGateway,
     _survivor,
     _terminal_subagent_run,
 )
@@ -48,6 +48,10 @@ from Tests.UI.test_console_fleet_panel import _AGENT_SECTION_SIZE
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
+)
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -97,8 +101,17 @@ async def _mounted_wake_rig(pilot, host, *, reply: str = "wake reply"):
         "harness must build the real bridge (chachanotes_db path wired)"
     )
     gateway = _RecordingWakeGateway(reply=reply)
+    console._console_provider_gateway = gateway
     controller.provider_gateway = gateway
+    bridge._gateway = gateway
     store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.set_session_project_instruction_state(
+        session.id, ProjectInstructionControlState.legacy_disabled()
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="Research topic", persist=True
+    )
     return console, controller, bridge, gateway, store
 
 
@@ -136,14 +149,20 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
             title="Background research",
             settings=console._session._default_console_session_settings(),
         )
+        store.set_session_project_instruction_state(
+            target.id, ProjectInstructionControlState.legacy_disabled()
+        )
+        store.append_message(
+            target.id, role=ConsoleMessageRole.USER, content="Background topic", persist=True
+        )
         store.switch_session(viewed.id)
-        _parent, run_id = _terminal_subagent_run(bridge.runs_db, target.id)
+        _parent, run_id = _terminal_subagent_run(bridge.runs_db, target.persisted_conversation_id)
         gate = asyncio.Event()
         gateway.stream_gate = gate
 
         _drain_from_child_thread(
             controller.fleet_wake,
-            _drain(target.id, _survivor(run_id, session_id=target.id)),
+            _drain(target.persisted_conversation_id, _survivor(run_id, session_id=target.id)),
         )
         assert await _settle(pilot, lambda: gateway.payloads), (
             "the wake turn never started streaming"
@@ -184,7 +203,7 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
             "the transcript poll must self-stop after the wake settles -- "
             "no recurring idle repaint (15664 AC#2)"
         )
-        assert console._console_fleet_survivor_timer is None
+        assert console._fleet._console_fleet_survivor_timer is None
 
 
 @pytest.mark.asyncio
@@ -203,11 +222,11 @@ async def test_wake_reply_reaches_the_viewed_transcript_without_a_switch(
             pilot, host, reply="wake reply body"
         )
         session = store.ensure_session()
-        _parent, run_id = _terminal_subagent_run(bridge.runs_db, session.id)
+        _parent, run_id = _terminal_subagent_run(bridge.runs_db, session.persisted_conversation_id)
 
         _drain_from_child_thread(
             controller.fleet_wake,
-            _drain(session.id, _survivor(run_id, session_id=session.id)),
+            _drain(session.persisted_conversation_id, _survivor(run_id, session_id=session.id)),
         )
         stamped = await _settle(
             pilot,
@@ -264,13 +283,13 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
         # workbench-contract suite's existing idiom.
         console._console_provider_blocker_copy = lambda: ""
         session = store.ensure_session()
-        _parent, run_id = _terminal_subagent_run(bridge.runs_db, session.id)
+        _parent, run_id = _terminal_subagent_run(bridge.runs_db, session.persisted_conversation_id)
         gate = asyncio.Event()
         gateway.stream_gate = gate
 
         _drain_from_child_thread(
             controller.fleet_wake,
-            _drain(session.id, _survivor(run_id, session_id=session.id)),
+            _drain(session.persisted_conversation_id, _survivor(run_id, session_id=session.id)),
         )
         assert await _settle(pilot, lambda: gateway.payloads), (
             "the wake turn never started streaming"
@@ -314,7 +333,7 @@ async def test_poll_survives_the_wake_scheduling_gap_then_stops_after(
     tmp_path,
 ):
     """The stop-guard race, pinned in isolation: the coordinator sets
-    ``_delivering`` synchronously BEFORE its delivery task first runs, and
+    its active delivery synchronously BEFORE its delivery task first runs, and
     a poll beat landing in that gap sees an idle viewed session and zero
     in-flight runs. Without the wake-delivery stop guard the poll would
     self-stop right there and the wake turn would stream unwatched -- the
@@ -330,7 +349,9 @@ async def test_poll_survives_the_wake_scheduling_gap_then_stops_after(
         wake = controller.fleet_wake
         # The scheduling gap, held open: delivery claimed, task not yet
         # busy (no run state change, no in-flight run).
-        wake._delivering = session.id
+        from tldw_chatbook.Chat.console_fleet_wake import _WakeDelivery
+
+        wake._active[session.id] = _WakeDelivery(session.id)
         try:
             console._start_console_transcript_sync_timer()
             await pilot.pause(0.7)
@@ -339,7 +360,7 @@ async def test_poll_survives_the_wake_scheduling_gap_then_stops_after(
                 "(delivery claimed, turn not yet busy) must not self-stop"
             )
         finally:
-            wake._delivering = None
+            wake._active.pop(session.id, None)
         await _settle(
             pilot, lambda: console._console_transcript_sync_timer is None
         )

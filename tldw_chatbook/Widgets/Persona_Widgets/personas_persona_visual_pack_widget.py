@@ -56,6 +56,10 @@ class PersonaVisualCancelRequested(Message):
     """Ask the screen to cancel work and discard only its isolated draft."""
 
 
+class PersonaVisualUseForBuddyRequested(Message):
+    """Explicitly choose the saved local Persona for the floating Buddy."""
+
+
 class PersonaVisualCustomStateDialog(ModalScreen[tuple[str, str, str] | None]):
     """Collect one safe custom state key, visible label, and catalog kind."""
 
@@ -138,7 +142,7 @@ class PersonasPersonaVisualPackWidget(Vertical):
     BUNDLED_CSS = """
     PersonasPersonaVisualPackWidget {
         width: 100%;
-        height: 27;
+        height: 30;
         min-height: 20;
         margin-top: 1;
         padding: 1;
@@ -154,6 +158,16 @@ class PersonasPersonaVisualPackWidget(Vertical):
     PersonasPersonaVisualPackWidget #personas-persona-visual-notice,
     PersonasPersonaVisualPackWidget #personas-persona-visual-status {
         color: $text-muted;
+    }
+
+    PersonasPersonaVisualPackWidget #personas-persona-visual-buddy {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        margin: 0 0 1 0;
+        border: none;
     }
 
     PersonasPersonaVisualPackWidget #personas-persona-visual-body {
@@ -200,11 +214,11 @@ class PersonasPersonaVisualPackWidget(Vertical):
     }
 
     PersonasPersonaVisualPackWidget.-narrow {
-        height: 31;
+        height: 34;
     }
 
     PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-body {
-        height: 12;
+        height: 10;
     }
 
     PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-preview-host {
@@ -234,6 +248,12 @@ class PersonasPersonaVisualPackWidget(Vertical):
             id="personas-persona-visual-notice",
             classes="persona-visual-copy",
             markup=False,
+        )
+        yield Button(
+            "Use for Buddy",
+            id="personas-persona-visual-buddy",
+            classes="console-action-secondary",
+            tooltip="Show this saved local Persona as your floating Buddy. Save Pack first.",
         )
         yield Static(
             "No draft loaded",
@@ -440,6 +460,9 @@ class PersonasPersonaVisualPackWidget(Vertical):
                 f"#personas-persona-visual-{action}", Button
             ).disabled = not (available and idle)
         activatable = self._inventory is not None and self._inventory.activatable
+        self.query_one("#personas-persona-visual-buddy", Button).disabled = not (
+            available and idle and not self._dirty and activatable
+        )
         self.query_one("#personas-persona-visual-save", Button).disabled = not (
             available and idle and self._dirty and activatable
         )
@@ -500,6 +523,11 @@ class PersonasPersonaVisualPackWidget(Vertical):
         event.stop()
         self.post_message(PersonaVisualSaveRequested())
 
+    @on(Button.Pressed, "#personas-persona-visual-buddy")
+    def _buddy_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaVisualUseForBuddyRequested())
+
     @on(Button.Pressed, "#personas-persona-visual-cancel")
     def _cancel_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -510,10 +538,11 @@ __all__ = [
     "PersonaVisualAddCustomRequested",
     "PersonaVisualCancelRequested",
     "PersonaVisualClearRequested",
+    "PersonaVisualCustomStateDialog",
     "PersonaVisualImportRequested",
     "PersonaVisualPreviewRequested",
     "PersonaVisualReplaceRequested",
     "PersonaVisualSaveRequested",
-    "PersonaVisualCustomStateDialog",
+    "PersonaVisualUseForBuddyRequested",
     "PersonasPersonaVisualPackWidget",
 ]

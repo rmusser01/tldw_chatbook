@@ -3470,6 +3470,14 @@ at the narrow owning component and call `scroll_visible(animate=False,
 force=True, immediate=True)` on the exact control. Do not infer reachability
 from focus state or a nonzero layout region alone.
 
+**Related incident (TASK-15201, 2026-09-07).** Revealing the fleet header in the
+Console's outer rail still left its View all action behind the avatar: TASK-15110
+also caps each inner section at 20% of the rail viewport. Revealing the exact
+tail action through Textual's ancestor scrolling fixed both clips without
+removing either size cap. Wide and compact compositor hit-tests plus a real
+click caught what a header-region assertion missed; in-place refreshes were
+also checked to preserve a manually chosen scroll position.
+
 ## An "indexed" query can still scan the table the index exists to avoid — and the plan assertion can miss it (TASK-15469, 2026-08-11)
 
 TASK-15469 replaced a `metadata LIKE '%active_dictionaries%'` full scan of
@@ -5407,6 +5415,17 @@ Two rules, both incident-backed here:
    from the v40 bump until this task. Re-greening a trivially-red probe is
    not cosmetics; until it runs green, everything it guards is unguarded.
 
+**Repeat incident (TASK-21506, 2026-08-24).** PyPI readiness work ran the
+installed-distribution gate in an outside-checkout Python 3.12 runner and the
+wheel failed migration from v40 to v41: `chachanotes_v40_to_v41_persona_visual.sql`
+was present in source but missing from `pyproject.toml` package data and the
+checker/test required-path lists. The next migration,
+`chachanotes_v41_to_v42_console_project_context.sql`, was in the same state and
+would have failed next. The source build, docs, and stale local `.venv` run were
+not enough evidence; only the installed-wheel migration probe exposed the real
+release defect. Fix both package data and the manifest/test contract whenever a
+runtime SQL migration is added.
+
 ## A "pristine" probe worktree cut from `origin/dev` is not pinned to your base (task-19043, 2026-08-20)
 
 Attributing a red test to my-change-vs-pre-existing, the standard move is a
@@ -5593,3 +5612,237 @@ check the exit code) — never `tail -1`. The habit of tailing to keep output
 small is exactly what makes a per-item check unreadable. Note the exit code
 alone was also insufficient here: the script printed `::error::` and still
 exited 0 under the shell pipeline used.
+
+## A package AST sweep can descend into an ignored nested virtualenv (TASK-19602, 2026-08-22)
+
+While verifying the Remote Models redesign, the package-wide class-CSS
+consolidation test failed inside Textual's own `Widget` and `Toast` classes,
+even though the changed stylesheet parsed and reproduced exactly. The test's
+`Path.rglob("*.py")` walked through an old, gitignored
+`tldw_chatbook/.venv/lib/python3.13/site-packages/` directory nested beneath
+the package root; serializing that foreign Textual version's default rules
+then crashed on a `None` link background. A targeted diagnostic that printed
+the `(module, class)` pair for each parse failure proved both failures came
+from the ignored virtualenv, not application code.
+
+Rule: source-tree AST/file sweeps must prune environment and tool directories
+(`.venv`, virtualenvs, caches) explicitly; `.gitignore` does not affect
+`Path.rglob`. When such a gate fails in dependency code, print the exact
+discovered path before changing production CSS or blaming version drift.
+
+---
+
+## Region assertions inside the Console left rail need the rail explicitly opened
+
+**task-31207, 2026-09-05.** The new appearance-control geometry test read
+`Region(0, 0, 0, 0)` for every conversation row button — the pre-existing
+star and title buttons included — while the identical script run OUTSIDE
+pytest laid out perfectly (icon at x=4 width 4). The divergence was not
+timing, bytecode, or import order (all were chased first): the Console left
+rail starts COLLAPSED under the fresh test config's saved rail preference,
+and `display: none` on `#console-left-rail` zeroes every descendant region.
+The standalone probe passed only because it read the developer's real
+`~/.config`, where the rail happens to be open — a config-dependent pass.
+
+**What to do.** Before asserting any geometry inside the Console left rail,
+open it explicitly (`console._set_console_rail_preference(left_open=True)`
+plus a pause) and use the stylesheet-carrying harness (`StyledConsoleHarness`):
+under a bare harness the new width-4 control has no CSS rule and defaults to
+a wide auto width that eats the row — the TASK-2154.1 "new widget in a shared
+row" trap reproduced exactly here. DOM/label queries work collapsed; regions
+do not. If a region reads exactly zero for EVERY widget in a subtree, climb
+the ancestor chain and look for `display: none` before suspecting layout or
+the harness.
+
+---
+
+## A dirty tree is not provenance — verify suspected pre-existing failures against a clean HEAD worktree
+
+**task-31210, 2026-09-06.** Twelve `test_console_native_chat_flow.py` tests
+failed during the task-31207 sweep, and the failure (`ChatScreen has no
+attribute '_retrieval'`) was blamed on the in-flight `wiring.py` refactor
+sitting uncommitted in the working tree — a plausible story, reported as fact.
+A clean `git worktree add /tmp/head-verify HEAD` run showed the same tests
+**red at HEAD**: the breakage predated both the feature branch and the
+in-flight changes. The actual cause (eager unguarded controller reads in
+`console_view_hooks` hitting bare-`__new__` test screens) was only found
+because the worktree check ruled the plausible story out.
+
+**What to do.** Before attributing any failure to "someone else's uncommitted
+changes", run the failing test in a throwaway worktree at HEAD (`git worktree
+add <tmp> HEAD` costs nothing and never touches the dirty tree). Red at HEAD
+means the dirty tree is innocent; green at HEAD means the diff — anyone's —
+is the cause. A plausible-sounding blame that skips this check propagates
+into task notes, PR bodies, and the next session's mental model.
+
+
+## A negative delivery assertion can hide an automatic retry storm
+
+**TASK-32018, 2026-09-07.** The fleet wake test for an unavailable provider
+asserted that no stream payload arrived and that pending state survived. Both
+were true while the real controller retried provider readiness **183 times in
+150 ms**. The immediate completion retry also let an unavailable first session
+run **143 attempts while a ready second session got none**. Counting attempts
+at the provider-readiness boundary, and asserting that the second session
+actually reached its recording provider, exposed the defects the existing
+negative-result assertions could not see.
+
+For deferred background work, verify attempted work per time window and
+progress of an independent eligible item, in addition to checking that no
+result was delivered prematurely. A quiet output is not evidence of an idle
+worker. The regression now requires bounded retries, pending-state retention,
+delayed recovery without an external poke, and ready-session progress.
+
+
+## Loop cleanup must finish before another owner can classify the loop as idle
+
+**TASK-15665, 2026-09-07.** The first fleet pool-cleanup repair stopped the
+driver, then used `run_until_complete` to close its HTTP client. The six
+ownership/teardown tests passed, but self-review found that the gateway's
+app-level sweep classifies non-running loops as idle and may detach their
+clients for closure. A regression observing the first driver return recorded
+`[False, True]` for `client.is_closed`: the pool stayed open across an idle-loop
+interval before its later cleanup. The final implementation schedules cleanup
+while the driver is still running and stops the loop only after cleanup.
+
+**What to do.** When another owner uses `loop.is_running()` as a lifetime signal,
+verify that owned transport cleanup finishes before the first driver stop. An
+assertion that both the client and loop eventually close misses this interval.
+Also verify delayed cleanup after a bounded join: repeated shutdown must not
+stop the loop underneath the cleanup coroutine.
+
+
+## A mounted TTS control test must cross effective selection
+
+**Incident (TASK-32027/32038, 2026-09-08).** Kokoro Playground left its language
+Select in a loading/unavailable enum state, then copied that placeholder into the
+request. Catalog and widget tests passed while actual generation failed with
+TTSEffectiveResolutionError before the adapter was called. A mounted Playground
+test with the real registry, resolver and service reproduced both engines and
+provider-switch paths; replacing only audio execution exposed the boundary. A
+second mounted Settings test found that switching from audio.cpp retained a voice
+policy and identifiers rejected by the same resolver.
+
+**Practice.** For speech selection changes, follow the emitted request through
+real admission and drain the response; substitute only the expensive audio
+backend. Include fresh mounts, provider round trips, invalid saved-state repair
+and repeated generation. A visible selection or emitted event alone is not
+evidence that a reply can be spoken.
+
+
+## Check every spawn counter when testing admission refunds
+
+**TASK-32035, 2026-09-08.** With a one-child spawn allowance, a runtime-capacity
+refusal or failed thread start was refunded by `AgentService`, but a later valid
+spawn still created no child row. The pure loop independently incremented its
+unnamed-spawn counter even when the service had refused before execution. Tests
+with larger allowances hid the mismatch. A typed `SpawnAdmissionRefusal` now
+keeps both counters consistent; a child that actually ran still costs a slot.
+Test refusal followed by success in the same turn with an allowance of one,
+and assert actual child rows/worker starts, not only the service's return copy.
+
+## Verify a named agent's model at the provider boundary (TASK-32026, 2026-09-07)
+
+**Incident.** The bulk-reader pilot needed a cheaper worker model. Existing
+AgentService tests showed that a named definition's model reached `chat_call`,
+but a recording gateway behind the real Console `_StreamingModelAdapter`
+observed `primary-model` when the child requested `cheap-worker`. The adapter
+accepted the override and then dispatched its constructor's parent resolution;
+usage normalization also labeled the call with that parent model. Testing only
+the service callback had left the actual provider behavior unverified.
+
+**Resolution.** Derive an immutable resolution per adapter call, changing only
+the model, and use it for request preparation, dispatch, and usage. The
+regression test runs parent and child calls concurrently and verifies their
+gateway model identities, unchanged shared resolution, matching usage labels,
+and isolation of the parent's continuation state. A separate real local-tool
+test verifies that the reader's allowlist still refuses a write.
+
+**Rule.** When a feature selects a model, endpoint, or credential scope, verify
+the selection at the final dispatch boundary as well as at the runtime callback.
+If parent and child share an adapter, include concurrent calls and continuation
+ownership in that check. Configuration persistence alone cannot demonstrate
+that a cheaper worker was used or that its usage was priced correctly.
+
+## Exercise real config and typed streams in a reader pilot (TASK-32026, 2026-09-08)
+
+**Incident.** The first live bulk-reader comparison made 41 calls after the
+focused offline checks were green. Every cost was unknown despite complete
+provider usage and configured prices: real `load_settings()` kept pricing
+under `COMPREHENSIVE_CONFIG_RAW`, while the evaluator read only the top level.
+Separately, ZAI stripped private reasoning from chunks into empty deltas; the
+Console's generic mapping parser rendered an unsupported-shape message for each
+one. Those locally generated strings polluted agent history and consumed output
+limits. The fake provider streams had not exercised this sanitized frame shape.
+
+**What worked.** A real-loader regression failed for normalized config while
+its raw-config control passed. A typed ZAI stream through the real Console
+normalizer reproduced three diagnostic chunks around one valid text chunk.
+Provider-local empty visible content removed the noise while native-tool
+loopback tests preserved fragments and private continuation metadata. Keep raw
+live captures immutable and put repricing/review in separate artifacts. The
+corrected repeat still failed to invoke the reader in all four delegated arms;
+fixing the harness did not establish a model-quality or savings benefit.
+
+
+## Deadline tests must distinguish connection reopen, new handle, and new process
+
+**TASK-32036, 2026-09-08.** The automatic-work ledger passed same-object reopen
+checks while a second DB handle reset its local monotonic anchor and renewed
+elapsed allowance under a slow wall clock. Persisting a process-tagged anchor
+fixed handle reopen, but review then reproduced a replacement process falling
+back to wall time forever. The final regressions cover both handle replacement
+and a simulated process-ID change; the replacement anchor carries forward
+elapsed wall time while preserving the original deadline. A refused admission
+also initially rolled back this anchor, so clock observations now survive the
+refused-work savepoint rollback. A connection reopen alone does not establish that a deadline survives an owner or process change.
+
+## Decode the entire utterance when validating playback
+
+**Incident (TASK-32027/32027.1, 2026-09-08).** Real Kokoro playback first exposed
+a fresh Speech Lab engine mismatch hidden by tests that explicitly set the ONNX
+switch. After fixing that default, MP3 generation produced audible output and
+afplay exited successfully, but independent decoding and local transcription
+read only the first 0.34 seconds. The backend had concatenated separately encoded
+files. Collecting samples and encoding once preserved the full utterance. The
+optional PyTorch text-chunk path had the same defect, including invalid repeated
+WAV headers; real-codec tests reproduced it without downloading a neural model.
+
+**Practice.** Preserve fresh controls in the live harness, cross the actual app
+admission and playback paths, and wait for device drain or file-player completion.
+Also decode the generated file and check its complete duration and content.
+Process exit status, nonzero RMS and a first spoken word do not establish that
+the entire response survived encoding. Keep inference, codec, device and content
+evidence distinct; these checks used real ONNX inference and codecs, while
+PyTorch coverage replaced only inference and voice loading.
+
+
+### TASK-32037: a drained coordinator is not a released Console run
+
+On 2026-09-08, an automatic-wake cancellation test passed because its delivery
+task and coordinator slot disappeared. Independent review held skill preparation
+until the deadline and found the controller still VALIDATING: its primary count
+was one and manual continuation was refused. The strengthened regression checks
+both scheduler cleanup and `send_refusal_copy`/primary occupancy. Streaming and
+preparation have different cleanup boundaries, so exercise both.
+
+The same pass initially assigned a replacement gateway to an unused private
+attribute in a test; generation counts changed while the intended provider seam
+saw zero calls. Asserting physical provider calls, actual usage, and causal IDs
+exposed the fixture error. The final test drives the real gateway through both
+controller paths and an automatic child plus its later wake.
+
+### TASK-32022: multiprocessing ENOSPC is not evidence of a full disk or a store bug
+
+On 2026-09-08, the steering/mailbox/task-store baseline passed 216 tests but six
+spawn-based callback regressions failed inside `multiprocessing.Queue()` while
+constructing `SemLock`, before exercising the store. The exception said
+`OSError: [Errno 28] No space left on device`; the workspace still had 22.2 GiB
+free. A standalone `get_context('spawn').Lock()` reproduced it, and a targeted
+rerun with sandbox escalation still failed at the same boundary. The specific
+resource restriction/exhaustion was not established.
+
+Locate the failing primitive and test it independently before changing product
+code, weakening a regression, deleting files, or attributing the error solely to
+the sandbox. Record these cases as unverified environment prerequisites; neither
+the passing neighbors nor an escalated rerun that also fails certifies them.

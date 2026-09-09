@@ -255,7 +255,9 @@ async def test_state_1_summary_counts_every_terminal_status_as_done_not_just_lit
         fleet_section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
-        assert fleet_section.summary == "●✓✗✗⚠ 1 working, 4 done"
+        # Large fleets keep full counts without an unbounded glyph cluster.
+        assert fleet_section.summary == "1 working, 4 done"
+        assert len(fleet_section.rows) == 5
 
 
 # -- State 2: expanded rows, two lines each (spec §7) --------------------
@@ -507,7 +509,7 @@ async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
         _assert_painted_at_own_region(host, secondary)
         text = str(secondary.renderable)
         assert "drafted the summary" in text
-        assert "1.2k tok" in text
+        assert "1.2k budget tok" in text
 
 
 @pytest.mark.asyncio

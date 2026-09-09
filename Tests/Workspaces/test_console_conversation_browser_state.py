@@ -4,8 +4,10 @@ from datetime import datetime, timezone
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+    CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT,
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
+    console_conversation_browser_group_row_limit,
     console_persisted_row_updated_sort,
     format_console_relative_age,
 )
@@ -25,6 +27,8 @@ def _row(
     starred_sort="",
     updated_sort="",
     run_marker="",
+    icon="",
+    color="",
 ):
     return ConsoleConversationBrowserInputRow(
         row_key=key,
@@ -45,6 +49,8 @@ def _row(
         starred_sort=starred_sort,
         updated_sort=updated_sort,
         run_marker=run_marker,
+        icon=icon,
+        color=color,
     )
 
 
@@ -58,6 +64,53 @@ def _workspace_group(state, group_id):
     workspace_section = _section(state, "workspaces")
     return next(
         group for group in workspace_section.groups if group.group_id == group_id
+    )
+
+
+def test_group_row_limit_defaults_to_the_historical_cap_without_a_measurement():
+    assert (
+        console_conversation_browser_group_row_limit(None)
+        == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    )
+    assert (
+        console_conversation_browser_group_row_limit(0)
+        == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    )
+    assert (
+        console_conversation_browser_group_row_limit(-5)
+        == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    )
+
+
+def test_group_row_limit_keeps_the_default_on_short_rails():
+    # A 40-line rail halves to 20 lines per section = 6 rows at the nominal
+    # 3-line row height, below the 12-row floor: short terminals are
+    # unchanged from the pre-adaptive behaviour.
+    assert (
+        console_conversation_browser_group_row_limit(40)
+        == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    )
+
+
+def test_group_row_limit_splits_a_tall_rail_evenly_between_peer_sections():
+    # 200 available lines: each peer row surface (the Workspaces section's
+    # expanded groups and the Chats bucket) gets half the space, and half of
+    # 200 lines at the nominal row height is 33 rows.
+    assert (
+        console_conversation_browser_group_row_limit(200)
+        == (200 // 2) // CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT
+        == 33
+    )
+
+
+def test_group_row_limit_grows_monotonically_with_available_height():
+    limits = [
+        console_conversation_browser_group_row_limit(height)
+        for height in (None, 24, 48, 120, 200, 400)
+    ]
+    assert limits == sorted(limits)
+    assert console_conversation_browser_group_row_limit(400) > (
+        console_conversation_browser_group_row_limit(120)
     )
 
 
@@ -1241,3 +1294,46 @@ def test_selected_summary_drops_synthetic_chats_bucket_label():
     )
 
     assert state.selected_summary == "Global chat"
+
+
+def _all_browser_rows(state):
+    for section in state.sections:
+        yield from section.rows
+        for group in section.groups:
+            yield from group.rows
+
+
+def test_browser_rows_carry_icon_and_color():
+    """task-31207: an input row's icon/color survive the builder unchanged."""
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-icon", "Lab chat", icon="🧪", color="#f87171"),
+            _row("conv-plain", "Plain chat"),
+        ),
+        active_workspace_id="ws-a",
+    )
+    by_key = {row.row_key: row for row in _all_browser_rows(state)}
+    assert by_key["conv-icon"].icon == "🧪"
+    assert by_key["conv-icon"].color == "#f87171"
+    assert by_key["conv-plain"].icon == ""
+    assert by_key["conv-plain"].color == ""
+
+
+def test_browser_row_icon_color_defaults_are_empty_strings():
+    """task-31207: rows built without appearance render exactly as before."""
+    state = build_console_conversation_browser_state(
+        rows=(_row("conv-defaults", "Any chat"),),
+        active_workspace_id="ws-a",
+    )
+    (row,) = list(_all_browser_rows(state))
+    assert row.icon == ""
+    assert row.color == ""
+
+
+def test_browser_row_appearance_participates_in_equality():
+    """task-31207: icon/color are part of row value equality, so the tray's
+    structural recompose guard (TASK-15454) repaints on an appearance change
+    instead of skipping as a no-op."""
+    base = _row("conv-eq", "Same title")
+    recolored = _row("conv-eq", "Same title", color="#22d3ee")
+    assert base != recolored

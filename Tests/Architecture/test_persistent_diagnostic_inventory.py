@@ -25,6 +25,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
+    "tldw_chatbook/Chat/chat_conversation_service.py": {
+        "Unable to batch-read Console conversation appearances": (),
+    },
     "tldw_chatbook/Agents/agent_service.py": {
         "autowake_enabled is not boolean; using default": (),
         "child_max_wall_seconds is not numeric": (),
@@ -106,6 +109,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "wake session resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+        "Database error fetching conversation metadata batch": ("type(e).__name__",),
         "Database error restoring a note": ("type(e).__name__",),
         "Note restore was already active": (),
         "Note restore completed normally": (),
@@ -142,13 +146,15 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Query truncated": ("len(query)", "MAX_QUERY_LENGTH"),
         "Unknown fts_match_construction; using conservative fallback": (),
     },
-    "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "tldw_chatbook/UI/Console_Modules/fleet.py": {
         "Console fleet completion handoff will retry": (
             "claim.revision",
             "type(exc).__name__",
         ),
         "console fleet wake mount-claim failed": ("type(exc).__name__",),
         "fleet survivor check failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
         "Pending sidebar-state write failed": ("type(error).__name__",),
     },
     "tldw_chatbook/UI/Console_Modules/video.py": {
@@ -160,6 +166,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "stream resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
+        "Pending Library lifecycle write failed during unmount": (),
+        "Library Skill tool catalog is temporarily unavailable": (),
         "canvas sync failed": ("kind",),
         "Library entry canvas repair attempt failed": (),
         "Strict Library entry shell synchronization failed": (),
@@ -207,6 +215,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Image generation batch raised": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/LLM_Management_Window.py": {
+        "Lazy LLM view mount failed": (),
         "Managed GGUF inventory load failed": (),
     },
     "tldw_chatbook/UI/Screens/llm_screen.py": {
@@ -237,6 +246,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Start Chat: roleplay template seed/persist failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Console_Modules/workspace.py": {
+        "Unable to read Console conversation appearances": (),
+        "Unable to write Console conversation appearance": (),
+        "Appearance-write cancellation re-sync failed": (),
         "Star-toggle cancellation re-sync failed": (),
     },
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
@@ -1176,6 +1188,43 @@ def test_shifting_a_real_inventory_file_leaves_its_digest_unchanged() -> None:
     )
     # Prepending blank lines shifts every line number in the file.
     assert _digest("\n\n\n" + source) == entry["diagnostic_digest"]
+
+
+@pytest.mark.parametrize("environment_name", [".venv", "developer-python"])
+def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment_name: str
+) -> None:
+    """Local dependency installations must not become application owners/sinks."""
+    package = tmp_path / "tldw_chatbook"
+    package.mkdir()
+    environment = package / environment_name
+    dependency = environment / "lib/python3.13/site-packages/foreign.py"
+    dependency.parent.mkdir(parents=True)
+    (environment / "pyvenv.cfg").write_text("home = /local/python\n")
+    dependency.write_text("logger.error('foreign')\nlogger.add('foreign.log')\n")
+    # A similarly named application module is still in scope.
+    application = package / "venv"
+    application.mkdir()
+    (application / "owner.py").write_text(
+        "logger.warning('owned')\nlogger.add('owned.log')\n"
+    )
+    monkeypatch.setattr(diagnostic_inventory, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(diagnostic_inventory, "PACKAGE_ROOT", package)
+
+    inventory = diagnostic_inventory.build_inventory()
+
+    assert [row["path"] for row in inventory["owners"]] == [
+        "tldw_chatbook/venv/owner.py"
+    ]
+    assert [row["path"] for row in inventory["persistent_sink_topology"]] == [
+        "tldw_chatbook/venv/owner.py"
+    ]
+    assert inventory["summary"] == {
+        "owner_files": 1,
+        "persistent_sink_files": 1,
+        "task_492_calls": 0,
+        "task_494_calls": 1,
+    }
 
 
 def test_inventory_counts_chained_logger_diagnostic_calls() -> None:

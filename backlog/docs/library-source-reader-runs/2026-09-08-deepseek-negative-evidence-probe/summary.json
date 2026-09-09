@@ -1,0 +1,14 @@
+{
+  "purpose": "focused development regression probe; not the full matrix or blind human grading",
+  "probe_requests": 4,
+  "cumulative_requests": 24,
+  "probe_estimated_cost_usd": 0.001794,
+  "cumulative_estimated_cost_usd": 0.005122,
+  "adoption_decision": "inconclusive",
+  "cases_with_required_quotes_and_answers": 2,
+  "cases_checked": 2,
+  "positive_control_cases_rerun": 0,
+  "heldout_calls": 0,
+  "pricing_tier": "peak",
+  "baseline_pricing_tier": "off_peak"
+}

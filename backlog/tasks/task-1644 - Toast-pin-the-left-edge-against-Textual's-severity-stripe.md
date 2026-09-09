@@ -1,6 +1,6 @@
 ---
 id: TASK-1644
-title: 'Toast: pin the left edge against Textual's severity stripe'
+title: 'Toast: pin the left edge against Textual''s severity stripe'
 status: Done
 assignee:
   - '@claude'

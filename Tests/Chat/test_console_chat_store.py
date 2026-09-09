@@ -71,6 +71,48 @@ def test_initial_chat_one_is_pristine_until_the_user_types():
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
 
 
+def test_console_settings_revision_tracks_only_settings_owned_changes():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    assert session.settings_revision == 0
+    assert store.session_settings_revision(session.id) == 0
+
+    store.replace_session_settings(session.id, replace(defaults, temperature=0.2))
+    assert store.session_settings_revision(session.id) == 1
+    store.replace_session_settings(session.id, replace(defaults, temperature=0.2))
+    assert store.session_settings_revision(session.id) == 1
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    assert store.session_settings_revision(session.id) == 1
+
+    overrides = ConsoleContextPolicyOverrides(max_turns=5)
+    store.set_session_context_policy_overrides(session.id, overrides)
+    assert store.session_settings_revision(session.id) == 2
+    store.set_session_context_policy_overrides(session.id, overrides)
+    assert store.session_settings_revision(session.id) == 2
+
+    store.set_session_user_display_name_override(
+        session.id, "Ada", global_default="User"
+    )
+    assert store.session_settings_revision(session.id) == 3
+    store.set_session_user_display_name_override(
+        session.id, "Ada", global_default="User"
+    )
+    assert store.session_settings_revision(session.id) == 3
+
+    store.set_session_system_prompt(session.id, "Be concise.")
+    assert store.session_settings_revision(session.id) == 4
+    store.set_session_system_prompt(session.id, "Be concise.")
+    assert store.session_settings_revision(session.id) == 4
+
+    store.set_session_pinned_prefill(session.id, "Voice:")
+    assert store.session_settings_revision(session.id) == 5
+    store.set_session_pinned_prefill(session.id, "Voice:")
+    assert store.session_settings_revision(session.id) == 5
+
+
 def test_message_completed_subscription_emits_first_live_completion_once():
     store = ConsoleChatStore()
     session = store.create_session()
@@ -4556,7 +4598,7 @@ def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
     create, and a follow-up metadata-only patch (mirroring the "final" case's own
     two-step order: content write, then status write) marks it "empty"."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
@@ -4609,7 +4651,7 @@ def test_empty_transcript_placeholder_reaches_a_real_db_through_the_deferred_cre
     write_and_leaves_version_unchanged`) for exactly this kind of durability
     claim."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 

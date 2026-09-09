@@ -623,10 +623,25 @@ class LocalToolProvider:
         nothing: MCPToolProvider records those service-side via
         execute_hub_tool, which has no local analogue.
         """
+        from .automatic_work_runtime import current_automatic_work
+
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs.get(name)
         if spec is None:
             return ToolResult(ok=False, error=f"Unknown local tool: {name}")
+        automatic_work = current_automatic_work()
+        if automatic_work is not None:
+            try:
+                automatic_work.check()
+            except Exception as exc:  # noqa: BLE001 -- no authority, no tool work
+                return ToolResult(ok=False, error=f"automatic tool call refused: {exc}")
+            if name == "web_deep_search":
+                # This tool's direct helper generations do not use the Console
+                # gateway. Refuse before they can escape shared call accounting.
+                return ToolResult(
+                    ok=False,
+                    error="web_deep_search is unavailable during automatic follow-up; request it in a manual message",
+                )
         if not self._root_is_valid():
             return ToolResult(ok=False, error=LOCAL_ROOT_CHANGED_REFUSAL)
         if self._kill_switch_engaged():
@@ -642,6 +657,9 @@ class LocalToolProvider:
             if not self._root_is_valid():
                 return ToolResult(ok=False, error=LOCAL_ROOT_CHANGED_REFUSAL)
             try:
+                # Human approval does not extend the independent chain deadline.
+                if automatic_work is not None:
+                    automatic_work.check()
                 return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
             except Exception as exc:  # noqa: BLE001 — never raises across the boundary
                 return ToolResult(

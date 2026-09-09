@@ -28,6 +28,11 @@ class ConsoleSwitcherEntry:
     scope_type: str
     workspace_id: str | None
     is_active: bool
+    #: task-31208: sanitized custom icon glyph ("" when unset), shown left
+    #: of the title exactly like the Context rail row.
+    icon: str = ""
+    #: task-31208: canonical ``#rrggbb`` icon tint ("" when unset).
+    color: str = ""
 
 
 def _matches(row: ConsoleConversationBrowserInputRow, tokens: list[str]) -> bool:
@@ -130,6 +135,8 @@ def build_console_switcher_entries(
                 scope_type=str(row.scope_type or ""),
                 workspace_id=row.workspace_id,
                 is_active=bool(row.selected),
+                icon=str(row.icon or ""),
+                color=str(row.color or ""),
             )
         )
     return tuple(entries)

@@ -429,6 +429,11 @@ def _run(bridge, store, session, assistant_id, **over):
         should_cancel=lambda: False,
     )
     kwargs.update(over)
+    if "work_chain_id" not in kwargs:
+        from uuid import uuid4
+        kwargs["work_chain_id"] = bridge._db.automatic_work.create_chain(
+            kwargs["conversation_id"], root_submission_id=uuid4().hex
+        )
     # run_reply returns (run_id, outcome); these tests assert on the outcome.
     _run_id, outcome = bridge.run_reply(**kwargs)
     return outcome

@@ -28,8 +28,8 @@ import time
 from loguru import logger
 from rich.markup import escape as escape_markup
 
-from ...Chat.console_chat_models import (
-    CONSOLE_GLOBAL_WORKSPACE_ID,
+from ...Chat.console_appearance import ConsoleConversationAppearance
+from ...Chat.console_chat_models import (    CONSOLE_GLOBAL_WORKSPACE_ID,
     CONSOLE_RUN_MARKER_GLYPHS,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleRunMarker,
@@ -52,6 +52,9 @@ from ...Widgets.Console import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.Console.console_appearance_picker_modal import (
+    ConsoleAppearancePickerModal,
+)
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
@@ -61,6 +64,7 @@ from ...Workspaces import (
     DEFAULT_WORKSPACE_ID,
     WorkspaceRecord,
     build_console_conversation_browser_state,
+    console_conversation_browser_group_row_limit,
     console_persisted_row_updated_sort,
 )
 from ...Workspaces.display_state import (
@@ -156,6 +160,7 @@ class ConsoleWorkspaceController:
         ensure_agent_bridge: Callable[[], Any],
         subagent_counts_for_rows: Callable[[Any, Iterable[Any]], dict[str, int]],
         conversation_browser_collapse_preferences: Callable[[], dict[str, bool]],
+        rail_body_height_accessor: Callable[[], int | None],
         wake_retry_poke: Callable[[], None] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
@@ -202,6 +207,10 @@ class ConsoleWorkspaceController:
             ensure_agent_bridge: Return the Console agent bridge.
             subagent_counts_for_rows: Compute sub-agent counts for browser rows.
             conversation_browser_collapse_preferences: Return collapse preferences.
+            rail_body_height_accessor: Return the Console rail body height in
+                terminal lines (or ``None`` before layout) so the browser's
+                per-section/group visible-row cap can adapt to fill the
+                available space.
             wake_retry_poke: Optionally request a staged-wake retry after resume.
         """
         self._screen = screen
@@ -249,6 +258,7 @@ class ConsoleWorkspaceController:
         self._conversation_browser_collapse_preferences_fn = (
             conversation_browser_collapse_preferences
         )
+        self._rail_body_height_accessor = rail_body_height_accessor
         #: task-15864 AC#2: `ChatScreen._poke_console_wake_retry` -- resume
         #: is the one loader of persisted conversations into sessions, so
         #: session-open becomes a wake retry trigger here. Optional so the
@@ -562,6 +572,10 @@ class ConsoleWorkspaceController:
     def _console_conversation_browser_collapse_preferences(self) -> Any:
         return self._conversation_browser_collapse_preferences_fn
 
+    @property
+    def _console_rail_body_height(self) -> int | None:
+        return self._rail_body_height_accessor()
+
     def transition_browser_search(self, query: str, disabled: bool) -> None:
         """Apply one input change and schedule its canonical browser refresh."""
         if disabled or query == self._console_conversation_browser_query:
@@ -774,6 +788,51 @@ class ConsoleWorkspaceController:
             starred=bool(conversation_id and conversation_id in ids),
             star_enabled=bool(star_enabled),
         )
+
+    def _console_conversation_appearance_map(
+        self, conversation_ids: Iterable[str]
+    ) -> dict[str, tuple[str, str]]:
+        """Batch-read sanitized conversation appearance keyed by id.
+
+        task-31207: one batched SELECT decorates every browser row (native,
+        membership, and persisted alike — merged native rows supersede the
+        persisted row that carried the metadata, so the map is the single
+        source for all of them). Failures degrade to "no appearance".
+        """
+        service = getattr(
+            self.app_instance, "local_chat_conversation_service", None
+        )
+        get_appearances = getattr(service, "get_conversation_appearances", None)
+        if not callable(get_appearances):
+            return {}
+        try:
+            appearances = get_appearances(conversation_ids)
+        except Exception:
+            logger.debug(
+                "Unable to read Console conversation appearances"
+            )
+            return {}
+        return {
+            str(conversation_id): (
+                str(appearance.icon or ""),
+                str(appearance.color or ""),
+            )
+            for conversation_id, appearance in appearances.items()
+        }
+
+    @staticmethod
+    def _apply_console_browser_appearance_state(
+        row: ConsoleConversationBrowserInputRow,
+        appearances: dict[str, tuple[str, str]],
+    ) -> ConsoleConversationBrowserInputRow:
+        """Apply persisted appearance metadata to one browser row."""
+        conversation_id = str(row.conversation_id or "").strip()
+        if not conversation_id or conversation_id not in appearances:
+            return row
+        icon, color = appearances[conversation_id]
+        if row.icon == icon and row.color == color:
+            return row
+        return replace(row, icon=icon, color=color)
 
     def _native_console_browser_rows(
         self,
@@ -1191,9 +1250,19 @@ class ConsoleWorkspaceController:
         merged: list[ConsoleConversationBrowserInputRow] = []
         seen: set[tuple[str, ...]] = set()
         starred_ids = self._starred_console_conversation_ids()
+        conversation_ids = sorted(
+            {
+                str(row.conversation_id or "").strip()
+                for group in row_groups
+                for row in group
+                if str(row.conversation_id or "").strip()
+            }
+        )
+        appearances = self._console_conversation_appearance_map(conversation_ids)
         for group in row_groups:
             for raw_row in group:
                 row = self._apply_console_browser_star_state(raw_row, starred_ids)
+                row = self._apply_console_browser_appearance_state(row, appearances)
                 identity = self._console_browser_display_identity(row)
                 if not identity[-1] or identity in seen:
                     continue
@@ -1328,6 +1397,13 @@ class ConsoleWorkspaceController:
             result_total_count=total,
             result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
             subagent_counts=subagent_counts,
+            # The visible-row cap grows with the measured rail body height so
+            # the Workspaces and Chats sections expand to fill the available
+            # space together; the historical 12-row default still floors it
+            # on short/unmeasured rails.
+            group_row_limit=console_conversation_browser_group_row_limit(
+                self._console_rail_body_height
+            ),
         )
         return replace(
             state,
@@ -2735,6 +2811,128 @@ class ConsoleWorkspaceController:
                     break
         collapsed = not bool(group.collapsed if group is not None else False)
         self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
+        self._sync_console_workspace_context()
+
+    def _open_console_conversation_appearance_picker(
+        self,
+        conversation_id: str,
+        *,
+        conversation_title: str = "",
+        icon: str = "",
+        color: str = "",
+    ) -> None:
+        """Open the per-conversation icon + color picker (task-31207)."""
+        normalized_id = str(conversation_id or "").strip()
+        if not normalized_id:
+            # Same guard copy as the star: an unpersisted native session has
+            # no conversations row to carry metadata yet.
+            self.app_instance.notify(
+                "Save this conversation before customizing it.",
+                severity="warning",
+            )
+            return
+        self.push_screen(
+            ConsoleAppearancePickerModal(
+                conversation_id=normalized_id,
+                conversation_title=str(conversation_title or ""),
+                icon=icon or None,
+                color=color or None,
+            ),
+            callback=partial(
+                self._on_console_conversation_appearance_result,
+                normalized_id,
+                str(conversation_title or ""),
+            ),
+        )
+
+    def _on_console_conversation_appearance_result(
+        self,
+        conversation_id: str,
+        conversation_title: str,
+        appearance: "ConsoleConversationAppearance | None",
+    ) -> None:
+        """Apply the picker's result; ``None`` means it was cancelled."""
+        if appearance is None:
+            return
+        service = getattr(
+            self.app_instance, "local_chat_conversation_service", None
+        )
+        set_appearance = getattr(service, "set_conversation_appearance", None)
+        if not callable(set_appearance):
+            self.app_instance.notify(
+                "Conversation appearance is unavailable.",
+                severity="warning",
+            )
+            return
+        self.run_worker(
+            self._write_console_conversation_appearance_off_loop(
+                set_appearance, conversation_id, appearance, conversation_title
+            ),
+            group="console-conversation-appearance",
+            exit_on_error=False,
+        )
+
+    async def _write_console_conversation_appearance_off_loop(
+        self,
+        set_appearance: Callable[..., bool],
+        conversation_id: str,
+        appearance: "ConsoleConversationAppearance",
+        conversation_title: str,
+    ) -> None:
+        """Durably write one appearance change off the loop, then repaint.
+
+        task-15471 discipline (same as the star toggle): the DB write runs
+        off the event loop, guarded for per-connection memory DBs. Metadata
+        writes also invalidate the persisted-rows TTL cache so the next tray
+        sync re-reads rows instead of painting the stale appearance.
+        """
+        try:
+
+            def _write_appearance() -> bool:
+                return bool(
+                    set_appearance(
+                        conversation_id=conversation_id,
+                        appearance=appearance,
+                    )
+                )
+
+            db = getattr(
+                getattr(self.app_instance, "local_chat_conversation_service", None),
+                "db",
+                None,
+            )
+            if bool(getattr(db, "is_memory_db", False)):
+                wrote = _write_appearance()
+            else:
+                wrote = await asyncio.to_thread(_write_appearance)
+        except asyncio.CancelledError:
+            try:
+                self._sync_console_workspace_context()
+            except Exception:
+                logger.debug("Appearance-write cancellation re-sync failed")
+            raise
+        except Exception:
+            logger.error("Unable to write Console conversation appearance")
+            self.app_instance.notify(
+                "Could not update the conversation's appearance.",
+                severity="error",
+            )
+            return
+        if not wrote:
+            self.app_instance.notify(
+                "Could not update the conversation's appearance; try again.",
+                severity="warning",
+            )
+            return
+        # Untitled-conversation guard + markup escape: same toast rules the
+        # star toggle established (task-3024, TASK-357).
+        title = next(iter(str(conversation_title or "").splitlines()), "").strip()
+        title_suffix = f' "{escape_markup(title)}"' if title else ""
+        if appearance.icon is None and appearance.color is None:
+            self.app_instance.notify(f"Cleared the icon for{title_suffix}.")
+        else:
+            self.app_instance.notify(f"Updated the icon for{title_suffix}.")
+        self._invalidate_console_persisted_rows_cache()
         self._sync_console_workspace_context()
 
     def _toggle_console_conversation_star(

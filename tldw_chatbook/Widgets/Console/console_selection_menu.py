@@ -40,7 +40,7 @@ from textual.widgets import Button, Static
 
 #: Shrink-guard class: added by the measured clamp when the owner box is
 #: shorter than even the compact menu; drops the container border and the
-#: hint line (3 rows) before the top-out tie-break. No actions are hidden.
+#: hint line (3 rows) before scrolling. All actions remain reachable.
 _SHRUNK_CLASS = "shrunk-for-short-owner"
 
 #: Shown (dim, inside the menu) and carried on the disabled buttons'
@@ -160,9 +160,10 @@ class ConsoleSelectionMenu(Vertical):
        specificity decides -- and re-grew tall borders on the run-gated
        pair (2-row border-only boxes, labels clipped, 11-row menu). Per-ID
        rules ((1,0,1)) beat any class/pseudo stack textual throws. Applied
-       to ALL seven action IDs, not just the two gated ones: any action may
+       to ALL action IDs, not just the two gated ones: any action may
        end up disabled, and every action must stay one row in every state
        and color mode. */
+    ConsoleSelectionMenu #console-selection-copy,
     ConsoleSelectionMenu #console-selection-add-to-chat,
     ConsoleSelectionMenu #console-selection-more-details,
     ConsoleSelectionMenu #console-selection-ask-side-chat,
@@ -181,10 +182,11 @@ class ConsoleSelectionMenu(Vertical):
     }
     /* Shrink guard for boxes shorter than even the compact menu: the
        measured clamp adds this class, trading the container border and
-       the hint line for 3 more usable rows (last resort before the
-       top-out tie-break; no actions are ever hidden). */
+       the hint line for 3 more usable rows, with scrolling if the actions
+       still cannot all fit. */
     ConsoleSelectionMenu.shrunk-for-short-owner {
         border: none;
+        overflow-y: auto;
     }
     ConsoleSelectionMenu.shrunk-for-short-owner #console-selection-feedback-hint {
         display: none;
@@ -192,6 +194,9 @@ class ConsoleSelectionMenu(Vertical):
     """
 
     BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "dismiss", show=False)]
+
+    class CopySelection(Message):
+        """User chose 'Copy selection' for the active selection."""
 
     class AddToChat(Message):
         """User chose 'Add to chat' for the active selection."""
@@ -269,8 +274,9 @@ class ConsoleSelectionMenu(Vertical):
         self._previous_focus: Widget | None = None
 
     def compose(self):
+        yield Button("Copy selection", id="console-selection-copy", variant="primary")
         if self._has_add_to_chat:
-            yield Button("Add to chat", id="console-selection-add-to-chat", variant="primary")
+            yield Button("Add to chat", id="console-selection-add-to-chat")
         yield Button("More Details", id="console-selection-more-details")
         yield Button("Ask in Side Chat", id="console-selection-ask-side-chat")
         yield Button("Create note", id="console-selection-create-note")
@@ -364,11 +370,14 @@ class ConsoleSelectionMenu(Vertical):
         # Shrink guard (clamp-fix review): a box shorter than even the
         # compact menu cannot contain it at ANY offset -- trade the
         # container border + hint line for three more usable rows, then
-        # re-measure in a fresh layout pass (the class check stops the
-        # recursion; if it still does not fit, the top-out tie-break below
-        # is the accepted last resort).
+        # re-measure in a fresh layout pass. If the actions still cannot
+        # all fit, constrain the menu height and let it scroll.
         if region.height > bounds.height and not self.has_class(_SHRUNK_CLASS):
             self.add_class(_SHRUNK_CLASS)
+            self.call_after_refresh(self._clamp_within_owner)
+            return
+        if region.height > bounds.height:
+            self.styles.max_height = bounds.height
             self.call_after_refresh(self._clamp_within_owner)
             return
         shift_x = max(0, region.right - bounds.right)
@@ -441,6 +450,10 @@ class ConsoleSelectionMenu(Vertical):
 
     def _post(self, message: Message) -> None:
         (self._owner if self._owner is not None else self).post_message(message)
+
+    @on(Button.Pressed, "#console-selection-copy")
+    def _copy_selection(self) -> None:
+        self._post(self.CopySelection())
 
     @on(Button.Pressed, "#console-selection-add-to-chat")
     def _add_to_chat(self) -> None:

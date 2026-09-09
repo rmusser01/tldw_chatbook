@@ -15,19 +15,44 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Chat.console_glyphs import (
+    GLYPH_APPEARANCE_ASCII_SET,
+)
 from tldw_chatbook.Chat.console_switcher_state import (
     ConsoleSwitcherEntry,
     build_console_switcher_entries,
 )
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Widgets.glyph_fallback import ascii_glyph_mode
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
 )
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
 _SWITCHER_TITLE_MAX_CHARACTERS = 500
 _SWITCHER_SUBTITLE_MAX_CHARACTERS = 500
+
+
+def _switcher_icon_prefix(entry: ConsoleSwitcherEntry) -> str:
+    """Return the Rich-markup icon prefix for one switcher row (task-31208).
+
+    Mirrors the Context rail row: the custom icon, colored when a color is
+    set, left of the title; a fixed ASCII substitute in ASCII-glyph mode,
+    where arbitrary user emoji cannot render. The sanitized display title is
+    escaped before being appended by the caller so the prefix's markup tags
+    are the only ones in the label.
+    """
+    icon = str(entry.icon or "")
+    if not icon and not entry.color:
+        return ""
+    glyph = GLYPH_APPEARANCE_ASCII_SET if ascii_glyph_mode() else (icon or "")
+    escaped = escape_markup(glyph) if glyph else ""
+    if not escaped:
+        return ""
+    if entry.color:
+        return f"[{entry.color}]{escaped}[/] "
+    return f"{escaped} "
 
 
 #: Debounce for the search `Input` -- mirrors the console picker family's
@@ -171,13 +196,16 @@ class ConsoleSessionSwitcherModal(
                     entry.subtitle,
                     max_characters=_SWITCHER_SUBTITLE_MAX_CHARACTERS,
                 )
+                title_line = (
+                    f"{_switcher_icon_prefix(entry)}{escape_markup(display_title)}"
+                )
                 label = (
-                    display_title
+                    title_line
                     if not display_subtitle
-                    else f"{display_title}\n  {display_subtitle}"
+                    else f"{title_line}\n  {escape_markup(display_subtitle)}"
                 )
                 button = Button(
-                    Text(label),
+                    Text.from_markup(label),
                     id=f"console-switcher-result-{index}",
                     classes="console-switcher-result",
                     compact=True,

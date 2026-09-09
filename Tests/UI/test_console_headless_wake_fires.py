@@ -39,20 +39,25 @@ from __future__ import annotations
 
 import pytest
 
-from Tests.Chat.test_console_fleet_wake import _drain, _quiet, _settle, _survivor
+from Tests.Chat.test_console_fleet_wake import (
+    _drain,
+    _quiet,
+    _settle,
+    _survivor,
+    _terminal_subagent_run,
+)
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_console_store_continuity import (
     CHILD_RESULT,
-    _StallingWakeGateway,
+    SEEDED_USER,
     _db_chain,
     _drain_from_child_thread,
     _navigate,
     _rendered_text,
     _seed_console,
-    _terminal_survivor_run,
-    SEEDED_USER,
+    _StallingWakeGateway,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
@@ -60,7 +65,6 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
 
 WAKE_REPLY = "HEADLESS-WAKE-REPLY"
 
@@ -110,7 +114,9 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
         )
         wake = controller.fleet_wake
         runs_db = controller._agent_bridge.runs_db
-        run_id = _terminal_survivor_run(runs_db, conversation_id)
+        _parent, run_id = _terminal_subagent_run(
+            runs_db, conversation_id, result=CHILD_RESULT
+        )
         marks = app.conversation_local_marks_service
         marks.set_mark(conversation_id, ConversationLocalMarksService.FLEET_UNSEEN)
         rows_before = _db_chain(app.chachanotes_db, conversation_id)

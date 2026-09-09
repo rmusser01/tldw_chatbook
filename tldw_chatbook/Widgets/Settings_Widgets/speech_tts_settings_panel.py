@@ -71,6 +71,10 @@ from tldw_chatbook.TTS.audio_cpp_recipes import (
     AudioCppMatchState,
     AudioCppReferenceRequirement,
 )
+from tldw_chatbook.TTS.legacy_catalogs import (
+    LEGACY_DEFAULT_MODELS,
+    LEGACY_DEFAULT_VOICES,
+)
 from tldw_chatbook.Third_Party.textual_fspicker import (
     FileOpen,
     Filters,
@@ -2091,15 +2095,16 @@ class SpeechTTSSettingsPanel(Vertical):
         """Return the global-selection draft state independently of setup."""
 
         try:
-            changed = (
-                self.state.defaults.snapshot()
-                != self.original_state.defaults.snapshot()
-            )
+            preferences = self.state.defaults.snapshot()
         except GlobalSpeechTTSValidationError as error:
             if "required" in str(error).lower():
                 return SpeechTTSConfigurationState.INCOMPLETE
             return SpeechTTSConfigurationState.INVALID
-        if changed:
+        try:
+            original_preferences = self.original_state.defaults.snapshot()
+        except GlobalSpeechTTSValidationError:
+            return SpeechTTSConfigurationState.UNSAVED
+        if preferences != original_preferences:
             return SpeechTTSConfigurationState.UNSAVED
         if self.state.defaults_source is GlobalSpeechTTSEffectiveSource.DEFAULT:
             return SpeechTTSConfigurationState.DEFAULT
@@ -2434,10 +2439,13 @@ class SpeechTTSSettingsPanel(Vertical):
                 ("Exact", "exact"),
                 ("First available", "first_available"),
             ]
-            voice_policy_options = [
-                ("Exact", "exact"),
-                ("Server default", "server_default"),
-            ]
+            voice_policy_options = [("Exact", "exact")]
+            if defaults.voice_mode == "server_default":
+                # Keep invalid saved state visible so it can be corrected;
+                # ordinary Save rejects it before publishing preferences.
+                voice_policy_options.append(
+                    ("Server default (unsupported; choose Exact)", "server_default")
+                )
         yield Static("Global defaults", classes="destination-section")
         yield Static(
             f"Default voice setup: {self._defaults_configuration_state().value}.",
@@ -3867,8 +3875,13 @@ class SpeechTTSSettingsPanel(Vertical):
             )
             if "audio_cpp" in proposal.changed_provider_ids:
                 validate_audio_cpp_managed_settings(self.state.providers["audio_cpp"])
+            try:
+                original_preferences = self.original_state.defaults.snapshot()
+            except GlobalSpeechTTSValidationError:
+                # A valid draft must be able to replace invalid saved defaults.
+                original_preferences = None
             defaults_changed = (
-                proposal.preferences != self.original_state.defaults.snapshot()
+                proposal.preferences != original_preferences
                 # `default_profile_id` lives outside `TTSPreferencesSnapshot`
                 # (a distinct precedence rung -- see has_unsaved_changes and
                 # build_global_speech_tts_save_proposal), so the snapshot
@@ -5025,8 +5038,8 @@ class SpeechTTSSettingsPanel(Vertical):
         if event.value == self.state.defaults.provider_id:
             return
         self._collect_visible_state()
+        persisted = self.original_state.defaults
         if event.value == "audio_cpp":
-            persisted = self.original_state.defaults
             if persisted.provider_id == "audio_cpp":
                 self.state.defaults.model_mode = persisted.model_mode
                 self.state.defaults.model_id = persisted.model_id
@@ -5039,6 +5052,17 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.state.defaults.voice_id = None
             self.state.defaults.response_format = "wav"
             self.state.defaults.speed = 1.0
+        elif event.value in LEGACY_DEFAULT_MODELS:
+            if persisted.provider_id == event.value:
+                self.state.defaults.model_mode = persisted.model_mode
+                self.state.defaults.model_id = persisted.model_id
+                self.state.defaults.voice_mode = persisted.voice_mode
+                self.state.defaults.voice_id = persisted.voice_id
+            else:
+                self.state.defaults.model_mode = "exact"
+                self.state.defaults.model_id = LEGACY_DEFAULT_MODELS[event.value]
+                self.state.defaults.voice_mode = "exact"
+                self.state.defaults.voice_id = LEGACY_DEFAULT_VOICES[event.value]
         await self._replace_card_bodies(
             self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
         )

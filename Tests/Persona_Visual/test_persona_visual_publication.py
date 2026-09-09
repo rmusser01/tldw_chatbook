@@ -445,22 +445,10 @@ def test_final_file_content_mutation_inside_authority_guard_is_rejected(
     assert repository.get_active_persona_pack(snapshot.persona_id) is None
 
 
-@pytest.mark.parametrize(
-    "layout", ("same", "profile_inside_source", "source_inside_profile")
-)
-def test_profile_and_package_root_overlap_is_rejected(
-    tmp_path: Path, layout: str
-) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    if layout == "same":
-        source_root = profile_root = root
-    elif layout == "profile_inside_source":
-        source_root, profile_root = root, root / "profile"
-        profile_root.mkdir()
-    else:
-        profile_root, source_root = root, root / "source"
-        source_root.mkdir()
+def test_profile_inside_external_source_is_rejected(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    profile_root = source_root / "profile"
+    profile_root.mkdir(parents=True)
     db = CharactersRAGDB(tmp_path / "overlap.db", "overlap")
     repository = PersonaVisualRepository(db)
     try:
@@ -1038,3 +1026,79 @@ def test_publication_and_cleanup_fail_closed_without_posix_descriptor_guards(
             "persona_visual/packs/" + "a" * 32 + "/versions/" + "b" * 32,
             profile_root=profile_root,
         )
+
+
+@pytest.mark.parametrize("mutation", ("directory", "file", "symlink"))
+def test_profile_owned_source_substitution_cannot_activate(environment, mutation):
+    repository, _source_root, profile_root = environment
+    source_key = "persona_visual/drafts/review/assets/idle.png"
+    snapshot = _snapshot(profile_root, source_storage_key=source_key)
+    original = profile_root / source_key
+    original_data = original.read_bytes()
+    changed = False
+
+    def substitute_source():
+        nonlocal changed
+        if not changed:
+            changed = True
+            if mutation == "directory":
+                original.parent.rename(original.parent.with_name("displaced"))
+                original.parent.mkdir()
+                original.write_bytes(original_data)
+            elif mutation == "file":
+                original.unlink()
+                original.write_bytes(_png_bytes((7, 8, 9)))
+            else:
+                original.rename(original.with_suffix(".old"))
+                original.symlink_to(original.with_suffix(".old").name)
+        return True
+
+    with pytest.raises(PersonaVisualPublicationError, match="publication_denied"):
+        publish_persona_visual(
+            repository,
+            snapshot,
+            source_root=profile_root,
+            profile_root=profile_root,
+            authority_guard=substitute_source,
+        )
+    assert changed  # Ensure the rejection reached the source revalidation guard.
+    assert repository.get_active_persona_pack(snapshot.persona_id) is None
+
+
+@pytest.mark.parametrize("alias", ("source_root", "source_component", "destination"))
+def test_profile_owned_publication_rejects_symlink_escape(environment, alias):
+    repository, outside, profile = environment
+    source_key = "persona_visual/drafts/review/idle.png"
+    snapshot = _snapshot(profile, source_storage_key=source_key)
+    source = profile
+    (outside / "sentinel").write_bytes(b"unchanged")
+    if alias == "source_root":
+        source = profile.parent / "profile-alias"
+        source.symlink_to(profile, target_is_directory=True)
+    elif alias == "source_component":
+        directory = (profile / source_key).parent
+        directory.rename(outside / "review")
+        directory.symlink_to(outside / "review", target_is_directory=True)
+    else:
+        (profile / "persona_visual/packs").symlink_to(outside, target_is_directory=True)
+    before = {
+        str(path.relative_to(outside)): path.read_bytes()
+        for path in outside.rglob("*")
+        if path.is_file()
+    }
+    with pytest.raises(PersonaVisualPublicationError) as caught:
+        publish_persona_visual(
+            repository,
+            snapshot,
+            source_root=source,
+            profile_root=profile,
+            authority_guard=lambda: True,
+        )
+    assert str(profile) not in str(caught.value)
+    assert str(outside) not in str(caught.value)
+    assert repository.get_active_persona_pack(snapshot.persona_id) is None
+    assert {
+        str(path.relative_to(outside)): path.read_bytes()
+        for path in outside.rglob("*")
+        if path.is_file()
+    } == before

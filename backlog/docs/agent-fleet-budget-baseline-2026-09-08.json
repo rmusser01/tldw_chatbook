@@ -1,0 +1,29 @@
+{
+  "task": "TASK-32019",
+  "date": "2026-09-08",
+  "scope": "Pre-enforcement local deterministic probes; real service/controller paths with scripted provider boundaries. No live provider calls.",
+  "command": ".venv/bin/python -m pytest Tests/Chat/test_fleet_budget_boundary_probes.py -q -o junit_family=legacy --junitxml=/tmp/fleet-budget-baseline.xml",
+  "results": {
+    "test_cross_conversation_survivors_exceed_one_conversation_cap": {
+      "live_children_per_conversation": "[2, 2, 2, 2]",
+      "actual_gated_provider_calls": "8"
+    },
+    "test_timed_out_tool_workers_can_accumulate": {
+      "timed_out_operations": "4",
+      "actual_tool_workers_still_alive": "4"
+    },
+    "test_six_successive_wakes_have_no_shared_generation_limit": {
+      "accepted_automatic_wakes_without_user_send": "6",
+      "added_user_rows": "0"
+    },
+    "test_terminal_status_can_release_capacity_before_worker_exit": {
+      "terminal_handle_live_count": "0",
+      "actual_worker_threads_still_alive": "1"
+    }
+  },
+  "limitations": [
+    "The successive-wake probe injects settled results at the coordinator; it does not assert model-driven recursive spawning.",
+    "Tool and child workers are held with explicit gates and released in finally; measurements are local occupancy, not remote server execution.",
+    "These baseline counts characterize missing limits and must change when enforcement is implemented."
+  ]
+}

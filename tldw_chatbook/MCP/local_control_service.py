@@ -289,10 +289,17 @@ class LocalMCPControlService:
             RuntimeError: If the client reports an error payload.
         """
         self._require_allowed("mcp.external_profiles.trigger.local")
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        automatic_work = current_automatic_work()
+        if automatic_work is not None:
+            automatic_work.check()
         client = self._get_client()
         sessions = getattr(client, "sessions", {})
         if profile_id not in sessions:
             await self.connect_profile(profile_id)
+        if automatic_work is not None:
+            automatic_work.check()
         payload = await client.call_tool(profile_id, tool_name, arguments or {})
         if isinstance(payload, dict) and "error" in payload:
             raise RuntimeError(payload["error"])

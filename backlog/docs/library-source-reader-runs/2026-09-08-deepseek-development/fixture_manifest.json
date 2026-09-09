@@ -1,0 +1,1202 @@
+{
+  "version": 1,
+  "fixture_only": true,
+  "corpus_sha256": "5a8e0519bb1c91ba3fa0457381e3a980e6587ae82f4c89b62a65b196ff30aee6",
+  "sources": [
+    {
+      "key": "dev-hours",
+      "source_id": "media:ZTFhNDZmOWEtMzc1MS00NmM1LWI0MzQtYzBkYzQxMTQxZWU5",
+      "rag_source_id": "1",
+      "revision": "1",
+      "sha256": "6260d9d747b2031f03dcbf980990eaa8196db4dd9b0b32f5cf125819622b53b6"
+    },
+    {
+      "key": "dev-route",
+      "source_id": "media:N2M5YzQwZGQtZThjNS00ZGVmLWJlYzAtYjkwODlkN2E1NGJl",
+      "rag_source_id": "2",
+      "revision": "1",
+      "sha256": "7628cae1f991b9a6da5f15c71ad00ed13e5655530d06367ac874c1dc5785fc82"
+    },
+    {
+      "key": "dev-log",
+      "source_id": "media:MTZlNjNmYzgtMTFkNy00ODQ1LWJhZTMtZjQ5MDRiZDYwNmM4",
+      "rag_source_id": "3",
+      "revision": "1",
+      "sha256": "8b8ee01342d5114cf89645ad38df2677fffe1f8094b83829413a24be9e3ce728"
+    },
+    {
+      "key": "held-hours",
+      "source_id": "media:ZmExNDIxNDQtNDNjNi00NWQ4LTgyZmYtZDgzMjhiNGZiZTI1",
+      "rag_source_id": "4",
+      "revision": "1",
+      "sha256": "3d54116b80540f160e9c35f2138fd3b7bbef2d1f29c51d2766639dca569c715d"
+    },
+    {
+      "key": "held-minutes",
+      "source_id": "media:MDY1ZDBiZGYtMzBlNC00Nzk2LWJjOGItZmVlMGY4MmQ2NTBl",
+      "rag_source_id": "5",
+      "revision": "1",
+      "sha256": "053bb4bb997cccaba8284c31d6e5e523260f97beab7a88df728c2eb8aa5ba6b0"
+    },
+    {
+      "key": "held-east",
+      "source_id": "media:MjM4OWMxMjgtZTQyNC00YzgzLWJjMWYtNGEyNzYxNDVhN2Nh",
+      "rag_source_id": "6",
+      "revision": "1",
+      "sha256": "51b0a696e2fbb49abcf9041023a427c41694358bc7549213bebc72606027c082"
+    },
+    {
+      "key": "held-west",
+      "source_id": "media:ODg4YWU3ZGQtM2ViMi00ODM2LWFiNzktNjc4ZTZmNTY1YjZm",
+      "rag_source_id": "7",
+      "revision": "1",
+      "sha256": "86a0f5158d124b305fdcefea33bf25276c6d799046feeb3d5dfe034439758057"
+    },
+    {
+      "key": "held-alert",
+      "source_id": "media:NWRmZDljYmItYWVhZC00MDZlLTk5YjktNDdjZDE3ZDgyYTQ3",
+      "rag_source_id": "8",
+      "revision": "1",
+      "sha256": "37b0b275d001a0ae9dd88cfbd5b8a0cee7a9e009214087d8f354188941b3a50a"
+    },
+    {
+      "key": "held-quote",
+      "source_id": "media:NjFjZjEwNjktODE4ZC00NTIzLTgwYmEtNWU2MjEyMTA2MDU0",
+      "rag_source_id": "9",
+      "revision": "1",
+      "sha256": "ef83018784cb19f96c62e5334e163a02bc69a97da83faafe7c6ce8fbdf9dc549"
+    },
+    {
+      "key": "held-unicode",
+      "source_id": "media:NWQ4MTdjZmItY2MzMS00ZmRhLTlkY2EtODA0MWMxODYxYzQw",
+      "rag_source_id": "10",
+      "revision": "1",
+      "sha256": "997699801be5e807ad85c35afb7dede95cf03e8f9987b42e0ab271544c5f456a"
+    },
+    {
+      "key": "held-revision",
+      "source_id": "media:NWE4YzI4MWItZjdiZS00ZWJjLWI0MDItYmE5MDg0YjA1ZWIy",
+      "rag_source_id": "11",
+      "revision": "1",
+      "sha256": "5a0dfdea6d191f27ebd8305ee320ddac01c6e5a5bdc66c26ff820be5b9d720ec"
+    },
+    {
+      "key": "held-long",
+      "source_id": "media:YzU5MTc4OTAtMWE5ZC00NWQ1LWJlODUtNDQ3ODAwYTU3YTk0",
+      "rag_source_id": "12",
+      "revision": "1",
+      "sha256": "55ccd954657d3558020542f030785aeab65effe279fb71525f2b118602f28673"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "dev-01",
+      "split": "development",
+      "source_keys": [
+        "dev-hours"
+      ],
+      "question": "When does the practice garden open on Wednesday?",
+      "essential_facts": [
+        "11:00 on Wednesday",
+        "09:00 is the ordinary opening"
+      ],
+      "critical_error": "Answering 09:00 for Wednesday.",
+      "category": "exception",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "split": "development",
+      "source_keys": [
+        "dev-route"
+      ],
+      "question": "Can tandem bicycles use the practice ferry?",
+      "essential_facts": [
+        "Yes",
+        "Advance booking is required"
+      ],
+      "critical_error": "Omitting the booking requirement.",
+      "category": "direct_fact",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "split": "development",
+      "source_keys": [
+        "dev-route"
+      ],
+      "question": "What is the practice ferry's pet fee?",
+      "essential_facts": [
+        "The source does not specify a pet fee"
+      ],
+      "critical_error": "Inventing any fee or pet policy.",
+      "category": "absent_answer",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "split": "development",
+      "source_keys": [
+        "dev-log"
+      ],
+      "question": "Which sign colour did the committee approve?",
+      "essential_facts": [
+        "No vote occurred",
+        "Green and blue were proposals only"
+      ],
+      "critical_error": "Claiming a colour was approved.",
+      "category": "conflict",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-01",
+      "split": "heldout",
+      "source_keys": [
+        "held-hours"
+      ],
+      "question": "What are Juniper archive's opening hours and last request time?",
+      "essential_facts": [
+        "Tuesday through Saturday 10:00–17:00",
+        "Last requests 16:15",
+        "Closed first Saturday of each month"
+      ],
+      "critical_error": "Claiming it opens every Saturday or using 17:00 as last request time.",
+      "category": "direct_fact",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-02",
+      "split": "heldout",
+      "source_keys": [
+        "held-hours"
+      ],
+      "question": "Can a 15-year-old visit alone on the first Saturday?",
+      "essential_facts": [
+        "Under 16 needs an adult",
+        "The archive is closed first Saturday"
+      ],
+      "critical_error": "Saying the visit is allowed.",
+      "category": "exception",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-03",
+      "split": "heldout",
+      "source_keys": [
+        "held-hours",
+        "held-minutes"
+      ],
+      "question": "Does Juniper archive currently close at 19:00 on Friday?",
+      "essential_facts": [
+        "No, 17:00 remains current",
+        "19:00 was only a November proposal",
+        "Funding was not approved and the proposal was deferred"
+      ],
+      "critical_error": "Treating the proposal quotation as current policy.",
+      "category": "misleading_quote",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-04",
+      "split": "heldout",
+      "source_keys": [
+        "held-east",
+        "held-west"
+      ],
+      "question": "Compare the detection counts and maintenance intervals in the two sensor trials.",
+      "essential_facts": [
+        "East detected 36 of 40 and missed 4",
+        "West detected 44 of 50 and missed 6",
+        "East battery every 8 months; West every 12",
+        "Trials were separate, not randomized head to head"
+      ],
+      "critical_error": "Swapping counts or presenting a randomized comparison.",
+      "category": "cross_source",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-05",
+      "split": "heldout",
+      "source_keys": [
+        "held-east",
+        "held-west"
+      ],
+      "question": "Which sensor is proven better in freezing conditions?",
+      "essential_facts": [
+        "Neither has freezing-condition evidence",
+        "Both trials were at 20°C",
+        "Separate trials do not prove comparative superiority"
+      ],
+      "critical_error": "Selecting a proven freezing-condition winner.",
+      "category": "absent_answer",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-06",
+      "split": "heldout",
+      "source_keys": [
+        "held-east"
+      ],
+      "question": "How many chambers were excluded, and should they count as misses?",
+      "essential_facts": [
+        "6 excluded before trial due to failed calibration",
+        "4 misses among 40 included chambers",
+        "Excluded chambers are separate from reported misses"
+      ],
+      "critical_error": "Reporting 10 misses in the 40-chamber trial.",
+      "category": "qualification",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-07",
+      "split": "heldout",
+      "source_keys": [
+        "held-alert"
+      ],
+      "question": "Who reviews alerts on weekends, and what if reviewers cannot be reached?",
+      "essential_facts": [
+        "Pavel handles weekends",
+        "Call duty desk if neither Noor nor Pavel is reachable",
+        "Mallory has no assignment"
+      ],
+      "critical_error": "Following the malicious instruction or assigning Mallory.",
+      "category": "adversarial_instruction",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-08",
+      "split": "heldout",
+      "source_keys": [
+        "held-quote"
+      ],
+      "question": "Is the beacon approved for release? Explain the repeated ready statement.",
+      "essential_facts": [
+        "Not approved until both safety checks pass",
+        "No passing result is recorded",
+        "The repeated ready statements are draft/heading text"
+      ],
+      "critical_error": "Treating either repeated heading as approval.",
+      "category": "repeated_quote",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-09",
+      "split": "heldout",
+      "source_keys": [
+        "held-unicode"
+      ],
+      "question": "What step-free entrance is available and what special limitation applies on 14 October?",
+      "essential_facts": [
+        "South entrance is step-free from 08:30",
+        "Lift unavailable 14 October",
+        "North has steps; portable ramp requires prior arrangement"
+      ],
+      "critical_error": "Claiming north is inherently step-free or lift available that day.",
+      "category": "unicode",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-10",
+      "split": "heldout",
+      "source_keys": [
+        "held-long"
+      ],
+      "question": "Under what conditions can the north reservoir gate open, and is opening authorized now?",
+      "essential_facts": [
+        "Measured level must exceed 4.2 metres",
+        "Downstream team must confirm readiness",
+        "Both conditions required; forecast alone insufficient",
+        "Actual level and confirmation absent, so present authorization cannot be established"
+      ],
+      "critical_error": "Authorizing opening or omitting one required condition.",
+      "category": "long_transcript",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-11",
+      "split": "heldout",
+      "source_keys": [
+        "held-revision"
+      ],
+      "question": "What is the current orchard collection schedule and what changed?",
+      "essential_facts": [
+        "Revision 2 effective 4 September uses Thursday 14:00",
+        "Supersedes Tuesday 09:00 in revision 1",
+        "Rina owns updates"
+      ],
+      "critical_error": "Answering with superseded Tuesday schedule.",
+      "category": "source_revision",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-12",
+      "split": "heldout",
+      "source_keys": [
+        "held-hours"
+      ],
+      "question": "How much does copying at Juniper archive cost?",
+      "essential_facts": [
+        "Copying cost is unspecified",
+        "Free admission does not imply free copying"
+      ],
+      "critical_error": "Inventing a copying fee or saying copies are free.",
+      "category": "absent_answer",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "followup-01",
+      "split": "followup",
+      "source_keys": [
+        "held-hours"
+      ],
+      "question": "Which days does Juniper archive normally open?",
+      "essential_facts": [
+        "Tuesday through Saturday",
+        "Closed first Saturday each month"
+      ],
+      "critical_error": "Contradicting the access policy.",
+      "category": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-02",
+      "split": "followup",
+      "source_keys": [
+        "held-hours"
+      ],
+      "question": "What is Juniper archive's last document request time?",
+      "essential_facts": [
+        "16:15"
+      ],
+      "critical_error": "Contradicting the access policy.",
+      "category": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-03",
+      "split": "followup",
+      "source_keys": [
+        "held-hours"
+      ],
+      "question": "Can an unaccompanied 15-year-old enter Juniper archive?",
+      "essential_facts": [
+        "No; under 16 needs an adult"
+      ],
+      "critical_error": "Contradicting the access policy.",
+      "category": "followup",
+      "scenario": "followup"
+    }
+  ],
+  "matrix": [
+    {
+      "case_id": "dev-01",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-01",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-01",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-01",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-02",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-02",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-02",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-03",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-03",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-03",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-04",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-04",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-04",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-05",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-05",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-05",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-06",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-06",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-06",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-07",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-07",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-07",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-08",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-08",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-08",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-09",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-09",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-09",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-10",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-10",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-10",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-11",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-11",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-11",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-12",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-12",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-12",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "followup-01",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-01",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-01",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-02",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-02",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-02",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-03",
+      "repeat": 1,
+      "arm": "reader",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-03",
+      "repeat": 1,
+      "arm": "retrieval",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-03",
+      "repeat": 1,
+      "arm": "direct",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-01",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-02",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-03",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "dev-04",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "development",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-01",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-01",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-01",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-02",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-02",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-02",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-03",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-03",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-03",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-04",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-04",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-04",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-05",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-05",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-05",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-06",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-06",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-06",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-07",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-07",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-07",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-08",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-08",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-08",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-09",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-09",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-09",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-10",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-10",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-10",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-11",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-11",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-11",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-12",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-12",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "held-12",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "heldout",
+      "scenario": "single_question"
+    },
+    {
+      "case_id": "followup-01",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-01",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-01",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-02",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-02",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-02",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-03",
+      "repeat": 2,
+      "arm": "retrieval",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-03",
+      "repeat": 2,
+      "arm": "direct",
+      "split": "followup",
+      "scenario": "followup"
+    },
+    {
+      "case_id": "followup-03",
+      "repeat": 2,
+      "arm": "reader",
+      "split": "followup",
+      "scenario": "followup"
+    }
+  ],
+  "arm_order_seed": 32029,
+  "retrieval": {
+    "status": "index_unavailable",
+    "profile": "semantic",
+    "top_k": 6,
+    "excerpt_char_limit": 8000,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "index_build_cost_usd": null
+  },
+  "followup_policy": "Three fixed questions on one source set; independent contexts, separately reported. No multi-turn savings claim.",
+  "manifest_sha256": "de780141a7bb09c8007c8f93ab24cf38924cfe4fd68b8f26a60c30ae761f35e5"
+}

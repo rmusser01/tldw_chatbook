@@ -97,6 +97,12 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "Prompts startup participates in configured database parent policy.",
     ),
+    "chat.launch_wake": SQLiteOwnerPolicy(
+        "tldw_chatbook/Chat/console_launch_wake",
+        _READ_ONLY_URI,
+        "Native launch discovers pending agent results without creating, "
+        "migrating, or reconciling the runs database (ADR-135).",
+    ),
     "config.server_sqlite_parent": SQLiteOwnerPolicy(
         "tldw_chatbook/config",
         _PRIVATE_FILE,

@@ -1,6 +1,6 @@
 ---
 id: TASK-281
-title: Library: targeted sync_state updates instead of 124 whole-screen recomposes
+title: 'Library: targeted sync_state updates instead of 124 whole-screen recomposes'
 status: In Progress
 assignee: ['@claude']
 created_date: '2026-07-16 14:30'

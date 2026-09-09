@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 import pytest
 
@@ -198,9 +199,14 @@ def test_red_f_concurrent_post_and_drain_lose_and_duplicate_nothing():
 
     def post(worker: int) -> None:
         for i in range(per_poster):
-            assert c.post_steering(
+            deadline = time.monotonic() + 10.0
+            while not c.post_steering(
                 h.handle_id, STEERING_SOURCE_USER, f"w{worker}-{i}"
-            )
+            ):
+                # ADR-129: admission may refuse a full queue; retry the
+                # unsent entry after a drainer has had a chance to run.
+                assert time.monotonic() < deadline
+                stop.wait(0.001)
 
     def drain() -> None:
         while not stop.is_set():

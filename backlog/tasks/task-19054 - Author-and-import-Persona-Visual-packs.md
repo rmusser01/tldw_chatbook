@@ -1,10 +1,10 @@
 ---
 id: TASK-19054
 title: Author and import Persona Visual packs
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-08-20 17:29'
-updated_date: '2026-08-21 08:34'
+updated_date: '2026-09-05 03:04'
 labels: []
 dependencies:
   - TASK-19053
@@ -31,7 +31,7 @@ Let users review, edit, import, stage, and explicitly publish Persona Visual pac
 - [x] #5 Server-backed Personas show Save Local Copy first; legacy expression-set and Actor Pack import remain separate, honestly labelled actions.
 - [x] #6 Preview inventory/resolve/decode work is screen-owned, serialized across navigation, drained on cancellation, weak-targeted, and fenced after every await.
 - [x] #7 No image-generation provider, recipe workflow, Shared Visual Identity merge, or Buddy window is added.
-- [x] #8 Labelled actions are keyboard-operable, preserve focus, and add no forbidden bindings; compact and normal layouts paint usable controls; untrusted archive text renders as plain text; user-facing errors, logs, and diagnostics remain path-free. Evidence includes born-RED→GREEN tests and mutation proof for draft, Save, Cancel, authority, archive, cancellation, and invalidation guards; assigned-worktree provenance; real SQLite publication/repository tests where touched; isolated HOME/XDG/config/data roots; focused widget/screen/race/import/publication tests; Ruff, format, compile, and diff checks; diagnostic, privacy, architecture, and governance gates; and Impeccable review after the final visible change.
+- [ ] #8 Labelled actions are keyboard-operable, preserve focus, and add no forbidden bindings; compact and normal layouts paint usable controls; untrusted archive text renders as plain text; user-facing errors, logs, and diagnostics remain path-free. Evidence includes born-RED→GREEN tests and mutation proof for draft, Save, Cancel, authority, archive, cancellation, and invalidation guards; assigned-worktree provenance; real SQLite publication/repository tests where touched; isolated HOME/XDG/config/data roots; focused widget/screen/race/import/publication tests; Ruff, format, compile, and diff checks; diagnostic, privacy, architecture, and governance gates; and Impeccable review after the final visible change.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,6 +49,8 @@ ADR required: no
 ADR path: `backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md`
 
 Reason: ADR-074 already defines the separate local Persona Visual runtime, review-first import, immutable publication, authority, and scope boundaries implemented by this task.
+
+2026-09-04 UAT regression: reproduce the mounted editor import/replace/edit Save flow with real SQLite and profile-owned staging; correct publication root and source-directory identity checks while retaining confinement and substitution rejection; run targeted publication/import/workspace/editor tests and static checks. ADR required: no. ADR path: backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md. Reason: repair the existing ADR-074 publication contract; no new boundary or visible UI change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -60,4 +62,10 @@ Reason: ADR-074 already defines the separate local Persona Visual runtime, revie
 - TDD and mutation evidence covered hostile archives, draft isolation, workspace substitution, duplicate Save, Cancel/drain, stale authority, preview cancellation, import cancellation, old/new invalidation, and path-free error handling. Final touched gates were 120 authoring/import/workspace/publication/widget/screen tests, 10 legacy Workbench compatibility tests, 60 CSS/profile tests, 524 Persona Visual package tests, and 319 Workbench tests; Ruff, formatting, compilation, diff checks, isolated-profile provenance, and the one required Impeccable detector run passed.
 - Per user direction, the full repository suite was not run. The scoped diagnostic/privacy command had 107 passing tests and one generated-inventory mismatch caused partly by unrelated `retrieval.py`, `workspace.py`, and `chat_screen.py` drift; topology, classifications, and exclusions were unchanged, so unrelated generated inventory was not rewritten. Six unrelated `Client_Media_DB_v2` privacy-baseline failures reported by the preceding foundation task were also left outside this task.
 - ADR check: no new ADR; ADR-074 remains the governing decision. No reusable lesson was added because the implementation followed the existing cancellation, worktree, and testing guidance without uncovering a new cross-task trap.
+
+2026-09-04 UAT regression: repaired the existing publication root contract to accept profile-owned import staging, manual workspaces, and existing immutable versions. Directory guards now pin device/inode so publication-created siblings do not invalidate shared ancestors; source file metadata, bytes, digest, no-follow traversal, destination identity, authority, and cleanup guards remain intact. Added three mounted editor-to-real-SQLite regressions for import, manual replacement, and existing-pack edit Save, plus six profile-owned substitution/symlink safety cases. All three editor cases failed born-RED; root-only fix left replacement/edit RED; both fixes made all three GREEN. Focused editor/import/workspace/publication run: 101 passed; final publication guard run: 50 passed. Test Ruff, format, compile, and scoped diff checks pass; publication Ruff has five unchanged BLE001 broad-catch findings verified against HEAD, with all other rules clean. No new UI or ADR: ADR-074 applies. Task remains In Progress with AC8 pending the broader UAT/verification closeout; no full repository suite or commit. Files: Persona_Visual/publication.py, Tests/Persona_Visual/test_persona_visual_publication.py, Tests/UI/test_personas_persona_visual_authoring.py.
+
+2026-09-04 Buddy closeout: actual isolated TldwCli imported the Migu archive, saved the binding through the editor, and selected Use for Buddy with a real painted-button click. Main Persona Visual/view/editor suite: 594 passed, including publication/adversarial tests. Workbench action placement and compact editor regressions pass at 140x45 and 80x24. Evidence: qa/buddy-uat-2026-09-04/repair-report.md and chatbook-buddy-green.json. AC8 remains pending broader governance/diagnostic gates; task stays In Progress.
+
+2026-09-05 Buddy follow-up evidence is in qa/buddy-uat-2026-09-04/followup-report.md. Native drag/resize and real DeepSeek chat now pass; local speech recognition fixture passes with Migu→Mega name limitation. Diagnostic inventory, token/CSS and screen-size failures are repaired in the current checkout. Authoring task retains its own full acceptance gate; no unobserved import/export paths were marked complete.
 <!-- SECTION:NOTES:END -->

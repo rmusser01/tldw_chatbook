@@ -127,7 +127,13 @@ class ZAIStream(Iterator[dict[str, Any]]):
         event = deepcopy(next(self._stream))
         for choice in event.get("choices", ()):
             if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):
-                choice["delta"].pop("reasoning_content", None)
+                delta = choice["delta"]
+                delta.pop("reasoning_content", None)
+                # Reasoning and control frames have no visible content. Keep
+                # that explicit so generic consumers do not render fallback
+                # diagnostics for each private reasoning token.
+                if delta.get("content") is None and not delta.get("tool_calls"):
+                    delta["content"] = ""
         return event
 
     @property

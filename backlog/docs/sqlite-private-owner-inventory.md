@@ -69,6 +69,7 @@ Classifications have these meanings:
 | C48 | tldw_chatbook/TTS/profile_schema | open_exact_current_profile_store | tts.profile_store_descriptor | read_only_uri | immutable descriptor-bound shared-startup proof | Migrated via `connect_private_sqlite_descriptor`. Shared startup retains the canonical parent/file descriptors, validates an immutable exact-v4 logical image, and requires the query-only path connection to serialize to the same image before writes are enabled; the returned live handle owns the proof descriptors for its lifetime. |
 | C49 | tldw_chatbook/DB/Subscriptions_DB | SubscriptionsDB._get_connection | db.subscriptions.agent_read | read_only_uri | external agent Watchlists read | Migrated via `connect_private_sqlite`. Opens only an existing Watchlists database through a read-only URI, preserves the source file mode owned by the mutable application database, and cannot create or migrate the database or write the main database file, schema, or rows. A WAL reader may create or update SQLite-managed `-wal`/`-shm` sidecars; suppressing that with `immutable=1` could ignore committed, uncheckpointed WAL frames. |
 | C50 | tldw_chatbook/Notes/note_import_receipts | NoteImportReceiptRepository._connect | notes.sync_state | private_file | device-private import receipts and future lasting-sync state | Migrated via `connect_private_sqlite`. The profile-local ledger stores only opaque identifiers, private digests, bounded lifecycle state, and reconciliation metadata; it is excluded from portable export and centralized backup. |
+| C51 | tldw_chatbook/Chat/console_launch_wake | pending_conversations_at_launch | chat.launch_wake | read_only_uri | native fleet launch discovery | Migrated via `connect_private_sqlite`. TASK-32037 / ADR-135 reads identities from an existing private sibling runs database without creating, migrating, or reconciling it. Claimed results remain discoverable without attention badges; the native runtime separately owns recovery. The read-only WAL view includes committed frames and retains the normal private file and sidecar policy. |
 
 ## SQLite backup and restore inventory
 
@@ -156,7 +157,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains 45 classified connection sites and eighteen
+The migrated boundary retains 51 classified connection sites and eighteen
 classified backup/restore operations. Production has one raw
 `sqlite3.connect` site and one direct `Connection.backup()` site, both inside
 `DB/private_sqlite.py`; Settings has no SQLite database `shutil.copy2()` site.

@@ -22,6 +22,7 @@ worker-thread <-> UI-thread ``request_mcp_approvals`` round trip):
    whole intake, and only the explicit UI resolution releases the turn;
    the deferred wake then fires on the terminal transition.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,6 +34,7 @@ from Tests.Chat.test_console_agent_swap import (
     FakeMCPService,
     _catalog_record,
     _controller,
+    _disable_project_instructions_for_legacy_agent_swap_tests,  # noqa: F401 - pytest fixture
     _fake_app,
     _fence,
     _tool_dict,
@@ -171,8 +173,10 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
             ("local:srv", "run", {"x": 1}, "agent", "approved")
         ], "the tool executed only under the explicit approval"
         assert await _settle(
-            lambda: not app.conversation_local_marks_service.has_mark(
-                session.id, ConversationLocalMarksService.FLEET_UNSEEN
+            lambda: (
+                not app.conversation_local_marks_service.has_mark(
+                    session.id, ConversationLocalMarksService.FLEET_UNSEEN
+                )
             ),
             seconds=5.0,
         ), "delivery completed: the mark clears after the accepted wake"
@@ -212,9 +216,7 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
             runs_db, session.id, result="finished while you decided"
         )
 
-        send_task = asyncio.ensure_future(
-            controller.submit_draft("please run it")
-        )
+        send_task = asyncio.ensure_future(controller.submit_draft("please run it"))
         surfaced = await _settle(lambda: received and received[-1] is not None)
         assert surfaced, "the manual turn's approval card never surfaced"
         round_id = received[-1]["round_id"]
@@ -249,16 +251,17 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
             )
         )
         assert woke, (
-            "the deferred wake never fired after the manual turn's "
-            "terminal transition"
+            "the deferred wake never fired after the manual turn's terminal transition"
         )
         # Settled, not sampled: the reply CONTENT lands a beat before the
         # wake turn's own terminal transition, so reading the run state at
         # the content's first appearance races finalization (caught as an
         # interference-only failure in the full battery).
         assert await _settle(
-            lambda: controller.run_state_for(session.id).status
-            is ConsoleRunStatus.COMPLETED,
+            lambda: (
+                controller.run_state_for(session.id).status
+                is ConsoleRunStatus.COMPLETED
+            ),
             seconds=10.0,
         ), "the wake turn must settle terminal like any turn"
     finally:
@@ -307,8 +310,9 @@ async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
         assert (wake_kwargs["review_tool_calls"] is None) == (
             manual_kwargs["review_tool_calls"] is None
         ), "a woken turn must route tool calls through the same review hook"
-        assert wake_kwargs["native_tools_enabled"] == (
-            manual_kwargs["native_tools_enabled"]
+        assert (
+            wake_kwargs["native_tools_enabled"]
+            == (manual_kwargs["native_tools_enabled"])
         )
         # And the payload the wake hands the model ends on its own
         # machine-labelled user-role entry, never a widened toolset.
@@ -316,3 +320,61 @@ async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
         assert "not user input" in wake_kwargs["agent_messages"][-1]["content"]
     finally:
         chacha.close()
+
+
+@pytest.mark.asyncio
+async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_path):
+    """The second automatic slot does not resolve or bypass the first card."""
+    controller, store, runs_db = _controller(
+        tmp_path,
+        [
+            [_fence("mcp__srv__run", {"x": 1})],
+            ["second conversation completed"],
+            ["first conversation completed"],
+        ],
+    )
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    controller.app = _fake_app(service)
+    received = []
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    first = store.ensure_session()
+    second = store.create_session(title="Second")
+    store.switch_session(first.id)
+    wake = controller.fleet_wake
+    _, first_child = _terminal_subagent_run(runs_db, first.id)
+    _, second_child = _terminal_subagent_run(runs_db, second.id)
+    try:
+        wake.on_fleet_drained(
+            _drain(first.id, _survivor(first_child, session_id=first.id))
+        )
+        assert await _settle(lambda: any(received), seconds=5)
+        payload = next(item for item in received if item)
+        round_id = payload["round_id"]
+        with controller._approval_state_lock:
+            held = controller._pending_approval_rounds[round_id]
+        wake.on_fleet_drained(
+            _drain(second.id, _survivor(second_child, session_id=second.id))
+        )
+        assert await _settle(
+            lambda: runs_db.get_run(second_child)["wake_delivered_at"] is not None,
+            seconds=5,
+        )
+        assert not held["event"].is_set()
+        assert not held["decisions"]
+        assert runs_db.get_run(first_child)["wake_delivered_at"] is None
+        assert service.execute_calls == []
+        controller.resolve_pending_approval(
+            {"mcp__srv__run": "denied"}, round_id=round_id
+        )
+        assert await _settle(lambda: not wake._delivery_tasks, seconds=5)
+    finally:
+        controller._disposed = True
+        for sid in wake.delivering_session_ids():
+            controller._signal_stop(session_id=sid)
+        for task in tuple(wake._delivery_tasks):
+            task.cancel()
+        await asyncio.gather(*wake._delivery_tasks, return_exceptions=True)
+        runs_db.close()

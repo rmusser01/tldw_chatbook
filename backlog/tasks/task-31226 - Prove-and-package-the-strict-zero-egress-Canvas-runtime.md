@@ -1,18 +1,24 @@
 ---
 id: TASK-31226
 title: Prove and package the strict-zero-egress Canvas runtime
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@Robert'
 created_date: '2026-09-03'
-updated_date: '2026-09-03'
-labels: [canvas, security, runtime]
+updated_date: '2026-09-06 00:06'
+labels:
+  - canvas
+  - security
+  - runtime
 dependencies: []
 priority: high
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Establish the trusted compiler and virtual JavaScript execution foundation that lets Canvas render interactive self-contained documents without giving generated code a native browser or network capability. This implements the release-blocking runtime boundary in ADR-115 before any Canvas tool or UI is exposed.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
@@ -27,8 +33,8 @@ Establish the trusted compiler and virtual JavaScript execution foundation that 
 - [ ] #9 Runtime compatibility and security limitations are documented for Canvas authors and model tool guidance
 <!-- AC:END -->
 
-## Related Design
+## Implementation Plan
 
-- `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
-- `Docs/superpowers/plans/2026-09-03-chatbook-canvas-implementation.md`
-- `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+<!-- SECTION:PLAN:BEGIN -->
+1. Tests first: cancel routes to TAB_CHAT; rerun cancel stays; completed-result routing regression; empty-workspace tree node pin.\n2. app.py: _handle_first_run_wizard_result gains cancel_to_console=True (cancel branch switches tab + consumes deferred focus per the Chat rule); Settings/palette rerun sites pass cancel_to_console=False via partial.\n3. Suites, lint, PR, review, merge.
+<!-- SECTION:PLAN:END -->

@@ -20,6 +20,8 @@ import httpx
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
@@ -129,6 +131,9 @@ class ConsoleProviderStreamSignals:
     controller can distinguish provider content from locally synthesized
     fallback copy.
     """
+
+    # Trusted controller context; never derived from provider/tool payload text.
+    automatic_work_chain_id: str | None = field(default=None, repr=False, kw_only=True)
 
     _synthetic_fallback: threading.Event = field(
         default_factory=threading.Event,
@@ -295,6 +300,91 @@ class ConsoleProviderCallSignals:
 
 
 _ProviderStreamSignals = ConsoleProviderStreamSignals | ConsoleProviderCallSignals
+
+
+def _check_automatic_dispatch() -> None:
+    """Recheck live authority after waits, immediately before provider work."""
+    automatic = current_automatic_work()
+    if automatic is not None:
+        automatic.check()
+
+
+def _automatic_budget_tokens(
+    payload: Mapping[str, Any] | None, *, provider: str, model: str
+) -> int | None:
+    """Require complete usage before applying the existing budget weights."""
+    if not isinstance(payload, Mapping):
+        return None
+    fields = (
+        ("prompt_tokens", "completion_tokens")
+        if "prompt_tokens" in payload
+        else ("input_tokens", "output_tokens")
+        if "input_tokens" in payload
+        else ("total_tokens",)
+    )
+    if any(type(payload.get(name)) is not int or payload[name] < 0 for name in fields):
+        return None
+    for name in ("cache_read_input_tokens", "cache_creation_input_tokens"):
+        if name in payload and (type(payload[name]) is not int or payload[name] < 0):
+            return None
+    from tldw_chatbook.Agents.agent_service import _budget_weighted_tokens
+
+    return _budget_weighted_tokens(
+        {"usage": dict(payload)}, provider=provider, model=model
+    )
+
+
+@contextlib.contextmanager
+def _automatic_generation(
+    prepared: PreparedProviderRequest | None,
+    signals: ConsoleProviderCallSignals | None,
+) -> Iterator[None]:
+    """Fence one physical generation and conservatively settle its outcome."""
+    automatic = current_automatic_work()
+    if automatic is None:
+        yield
+        return
+    if prepared is None:
+        raise AutomaticWorkRefused("unprepared_call")
+    reservation = automatic.begin_call(
+        prepared.accounting.total_input_tokens,
+        prepared.capacity.effective_response_tokens,
+    )
+    completed = False
+    try:
+        yield
+        completed = True
+    finally:
+        actual = None
+        if completed and signals is not None:
+            try:
+                actual = _automatic_budget_tokens(
+                    signals.usage_snapshot(),
+                    provider=prepared.provider,
+                    model=prepared.model,
+                )
+            except Exception:  # noqa: BLE001 - keep uncertain accounting conservative
+                # A missing/malformed usage outcome keeps the full reservation.
+                actual = None
+        automatic.settle_call(reservation, actual)
+
+
+def _cap_automatic_prepared(
+    prepared: PreparedProviderRequest, output_cap: int
+) -> PreparedProviderRequest:
+    """Narrow output while retaining the exact validated and counted input."""
+    return replace(
+        prepared,
+        capacity=replace(
+            prepared.capacity,
+            requested_response_tokens=min(
+                prepared.capacity.requested_response_tokens, output_cap
+            ),
+            effective_response_tokens=min(
+                prepared.capacity.effective_response_tokens, output_cap
+            ),
+        ),
+    )
 
 
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
@@ -1099,11 +1189,8 @@ class ConsoleProviderGateway:
             # Retained, not merely spared: the child's next
             # `_active_http_client()` must find the SAME pool rather than
             # build a fresh one per call for the rest of its life.
-            # Each is closed by its own owner's teardown -- a
-            # `_ModelCallLifeline` closes its loop when the child ends, at
-            # which point `_prune_closed_loops` drops the entry and the
-            # client's own finalizer releases the sockets (the same
-            # reasoning that method's docstring already relies on).
+            # Each lifeline calls aclose_current_loop before closing its
+            # loop, including when the child outlives this app teardown.
             for live_loop, live_client in still_live:
                 self._loop_clients[live_loop] = live_client
             self._client_loop = None
@@ -1113,6 +1200,22 @@ class ConsoleProviderGateway:
 
         if current_client is not None:
             await current_client.aclose()
+
+    async def aclose_current_loop(self) -> None:
+        """Release only the calling lifeline's owned HTTP client.
+
+        Called after that lifeline has stopped model submissions and drained
+        pending calls. Other loops and injected clients remain untouched.
+        """
+        if not self._owns_http_client:
+            return
+        loop = asyncio.get_running_loop()
+        with self._client_lock:
+            client = self._loop_clients.pop(loop, None)
+            if self._client_loop is loop:
+                self._client_loop = None
+        if client is not None:
+            await client.aclose()
 
     def prepare_chat_request(
         self,
@@ -1820,6 +1923,38 @@ class ConsoleProviderGateway:
             streaming=selection.streaming,
         )
 
+    def _automatic_local_request(
+        self,
+        *,
+        model: str,
+        base_url: str,
+        messages: list[Mapping[str, Any]],
+        max_tokens: int | None,
+        prepared: PreparedProviderRequest | None,
+    ) -> PreparedProviderRequest | None:
+        """Prepare a direct local helper, or keep a caller's exact artifact."""
+        automatic = current_automatic_work()
+        if automatic is None:
+            return None
+        cap = automatic.output_cap(max_tokens)
+        if prepared is None:
+            prepared = self.prepare_chat_request(
+                ConsoleProviderResolution(
+                    provider="llama_cpp",
+                    model=model,
+                    base_url=base_url,
+                    ready=True,
+                    max_tokens=cap,
+                ),
+                messages,
+                apply_safety_window=False,
+            )
+        if prepared.known_overflow:
+            raise ChatBadRequestError(
+                "Local request exceeds input capacity.", provider="llama_cpp"
+            )
+        return _cap_automatic_prepared(prepared, cap)
+
     async def stream_llamacpp_chat(
         self,
         *,
@@ -1834,6 +1969,8 @@ class ConsoleProviderGateway:
         reasoning_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
         api_key: str | None = None,
+        _automatic_prepared: PreparedProviderRequest | None = None,
+        _automatic_signals: ConsoleProviderCallSignals | None = None,
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
 
@@ -1858,6 +1995,20 @@ class ConsoleProviderGateway:
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
+        prepared = self._automatic_local_request(
+            model=model,
+            base_url=base_url,
+            messages=messages,
+            max_tokens=max_tokens,
+            prepared=_automatic_prepared,
+        )
+        call_signals = _automatic_signals
+        if prepared is not None:
+            messages = [thaw_json(row) for row in prepared.messages]
+            max_tokens = prepared.capacity.effective_response_tokens
+            call_signals = (
+                call_signals or ConsoleProviderStreamSignals().new_usage_call()
+            )
         payload = build_llamacpp_chat_payload(
             model=model,
             messages=messages,
@@ -1875,25 +2026,40 @@ class ConsoleProviderGateway:
         received_content = False
         stream_error: httpx.HTTPError | None = None
         try:
-            async with self._active_http_client().stream(
-                "POST",
-                f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
-                json=payload,
-                headers=self._authorization_headers(api_key),
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    chunk = self._content_from_sse_line(line)
-                    if chunk:
-                        received_content = True
-                        visible = think_filter.feed(chunk)
-                        if visible:
-                            emitted_content = True
-                            yield visible
+            client = self._active_http_client()
+            with _automatic_generation(prepared, call_signals):
+                _check_automatic_dispatch()
+                async with client.stream(
+                    "POST",
+                    f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
+                    json=payload,
+                    headers=self._authorization_headers(api_key),
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        _check_automatic_dispatch()
+                        if call_signals is not None and line.startswith("data:"):
+                            try:
+                                usage_payload = json.loads(line[5:].strip())
+                            except (ValueError, TypeError):
+                                pass
+                            else:
+                                if isinstance(usage_payload, Mapping):
+                                    _maybe_record_usage(usage_payload, call_signals)
+                        chunk = self._content_from_sse_line(line)
+                        if chunk:
+                            received_content = True
+                            visible = think_filter.feed(chunk)
+                            if visible:
+                                emitted_content = True
+                                yield visible
         except httpx.HTTPError as exc:
             if emitted_content:
                 raise
             stream_error = exc
+        finally:
+            if call_signals is not None:
+                call_signals.close_usage_call()
 
         if emitted_content:
             # flush() contractually returns "" (unterminated start-anchored
@@ -1919,6 +2085,14 @@ class ConsoleProviderGateway:
             reasoning_effort=reasoning_effort,
             thinking_budget_tokens=thinking_budget_tokens,
             api_key=api_key,
+            **(
+                {
+                    "_automatic_prepared": prepared,
+                    "_automatic_signals": call_signals._aggregate.new_usage_call(),
+                }
+                if prepared is not None and call_signals is not None
+                else {}
+            ),
         )
         if fallback:
             yield fallback
@@ -1944,6 +2118,8 @@ class ConsoleProviderGateway:
         thinking_budget_tokens: int | None = None,
         strict_response: bool = False,
         api_key: str | None = None,
+        _automatic_prepared: PreparedProviderRequest | None = None,
+        _automatic_signals: ConsoleProviderCallSignals | None = None,
     ) -> str:
         """Request a non-streaming OpenAI-compatible chat completion.
 
@@ -1973,6 +2149,20 @@ class ConsoleProviderGateway:
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
+        prepared = self._automatic_local_request(
+            model=model,
+            base_url=base_url,
+            messages=messages,
+            max_tokens=max_tokens,
+            prepared=_automatic_prepared,
+        )
+        call_signals = _automatic_signals
+        if prepared is not None:
+            messages = [thaw_json(row) for row in prepared.messages]
+            max_tokens = prepared.capacity.effective_response_tokens
+            call_signals = (
+                call_signals or ConsoleProviderStreamSignals().new_usage_call()
+            )
         request_url = f"{normalized_base_url.rstrip('/')}/v1/chat/completions"
         payload = build_llamacpp_chat_payload(
             model=model,
@@ -1990,29 +2180,39 @@ class ConsoleProviderGateway:
             thinking_budget_tokens=thinking_budget_tokens,
         )
         client = self._active_http_client()
-        response = (
-            await self._post_without_high_level_http_log(
-                client,
-                request_url,
-                json_payload=payload,
-                headers=self._authorization_headers(api_key),
-            )
-            if is_sensitive_llm_request()
-            else await client.post(
-                request_url,
-                json=payload,
-                headers=self._authorization_headers(api_key),
-            )
-        )
-        response.raise_for_status()
-        content = self._content_from_completion_response(response)
-        if content is None and strict_response:
-            raise ChatProviderError(
-                "Provider returned an unsupported auxiliary response.",
-                provider="llama_cpp",
-            )
-        think_filter = StartAnchoredThinkFilter()
-        return think_filter.feed(content or "") + think_filter.flush()
+        try:
+            with _automatic_generation(prepared, call_signals):
+                _check_automatic_dispatch()
+                response = (
+                    await self._post_without_high_level_http_log(
+                        client,
+                        request_url,
+                        json_payload=payload,
+                        headers=self._authorization_headers(api_key),
+                    )
+                    if is_sensitive_llm_request()
+                    else await client.post(
+                        request_url,
+                        json=payload,
+                        headers=self._authorization_headers(api_key),
+                    )
+                )
+                response.raise_for_status()
+                if call_signals is not None:
+                    payload_response = response.json()
+                    if isinstance(payload_response, Mapping):
+                        _maybe_record_usage(payload_response, call_signals)
+                content = self._content_from_completion_response(response)
+                if content is None and strict_response:
+                    raise ChatProviderError(
+                        "Provider returned an unsupported auxiliary response.",
+                        provider="llama_cpp",
+                    )
+                think_filter = StartAnchoredThinkFilter()
+                return think_filter.feed(content or "") + think_filter.flush()
+        finally:
+            if call_signals is not None:
+                call_signals.close_usage_call()
 
     @staticmethod
     async def _post_without_high_level_http_log(
@@ -2026,6 +2226,7 @@ class ConsoleProviderGateway:
 
         request = client.build_request("POST", url, json=json_payload, headers=headers)
         transport = client._transport_for_url(request.url)
+        _check_automatic_dispatch()
         response = await transport.handle_async_request(request)
         response.request = request
         try:
@@ -2047,6 +2248,16 @@ class ConsoleProviderGateway:
 
         if not isinstance(request, AuxiliaryCompletionRequest):
             raise TypeError("request must be an AuxiliaryCompletionRequest")
+        automatic = current_automatic_work()
+        if automatic is not None:
+            request = replace(
+                request,
+                max_output_tokens=automatic.output_cap(
+                    min(request.max_output_tokens, request.resolution.max_tokens)
+                    if request.resolution.max_tokens is not None
+                    else request.max_output_tokens
+                ),
+            )
         resolution = replace(
             request.resolution,
             streaming=False,
@@ -2057,6 +2268,27 @@ class ConsoleProviderGateway:
         messages = cast(
             list[Mapping[str, Any]], _thaw_auxiliary_value(request.messages)
         )
+        prepared = None
+        call_signals = None
+        if automatic is not None:
+            prepared = self.prepare_chat_request(
+                resolution,
+                messages,
+                apply_safety_window=False,
+                response_format=request.response_format,
+            )
+            if prepared.known_overflow:
+                raise ChatBadRequestError(
+                    "Auxiliary request exceeds input capacity.", provider=provider
+                )
+            prepared = _cap_automatic_prepared(prepared, request.max_output_tokens)
+            resolution = replace(
+                resolution,
+                max_tokens=prepared.capacity.effective_response_tokens,
+                request_retries=0,
+            )
+            request = replace(request, max_output_tokens=resolution.max_tokens)
+            call_signals = ConsoleProviderStreamSignals().new_usage_call()
         response: Any = _UNSUPPORTED_RESPONSE
         try:
             with sensitive_llm_request():
@@ -2082,15 +2314,32 @@ class ConsoleProviderGateway:
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         strict_response=True,
                         api_key=resolution.api_key,
+                        **(
+                            {
+                                "_automatic_prepared": prepared,
+                                "_automatic_signals": call_signals,
+                            }
+                            if automatic is not None
+                            else {}
+                        ),
                     )
                 else:
-                    kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
-                    context = copy_context()
-                    response = await asyncio.to_thread(
-                        context.run,
-                        self._complete_sensitive_sync,
-                        kwargs,
+                    kwargs = (
+                        self._chat_api_kwargs_from_prepared(resolution, prepared)
+                        if prepared is not None
+                        else self._auxiliary_chat_api_kwargs(request, resolution)
                     )
+                    with _automatic_generation(prepared, call_signals):
+                        context = copy_context()
+                        response = await asyncio.to_thread(
+                            context.run,
+                            self._complete_sensitive_sync,
+                            kwargs,
+                        )
+                        if call_signals is not None and isinstance(response, Mapping):
+                            _maybe_record_usage(response, call_signals)
+        except AutomaticWorkRefused:
+            raise
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -2100,6 +2349,9 @@ class ConsoleProviderGateway:
                 provider=provider,
                 status_code=status_code if isinstance(status_code, int) else 502,
             ) from None
+        finally:
+            if call_signals is not None:
+                call_signals.close_usage_call()
 
         usage: ProviderUsage | None = None
         if response is not _UNSUPPORTED_RESPONSE:
@@ -2127,6 +2379,7 @@ class ConsoleProviderGateway:
         """Invoke the final synchronous adapter under the sensitive policy."""
 
         with sensitive_llm_request():
+            _check_automatic_dispatch()
             return self._chat_api_call(**dict(kwargs))
 
     @staticmethod
@@ -2239,6 +2492,15 @@ class ConsoleProviderGateway:
         # so the in-flight usage payload is closed out here, at the only
         # seam that knows where a call ends -- never in the consumer, which
         # cannot see the boundary at all.
+        automatic = current_automatic_work()
+        if automatic is not None:
+            resolution = replace(
+                resolution,
+                max_tokens=automatic.output_cap(resolution.max_tokens),
+                request_retries=0,
+            )
+            if signals is None:
+                signals = ConsoleProviderStreamSignals()
         call_signals = (
             signals
             if isinstance(signals, ConsoleProviderCallSignals)
@@ -2254,6 +2516,8 @@ class ConsoleProviderGateway:
                 if isinstance(messages, PreparedProviderRequest)
                 else self.prepare_chat_request(resolution, messages, tools=tools)
             )
+            if automatic is not None:
+                prepared = _cap_automatic_prepared(prepared, resolution.max_tokens)
             if isinstance(messages, PreparedProviderRequest) and tools is not None:
                 raise ValueError("tools are already owned by PreparedProviderRequest")
             if prepared.provider and prepared.provider != resolution.provider:
@@ -2291,6 +2555,14 @@ class ConsoleProviderGateway:
                         reasoning_effort=resolution.reasoning_effort,
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
+                        **(
+                            {
+                                "_automatic_prepared": prepared,
+                                "_automatic_signals": call_signals,
+                            }
+                            if automatic is not None
+                            else {}
+                        ),
                     )
                     if completion:
                         yield completion
@@ -2307,14 +2579,31 @@ class ConsoleProviderGateway:
                     reasoning_effort=resolution.reasoning_effort,
                     thinking_budget_tokens=resolution.thinking_budget_tokens,
                     api_key=resolution.api_key,
+                    **(
+                        {
+                            "_automatic_prepared": prepared,
+                            "_automatic_signals": call_signals,
+                        }
+                        if automatic is not None
+                        else {}
+                    ),
                 ):
                     yield chunk
                 return
             if resolution.execution_key:
-                async for chunk in self._stream_generic_chat(
-                    effective_resolution, prepared, signals=call_signals
-                ):
-                    yield chunk
+                with _automatic_generation(prepared, call_signals):
+                    async for chunk in self._stream_generic_chat(
+                        effective_resolution, prepared, signals=call_signals
+                    ):
+                        if (
+                            isinstance(chunk, ProviderToolCalls)
+                            and chunk.metadata is not None
+                            and call_signals is not None
+                        ):
+                            usage = chunk.metadata.usage
+                            if isinstance(usage, Mapping):
+                                call_signals.record_usage_payload(usage)
+                        yield chunk
                 return
         finally:
             if call_signals is not None:
@@ -2367,9 +2656,12 @@ class ConsoleProviderGateway:
             with contextlib.suppress(RuntimeError):
                 loop.call_soon_threadsafe(queue.put_nowait, item)
 
-        def worker() -> None:
+        def consume_provider() -> None:
             try:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
+                if stop_event.is_set():
+                    return
+                _check_automatic_dispatch()
                 response = self._chat_api_call(**kwargs)
                 provider_response = response
                 accumulator = _ToolCallAccumulator() if request.tools else None
@@ -2389,6 +2681,7 @@ class ConsoleProviderGateway:
                 )
                 while not stop_event.is_set():
                     try:
+                        _check_automatic_dispatch()
                         text = next(normalized_response)
                     except StopIteration:
                         break
@@ -2439,6 +2732,16 @@ class ConsoleProviderGateway:
             finally:
                 close_response()
                 enqueue(_QueueItem.done())
+
+        def worker() -> None:
+            # The existing one-shot policy disables adapter transport retries
+            # for automatic work, including lazily iterated provider streams.
+            with (
+                sensitive_llm_request()
+                if current_automatic_work()
+                else contextlib.nullcontext()
+            ):
+                consume_provider()
 
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
         try:

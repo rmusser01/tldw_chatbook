@@ -26,6 +26,7 @@ from tldw_chatbook.Agents.agent_models import (
     validate_agent_definition,
 )
 from .base_db import BaseDB
+from .automatic_work import AutomaticWorkLedger, SCHEMA as AUTOMATIC_WORK_SCHEMA
 
 
 def _now_iso() -> str:
@@ -53,7 +54,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 12
+    _CURRENT_SCHEMA_VERSION = 15
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -64,6 +65,7 @@ class AgentRunsDB(BaseDB):
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._thread_local = threading.local()
         super().__init__(db_path, client_id)
+        self.automatic_work = AutomaticWorkLedger(self)
         # After super().__init__: the agent_runs table exists (base_db ran
         # _initialize_schema) and self.is_memory_db is set. Reconcile once per
         # file per process so a crash mid-run doesn't leave a 'running' row
@@ -225,7 +227,11 @@ class AgentRunsDB(BaseDB):
                     -- run it resumed from. NULL for every ordinary run.
                     -- Lineage only: parent_run_id still points at the
                     -- RESUMING turn's primary, never at the old run.
-                    resumed_from_run_id TEXT
+                    resumed_from_run_id TEXT,
+                    budget_tokens INTEGER CHECK (
+                        budget_tokens IS NULL OR
+                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)
+                    )
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -417,6 +423,19 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN resumed_from_run_id TEXT"
                 )
+            # ADR-131: unknown historical counters stay NULL, never zero.
+            if "budget_tokens" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN budget_tokens INTEGER "
+                    "CHECK (budget_tokens IS NULL OR "
+                    "(typeof(budget_tokens) = 'integer' AND budget_tokens >= 0))"
+                )
+            if "work_chain_id" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN work_chain_id TEXT "
+                    "REFERENCES automatic_work_chains(id)"
+                )
+            conn.executescript(AUTOMATIC_WORK_SCHEMA)
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -531,6 +550,11 @@ class AgentRunsDB(BaseDB):
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (12)"
             )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (13)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (14)")
+            # ADR-135 / TASK-32037: explicit startup revokes stale runtime
+            # authority even when its previous attempt already completed.
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (15)")
 
     def record_change_snapshot(
         self,
@@ -1037,6 +1061,7 @@ class AgentRunsDB(BaseDB):
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
         resumed_from_run_id: str | None = None,
+        work_chain_id: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -1061,6 +1086,8 @@ class AgentRunsDB(BaseDB):
             resumed_from_run_id: For a CONTINUATION of a finished
                 sub-agent (fleet PR3b Task 4): the run id this run was
                 seeded from. ``None`` for every ordinary run.
+            work_chain_id: Immutable accepted-work lineage. Children inherit
+                their parent's chain when omitted; legacy roots remain NULL.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -1068,13 +1095,32 @@ class AgentRunsDB(BaseDB):
         run_id = uuid.uuid4().hex
         now = _now_iso()
         with self.transaction() as conn:
+            if parent_run_id:
+                parent = conn.execute(
+                    "SELECT conversation_id, work_chain_id FROM agent_runs WHERE id=?",
+                    (parent_run_id,),
+                ).fetchone()
+                if parent is not None:
+                    if parent["conversation_id"] != conversation_id:
+                        raise ValueError("parent chain scope mismatch")
+                    if parent["work_chain_id"] is not None:
+                        if (
+                            work_chain_id is not None
+                            and work_chain_id != parent["work_chain_id"]
+                        ):
+                            raise ValueError("child chain conflicts with parent")
+                        work_chain_id = parent["work_chain_id"]
+            if work_chain_id is not None:
+                chain = self.automatic_work._chain(conn, work_chain_id)
+                if chain["conversation_id"] != conversation_id:
+                    raise ValueError("run chain scope mismatch")
             conn.execute(
                 """INSERT INTO agent_runs
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
                     assistant_message_id, agent_definition, definition_fingerprint,
-                    resumed_from_run_id)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?)""",
+                    resumed_from_run_id, work_chain_id)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -1088,6 +1134,7 @@ class AgentRunsDB(BaseDB):
                     agent_definition,
                     definition_fingerprint,
                     resumed_from_run_id,
+                    work_chain_id,
                 ),
             )
         return run_id
@@ -1227,7 +1274,14 @@ class AgentRunsDB(BaseDB):
                 (json.dumps(existing), _now_iso(), run_id),
             )
 
-    def set_status(self, run_id: str, status: str, result: str | None = None) -> bool:
+    def set_status(
+        self,
+        run_id: str,
+        status: str,
+        result: str | None = None,
+        *,
+        budget_tokens: int | None = None,
+    ) -> bool:
         """Update a run's terminal (or in-progress) status.
 
         A run already in a terminal status is never rewritten (first-writer-wins),
@@ -1242,13 +1296,28 @@ class AgentRunsDB(BaseDB):
                 text; when ``None`` the existing ``result`` column is left
                 unchanged (``COALESCE``), so a status-only update never
                 clobbers a previously recorded result.
+            budget_tokens: Completed run-budget counter, which may include
+                cache weighting or estimates. The first known value is kept;
+                a late outcome may fill NULL after cancellation without
+                replacing the terminal status or result. None keeps it unknown.
 
         Returns:
             True if the run was updated (a row changed), False if the run is
-            already terminal or does not exist.
+            already terminal or does not exist. Filling an unknown budget
+            counter alone does not change this status-update return value.
         """
+        if budget_tokens is not None and (
+            type(budget_tokens) is not int or not 0 <= budget_tokens < 2**63
+        ):
+            raise ValueError("budget_tokens must be a nonnegative SQLite integer")
         placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
         with self.transaction() as conn:
+            if budget_tokens is not None:
+                conn.execute(
+                    "UPDATE agent_runs SET budget_tokens = ? "
+                    "WHERE id = ? AND budget_tokens IS NULL",
+                    (budget_tokens, run_id),
+                )
             cursor = conn.execute(
                 "UPDATE agent_runs SET status = ?, "
                 "result = COALESCE(?, result), updated_at = ? "
@@ -1256,6 +1325,52 @@ class AgentRunsDB(BaseDB):
                 (status, result, _now_iso(), run_id, *sorted(TERMINAL_RUN_STATUSES)),
             )
         return cursor.rowcount > 0
+
+    def continuation_budget(self, conversation_id: str, run_id: str) -> dict | None:
+        """Read this sub-agent's recorded budget and continuation ancestors.
+
+        Each run is counted once; siblings, primary runs, and foreign
+        conversations are excluded. Missing history/counters or cycles leave
+        the result partial. This is budget accounting, not billed provider usage.
+
+        Args:
+            conversation_id: Conversation whose ancestry may be read.
+            run_id: Selected sub-agent run, including that run in the sum.
+
+        Returns:
+            Budget tokens, run and recorded-run counts, and completeness;
+            None if the selected sub-agent is not in this conversation.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """WITH RECURSIVE chain AS (
+                    SELECT id, resumed_from_run_id, budget_tokens, status
+                    FROM agent_runs
+                    WHERE id = ? AND conversation_id = ? AND agent_kind = 'subagent'
+                    UNION
+                    SELECT parent.id, parent.resumed_from_run_id,
+                           parent.budget_tokens, parent.status
+                    FROM agent_runs AS parent JOIN chain
+                      ON parent.id = chain.resumed_from_run_id
+                    WHERE parent.conversation_id = ? AND parent.agent_kind = 'subagent'
+                ) SELECT resumed_from_run_id, budget_tokens, status FROM chain""",
+                (run_id, conversation_id, conversation_id),
+            ).fetchall()
+        if not rows:
+            return None
+        recorded = [
+            row["budget_tokens"] for row in rows if row["budget_tokens"] is not None
+        ]
+        return {
+            "budget_tokens": sum(recorded),
+            "run_count": len(rows),
+            "recorded_run_count": len(recorded),
+            "complete": (
+                len(recorded) == len(rows)
+                and any(row["resumed_from_run_id"] is None for row in rows)
+                and all(row["status"] in TERMINAL_RUN_STATUSES for row in rows)
+            ),
+        }
 
     def reconcile_orphaned_runs(self) -> int:
         """Mark runs left ``running`` by a crashed process as ``error``.
@@ -1465,6 +1580,45 @@ class AgentRunsDB(BaseDB):
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
+    def list_subagent_run_headers(
+        self,
+        conversation_id: str,
+        *,
+        before: tuple[str, str] | None = None,
+        limit: int = 51,
+    ) -> list[dict]:
+        """Read a bounded newest-first page without loading run payloads.
+
+        Includes superseded children for history inspection. The cursor is
+        the preceding page's last (created_at, id) pair; concurrent inserts
+        cannot shift later pages. See ADR-132.
+
+        Raises:
+            ValueError: Limit is outside 1..101 or the cursor is malformed.
+        """
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("history page limit must be an integer in 1..101")
+        if before is not None and (
+            not isinstance(before, tuple)
+            or len(before) != 2
+            or not all(isinstance(value, str) and value for value in before)
+        ):
+            raise ValueError("history cursor must contain a timestamp and run ID")
+        query = (
+            "SELECT id, CASE WHEN length(task) > 200 THEN substr(task, 1, 199) || '…' "
+            "ELSE task END AS task, status, created_at, updated_at, budget_tokens, "
+            "resumed_from_run_id FROM agent_runs "
+            "WHERE conversation_id = ? AND agent_kind = 'subagent'"
+        )
+        params: list = [conversation_id]
+        if before is not None:
+            query += " AND (created_at, id) < (?, ?)"
+            params.extend(before)
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        with self.connection() as conn:
+            return [dict(row) for row in conn.execute(query, params).fetchall()]
+
     def count_runs(
         self,
         conversation_id: str,
@@ -1516,6 +1670,9 @@ class AgentRunsDB(BaseDB):
           superseded row is retracted work, delivering it would announce a
           result a retry already replaced);
         - whose ``wake_delivered_at`` ledger column is still NULL;
+        - with no durable automatic-attempt claim (including an uncertain
+          attempt retained for review); releasing a proven pre-start claim
+          makes the result eligible again;
         - whose parent run is itself terminal AND terminal-stamped no later
           than the child (``child.updated_at >= parent.updated_at``): a
           child that settled BEFORE its parent's turn ended was collected
@@ -1544,6 +1701,7 @@ class AgentRunsDB(BaseDB):
                 "WHERE child.conversation_id = ? "
                 "AND child.agent_kind != 'primary' "
                 "AND child.wake_delivered_at IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM automatic_wake_claims AS claim WHERE claim.run_id=child.id) "
                 "AND child.status IN ('done', 'error', 'cancelled') "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
                 "AND child.updated_at >= parent.updated_at "
@@ -1551,6 +1709,38 @@ class AgentRunsDB(BaseDB):
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def pending_wake_conversation_ids(self) -> tuple[str, ...]:
+        """Discover saved survivor results, including claims awaiting review.
+
+        Attention badges are a view projection and never the discovery index.
+        This projection reads identity only; result bodies are loaded per session.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT child.conversation_id FROM agent_runs AS child "
+                "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
+                "WHERE child.wake_delivered_at IS NULL AND child.agent_kind!='primary' "
+                "AND child.status IN ('done','error','cancelled') "
+                f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
+                "AND child.updated_at>=parent.updated_at ORDER BY child.conversation_id",
+                tuple(sorted(TERMINAL_RUN_STATUSES)),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def pending_wake_results(self, conversation_id: str) -> list[dict]:
+        """Read pending survivor identity and status without loading run bodies."""
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT child.id, child.status, child.work_chain_id FROM agent_runs AS child "
+                "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
+                "WHERE child.conversation_id=? AND child.wake_delivered_at IS NULL "
+                "AND child.agent_kind!='primary' AND child.status IN ('done','error','cancelled') "
+                f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
+                "AND child.updated_at>=parent.updated_at ORDER BY child.updated_at, child.id",
+                (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def mark_wake_delivered(self, run_ids: Sequence[str]) -> int:
         """Stamp runs as wake-delivered; already-stamped rows are left alone.

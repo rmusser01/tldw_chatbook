@@ -137,7 +137,7 @@ async def test_survivor_elapsed_advances_with_no_other_interaction():
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console, controller = await _wire_survivor(pilot, host, bridge)
         await pilot.pause(0.5)  # let the mount hedge fire against idle
-        assert console._console_fleet_survivor_timer is None
+        assert console._fleet._console_fleet_survivor_timer is None
         bridge.unsettled = True
         bridge.started_at = _time.monotonic() - 1.0
         console._sync_console_agent_section()
@@ -193,7 +193,7 @@ async def test_the_tick_stops_itself_with_one_final_settle_paint():
         await pilot.pause()
         console._start_console_transcript_sync_timer()
         await pilot.pause(0.5)
-        assert console._console_fleet_survivor_timer is not None, (
+        assert console._fleet._console_fleet_survivor_timer is not None, (
             "precondition: the survivor tick armed at the poll's stop edge"
         )
 
@@ -203,7 +203,7 @@ async def test_the_tick_stops_itself_with_one_final_settle_paint():
         bridge.finished_at = bridge.started_at + 5.0
         await pilot.pause(2.5)
 
-        assert console._console_fleet_survivor_timer is None, (
+        assert console._fleet._console_fleet_survivor_timer is None, (
             "15664 AC#2: the survivor tick must stop itself when nothing is live"
         )
         after = _fleet_row_text(console)
@@ -223,11 +223,11 @@ async def test_an_idle_console_never_gains_a_survivor_timer():
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console, controller = await _wire_survivor(pilot, host, bridge)
-        console._maybe_start_console_fleet_survivor_tick()
+        console._fleet._maybe_start_console_fleet_survivor_tick()
         console._start_console_transcript_sync_timer()
         await pilot.pause(0.6)
         assert console._console_transcript_sync_timer is None
-        assert console._console_fleet_survivor_timer is None
+        assert console._fleet._console_fleet_survivor_timer is None
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +385,7 @@ async def test_mount_claim_switches_to_the_settled_conversations_session():
                 conversation_id=second.id, session_id=second.id
             ),
         )
-        assert console.consume_pending_console_fleet_completion() is True
+        assert console._fleet.consume_pending_console_fleet_completion() is True
         assert store.active_session_id == second.id, (
             "the claim must land the user on the settled conversation"
         )
@@ -398,7 +398,7 @@ async def test_mount_claim_switches_to_the_settled_conversations_session():
             HandoffChannel.CONSOLE_FLEET_COMPLETION,
             ConsoleFleetCompletionTarget(conversation_id="conv-gone"),
         )
-        assert console.consume_pending_console_fleet_completion() is False
+        assert console._fleet.consume_pending_console_fleet_completion() is False
         assert store.active_session_id == second.id
         assert not app.pending_handoffs.has_pending(
             HandoffChannel.CONSOLE_FLEET_COMPLETION

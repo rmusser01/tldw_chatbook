@@ -1,6 +1,6 @@
 ---
 id: TASK-15479
-title: Character voice widget: reactive self-assignment can never fire
+title: 'Character voice widget: reactive self-assignment can never fire'
 status: Done
 assignee:
   - '@claude'

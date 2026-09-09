@@ -211,6 +211,17 @@ class ConsoleAgentSteeringBar(Vertical):
             return
         note.update(text)
         note.styles.display = "block" if text else "none"
+        if text:
+            # The note adds rows below the input. Reveal it after layout
+            # so failed admission is visible even near the rail's fold.
+            self.call_after_refresh(note.scroll_visible, animate=False)
+
+    def show_delivery_refusal(self) -> None:
+        """Explain failed admission while preserving the submitted draft."""
+        self._set_note(
+            "Message not queued: the agent is unavailable or its steering "
+            "queue is full. Your draft was kept."
+        )
 
     def clear_draft(self) -> None:
         """Clear the input after a submit the bridge actually QUEUED.

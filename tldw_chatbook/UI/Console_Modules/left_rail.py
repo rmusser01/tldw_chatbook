@@ -44,6 +44,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -131,6 +132,7 @@ class ConsoleLeftRail(Vertical):
         agent_full_log_available: bool,
         agent_steering_state: ConsoleAgentSteeringState | None = None,
         agent_cancel_all_visible: bool = False,
+        open_agent_history: Callable[[], None] | None = None,
         show_character_section: bool,
         character_avatar_widget_builder: Callable[[], Widget] | None,
         character_avatar_name: str,
@@ -159,7 +161,7 @@ class ConsoleLeftRail(Vertical):
                 spec §7 states 1/2) for the ``ConsoleInspectorSection`` that
                 renders the conversation's own sub-agent fleet -- computed
                 by ``ConsoleAgentController._console_agent_fleet_section_
-                state``. Empty rows/summary hides the section entirely
+                state``. Empty rows and summary hide the section entirely
                 (nothing to show, or a sub-agent drill-down is active and
                 the status/steps Statics already carry that one child's
                 own detail -- state 3, unchanged).
@@ -182,6 +184,8 @@ class ConsoleLeftRail(Vertical):
                 visible``. Passed at construction for the same
                 recompose-mid-state reason as ``agent_steering_state``;
                 the default keeps bare test constructions valid (hidden).
+            open_agent_history: Late-bound action for the fleet history
+                picker. None disables the preview cap and history action.
             show_character_section: Whether the Character section is
                 composed at all (config-gated; matches
                 ``resolve_show_character_avatar``).
@@ -227,6 +231,7 @@ class ConsoleLeftRail(Vertical):
         self._agent_full_log_available = agent_full_log_available
         self._agent_steering_state = agent_steering_state
         self._agent_cancel_all_visible = agent_cancel_all_visible
+        self._open_agent_history = open_agent_history
         self._show_character_section = show_character_section
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
@@ -561,12 +566,16 @@ class ConsoleLeftRail(Vertical):
                     section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
                     rows=self._agent_fleet_section_state.rows,
                     summary=self._agent_fleet_section_state.summary,
+                    notice=self._agent_fleet_section_state.notice,
                     collapsible=True,
                     open=False,
+                    max_visible_rows=4 if self._open_agent_history else None,
+                    scroll_on_expand=True,
+                    view_all_label="View all runs" if self._open_agent_history else "",
                     id="console-agent-section-subagents",
                 )
                 fleet_section.styles.display = (
-                    "block" if self._agent_fleet_section_state.rows else "none"
+                    "block" if self._agent_fleet_section_state.rows or self._agent_fleet_section_state.summary else "none"
                 )
                 yield fleet_section
                 # PR3b Task 5: the whole-fleet kill switch. With Stop
@@ -706,6 +715,13 @@ class ConsoleLeftRail(Vertical):
                     )
                     reaction_button.tooltip = "Choose or clear a reaction"
                     yield reaction_button
+
+    @on(ConsoleInspectorSection.ViewAllRequested)
+    def _view_all_agents(self, event: ConsoleInspectorSection.ViewAllRequested) -> None:
+        if event.section_id == CONSOLE_AGENT_FLEET_SECTION_ID:
+            event.stop()
+            if self._open_agent_history is not None:
+                self._open_agent_history()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Catch this rail's own section-toggle buttons; let everything else bubble.

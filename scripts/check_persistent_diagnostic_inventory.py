@@ -15,6 +15,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -258,7 +259,20 @@ def _scan_file(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
 def build_inventory() -> dict[str, Any]:
     owners: list[dict[str, Any]] = []
     topology: list[dict[str, Any]] = []
-    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+    sources: list[Path] = []
+    for directory, subdirectories, filenames in os.walk(PACKAGE_ROOT):
+        # A virtualenv may live under the package tree and need not be named
+        # .venv. Its installed dependencies are explicitly outside this
+        # application-owned inventory; prune before parsing any of them.
+        if "pyvenv.cfg" in filenames:
+            subdirectories.clear()
+            continue
+        sources.extend(
+            Path(directory) / filename
+            for filename in filenames
+            if filename.endswith(".py")
+        )
+    for path in sorted(sources):
         relative = path.relative_to(REPO_ROOT).as_posix()
         diagnostics, sinks = _scan_file(path)
         if diagnostics:

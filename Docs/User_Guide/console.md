@@ -165,6 +165,14 @@ composer-level strip below shows once setup completes.
 | **Speak replies** | Speaks new assistant replies in this conversation. |
 | **Hands-free** | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. |
 
+For local Kokoro, open **Settings > Speech & TTS** and use **Exact** voice policy
+with a Kokoro voice value. If an older configuration shows **Server default**,
+choose Exact and save. Selection errors identify the setting or voice profile
+that needs attention; correct it before trying speech again. In **Lab > Speech**,
+Kokoro's **Automatic (from voice)** language option follows the selected voice.
+Speech Lab starts with **Use ONNX** enabled, matching automatic reply speech;
+the switch still allows an explicit PyTorch selection.
+
 ### Rails and handles
 
 | Control | What it does |

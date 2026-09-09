@@ -759,7 +759,7 @@ def test_resume_restores_an_empty_transcript_row_and_its_explanation():
     writes so the row can be durably created at all (the DB layer refuses a
     message with neither text nor an image, so a metadata-only "empty"
     record could never survive to be resumed)."""
-    from tldw_chatbook.UI.Screens.chat_screen import (
+    from tldw_chatbook.UI.Console_Modules.realtime import (
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 

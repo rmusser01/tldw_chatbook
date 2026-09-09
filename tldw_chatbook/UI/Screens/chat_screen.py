@@ -5,7 +5,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
 from functools import partial
-import logging
 import os
 from pathlib import Path
 import re
@@ -104,6 +103,7 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
+from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.session import (
     _canonical_card_character_id,
     _console_global_user_display_name,
@@ -139,8 +139,7 @@ from ...Chat.console_cost_tracker import (
     fingerprint_break_reason,
     token_estimate_signature,
 )
-from ...Chat.message_metadata import MessageMetadata
-from ...Chat.provider_usage import ProviderUsage, as_seconds
+from ...Chat.provider_usage import ProviderUsage
 from ...Chat.trajectory import TrajectorySnapshot, derive_trajectory
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
@@ -243,17 +242,6 @@ from ...Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
 )
-from ...Chat.console_voice_input import (
-    acoustic_barge_in_enabled,
-    realtime_idle_timeout_seconds,
-    realtime_model,
-    realtime_provider,
-    realtime_turn_detection,
-    realtime_vad_silence_ms,
-    realtime_vad_threshold,
-    realtime_voice,
-)
-from ...Chat.console_realtime_loop import RealtimeLoopController
 
 # Import-safe at module scope, same discipline as `console_voice_input`'s
 # own optional-stack avoidance (see `dictation.py`'s module docstring):
@@ -263,7 +251,6 @@ from ...Chat.console_realtime_loop import RealtimeLoopController
 # (`realtime/openai_session.py`, which does reach a transport) is imported
 # lazily, in `_build_console_realtime_session`, exactly like
 # `default_service_factory` defers the speech stack.
-from ...LLM_Calls.realtime import RealtimeCallbacks, RealtimeSessionConfig
 
 # `ExitLoop`/`ModeChanged`/`SilenceSpeech` are dual-use: the realtime engine's
 # own `_handle_console_realtime_intent` reads them directly (V4's FSM emits a
@@ -275,11 +262,6 @@ from ...LLM_Calls.realtime import RealtimeCallbacks, RealtimeSessionConfig
 # (`CloseCapture`/`CountdownTick`/`HandsFreeController`/`HandsFreeIntent`/
 # `OpenCapture`/`RequestStopAndSend`/`SuppressReplySpeech`) is pipeline-only
 # and moved there entirely.
-from ...Chat.console_hands_free import (
-    ExitLoop,
-    ModeChanged,
-    SilenceSpeech,
-)
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
@@ -350,24 +332,7 @@ from ...Chat.console_rail_state import (
     resolve_console_rail_priority,
     serialize_console_rail_preferences,
 )
-from ...config import (
-    DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
-    DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
-    MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
-    MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
-    _get_effective_config_path,
-    coerce_bool_setting,
-    coerce_int_setting,
-    delete_settings_from_cli_config,
-    get_api_key,
-    get_cli_providers_and_models,
-    get_cli_setting,
-    get_runtime_config_snapshot,
-    load_settings,
-    run_if_runtime_config_generation_current,
-    save_setting_to_cli_config,
-    save_settings_to_cli_config,
-)
+from ...config import DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD, DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE, MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD, MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD, _get_effective_config_path, coerce_bool_setting, coerce_int_setting, delete_settings_from_cli_config, get_cli_providers_and_models, get_cli_setting, get_runtime_config_snapshot, load_settings, run_if_runtime_config_generation_current, save_setting_to_cli_config, save_settings_to_cli_config
 from ...Library.library_rag_service import LibraryRagSearchRequest
 from ...Library.library_rag_state import (
     LIBRARY_RAG_FALLBACK_TOP_K,
@@ -382,7 +347,6 @@ from ...Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
     normalize_console_background_effects,
 )
-from ...Utils.persistent_diagnostics import persist_event, safe_metadata_token
 from ...Utils.token_counter import estimate_tokens
 from ...UI.Workbench import (
     CommandStrip,
@@ -720,48 +684,6 @@ CONSOLE_FOCUS_PANE_FOR_WIDGET = {
 #: for the same two reasons dictation's types are.
 
 
-# ---------------------------------------------------------------------------
-# Realtime (V4) hands-free loop -- constants
-#
-# The realtime engine keeps ONE provider session open for the whole
-# conversation (`LLM_Calls/realtime/`), streams raw microphone PCM into it
-# (`Audio/realtime_mic_tap.py`), plays its reply audio back through the
-# streaming sink (`Audio/streaming_sink.py`), and is driven by the headless
-# FSM in `Chat/console_realtime_loop.py`. Everything below is that stack's
-# Console-screen wiring vocabulary. See
-# `.superpowers/sdd/2026-08-04-realtime-voice-engine/`.
-# ---------------------------------------------------------------------------
-
-#: The only realtime provider this app implements a transport for. The
-#: config reader (`realtime_provider()`) deliberately does NOT validate its
-#: value -- it is a plain passthrough -- so the engine fork is the single
-#: place a typo'd or aspirational provider name can be refused honestly
-#: instead of failing later as an opaque connection error.
-CONSOLE_REALTIME_SUPPORTED_PROVIDER = "openai"
-
-#: The realtime session's hardcoded input-transcription model (mirrors
-#: `LLM_Calls/realtime/openai_session.py`'s private `_TRANSCRIPTION_MODEL`
-#: -- duplicated here as a literal, not imported, since that constant is an
-#: internal implementation detail of the session module and this wiring
-#: only needs it for one usage-attribution string). Live-confirmed accepted
-#: (see that module's ground-truth header).
-CONSOLE_REALTIME_TRANSCRIPTION_MODEL = "whisper-1"
-
-#: Wall-clock ceiling on the provider handshake. A realtime connect that
-#: never completes is indistinguishable from a hang to the user, and the
-#: mic is already open by then (see `_enter_console_realtime_loop`), so it
-#: must be bounded rather than awaited forever. Module-scope (not inlined)
-#: so tests can shrink it instead of waiting out a real 8 s.
-CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS = 8.0
-
-#: Ceiling on the window between `connect()` RETURNING and the provider
-#: acknowledging the handshake (`on_ready`). A separate ceiling from the
-#: one above because they are separate failures: live-confirmed, OpenAI
-#: accepts the WebSocket upgrade for an invalid key and only then rejects,
-#: so `connect()` returns perfectly happily and the refusal arrives as
-#: callbacks. This is the backstop for any no-ready path that arrives as
-#: NOTHING at all -- see `_tick_console_realtime`.
-CONSOLE_REALTIME_READY_TIMEOUT_SECONDS = 8.0
 
 #: Maximum default wait for the screen-owned roleplay drain during unmount.
 #: The immutable writer may outlive this deadline, but never the screen-bound
@@ -886,263 +808,6 @@ def _consume_console_roleplay_repair_for_current_screen(
     )
     if callable(consume):
         consume()
-
-
-#: Longest sanitized provider-failure text this wiring will carry into a
-#: toast. Long enough to name a cause, short enough that an unexpectedly
-#: chatty provider cannot paste an essay (or a credential) into the UI.
-CONSOLE_REALTIME_FAILURE_TEXT_MAX_CHARS = 120
-
-#: Matches the `(code=<something>)` suffix `OpenAIRealtimeSession` appends
-#: to provider error events. The code is provider vocabulary
-#: ("invalid_api_key"), never user material, so it survives sanitization
-#: when the rest of the message does not.
-_CONSOLE_REALTIME_CODE_RE = re.compile(r"\(code=([A-Za-z0-9_.\- ]{1,64})\)")
-
-#: Provider error codes whose literal spelling the persistent-diagnostics
-#: schema refuses (anything containing `api_key` reads as a credential to
-#: its admission boundary -- rightly, since it cannot tell them apart),
-#: mapped to marker-free synonyms so the reason still reaches the log.
-CONSOLE_REALTIME_ERROR_CATEGORY_ALIASES: dict[str, str] = {
-    "invalid_api_key": "invalid_credentials",
-    "missing_api_key": "missing_credentials",
-}
-
-#: Anything long, unbroken and word-character-ish looks like a credential.
-#: Applied AFTER the leading-clause truncation as a second net, because
-#: "take the text before the first colon" only helps when the provider
-#: happened to put the key after one.
-_CONSOLE_REALTIME_SECRET_RE = re.compile(r"[A-Za-z0-9_\-]{24,}")
-
-#: Input AND output PCM rate for the realtime engine, in Hz. Both ends are
-#: pinned to the same rate on purpose: the mic tap captures at it, the
-#: session declares it in both directions, and the sink plays at it, so
-#: there is exactly one number to keep true.
-CONSOLE_REALTIME_SAMPLE_RATE = 24000
-
-#: Bytes of PCM16 mono per second of audio at `CONSOLE_REALTIME_SAMPLE_RATE`
-#: -- the divisor behind `played_ms` (see `_console_realtime_played_ms`).
-CONSOLE_REALTIME_BYTES_PER_SECOND = CONSOLE_REALTIME_SAMPLE_RATE * 2
-
-#: Seeding budget: at most this many prior turns, and at most this many
-#: characters across them, are replayed into a fresh session. Both are
-#: applied newest-first (see `_console_realtime_seed_items`) -- a realtime
-#: session is billed per token of context it holds, so an unbounded replay
-#: of a long Console conversation would be a silent, permanent cost.
-CONSOLE_REALTIME_SEED_TURNS = 20
-CONSOLE_REALTIME_SEED_CHARS = 8000
-
-#: Appended to the assistant's transcript row when a barge-in cut its reply
-#: short. Without it, the stored transcript claims the user heard a whole
-#: sentence they cut off mid-word -- and that transcript is what later
-#: seeds/exports/summarizes the conversation.
-CONSOLE_REALTIME_INTERRUPTED_MARKER = " ⏹ interrupted"
-
-#: Written as a committed voice turn's row CONTENT when the provider's
-#: transcription resolves with no words (task-2391). The store defers
-#: persistence for a content-less row, and the DB layer refuses to create a
-#: message with neither text nor an image at all
-#: (`CharactersRAGDB.add_message`) -- so a blank row explained only through
-#: `MessageMetadata.transcript_status` could never durably exist; a restart
-#: would find nothing here. This placeholder is real, non-blank content
-#: (mirroring how the interrupted marker above is chrome baked into content,
-#: not just a metadata flag), so it renders through the ordinary
-#: message-body path with no new widget and persists through the same
-#: `update_message_content` flush the "final" transcript case already uses.
-#: The reseed builder (`_console_realtime_seed_items`) is the machine reader
-#: that keeps this text out of a reconnected session's context despite it
-#: now being non-blank -- it is UI chrome, not something the user said.
-CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER = "(no speech detected)"
-
-#: `MessageMetadata.engine` value stamped on every row this loop writes
-#: (task-2364). The marker above stays as the reader's cue; machine
-#: consumers -- reseed, exports, summaries -- read the structured record.
-CONSOLE_REALTIME_ENGINE = "realtime"
-
-#: Chip copy per `RealtimeLoopState`. States absent from this map
-#: (`idle`) never paint: the loop is gone by then and
-#: `_restore_console_voice_chip` puts the ordinary dictation chip back.
-CONSOLE_REALTIME_CHIP_MESSAGES: dict[str, str] = {
-    "connecting": "realtime · connecting…",
-    "live": "realtime · listening",
-    "thinking": "realtime · thinking…",
-    "speaking": "realtime · speaking",
-    "reconnecting": "realtime · reconnecting…",
-}
-
-#: `CONSOLE_REALTIME_FORCED_UNCONFIGURED_MESSAGE` moved to
-#: `UI/Console_Modules/hands_free.py` (wave-2 console decomposition, task 1)
-#: -- realtime-labeled but consumed only by the engine fork, which moved
-#: with it; see that module's docstring.
-CONSOLE_REALTIME_UNSUPPORTED_PROVIDER_TEMPLATE = (
-    "Realtime voice provider '{provider}' is not supported. Only "
-    "'{supported}' is implemented; hands-free did not start."
-)
-#: The microphone could not be opened at all -- reported through the SAME
-#: connect-failure path as a refused handshake, since from the user's seat
-#: both mean "the realtime loop cannot run" and both deserve the fallback.
-CONSOLE_REALTIME_MIC_FAILED_MESSAGE = "the microphone could not be opened"
-#: Reported the same way, and for the same reason: there is nothing to
-#: authenticate with, so the connect is never dispatched at all.
-CONSOLE_REALTIME_NO_API_KEY_MESSAGE = (
-    f"no {CONSOLE_REALTIME_SUPPORTED_PROVIDER.title()} API key is configured"
-)
-#: Shown once per loop entry when reply audio cannot be played. The
-#: conversation itself still works (the transcript streams in), so this is
-#: a warning, not a failure -- but silently miming a spoken reply would be
-#: worse than either.
-CONSOLE_REALTIME_AUDIO_UNAVAILABLE_MESSAGE = (
-    "Realtime reply audio is unavailable (no output device); the reply "
-    "transcript still appears in the conversation."
-)
-CONSOLE_REALTIME_CONNECT_TIMEOUT_MESSAGE = "the connection timed out after {seconds:g}s"
-#: `connect()` returned but the provider never acknowledged the handshake.
-CONSOLE_REALTIME_HANDSHAKE_INCOMPLETE_MESSAGE = (
-    "the handshake never completed after {seconds:g}s"
-)
-#: Fallback when a provider failure sanitizes down to nothing at all.
-CONSOLE_REALTIME_UNSPECIFIED_FAILURE_MESSAGE = (
-    "the realtime session could not be opened"
-)
-CONSOLE_REALTIME_FALLBACK_TEMPLATE = (
-    "Realtime voice unavailable ({reason}); using the pipeline hands-free loop instead."
-)
-CONSOLE_REALTIME_NO_LOOP_TEMPLATE = (
-    "Hands-free unavailable. Realtime failed ({reason}); the pipeline loop "
-    "is not usable either ({pipeline_reason})."
-)
-CONSOLE_REALTIME_RECONNECTING_MESSAGE = "Realtime reconnecting…"
-#: The other half of the reconnect story. Without it the chip returning to
-#: `listening` is the only signal, and that looks identical whether the
-#: reconnect landed or is still in flight.
-CONSOLE_REALTIME_RECONNECTED_MESSAGE = "Realtime reconnected"
-CONSOLE_REALTIME_EXIT_CONNECTION_LOST_MESSAGE = "Hands-free ended: connection lost"
-CONSOLE_REALTIME_EXIT_IDLE_TEMPLATE = "Hands-free ended: idle for {minutes:g} minutes"
-
-
-@dataclass
-class ConsoleRealtimeSession:
-    """Everything the realtime (V4) hands-free loop needs while it runs.
-
-    Constructed once per loop entry (`ChatScreen._enter_console_realtime_
-    loop`) and dropped on `ExitLoop` (`ChatScreen._release_console_realtime_
-    state`) -- never reused across entries, exactly like its V3 sibling
-    `ConsoleHandsFreeSession`, so every entry gets a clean FSM.
-
-    Attributes:
-        controller: The headless FSM driving the loop.
-        console_session_id: The Console chat session this loop is bound to,
-            captured at entry. Every continuity row is written to THIS
-            session, never to `store.active_session_id` re-read later --
-            a tab switch mid-conversation must not scatter half a spoken
-            exchange across two transcripts (the same discipline V3's
-            `pending_session_id` enforces for its own send).
-        idle_timeout_seconds: The configured idle ceiling, kept here so the
-            exit toast can name it without re-reading config at exit time.
-        tap: The `RealtimeMicTap` streaming microphone PCM into the session.
-        session: The live `RealtimeSession`, or None before the first
-            connect completes and between a drop and its reconnect.
-        sink: The `StreamingPcmSink` playing the CURRENT reply's audio, or
-            None between replies.
-        audio_queue: The `asyncio.Queue` feeding this reply's `pump` task;
-            a `None` item is the end-of-reply sentinel that closes the
-            async iterator.
-        pump_worker: The worker running `pump(sink, aiter)` for this reply.
-        tick_timer: The `set_interval(0.1, ...)` handle driving
-            `controller.tick(now)` (the idle ceiling) and the chip repaint.
-        connect_attempt: Monotonic per-loop counter, incremented for every
-            connect (first and each reconnect). Callbacks are bound to the
-            attempt that created them, so a superseded session's late
-            events are dropped instead of driving the FSM (see
-            `_console_realtime_marshal`).
-        ready: True once the provider acknowledged the handshake and the
-            tap was flushed; an adopted transcript arriving before that is
-            held in `pending_text_turn` rather than enqueued into a session
-            that cannot send it yet. Also the discriminator for what a
-            close/error MEANS (see `_on_console_realtime_closed`): before
-            it, a refused connect; after it, a transport drop.
-        connect_returned_at: Monotonic stamp of the moment `connect()`
-            returned for the outstanding attempt, or None when no attempt
-            is waiting on `on_ready`. Drives the ready deadline in
-            `_tick_console_realtime` -- the backstop for a no-ready path
-            that arrives as nothing at all.
-        mic_gated: The gate value last synced to `tap.set_gated(...)` --
-            the wiring's record of rule 7, and what tests assert against
-            (the tap's own flag is private).
-        fed_bytes: Bytes of reply audio handed to the sink queue for the
-            CURRENT reply. Drives `played_ms`; reset per reply.
-        audio_failed_for_reply: True once this reply's audio sink failed to
-            open -- every later delta of the SAME reply is then dropped
-            without another attempt. Reset at the next reply start.
-        audio_unavailable_notified: True once the user has been told, in
-            THIS loop entry, that reply audio is unavailable. One toast per
-            loop, not one per reply.
-        reply_token: Monotonic per-reply counter. A reply's playback
-            completion carries the token it started with, so a completion
-            that lands after the next reply began is dropped instead of
-            reporting that one finished.
-        generation_done: True once `response.done` arrived for the current
-            reply. Half of the rendezvous below.
-        playback_pending: True while this reply's audio is still being fed
-            or played. The other half: whichever of these two finishes
-            LAST is what tells the FSM the reply is over -- see
-            `_on_console_realtime_reply_done`.
-        barged: True once the user cut this reply short. Mirrors Task 2's
-            "a cancelled response fires no reply-done": the aborted pump's
-            completion must report nothing.
-        barge_trigger: Which input drove the barge-in currently being
-            handled -- `"keypress"` or `"speech"`. Recorded here because
-            the `SilenceSpeech` intent is shared by both and carries no
-            trigger of its own, and "which one fired" is the first
-            question any barge-in report raises.
-        user_row_id: The transcript row created at turn-commit, waiting for
-            its input transcript to land.
-        assistant_row_id: The current reply's transcript row, or None
-            between replies (closed by `_finish_console_realtime_reply_row`).
-        last_reply_row_id: The most recent reply's row, NOT cleared when
-            that reply closes -- usage arrives from the same provider event
-            that ended the reply, so it always needs the row that just
-            stopped being current.
-        pending_text_turn: An adopted pipeline capture's transcript waiting
-            for `on_ready` (see `ready`).
-        adopt_capture: True while a live pipeline capture is being stopped
-            so its transcript can become this loop's first turn.
-        failure_text: Why the last connect attempt failed, in user-facing
-            words -- consumed by the fallback toast.
-        transcript_dirty: Set by every continuity write; consumed by the
-            0.1 s tick, which is what actually repaints the transcript (a
-            per-delta resync would be one full UI rebuild per audio
-            transcript chunk).
-    """
-
-    controller: RealtimeLoopController
-    console_session_id: str
-    idle_timeout_seconds: float
-    tap: Any = None
-    session: Any = None
-    sink: Any = None
-    audio_queue: Any = None
-    pump_worker: Any = None
-    tick_timer: Any = None
-    connect_attempt: int = 0
-    ready: bool = False
-    connect_returned_at: float | None = None
-    reply_token: int = 0
-    generation_done: bool = False
-    playback_pending: bool = False
-    barged: bool = False
-    barge_trigger: str = "unknown"
-    mic_gated: bool = False
-    fed_bytes: int = 0
-    user_row_id: str | None = None
-    assistant_row_id: str | None = None
-    last_reply_row_id: str | None = None
-    audio_failed_for_reply: bool = False
-    audio_unavailable_notified: bool = False
-    pending_text_turn: str | None = None
-    adopt_capture: bool = False
-    failure_text: str = ""
-    transcript_dirty: bool = False
 
 
 CONSOLE_WORKBENCH_SHORTCUTS = (
@@ -2095,6 +1760,11 @@ class ChatScreen(BaseAppScreen):
                 self.query_one(ConsoleAgentSteeringBar).clear_draft()
             except Exception:  # noqa: BLE001 -- a mid-recompose bar is fine
                 pass
+        else:
+            try:
+                self.query_one(ConsoleAgentSteeringBar).show_delivery_refusal()
+            except Exception:  # noqa: BLE001 -- the bar may have unmounted
+                pass
 
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
@@ -3039,8 +2709,12 @@ class ChatScreen(BaseAppScreen):
             )
         )
         rows.extend(persisted_rows)
+        # task-31208: through the merge choke point so switcher rows carry
+        # the same star + appearance decoration (and dedupe) as the rail.
         self.app.push_screen(
-            ConsoleSessionSwitcherModal(rows=tuple(rows)),
+            ConsoleSessionSwitcherModal(
+                rows=self._workspace._merge_console_browser_rows(rows)
+            ),
             callback=self._session._apply_console_switcher_choice,
         )
 
@@ -3557,18 +3231,6 @@ class ChatScreen(BaseAppScreen):
             rag_source_types_accessor=(lambda: _console_library_rag_source_scope(self)),
             rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
         )
-        #: The realtime (V4) hands-free loop's live session, or None when
-        #: that loop is not running. Mutually exclusive with
-        #: `_console_hands_free` by construction: the engine fork in
-        #: `_enter_console_hands_free_loop` picks exactly one engine per
-        #: loop entry, and neither entry point runs while the other's
-        #: session is set. See `ConsoleRealtimeSession` and
-        #: `_enter_console_realtime_loop`/`_release_console_realtime_state`.
-        self._console_realtime: ConsoleRealtimeSession | None = None
-        #: The worker releasing a just-exited realtime loop's tap/session/
-        #: sink, or None. Retained only so `on_unmount` can wait for it --
-        #: see `_teardown_console_realtime_loop`.
-        self._console_realtime_close_worker: Any | None = None
         # `_console_provider_gateway`/`_console_chat_controller`: properties
         # over the app-owned runtime, no `__init__` slot -- see the note at
         # `_console_chat_store`'s old slot.
@@ -3598,7 +3260,6 @@ class ChatScreen(BaseAppScreen):
         # Sub-agents rows' elapsed, the tab glyphs, and the unseen badge
         # frozen. Stops itself, with one final paint, when the last child
         # settles.
-        self._console_fleet_survivor_timer: Any | None = None
         # Cost-ticker PR3 (task-5): the 10s WARM->EXPIRED repaint timer --
         # mirrors `_console_transcript_sync_timer` (started/stopped via the
         # `_record_ui_timer_created/_stopped("console-cost-ttl")` audit
@@ -4294,68 +3955,6 @@ class ChatScreen(BaseAppScreen):
         self.app_instance.pending_handoffs.acknowledge(claim)
         return True
 
-    def consume_pending_console_fleet_completion(self) -> bool:
-        """Claim a staged background sub-agent completion and switch to it.
-
-        PR3a-2 Task 4: the fleet-attention consumer stages a
-        ``ConsoleFleetCompletionTarget`` while Console is NOT the active
-        screen; this claim (mount + resume, 0.15s settle hedge like its
-        sibling handoff claims) switches the store to the settled
-        conversation's still-open session so the user lands on the news
-        the toast announced. A target whose session is no longer open is
-        acknowledged and dropped -- the durable ``fleet_unseen`` mark (and
-        the sidebar badge it drives) still points at the conversation, and
-        Task 5's wake delivery reads the MARK, not this channel, so
-        nothing is lost by not force-resuming here.
-
-        Returns:
-            True when a target was claimed and its session activated.
-        """
-        claim = self.app_instance.pending_handoffs.claim(
-            HandoffChannel.CONSOLE_FLEET_COMPLETION
-        )
-        if claim is None:
-            return False
-        try:
-            target = claim.value
-            if not isinstance(target, ConsoleFleetCompletionTarget):
-                raise TypeError("Console fleet completion handoff was not typed")
-            store = self._ensure_console_chat_store()
-            match = None
-            for session in store.sessions():
-                if target.session_id and session.id == target.session_id:
-                    match = session
-                    break
-                if target.conversation_id in (
-                    session.id,
-                    session.persisted_conversation_id,
-                ):
-                    match = session
-            if match is None:
-                # Session closed since the toast: the badge/mark remains
-                # the durable pointer; nothing to switch to.
-                self.app_instance.pending_handoffs.acknowledge(claim)
-                return False
-            if store.active_session_id != match.id:
-                controller = self._ensure_console_chat_controller()
-                self._workspace._set_active_workspace_for_console_session(match.id)
-                controller.switch_session(match.id)
-                self.run_worker(
-                    self._sync_native_console_chat_ui(),
-                    exclusive=True,
-                    group="console-sync",
-                )
-        except Exception as exc:  # noqa: BLE001 -- release for retry, never crash a mount
-            self.app_instance.pending_handoffs.release(claim)
-            logger.warning(
-                "Console fleet completion handoff will retry "
-                "(revision={}, exception_category={})",
-                claim.revision,
-                type(exc).__name__,
-            )
-            return False
-        self.app_instance.pending_handoffs.acknowledge(claim)
-        return True
 
     @staticmethod
     def _first_chat_defaults_match(
@@ -4958,7 +4557,7 @@ class ChatScreen(BaseAppScreen):
             )
             fleet_section.sync_state(fleet_section_state)
             fleet_section.styles.display = (
-                "block" if fleet_section_state.rows else "none"
+                "block" if fleet_section_state.rows or fleet_section_state.summary else "none"
             )
             fleet_summary = self.query_one("#console-agent-fleet-summary", Static)
             fleet_summary.update(fleet_line)
@@ -5521,11 +5120,22 @@ class ChatScreen(BaseAppScreen):
         """
         session = getattr(self, "_session", None)
         prompts = getattr(self, "_prompts", None)
+        # A view can claim the runtime before the objects owning these slots
+        # exist (`_bind_view_hooks`' docstring: `_restore_native_console_
+        # state` reaches `ensure_chat_store` long before any controller is
+        # built -- bare-`__new__` test screens do the same). Guarded getattr
+        # reads, same shape as `_session`/`_prompts` above: an absent
+        # controller contributes None, never an AttributeError.
+        retrieval = getattr(self, "_retrieval", None)
+        skill = getattr(self, "_skill", None)
+        fleet = getattr(self, "_fleet", None)
         return {
             # constructor-supplied callables
             "_chat_dictionary_applier": self._console_chat_dictionary_applier,
             "_world_info_applier": self._console_world_info_applier,
-            "_rag_capture_provider": self._retrieval._capture_console_staged_rag,
+            "_rag_capture_provider": getattr(
+                retrieval, "_capture_console_staged_rag", None
+            ),
             "_default_session_settings": getattr(
                 session, "_default_console_session_settings", None
             ),
@@ -5555,15 +5165,23 @@ class ChatScreen(BaseAppScreen):
             # task-2154.16 (FB-05): the ACTIVE session's own run failing --
             # one error toast carrying the run's visible copy.
             "notify_run_failure": self._notify_console_run_failure,
-            "set_pending_skill_install": self._skill._set_console_pending_skill_install,
-            "set_pending_skill_script": self._skill._set_console_pending_skill_script,
+            "set_pending_skill_install": getattr(
+                skill, "_set_console_pending_skill_install", None
+            ),
+            "set_pending_skill_script": getattr(
+                skill, "_set_console_pending_skill_script", None
+            ),
             # PR3a-2 Task 5, user-wins-ties.
-            "wake_user_priority_probe": self._console_wake_user_priority,
+            "wake_user_priority_probe": getattr(
+                fleet, "_console_wake_user_priority", None
+            ),
             # task-15971: the delivery COMMIT's visibility probe -- a wake
             # completing while this conversation is not displayed-and-active
             # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
             # learns an off-view delivery landed).
-            "wake_conversation_in_view": self._console_wake_conversation_in_view,
+            "wake_conversation_in_view": getattr(
+                fleet, "_console_wake_conversation_in_view", None
+            ),
             # the store's one screen-owned callback
             "on_scope_flushed": self._on_console_scope_flushed,
             # task-15862: a wake turn enters through the coordinator, never
@@ -5571,7 +5189,9 @@ class ChatScreen(BaseAppScreen):
             # without this hook nothing repaints the wake turn's streamed
             # reply, its terminal tab glyph, or the composer state (the live
             # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
-            "delivery_ui_hook": self._on_console_wake_delivery_started,
+            "delivery_ui_hook": getattr(
+                fleet, "_on_console_wake_delivery_started", None
+            ),
         }
 
     def _release_consumed_console_launch(
@@ -6504,11 +6124,10 @@ class ChatScreen(BaseAppScreen):
     async def _console_read_last_response_back(self) -> None:
         """Speak the last completed assistant reply for "Console, read that back."
 
-        Mirrors `handle_console_message_action`'s "speak" branch (task-559)
-        exactly rather than inventing a second TTS path: post
-        `TTSRequestEvent`, track the message as the one currently driving
-        speech, and resync so the transcript's action row reflects it. Only
-        the completed target selection and the two ack cases are new here.
+        Use Manual Speak's trusted snapshot and playback lifecycle so
+        authority checks and terminal speech cleanup also apply to voice
+        commands. The completed target selection and acknowledgements stay
+        local to this entry point.
         """
         # Own-guard for the microphone/speaker mutual-exclusion invariant.
         # The one caller already reaches here at `idle`, so this is defensive
@@ -6534,15 +6153,7 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify("Nothing to read yet.", severity="warning")
             self._speak_status("Nothing to read yet.")
             return
-        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-            TTSRequestEvent,
-        )
-
-        self.app_instance.post_message(
-            TTSRequestEvent(text=message.content, message_id=message.id)
-        )
-        self._console_speaking_message_id = message.id
-        await self._sync_native_console_chat_ui()
+        await self._message.request_console_message_speech(message.id)
 
     # ------------------------------------------------------------------
     # V3 pipeline hands-free conversation loop: moved to
@@ -6605,1899 +6216,63 @@ class ChatScreen(BaseAppScreen):
     # 2026-08-04-realtime-voice-engine/`.
     # ------------------------------------------------------------------
 
-    def _enter_console_realtime_loop(self, *, capture_live: bool) -> None:
-        """Start the realtime hands-free loop.
 
-        Order matters here and is load-bearing:
 
-        1. Refuse an unsupported provider BEFORE anything is opened -- the
-           config reader does not validate it (see
-           `CONSOLE_REALTIME_SUPPORTED_PROVIDER`).
-        2. Enter the FSM, which paints `connecting…` immediately, so the
-           several seconds a handshake can take never look like a hang.
-        3. Open the MICROPHONE, before the connect is even started. The tap
-           buffers everything it captures until `mark_ready()`, so a user
-           who starts talking the instant the chip appears keeps their
-           first words instead of losing them to the handshake window.
-        4. Only then connect, bounded by
-           `CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS`.
 
-        Args:
-            capture_live: True when a one-shot pipeline capture is already
-                open (the key binding pressed while recording, or a spoken
-                "hands free" mid-capture). That capture is stopped and
-                transcribed through the existing V2 path, and its
-                transcript becomes this loop's first turn -- see
-                `_console_realtime_adopt_transcript`.
-        """
-        if self._console_realtime is not None:
-            return
-        provider = str(realtime_provider() or "").strip().lower()
-        if provider != CONSOLE_REALTIME_SUPPORTED_PROVIDER:
-            self.app_instance.notify(
-                CONSOLE_REALTIME_UNSUPPORTED_PROVIDER_TEMPLATE.format(
-                    provider=realtime_provider(),
-                    supported=CONSOLE_REALTIME_SUPPORTED_PROVIDER,
-                ),
-                severity="warning",
-            )
-            return
 
-        # Bind the Console session ONCE, here: every continuity row this
-        # loop writes goes to this id, never to a re-read `active_session_
-        # id` (see `ConsoleRealtimeSession.console_session_id`).
-        self._session._ensure_active_console_session_settings()
-        store = self._ensure_console_chat_store()
-        console_session_id = store.active_session_id
-        if not console_session_id:
-            logger.debug("Console realtime loop refused: no active Console session")
-            return
 
-        idle_timeout = realtime_idle_timeout_seconds()
-        controller = RealtimeLoopController(
-            self._handle_console_realtime_intent,
-            acoustic_barge_in=acoustic_barge_in_enabled(),
-            idle_timeout_seconds=idle_timeout,
-        )
-        session = ConsoleRealtimeSession(
-            controller=controller,
-            console_session_id=console_session_id,
-            idle_timeout_seconds=idle_timeout,
-        )
-        self._console_realtime = session
-        session.tick_timer = self.set_interval(0.1, self._tick_console_realtime)
-        self._persist_console_realtime_event(
-            "realtime_entry",
-            operation="entry",
-            provider=provider,
-            model=str(realtime_model()),
-        )
-        controller.enter()
 
-        if not self._start_console_realtime_tap(session):
-            self._console_realtime_connect_failed(
-                session,
-                session.connect_attempt,
-                RuntimeError(CONSOLE_REALTIME_MIC_FAILED_MESSAGE),
-            )
-            return
 
-        if capture_live and self._console_dictation_state == "recording":
-            session.adopt_capture = True
-            self._request_console_dictation_stop()
 
-        self._start_console_realtime_connect(session)
 
-    def _start_console_realtime_tap(self, session: ConsoleRealtimeSession) -> bool:
-        """Open the microphone for `session`. Returns True on success.
 
-        The tap is constructed with a lazily-imported `RealtimeMicTap`: its
-        module reaches `Audio/recording_service.py` (and therefore NumPy
-        plus the optional capture backends) at import time, which must not
-        be paid at app start by every Console mount that never speaks.
 
-        `recorder_factory` is left as None in production; the app-level
-        `console_realtime_recorder_factory` seam exists so tests exercise
-        the REAL tap (its buffering/ordering guarantees are what rule 3
-        depends on) against a fake recorder rather than a real device.
-        """
-        from ...Audio.realtime_mic_tap import RealtimeMicTap
 
-        recorder_factory = getattr(
-            self.app_instance, "console_realtime_recorder_factory", None
-        )
-        tap = RealtimeMicTap(
-            lambda frames: self._on_console_realtime_frames(session, frames),
-            sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
-            recorder_factory=recorder_factory if callable(recorder_factory) else None,
-        )
-        session.tap = tap
-        try:
-            started = bool(tap.start())
-        except Exception:  # noqa: BLE001 - a device failure is a fallback, not a crash
-            logger.opt(exception=True).warning(
-                "Console realtime: microphone tap failed to start"
-            )
-            started = False
-        return started
 
-    def _on_console_realtime_frames(
-        self, session: ConsoleRealtimeSession, frames: bytes
-    ) -> None:
-        """Forward one captured PCM chunk to the provider session.
 
-        Runs on the RECORDER's own background thread (see
-        `RealtimeMicTap`'s module docstring), which is exactly the call
-        pattern `OpenAIRealtimeSession.append_audio` documents itself
-        thread-safe for -- it marshals onto its own loop internally, so
-        nothing is marshalled here. Both reads below are plain attribute
-        loads, safe from any thread, and a stale session (the loop exited
-        while a frame was in flight) is dropped rather than resurrected.
-        """
-        if self._console_realtime is not session:
-            return
-        provider_session = session.session
-        if provider_session is None:
-            return
-        try:
-            provider_session.append_audio(frames)
-        except Exception:  # noqa: BLE001 - never kill the recorder thread
-            logger.opt(exception=True).debug(
-                "Console realtime: append_audio failed; dropping this chunk"
-            )
 
-    def _console_realtime_instructions(self) -> str | None:
-        """The active session's system prompt, as realtime `instructions`.
 
-        A realtime session has no per-request message list to carry a
-        system prompt in -- instructions are session-level -- so the
-        Console's own system prompt has to be handed over at handshake and
-        re-handed on every reconnect, or the model silently loses its
-        persona the moment the transport blips.
-        """
-        try:
-            settings = self._session._ensure_active_console_session_settings()
-        except Exception:  # noqa: BLE001 - a settings failure must not block voice
-            logger.opt(exception=True).debug(
-                "Console realtime: could not read the session system prompt"
-            )
-            return None
-        prompt = str(getattr(settings, "system_prompt", "") or "").strip()
-        return prompt or None
-
-    def _console_realtime_seed_items(
-        self, console_session_id: str
-    ) -> list[tuple[str, str]]:
-        """Build the conversation seed for a fresh (or reconnected) session.
-
-        Newest-first selection under BOTH budgets
-        (`CONSOLE_REALTIME_SEED_TURNS`, `CONSOLE_REALTIME_SEED_CHARS`),
-        then reversed back into transcript order: what a returning session
-        most needs is the recent thread, and an unbounded replay of a long
-        Console conversation is billed context on every reconnect.
-
-        Only user/assistant rows with real text are replayed -- tool
-        markers would seed noise the user never said. A row whose
-        transcript came back empty (`transcript_status == "empty"`,
-        task-2391) is excluded the same way even though its content is no
-        longer blank: that content is now the empty-transcript placeholder
-        (`CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER`), UI chrome written
-        so the row could persist at all, not something the user said --
-        replaying it would teach the model the user typed that literal
-        phrase.
-
-        An over-budget message is SKIPPED, not treated as the end of the
-        walk (fix round 1, F6): stopping there meant one long newest reply
-        -- routine, a realtime reply is a monologue -- shipped ZERO history
-        on reconnect, silently amnesiac exactly when continuity matters
-        most. Skipping keeps every older turn that still fits.
-        """
-        store = self._ensure_console_chat_store()
-        try:
-            messages = store.messages_for_session(console_session_id)
-        except KeyError:
-            return []
-        selected: list[tuple[str, str]] = []
-        used_chars = 0
-        for message in reversed(messages):
-            if message.role not in (
-                ConsoleMessageRole.USER,
-                ConsoleMessageRole.ASSISTANT,
-            ):
-                continue
-            metadata = message.metadata
-            if metadata is not None and metadata.transcript_status == "empty":
-                continue
-            text = self._console_realtime_seed_text(message)
-            if not text:
-                continue
-            if used_chars + len(text) > CONSOLE_REALTIME_SEED_CHARS:
-                continue
-            selected.append((message.role.value, text))
-            used_chars += len(text)
-            if len(selected) >= CONSOLE_REALTIME_SEED_TURNS:
-                break
-        selected.reverse()
-        return selected
-
-    @staticmethod
-    def _console_realtime_seed_text(message: ConsoleChatMessage) -> str:
-        """The model-facing text of one prior turn, without our chrome.
-
-        The interrupted marker is OUR chrome for the human reader (final
-        review M4): replaying it into the model's context on every reseed
-        would teach it that "⏹ interrupted" is part of how the assistant
-        speaks. So it is removed here -- as a TRAILING marker, always, on
-        every row, with no condition attached.
-
-        Trimming a suffix rather than matching the text anywhere is what
-        makes that safe: `_finish_console_realtime_reply_row` only ever
-        APPENDS the marker (via `append_stream_chunk`), so a suffix trim
-        removes every marker this app has written while leaving alone the
-        same characters occurring in a turn's actual words. A user who
-        types "the docs say ⏹ interrupted means cut off" gets their
-        sentence seeded intact; the earlier global replace ate it.
-
-        Deliberately NOT gated on `metadata.interrupted` (task-2364, review
-        round 1). Only the realtime loop stamps metadata onto rows, so
-        every ordinary typed turn -- past, present and future -- arrives
-        here with `metadata is None`: a gate reading "no metadata means a
-        legacy interrupted reply" would mangle live user text forever, and
-        a gate reading the flag alone would leak chrome whenever the marker
-        append succeeded but the metadata write was swallowed (they are
-        separate, separately-swallowed calls). `interrupted` remains the
-        SEMANTIC record -- what exports, summaries and later readers
-        consult; removing chrome this code appended is a mechanical undo,
-        not an inference, so it needs no fact to consult.
-
-        Where the two disagree, that is logged rather than acted on: it is
-        the only place the divergence is observable, and each direction
-        means something different (a marker without the flag is a stale
-        marker; a flag without the marker is a LOST one, so the reader
-        never saw the reply was cut).
-
-        Args:
-            message: A transcript row from the loop's Console session.
-
-        Returns:
-            The row's text with a trailing interruption marker removed,
-            stripped.
-        """
-        raw = str(message.content or "")
-        trimmed = raw.removesuffix(CONSOLE_REALTIME_INTERRUPTED_MARKER)
-        metadata = message.metadata
-        if metadata is not None:
-            if trimmed != raw and not metadata.interrupted:
-                logger.debug(
-                    "Console realtime: seeded a row carrying the interrupted "
-                    "marker without the flag; the metadata write was likely "
-                    "swallowed: op=realtime_seed_text"
-                )
-            elif trimmed == raw and metadata.interrupted:
-                logger.debug(
-                    "Console realtime: seeded a row flagged interrupted with no "
-                    "marker in its text; the marker append was likely "
-                    "swallowed, so the reader never saw the cut: "
-                    "op=realtime_seed_text"
-                )
-        return trimmed.strip()
-
-    def _console_realtime_row_metadata(
-        self,
-        *,
-        model: str,
-        interrupted: bool = False,
-        transcript_status: str = "",
-    ) -> MessageMetadata:
-        """Build the provenance record every realtime row carries.
-
-        The V4 spec puts engine/provider/model provenance on the row
-        itself; before task-2364 it could only ride the attached usage and
-        a visible marker (spec "Turn metadata deferred").
-
-        Args:
-            model: Model this row is attributed to -- the realtime model
-                for a reply, the transcription model for a user row, which
-                is exactly how each row's usage is attributed too.
-            interrupted: Whether the row's generation was cut short.
-            transcript_status: One of ``MessageMetadata``'s closed
-                vocabulary; ``""`` for rows that are not transcriptions.
-
-        Returns:
-            The metadata record to store on the row.
-        """
-        return MessageMetadata(
-            engine=CONSOLE_REALTIME_ENGINE,
-            provider=CONSOLE_REALTIME_SUPPORTED_PROVIDER,
-            model=model,
-            interrupted=interrupted,
-            transcript_status=transcript_status,
-        )
-
-    def _build_console_realtime_session(
-        self, config: RealtimeSessionConfig, callbacks: RealtimeCallbacks
-    ) -> Any:
-        """Construct the provider session, honoring the test seam.
-
-        `console_realtime_session_factory` mirrors `console_provider_
-        gateway_factory`'s getattr idiom exactly. The real session is
-        imported inside this method, not at module scope: it owns a
-        WebSocket transport, and a Console mount that never opens a
-        realtime loop must not pay for it.
-        """
-        factory = getattr(self.app_instance, "console_realtime_session_factory", None)
-        if callable(factory):
-            return factory(config, callbacks)
-        from ...LLM_Calls.realtime.openai_session import OpenAIRealtimeSession
-
-        return OpenAIRealtimeSession(config, callbacks)
-
-    def _console_realtime_api_key(self) -> str:
-        """The configured API key for the realtime provider, or `""`.
-
-        Never raises and never logs the key itself.
-        """
-        try:
-            return str(get_api_key(CONSOLE_REALTIME_SUPPORTED_PROVIDER) or "")
-        except Exception:  # noqa: BLE001 - config trouble is a connect failure
-            logger.opt(exception=True).debug(
-                "Console realtime: could not resolve the provider API key"
-            )
-            return ""
-
-    def _build_console_realtime_callbacks(
-        self, session: ConsoleRealtimeSession, attempt: int
-    ) -> RealtimeCallbacks:
-        """Wire this connect attempt's callbacks onto the screen.
-
-        Every callback is bound to `attempt`, so a session superseded by a
-        reconnect can never drive the FSM afterward (see
-        `_console_realtime_marshal`), and every one of them is marshalled
-        rather than called inline -- they arrive on the session's own
-        asyncio task.
-        """
-
-        def _route(handler: Callable[..., None]) -> Callable[..., None]:
-            def _fire(*args: Any) -> None:
-                self._console_realtime_marshal(handler, session, attempt, *args)
-
-            return _fire
-
-        return RealtimeCallbacks(
-            on_ready=_route(self._on_console_realtime_ready),
-            on_turn_committed=_route(self._on_console_realtime_turn_committed),
-            on_input_transcript=_route(self._on_console_realtime_input_transcript),
-            on_reply_started=_route(self._on_console_realtime_reply_started),
-            on_output_transcript_delta=_route(
-                self._on_console_realtime_output_transcript_delta
-            ),
-            on_audio_delta=_route(self._on_console_realtime_audio_delta),
-            on_first_audio=_route(self._on_console_realtime_first_audio),
-            on_reply_done=_route(self._on_console_realtime_reply_done),
-            on_usage=_route(self._on_console_realtime_usage),
-            on_transcription_usage=_route(
-                self._on_console_realtime_transcription_usage
-            ),
-            on_speech_started=_route(self._on_console_realtime_speech_started),
-            on_error=_route(self._on_console_realtime_error),
-            on_closed=_route(self._on_console_realtime_closed),
-        )
-
-    def _console_realtime_marshal(
-        self,
-        handler: Callable[..., None],
-        session: ConsoleRealtimeSession,
-        attempt: int,
-        *args: Any,
-    ) -> None:
-        """Run `handler(session, *args)` on the app's own thread.
-
-        Realtime callbacks fire from the session's asyncio task. In
-        production that task runs on the app's event loop (the connect
-        worker is dispatched there), so the fast path below is a direct
-        call -- but the contract does not promise it, and a foreign-thread
-        callback must never touch widgets. `call_soon_threadsafe` is used
-        rather than `App.call_from_thread` on purpose: `call_from_thread`
-        BLOCKS its caller until the callback completes, and blocking a
-        provider's receive loop on the UI thread would stall inbound audio
-        for the whole conversation.
-
-        The staleness check runs at DELIVERY time, not schedule time: a
-        callback queued just before a reconnect must be judged against the
-        state it will actually land in.
-        """
-
-        def _run() -> None:
-            if self._console_realtime is not session:
-                return
-            if session.connect_attempt != attempt:
-                return
-            try:
-                handler(session, *args)
-            except Exception:  # noqa: BLE001 - a wiring fault must not kill the loop
-                logger.opt(exception=True).warning(
-                    "Console realtime: callback handler failed; dropping it"
-                )
-
-        if threading.get_ident() == self.app_instance._thread_id:
-            _run()
-            return
-        loop = getattr(self.app_instance, "_loop", None)
-        if loop is None:
-            logger.debug(
-                "Console realtime: no app loop to marshal onto; dropping callback"
-            )
-            return
-        try:
-            loop.call_soon_threadsafe(_run)
-        except Exception:  # noqa: BLE001 - a closing loop is not an error here
-            logger.opt(exception=True).debug(
-                "Console realtime: marshal onto the app loop failed"
-            )
-
-    def _start_console_realtime_connect(self, session: ConsoleRealtimeSession) -> None:
-        """Dispatch one connect attempt (first connect or reconnect).
-
-        ONE code path serves both, which is exactly what
-        `RealtimeLoopController.on_connect_failed`'s docstring expects: it
-        routes a `connecting` failure to `connect-failed` and a
-        `reconnecting` failure to the same give-up exit a second transport
-        drop takes.
-        """
-        session.connect_attempt += 1
-        # No credential, no connect (fix round 1): dispatching one anyway
-        # would spend the connect timeout to come back with whatever 401
-        # text the provider chose, and the fallback toast would quote THAT
-        # instead of the one thing the user can act on. Same
-        # blocker-shaped check as `_console_pipeline_hands_free_blocker`,
-        # routed through the SAME failure path so the fallback behaves
-        # identically.
-        if not self._console_realtime_api_key():
-            self._console_realtime_connect_failed(
-                session,
-                session.connect_attempt,
-                RuntimeError(CONSOLE_REALTIME_NO_API_KEY_MESSAGE),
-            )
-            return
-        self.run_worker(
-            self._connect_console_realtime(session, attempt=session.connect_attempt),
-            exclusive=False,
-            group="console-realtime-connect",
-            exit_on_error=False,
-        )
-
-    async def _connect_console_realtime(
-        self, session: ConsoleRealtimeSession, *, attempt: int
-    ) -> None:
-        """Build and connect one provider session, bounded by a timeout."""
-        config = RealtimeSessionConfig(
-            api_key=self._console_realtime_api_key(),
-            model=realtime_model(),
-            # `or None` rather than the raw value: an empty configured
-            # voice means "use the provider default", which is what None
-            # means on the wire -- sending `""` would ask for a voice named
-            # nothing.
-            voice=realtime_voice() or None,
-            input_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
-            output_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
-            instructions=self._console_realtime_instructions(),
-            turn_detection=realtime_turn_detection(),
-            vad_threshold=realtime_vad_threshold(),
-            vad_silence_ms=realtime_vad_silence_ms(),
-            # Read per attempt, not captured at loop entry: a reconnect
-            # that reverted to the provider's defaults would bring back
-            # the fragmenting these settings exist to stop, halfway
-            # through a conversation, with nothing to show for it.
-        )
-        callbacks = self._build_console_realtime_callbacks(session, attempt)
-        try:
-            provider_session = self._build_console_realtime_session(config, callbacks)
-        except Exception as exc:  # noqa: BLE001 - reported, never raised at the user
-            self._console_realtime_connect_failed(session, attempt, exc)
-            return
-        if self._console_realtime is not session or session.connect_attempt != attempt:
-            # Superseded before we even connected (exit, or another
-            # reconnect): release what was just built rather than leaking
-            # a live transport nobody owns.
-            await self._close_console_realtime_session(provider_session)
-            return
-        session.session = provider_session
-        try:
-            await asyncio.wait_for(
-                provider_session.connect(),
-                timeout=CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            await self._close_console_realtime_session(provider_session)
-            self._console_realtime_connect_failed(
-                session,
-                attempt,
-                TimeoutError(
-                    CONSOLE_REALTIME_CONNECT_TIMEOUT_MESSAGE.format(
-                        seconds=CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS
-                    )
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 - every failure is a fallback
-            await self._close_console_realtime_session(provider_session)
-            self._console_realtime_connect_failed(session, attempt, exc)
-            return
-        if self._console_realtime is not session or session.connect_attempt != attempt:
-            return
-        # The transport is up, but the provider has NOT accepted the
-        # session yet (`on_ready` is the acknowledgement). Arm the ready
-        # deadline for that window -- see `CONSOLE_REALTIME_READY_TIMEOUT_
-        # SECONDS`; a refusal usually arrives as a callback long before
-        # this fires, and this exists for the case where nothing arrives
-        # at all.
-        session.connect_returned_at = time.monotonic()
-
-    @staticmethod
-    def _persist_console_realtime_event(event: str, **fields: Any) -> None:
-        """Record one realtime lifecycle event to the persistent log.
-
-        The persistent log admits ONLY `tldw_chatbook.diagnostics.*`
-        records (`Utils/persistent_diagnostics.py`), so without this a
-        realtime run left no durable trace at all -- the owner's
-        stuck-at-connecting session had to be reconstructed from a
-        screenshot. Same shape as the dictation-failure site above, for
-        the same reason.
-
-        Every field goes through the persistent schema, which is bounded
-        tokens only: a provider's error prose (which quotes API keys)
-        cannot be passed here even by accident. Failures to persist are
-        swallowed -- diagnostics must never break the voice loop.
-        """
-        try:
-            persist_event("realtime", event, **fields)
-        except Exception:  # noqa: BLE001 - diagnostics never break the loop
-            logger.opt(exception=True).debug(
-                "Could not persist a realtime diagnostics event"
-            )
-
-    @staticmethod
-    def _console_realtime_failure_token(text: str) -> str:
-        """Reduce a sanitized failure to a bounded token for the log.
-
-        Prefers the provider's own `(code=…)` -- the single most
-        diagnostic word available -- and falls back to `unspecified`
-        rather than forcing prose through `safe_metadata_token`, which
-        would write a useless `invalid`.
-
-        The alias table exists because the persistent schema REFUSES any
-        token containing `api_key` (`_PRIVATE_TOKEN_MARKERS`): from the
-        admission boundary's seat, "invalid_api_key" is indistinguishable
-        from a leaked credential, and it is right to refuse it. So the
-        credential-failure case -- the one that actually brought this
-        logging into existence -- is recorded under a marker-free synonym
-        instead of defeating the guard that protects the log.
-        """
-        match = _CONSOLE_REALTIME_CODE_RE.search(text or "")
-        candidate = match.group(1).strip() if match else ""
-        candidate = CONSOLE_REALTIME_ERROR_CATEGORY_ALIASES.get(candidate, candidate)
-        token = safe_metadata_token(candidate) if candidate else "invalid"
-        return "unspecified" if token == "invalid" else token
-
-    @staticmethod
-    def _sanitize_console_realtime_failure(raw: object) -> str:
-        """Reduce a provider failure to something safe to show and log.
-
-        Provider error text quotes credentials. OpenAI's own invalid-key
-        message is literally `Incorrect API key provided: sk-proj-…` --
-        so the raw string can never reach a toast, and (the discipline
-        this codebase already keeps for `loguru`'s frame dumps) can never
-        reach a log line either.
-
-        Three steps, in order:
-          1. Keep the code the session appended (`(code=invalid_api_key)`)
-             -- provider vocabulary, never user material, and the single
-             most useful token in the whole message.
-          2. Keep only the LEADING clause, up to the first `:` or newline.
-             That is where providers put the human summary and after which
-             they put the offending value.
-          3. Scrub any long unbroken token that survived anyway, and cap
-             the length.
-
-        Args:
-            raw: An exception or reason string from the provider.
-
-        Returns:
-            Sanitized text, never empty.
-        """
-        text = str(raw or "").strip()
-        if not text:
-            return CONSOLE_REALTIME_UNSPECIFIED_FAILURE_MESSAGE
-        code_match = _CONSOLE_REALTIME_CODE_RE.search(text)
-        code = code_match.group(1).strip() if code_match else ""
-        lead = text.splitlines()[0].split(":", 1)[0].strip()
-        lead = _CONSOLE_REALTIME_SECRET_RE.sub("…", lead).strip()
-        if code and code not in lead:
-            lead = f"{lead} ({code})".strip() if lead else code
-        if len(lead) > CONSOLE_REALTIME_FAILURE_TEXT_MAX_CHARS:
-            lead = lead[: CONSOLE_REALTIME_FAILURE_TEXT_MAX_CHARS - 1].rstrip() + "…"
-        return lead or CONSOLE_REALTIME_UNSPECIFIED_FAILURE_MESSAGE
-
-    def _console_realtime_connect_failed(
-        self, session: ConsoleRealtimeSession, attempt: int, exc: BaseException
-    ) -> None:
-        """Record why a connect attempt failed and tell the FSM.
-
-        The FSM decides what that MEANS (a first-connect failure exits with
-        `connect-failed`, which the exit handler turns into the loud
-        fallback; a failed reconnect exits with `connection-lost`), so this
-        never decides for it.
-
-        The SINGLE choke point for every way a connect can fail -- a
-        raising `connect()`, a timeout, a close or an error arriving before
-        the handshake was acknowledged, or the ready deadline -- so
-        sanitization happens here, once, and no caller can forget it.
-        """
-        if self._console_realtime is not session or session.connect_attempt != attempt:
-            return
-        session.connect_returned_at = None
-        session.failure_text = self._sanitize_console_realtime_failure(
-            str(exc) or type(exc).__name__
-        )
-        self._persist_console_realtime_event(
-            "realtime_connect_failed",
-            level=logging.ERROR,
-            operation="connect",
-            status="failed",
-            exception_type=type(exc).__name__,
-            error_category=self._console_realtime_failure_token(str(exc)),
-            retry_count=max(attempt - 1, 0),
-        )
-        logger.warning(
-            "Console realtime: connect attempt failed: "
-            f"op=realtime_connect attempt={attempt} reason={session.failure_text!r}"
-        )
-        session.session = None
-        session.controller.on_connect_failed()
 
     # -- provider callbacks -------------------------------------------------
 
-    def _on_console_realtime_ready(self, session: ConsoleRealtimeSession) -> None:
-        """`on_ready`: seed the session, release the buffered audio, go live.
 
-        Seeding happens BEFORE `mark_ready()` on purpose: the tap flushes
-        its pre-ready buffer synchronously into `append_audio`, and the
-        provider must already hold the conversation history (and the
-        instructions) when the user's first words arrive, not after them.
 
-        Arriving here from `reconnecting` also closes the loop the
-        "Realtime reconnecting…" toast opened (final review M6): without a
-        matching success toast, a reconnect that WORKED is
-        indistinguishable from one still in progress -- the chip returns
-        to `listening` either way, and the user is left unsure whether to
-        keep talking.
-        """
-        reconnected = session.controller.state == "reconnecting"
-        provider_session = session.session
-        if provider_session is not None:
-            try:
-                provider_session.send_seed(
-                    self._console_realtime_seed_items(session.console_session_id),
-                    self._console_realtime_instructions(),
-                )
-            except Exception:  # noqa: BLE001 - a seed failure is not fatal
-                logger.opt(exception=True).warning(
-                    "Console realtime: seeding the session failed"
-                )
-        tap = session.tap
-        if tap is not None:
-            try:
-                tap.mark_ready()
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).warning(
-                    "Console realtime: flushing the mic tap failed"
-                )
-        session.ready = True
-        session.connect_returned_at = None
-        self._persist_console_realtime_event(
-            "realtime_ready",
-            operation="ready",
-            status="reconnected" if reconnected else "connected",
-            retry_count=max(session.connect_attempt - 1, 0),
-        )
-        session.controller.on_session_ready()
-        if reconnected:
-            self.app_instance.notify(
-                CONSOLE_REALTIME_RECONNECTED_MESSAGE, severity="information"
-            )
-        pending, session.pending_text_turn = session.pending_text_turn, None
-        if pending:
-            # An adopted capture whose transcript landed while the
-            # handshake was still in flight (see
-            # `_console_realtime_adopt_transcript`).
-            self._send_console_realtime_text_turn(session, pending)
 
-    def _on_console_realtime_turn_committed(
-        self, session: ConsoleRealtimeSession
-    ) -> None:
-        """`on_turn_committed`: the provider closed the user's input turn.
 
-        The transcript row is created HERE, empty, rather than when the
-        transcript itself finally arrives: input transcription runs
-        asynchronously and routinely lands AFTER the assistant has already
-        started replying, so a row created on arrival would sit below the
-        answer it asked for. Creating it at commit fixes its place in the
-        transcript; `_on_console_realtime_input_transcript` fills it in.
 
-        `phase` records the state this arrived IN, before the FSM sees it:
-        `on_turn_committed` is a no-op outside `live`, so a commit landing
-        in `thinking` is silently dropped -- which is exactly the shape of
-        the owner's "I spoke and nothing came back" incident, and was
-        invisible in the log.
-        """
-        self._persist_console_realtime_event(
-            "realtime_turn_committed",
-            operation="turn_committed",
-            initiator="audio",
-            phase=session.controller.state,
-        )
-        session.user_row_id = self._append_console_realtime_row(
-            session,
-            ConsoleMessageRole.USER,
-            "",
-            # The row is deliberately empty until its transcript lands, so
-            # it records WHY it is empty from the moment it exists
-            # (task-2364): a transcript that never arrives leaves a row
-            # saying "pending", not an unexplained blank.
-            metadata=self._console_realtime_row_metadata(
-                model=CONSOLE_REALTIME_TRANSCRIPTION_MODEL,
-                transcript_status="pending",
-            ),
-        )
-        session.controller.on_turn_committed(time.monotonic())
 
-    def _on_console_realtime_input_transcript(
-        self, session: ConsoleRealtimeSession, text: str
-    ) -> None:
-        """`on_input_transcript`: fill in what the user actually said.
 
-        `update_message_content`, NOT `append_stream_chunk`: the store
-        refuses stream chunks on anything but an assistant row
-        (`_validate_can_stream`), and this callback delivers the whole
-        transcript exactly once (the provider's `...transcription.
-        completed` event; the incremental `.delta` sibling is deliberately
-        not wired). So there is nothing to append -- there is one final
-        text to set.
 
-        A transcript with no row to land in (a commit this wiring never
-        saw, e.g. one that arrived during a reconnect) creates its own row
-        rather than being dropped: losing what the user said is worse than
-        a row slightly out of order.
 
-        An ALREADY-FILLED row is never overwritten (fix round 1, F5). This
-        callback carries no item id, and `user_row_id` moves to each new
-        commit, so a transcription that finishes late -- after the next
-        turn committed AND after that turn's own transcript landed --
-        would otherwise replace a correct transcript with a stale one,
-        putting words in the user's mouth in the durable record. Dropped
-        instead, with the row id, because a wrong transcript is worse than
-        a missing one and this is the only place it can be diagnosed.
 
-        Every outcome is RECORDED on the row (task-2364): a transcript that
-        legitimately came back empty marks its row `empty`, a write that
-        failed marks it `failed`, and a filled row becomes `final`. Before
-        the metadata field, the empty case simply returned here and left an
-        empty user row stranded forever with nothing saying whether the
-        user had been silent or the pipeline had broken. The empty case is
-        now also durable (task-2391): see
-        `_mark_console_realtime_transcript_empty`.
-        """
-        spoken = str(text or "").strip()
-        row_id = session.user_row_id
-        if not spoken:
-            self._mark_console_realtime_transcript_empty(session, row_id)
-            return
-        if row_id is None:
-            session.user_row_id = self._append_console_realtime_row(
-                session,
-                ConsoleMessageRole.USER,
-                spoken,
-                metadata=self._console_realtime_row_metadata(
-                    model=CONSOLE_REALTIME_TRANSCRIPTION_MODEL,
-                    transcript_status="final",
-                ),
-            )
-            return
-        store = self._ensure_console_chat_store()
-        try:
-            existing = str(store.get_message(row_id).content or "").strip()
-        except Exception:  # noqa: BLE001 - an unreadable row is a dropped one
-            logger.opt(exception=True).warning(
-                "Console realtime: could not read the input-transcript row: "
-                f"op=realtime_input_transcript row_id={row_id}"
-            )
-            return
-        if existing:
-            logger.warning(
-                "Console realtime: dropping a late input transcript; its row "
-                "already holds another turn's text: "
-                f"op=realtime_input_transcript row_id={row_id}"
-            )
-            return
-        try:
-            store.finalize_deferred_user_message_content(row_id, spoken)
-        except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
-            logger.opt(exception=True).warning(
-                "Console realtime: could not write the input transcript"
-            )
-            self._set_console_realtime_transcript_status(row_id, "failed")
-            return
-        # AFTER the content write, never before: a status of "final" on a
-        # row whose text never landed would be a lie of exactly the kind
-        # this field exists to prevent.
-        self._set_console_realtime_transcript_status(row_id, "final")
-        session.transcript_dirty = True
 
-    def _mark_console_realtime_transcript_empty(
-        self, session: ConsoleRealtimeSession, row_id: str | None
-    ) -> None:
-        """Record a committed turn whose transcript came back with no words.
 
-        task-2391: `set_message_metadata` alone (the pre-fix behavior) only
-        ever reached a row that was ALREADY persisted -- an empty realtime
-        user row never is, because the store defers persistence for
-        content-less rows and the DB layer refuses to create a message with
-        neither text nor an image at all (`CharactersRAGDB.add_message`).
-        So the metadata write landed in memory only and vanished on
-        restart. `CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER` is written
-        as the row's CONTENT instead, through the same
-        `update_message_content` call the "final" (real transcript) branch
-        above uses -- which flushes the deferred create exactly as a real
-        transcript would. The status write follows the content write, same
-        order and same reason as the "final" branch: a status of "empty" on
-        a row whose placeholder never landed would be a lie.
 
-        Race-safe against a REAL transcript (matching the late-final-
-        transcript guard above): a row already carrying different non-blank
-        text is left alone, never overwritten.
 
-        Retry-safe against a SWALLOWED status write (Qodo review, task-2391
-        follow-up): the content write and the status write are two separate
-        store calls, and `_set_console_realtime_transcript_status` (below)
-        deliberately never raises -- a metadata-write failure there is
-        logged and swallowed, not surfaced. An earlier version of this
-        method used "does the row already have text" as its sole retry
-        guard, which -- once the placeholder itself IS that text -- also
-        blocked every later retry from ever reaching the status write
-        again, permanently stranding a row whose content says "empty" but
-        whose `transcript_status` never does (invisible to
-        `_is_empty_transcript_row`, and so reachable by a provider as a
-        fabricated user turn: the exact leak the placeholder was written to
-        avoid, reopened by a different route). So content and status are
-        each retried independently: content is written only when the row
-        is genuinely still blank; status is (re-)written whenever the
-        content is blank OR already the placeholder, never when it holds
-        something else.
 
-        Args:
-            session: The live realtime loop state, for the repaint flag.
-            row_id: Native store id of the committed turn's user row, or
-                ``None`` when no row exists to mark (a commit this wiring
-                never saw).
-        """
-        if row_id is None:
-            return
-        store = self._ensure_console_chat_store()
-        try:
-            existing = str(store.get_message(row_id).content or "").strip()
-        except Exception:  # noqa: BLE001 - an unreadable row is left untouched
-            logger.opt(exception=True).debug(
-                "Console realtime: could not read a transcript row's text: "
-                f"op=realtime_transcript_status row_id={row_id}"
-            )
-            return
-        if existing and existing != CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER:
-            # A real transcript is already there -- never relabel it "empty".
-            return
-        if not existing:
-            try:
-                store.finalize_deferred_user_message_content(
-                    row_id, CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
-                )
-            except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
-                logger.opt(exception=True).warning(
-                    "Console realtime: could not record the empty-transcript row"
-                )
-                return
-        # Reached with the placeholder now in place -- either just written
-        # above, or already there from an earlier call whose status write
-        # was swallowed. Either way, (re-)stamp the status: idempotent when
-        # it already succeeded, and the only way a stranded row recovers
-        # when it did not.
-        self._set_console_realtime_transcript_status(row_id, "empty")
-        session.transcript_dirty = True
 
-    def _set_console_realtime_transcript_status(self, row_id: str, status: str) -> None:
-        """Record what became of a user row's transcript (task-2364).
 
-        Args:
-            row_id: Native store id of the user row.
-            status: A `MessageMetadata` transcript status
-                ("final"/"empty"/"failed").
-        """
-        store = self._ensure_console_chat_store()
-        try:
-            store.set_message_metadata(
-                row_id,
-                self._console_realtime_row_metadata(
-                    model=CONSOLE_REALTIME_TRANSCRIPTION_MODEL,
-                    transcript_status=status,
-                ),
-            )
-        except Exception:  # noqa: BLE001 - bookkeeping is never worth a crash
-            logger.opt(exception=True).debug(
-                "Console realtime: could not record a transcript status: "
-                f"op=realtime_transcript_status row_id={row_id} status={status}"
-            )
 
-    def _on_console_realtime_reply_started(
-        self, session: ConsoleRealtimeSession, item_id: str
-    ) -> None:
-        """`on_reply_started`: open the assistant's transcript row.
 
-        Also the per-reply reset point for the audio accounting behind
-        `played_ms` -- a barge-in must be measured against THIS reply's
-        audio, not everything played since the loop started.
-        """
-        self._persist_console_realtime_event(
-            "realtime_reply_started",
-            operation="reply_started",
-            phase=session.controller.state,
-        )
-        row_id = self._append_console_realtime_row(
-            session,
-            ConsoleMessageRole.ASSISTANT,
-            "",
-            metadata=self._console_realtime_row_metadata(model=str(realtime_model())),
-        )
-        session.assistant_row_id = row_id
-        session.last_reply_row_id = row_id or session.last_reply_row_id
-        session.fed_bytes = 0
-        # A fresh attempt at the output device for this reply: the latch is
-        # per-reply, not per-loop (the toast is the per-loop half).
-        session.audio_failed_for_reply = False
-        session.reply_token += 1
-        session.generation_done = False
-        session.playback_pending = False
-        session.barged = False
-        session.controller.on_reply_started()
 
-    def _on_console_realtime_output_transcript_delta(
-        self, session: ConsoleRealtimeSession, text: str
-    ) -> None:
-        """`on_output_transcript_delta`: stream the reply's own words in."""
-        row_id = session.assistant_row_id
-        if row_id is None or not text:
-            return
-        store = self._ensure_console_chat_store()
-        try:
-            store.append_stream_chunk(row_id, text)
-        except Exception:  # noqa: BLE001
-            logger.opt(exception=True).warning(
-                "Console realtime: could not stream the reply transcript"
-            )
-            return
-        session.transcript_dirty = True
 
-    def _on_console_realtime_usage(
-        self, session: ConsoleRealtimeSession, payload: dict
-    ) -> None:
-        """`on_usage`: attach billing to the reply it belongs to.
 
-        Read from `last_reply_row_id`, not `assistant_row_id`: the provider
-        fires this from the SAME `response.done` event that already fired
-        `on_reply_done`, which closes the row -- so the usage for a reply
-        always arrives just after that reply stopped being "current".
-        """
-        row_id = session.last_reply_row_id
-        if row_id is None:
-            return
-        usage = ProviderUsage.from_provider_payload(
-            payload,
-            provider=CONSOLE_REALTIME_SUPPORTED_PROVIDER,
-            model=str(realtime_model()),
-        )
-        if usage is None:
-            return
-        store = self._ensure_console_chat_store()
-        try:
-            store.set_message_usage(row_id, usage)
-        except Exception:  # noqa: BLE001 - cost display is never worth a crash
-            logger.opt(exception=True).debug(
-                "Console realtime: could not attach usage to the reply"
-            )
 
-    def _on_console_realtime_transcription_usage(
-        self, session: ConsoleRealtimeSession, payload: dict
-    ) -> None:
-        """`on_transcription_usage`: attach the USER turn's spoken-audio
-        duration -- distinct from `_on_console_realtime_usage` (the
-        ASSISTANT reply's token usage, from `response.done`).
 
-        `payload` is `{"type": "duration", "seconds": N}` (live-confirmed,
-        see `openai_session.py`'s ground-truth header) -- a duration, not a
-        token count, so it is captured on `ProviderUsage.transcription_
-        seconds` rather than any of the token buckets. Attached to
-        `user_row_id` (this transcript's own row), never `last_reply_row_
-        id` (the assistant's): confusing the two would bill the user's
-        spoken-audio duration onto the assistant's reply.
 
-        `pricing_catalog.py`'s cost math does not read `transcription_
-        seconds` -- capturing it here does not make it billable; wiring a
-        cost display for it is a separate follow-up task (task-2363's own
-        AC treats cost-chip integration as explicitly out of scope).
-
-        Mirrors `_on_console_realtime_input_transcript`'s late-arrival
-        guard: a duration payload landing after `user_row_id` has already
-        moved to the NEXT turn (and that turn's own duration usage, if any,
-        already landed) must not clobber it -- dropped instead, loudly
-        enough to diagnose.
-        """
-        if not isinstance(payload, dict) or payload.get("type") != "duration":
-            return
-        if "seconds" not in payload:
-            return
-        # `as_seconds` is `ProviderUsage`'s OWN sanitizer, shared rather than
-        # re-implemented here so a duration means the same thing however it
-        # enters the record. A bare `float()` let a negative, NaN or +/-inf
-        # value off the wire into `transcription_seconds`, where it survived
-        # `plus()` and was persisted -- as bare `NaN`/`Infinity` tokens that
-        # strict JSON readers reject (Qodo Q2). Anything unusable becomes
-        # 0.0: the turn still records WHICH provider/model transcribed it,
-        # with no duration claimed.
-        seconds = as_seconds(payload.get("seconds"))
-        row_id = session.user_row_id
-        if row_id is None:
-            return
-        store = self._ensure_console_chat_store()
-        try:
-            existing = store.get_message(row_id).usage
-        except Exception:  # noqa: BLE001 - an unreadable row is a dropped one
-            logger.opt(exception=True).warning(
-                "Console realtime: could not read the transcription-usage row: "
-                f"op=realtime_transcription_usage row_id={row_id}"
-            )
-            return
-        if existing is not None:
-            logger.warning(
-                "Console realtime: dropping a late transcription usage; its "
-                "row already holds another turn's usage: "
-                f"op=realtime_transcription_usage row_id={row_id}"
-            )
-            return
-        usage = ProviderUsage(
-            transcription_seconds=seconds,
-            provider=CONSOLE_REALTIME_SUPPORTED_PROVIDER,
-            model=CONSOLE_REALTIME_TRANSCRIPTION_MODEL,
-        )
-        try:
-            store.set_message_usage(row_id, usage)
-        except Exception:  # noqa: BLE001 - cost display is never worth a crash
-            logger.opt(exception=True).debug(
-                "Console realtime: could not attach transcription usage"
-            )
-
-    def _append_console_realtime_row(
-        self,
-        session: ConsoleRealtimeSession,
-        role: ConsoleMessageRole,
-        content: str,
-        *,
-        metadata: MessageMetadata | None = None,
-    ) -> str | None:
-        """Append one continuity row to the loop's OWN Console session.
-
-        Persisted like any other Console turn: a spoken conversation is a
-        conversation, and a realtime exchange that vanished on restart
-        would be the only kind that does.
-
-        Args:
-            session: The live realtime loop state.
-            role: Transcript role for the new row.
-            content: Row text ("" for a placeholder filled in later).
-            metadata: Structured provenance/state to store with the row
-                (task-2364). Passed at creation so the row's engine,
-                provider and model are written by the same DB write as its
-                text rather than chased with a second update.
-
-        Returns:
-            The new row's id, or None when the write failed (already
-            logged) -- callers treat None as "no row to fill in later".
-        """
-        store = self._ensure_console_chat_store()
-        try:
-            message = store.append_message(
-                session.console_session_id,
-                role=role,
-                content=content,
-                persist=True,
-                metadata=metadata,
-            )
-        except Exception:  # noqa: BLE001 - a store failure must not end the call
-            logger.opt(exception=True).warning(
-                "Console realtime: could not append a transcript row: "
-                f"op=realtime_row role={role.value}"
-            )
-            return None
-        session.transcript_dirty = True
-        return message.id
-
-    def _finish_console_realtime_reply_row(
-        self, session: ConsoleRealtimeSession, *, interrupted: bool
-    ) -> None:
-        """Close the current reply's transcript row, marking a barge-in.
-
-        The marker is appended BEFORE the terminal mark (the store refuses
-        chunks on a completed row) and is what keeps the stored transcript
-        honest: the user heard half a sentence, and everything downstream
-        -- the seed on the next reconnect, an export, a summary -- reads
-        this row as if it were the whole reply otherwise.
-        """
-        row_id, session.assistant_row_id = session.assistant_row_id, None
-        if row_id is None:
-            return
-        store = self._ensure_console_chat_store()
-        # The structured record (task-2364) is what the reseed builder,
-        # exports and summaries read; the marker below stays because the
-        # HUMAN reading the transcript needs to see it too. Written before
-        # the terminal mark so the flush that persists the final text
-        # carries the flag in the same write.
-        try:
-            store.set_message_metadata(
-                row_id,
-                self._console_realtime_row_metadata(
-                    model=str(realtime_model()),
-                    interrupted=interrupted,
-                ),
-            )
-        except Exception:  # noqa: BLE001 - bookkeeping is never worth a crash
-            logger.opt(exception=True).debug(
-                "Console realtime: could not record the reply's metadata"
-            )
-        if interrupted:
-            try:
-                store.append_stream_chunk(row_id, CONSOLE_REALTIME_INTERRUPTED_MARKER)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Console realtime: could not mark the reply interrupted"
-                )
-        try:
-            store.mark_message_complete(row_id)
-        except Exception:  # noqa: BLE001
-            logger.opt(exception=True).debug(
-                "Console realtime: could not complete the reply row"
-            )
-        session.transcript_dirty = True
-
-    def _console_realtime_adopt_transcript(self, transcript: str) -> bool:
-        """Claim a just-finished pipeline capture as this loop's first turn.
-
-        Returns True when the realtime loop CONSUMED the transcript, which
-        is the caller's signal not to insert it into the composer draft as
-        well -- the words were spoken as a turn, not typed as a draft, and
-        leaving a copy behind would re-send them the next time the user
-        pressed Enter.
-
-        A transcript that lands before the handshake completes is held
-        (`pending_text_turn`) rather than enqueued into a session that
-        cannot send it yet; `_on_console_realtime_ready` releases it.
-        """
-        session = self._console_realtime
-        if session is None or not session.adopt_capture:
-            return False
-        session.adopt_capture = False
-        spoken = str(transcript or "").strip()
-        if not spoken:
-            return True
-        if session.ready:
-            self._send_console_realtime_text_turn(session, spoken)
-        else:
-            session.pending_text_turn = spoken
-        return True
-
-    def _send_console_realtime_text_turn(
-        self, session: ConsoleRealtimeSession, text: str
-    ) -> None:
-        """Send one TEXT turn (an adopted capture) into the live session.
-
-        `on_turn_committed` is a server-side signal about the AUDIO input
-        buffer, so it never fires for a text item -- which would leave the
-        FSM sitting in `live` while a reply streamed, never gating the mic
-        and never painting `thinking`. Driving the same input directly
-        here is what makes an adopted turn behave like any other turn.
-        """
-        self._append_console_realtime_row(
-            session,
-            ConsoleMessageRole.USER,
-            text,
-            # An adopted capture's WORDS came from the pipeline engine's
-            # STT, not from the realtime provider's transcription, so no
-            # transcription model is claimed here (task-2364) -- the row
-            # belongs to this realtime session and its text is already
-            # final, and that is all this record asserts. `set_message_
-            # metadata` replaces a record wholesale, but this row is never
-            # re-stamped: its id is deliberately not kept as
-            # `user_row_id` (that tracks AUDIO turns), so nothing later
-            # overwrites the blank model with the transcription model.
-            metadata=self._console_realtime_row_metadata(
-                model="",
-                transcript_status="final",
-            ),
-        )
-        provider_session = session.session
-        if provider_session is None:
-            return
-        try:
-            provider_session.send_text_item(text, request_response=True)
-        except Exception:  # noqa: BLE001
-            logger.opt(exception=True).warning(
-                "Console realtime: could not send the adopted transcript"
-            )
-            return
-        session.controller.on_turn_committed(time.monotonic())
-
-    def _on_console_realtime_audio_delta(
-        self, session: ConsoleRealtimeSession, pcm: bytes
-    ) -> None:
-        """`on_audio_delta`: hand one chunk of reply audio to the sink.
-
-        The sink and its pump task are created lazily, on the FIRST chunk
-        of a reply rather than at reply start: a reply that never produces
-        audio (a cancelled or failed one) must not open an output device
-        for nothing.
-
-        `fed_bytes` is counted HERE, at the queue, which is what makes
-        `played_ms` over-count rather than under-count -- see
-        `_console_realtime_played_ms` for why that direction is the safe
-        one.
-
-        A sink that could not be opened is LATCHED for the rest of the
-        reply (fix round 1, F2). Audio deltas arrive roughly per 20 ms of
-        speech, so retrying the open per delta meant one construction --
-        and one logged traceback, on the UI thread -- every 20 ms for as
-        long as the assistant talked. The device is not coming back
-        mid-reply; the next reply gets a fresh attempt.
-        """
-        if not pcm:
-            return
-        if session.audio_failed_for_reply:
-            return
-        if session.audio_queue is None:
-            self._begin_console_realtime_reply_audio(session)
-        queue = session.audio_queue
-        if queue is None:
-            return
-        session.fed_bytes += len(pcm)
-        try:
-            queue.put_nowait(pcm)
-        except Exception:  # noqa: BLE001 - a full/closed queue is not fatal
-            logger.opt(exception=True).debug("Console realtime: dropped an audio chunk")
-
-    def _begin_console_realtime_reply_audio(
-        self, session: ConsoleRealtimeSession
-    ) -> None:
-        """Open this reply's audio sink and start its pump task.
-
-        One sink and one pump per reply: `StreamingPcmSink` instances are
-        single-use by contract (open -> feed -> close/stop, then discard),
-        and a per-reply pump is what lets a barge-in abort exactly this
-        reply's audio without disturbing anything else.
-
-        Failure is latched rather than retried (see
-        `_on_console_realtime_audio_delta`), logged ONCE per reply and
-        toasted ONCE per loop entry -- a device that is missing will be
-        missing for every reply, and one toast per reply would bury the
-        conversation the user is still having.
-        """
-        try:
-            sink = self._build_console_realtime_sink()
-        except Exception:  # noqa: BLE001 - the conversation survives mute audio
-            sink = None
-            logger.opt(exception=True).warning(
-                "Console realtime: could not build the audio sink"
-            )
-        if sink is None:
-            self._note_console_realtime_audio_unavailable(session)
-            return
-        try:
-            sink.open(CONSOLE_REALTIME_SAMPLE_RATE, 1)
-        except Exception:  # noqa: BLE001 - the conversation survives mute audio
-            logger.opt(exception=True).warning(
-                "Console realtime: could not open the audio sink"
-            )
-            self._note_console_realtime_audio_unavailable(session)
-            return
-        queue: asyncio.Queue = asyncio.Queue()
-        session.sink = sink
-        session.audio_queue = queue
-        session.fed_bytes = 0
-        # From here until the pump reports back, this reply is not over --
-        # however long ago the provider stopped generating it.
-        session.playback_pending = True
-        session.pump_worker = self.run_worker(
-            self._pump_console_realtime_audio(
-                session, session.reply_token, sink, queue
-            ),
-            exclusive=False,
-            group="console-realtime-audio",
-            exit_on_error=False,
-        )
-
-    def _note_console_realtime_audio_unavailable(
-        self, session: ConsoleRealtimeSession
-    ) -> None:
-        """Latch "no reply audio this reply", and say so once per loop."""
-        session.audio_failed_for_reply = True
-        # Persisted every time, not just the first: the toast is
-        # deduplicated for the user's sake, but "which replies were
-        # silent" is exactly what a support log needs.
-        self._persist_console_realtime_event(
-            "realtime_audio_begin_failed",
-            operation="audio_begin",
-            status="failed",
-            error_category="sink_unavailable",
-        )
-        if session.audio_unavailable_notified:
-            return
-        session.audio_unavailable_notified = True
-        self.app_instance.notify(
-            CONSOLE_REALTIME_AUDIO_UNAVAILABLE_MESSAGE, severity="warning"
-        )
-
-    def _build_console_realtime_sink(self) -> Any:
-        """Construct the reply-audio sink, honoring the test seam.
-
-        Imported inside the method for the same reason the mic tap is: the
-        sink module reaches an audio backend, and a Console mount that
-        never speaks must not pay for it.
-        """
-        factory = getattr(self.app_instance, "console_realtime_sink_factory", None)
-        if callable(factory):
-            return factory()
-        from ...Audio.streaming_sink import StreamingPcmSink
-
-        return StreamingPcmSink(on_event=self._on_console_realtime_sink_event)
-
-    def _on_console_realtime_sink_event(self, event: object) -> None:
-        """Sink lifecycle events. Logged only -- fired on the sink's own
-        notify thread, so nothing here may touch widgets."""
-        logger.debug(f"Console realtime: sink event: op=sink_event event={event!r}")
-
-    async def _pump_console_realtime_audio(
-        self, session: ConsoleRealtimeSession, token: int, sink: Any, queue: Any
-    ) -> None:
-        """Feed one reply's queued audio into `sink`, then report playback end.
-
-        The queue's `None` item is the end-of-reply sentinel: it ends the
-        async iterator, which is what tells `pump` to close the sink and
-        let the buffered tail actually finish playing (rather than cutting
-        it off the way an abort does).
-
-        `pump` returning is the sink reaching a terminal state -- drained
-        (the device played everything), stopped (a barge-in or teardown
-        aborted it), or failed. `settle()` then waits for that terminal
-        EVENT to have been delivered, which `pump` explicitly does not
-        promise (its own N4 note): the same "playback is really over"
-        signal the V3 TTS path waits on before reporting an utterance
-        finished. It blocks, so it runs off-thread.
-
-        Whatever the outcome, this reply's audio is over exactly once, so
-        `_console_realtime_playback_finished` is called on every exit --
-        it owns the decision about whether that means anything to the FSM.
-        """
-        from ...Audio.streaming_sink import pump
-
-        async def _chunks():
-            while True:
-                chunk = await queue.get()
-                if chunk is None:
-                    return
-                yield chunk
-
-        try:
-            await pump(sink, _chunks())
-            settle = getattr(sink, "settle", None)
-            if callable(settle):
-                await asyncio.to_thread(settle)
-        except Exception:  # noqa: BLE001 - a pump failure still ends playback
-            logger.opt(exception=True).warning(
-                "Console realtime: reply audio playback failed"
-            )
-        finally:
-            self._console_realtime_playback_finished(session, token)
-
-    def _end_console_realtime_reply_audio(
-        self, session: ConsoleRealtimeSession, *, abort: bool
-    ) -> None:
-        """End this reply's audio: drain it, or cut it off.
-
-        `abort=False` (the reply finished) closes the source and lets the
-        already-buffered tail play out. `abort=True` (a barge-in) stops the
-        sink outright -- the whole point of barging in is that the
-        assistant stops talking NOW, not at the end of the buffer.
-
-        `session.sink` is deliberately NOT cleared on the drain path: the
-        sink is still playing, and exit teardown must still be able to
-        silence it. The next reply replaces it.
-        """
-        queue, session.audio_queue = session.audio_queue, None
-        if queue is not None:
-            try:
-                queue.put_nowait(None)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Console realtime: could not close the audio source"
-                )
-        if not abort:
-            return
-        sink = session.sink
-        if sink is not None:
-            try:
-                sink.stop()
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).warning(
-                    "Console realtime: could not stop the audio sink"
-                )
-
-    def _on_console_realtime_first_audio(self, session: ConsoleRealtimeSession) -> None:
-        """`on_first_audio`: reply audio started -- `thinking` -> `speaking`."""
-        self._persist_console_realtime_event(
-            "realtime_first_audio",
-            operation="first_audio",
-            phase=session.controller.state,
-        )
-        session.controller.on_first_audio()
-
-    def _on_console_realtime_reply_done(self, session: ConsoleRealtimeSession) -> None:
-        """`on_reply_done`: GENERATION finished. Not necessarily the reply.
-
-        Never fires for a response this client cancelled (Task 2's
-        semantics), so there is no barge-in case to disambiguate here.
-
-        It does NOT go straight to the FSM (live-gate defect, default
-        speaker-safe mode: the model heard itself and answered its own
-        voice). `response.done` means the provider finished GENERATING,
-        and 24 kHz audio generates far faster than it plays -- the sink
-        still holds seconds of the reply at this point. Telling the FSM
-        the reply was over here left `speaking` early, which ungated the
-        mic straight into the reply's own audible tail; the provider's
-        server-side VAD then committed the model's voice as the user's
-        next turn.
-
-        So this half only records that generation is done and closes the
-        audio source (letting the buffered tail play out). Whichever of
-        the two halves finishes LAST -- this one or
-        `_console_realtime_playback_finished` -- is what tells the FSM.
-        A reply that produced no audio at all has no playback half, and
-        completes here immediately.
-        """
-        session.generation_done = True
-        self._end_console_realtime_reply_audio(session, abort=False)
-        self._finish_console_realtime_reply_row(session, interrupted=False)
-        self._persist_console_realtime_event(
-            "realtime_reply_done",
-            operation="reply_done",
-            initiator="generation",
-            decision="deferred" if session.playback_pending else "fired",
-            phase=session.controller.state,
-            cancelled=session.barged,
-        )
-        if session.playback_pending:
-            return
-        session.controller.on_reply_done(time.monotonic())
-
-    def _console_realtime_playback_finished(
-        self, session: ConsoleRealtimeSession, token: int
-    ) -> None:
-        """This reply's audio has finished playing (or was aborted).
-
-        The other half of the rendezvous in
-        `_on_console_realtime_reply_done`. Three guards, each for a real
-        case:
-
-          * a different loop owns the screen now (exit/teardown, whose
-            abort makes the pump return) -- report nothing;
-          * a NEWER reply is in flight (`token`), so this completion
-            belongs to a reply the FSM has already moved past -- reporting
-            it would end the current one;
-          * the user barged in, and Task 2's contract is that a cancelled
-            response completes nothing. The FSM already returned to `live`
-            through its own barge-in input.
-        """
-        if self._console_realtime is not session:
-            return
-        if session.reply_token != token:
-            return
-        session.playback_pending = False
-        fires = session.generation_done and not session.barged
-        self._persist_console_realtime_event(
-            "realtime_reply_done",
-            operation="reply_done",
-            initiator="playback",
-            decision="fired" if fires else "dropped",
-            phase=session.controller.state,
-            cancelled=session.barged,
-        )
-        if not fires:
-            return
-        session.controller.on_reply_done(time.monotonic())
-
-    def _on_console_realtime_speech_started(
-        self, session: ConsoleRealtimeSession
-    ) -> None:
-        """`on_speech_started`: server-side VAD heard the user start talking.
-
-        The FSM itself decides whether that is a barge-in (acoustic mode
-        only) or noise to ignore.
-        """
-        session.barge_trigger = "speech"
-        session.controller.on_speech_started()
-
-    def _on_console_realtime_error(
-        self, session: ConsoleRealtimeSession, exc: Exception
-    ) -> None:
-        """`on_error`: terminal before the handshake, logged after it.
-
-        Once the session is live, a provider error that actually ends it
-        arrives separately as `on_closed`, and treating every error event
-        as terminal would end a working conversation over one recoverable
-        event.
-
-        BEFORE `on_ready`, the same event means the opposite: the
-        handshake did not succeed, and (live-confirmed) it is how an
-        invalid key is reported -- OpenAI accepts the WebSocket upgrade,
-        so `connect()` returns cleanly and the refusal arrives here. There
-        is no reply-in-flight to protect at that point, so it routes to
-        the connect-failure path rather than being logged into a chip that
-        would otherwise say `connecting…` forever.
-        """
-        if not session.ready:
-            self._console_realtime_connect_failed(session, session.connect_attempt, exc)
-            return
-        logger.warning(
-            "Console realtime: provider error: op=realtime_error "
-            f"reason={self._sanitize_console_realtime_failure(exc)!r}"
-        )
-
-    def _on_console_realtime_closed(
-        self, session: ConsoleRealtimeSession, reason: str
-    ) -> None:
-        """`on_closed`: the transport ended.
-
-        A close this wiring performed deliberately (exit, reconnect) can
-        never reach here -- both paths supersede the attempt first, and the
-        marshal drops the callback before it lands. So anything arriving
-        here is an unexpected end.
-
-        WHEN it arrives decides what it means. After the handshake, it is
-        a transport drop and the FSM's reconnect-once policy decides
-        between a retry and giving up. BEFORE the handshake was
-        acknowledged, it is a REFUSED CONNECT wearing a close's clothes:
-        the provider accepted the upgrade and then rejected the session
-        (an invalid key closes with 3000/`invalid_api_key`). The FSM
-        deliberately ignores a transport-closed input while `connecting`
-        -- Task 4's state table assumes connect failures surface as
-        `connect()` raising -- so routing it there left the loop parked in
-        `connecting` with no toast, forever. It goes to the same
-        connect-failure path a raising `connect()` takes, which is where
-        the reasoned exit and the loud fallback already live.
-        """
-        if not session.ready:
-            self._console_realtime_connect_failed(
-                session, session.connect_attempt, RuntimeError(reason)
-            )
-            return
-        session.failure_text = self._sanitize_console_realtime_failure(reason)
-        logger.info(
-            "Console realtime: transport closed: op=realtime_closed "
-            f"reason={session.failure_text!r}"
-        )
-        session.controller.on_transport_closed(error=True)
 
     # -- intents ------------------------------------------------------------
 
-    def _handle_console_realtime_intent(self, intent: object) -> None:
-        """Route one intent emitted synchronously by `RealtimeLoopController`.
 
-        The V4 FSM emits a strict subset of V3's vocabulary
-        (`ModeChanged`/`ExitLoop`/`SilenceSpeech`, imported from
-        `console_hands_free.py` rather than redefined), so this dispatcher
-        mirrors `_handle_console_hands_free_intent`'s shape exactly.
-        """
-        if isinstance(intent, SilenceSpeech):
-            self._console_realtime_silence_speech()
-        elif isinstance(intent, ModeChanged):
-            self._console_realtime_mode_changed(intent.state, intent.reason)
-        elif isinstance(intent, ExitLoop):
-            self._console_realtime_exit_loop(intent.reason)
 
-    def _console_realtime_mode_changed(self, state: str, reason: str | None) -> None:
-        """`ModeChanged`: sync the mic gate, handle reconnects, repaint.
 
-        The mic gate is synced on EVERY transition, unconditionally (rule
-        7): `mic_gated` is a derived property of the FSM's state, so
-        syncing it anywhere less than every transition would let the two
-        drift -- and a mic left hot while the assistant speaks feeds the
-        reply's own audio straight back into the provider.
-        """
-        session = self._console_realtime
-        if session is None:
-            return
-        gated = session.controller.mic_gated
-        session.mic_gated = gated
-        tap = session.tap
-        if tap is not None:
-            try:
-                tap.set_gated(gated)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Console realtime: could not sync the mic gate"
-                )
-        if reason == "reconnecting":
-            self.app_instance.notify(
-                CONSOLE_REALTIME_RECONNECTING_MESSAGE, severity="warning"
-            )
-            self._console_realtime_begin_reconnect(session)
-        self._repaint_console_realtime_chip()
 
-    def _console_realtime_begin_reconnect(
-        self, session: ConsoleRealtimeSession
-    ) -> None:
-        """Open a fresh session for the same loop after a transport drop.
 
-        The old session is released and a new one built through the SAME
-        factory and the SAME connect path, so a reconnect re-seeds from the
-        store (including everything said since the loop started) exactly
-        the way the first connect did. Incrementing the attempt inside
-        `_start_console_realtime_connect` is what retires the dead
-        session's callbacks.
 
-        `tap.begin_buffering()` runs FIRST, before anything else here
-        (task-2360): the mic tap is never rebuilt across a reconnect (it
-        is the SAME device stream for the whole loop entry), so without
-        this, speech captured in the window between here and the new
-        session's `on_ready` would either reach nobody (`session.session`
-        is momentarily None below) or reach a session that has not
-        finished its handshake yet (`session.session` is reassigned to
-        the new, not-yet-connected provider session inside `_connect_
-        console_realtime`, well before it calls `connect()` -- a real
-        session's `append_audio` silently drops anything sent before that
-        completes). Buffering at the tap, rather than depending on either
-        of those downstream behaviors, mirrors the ENTRY-time first-words
-        guarantee exactly: `_on_console_realtime_ready`'s existing `tap.
-        mark_ready()` call (unconditionally run for both a first connect
-        and every reconnect) is what releases it, in order, once the new
-        session is actually ready -- no other change needed there.
-        """
-        tap = session.tap
-        if tap is not None:
-            try:
-                tap.begin_buffering()
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Console realtime: could not re-arm the mic tap buffer "
-                    "for reconnect"
-                )
-        provider_session, session.session = session.session, None
-        session.ready = False
-        self._persist_console_realtime_event(
-            "realtime_reconnect",
-            operation="reconnect",
-            status="started",
-            error_category=self._console_realtime_failure_token(session.failure_text),
-        )
-        # A reply that was in flight when the transport died is over, and
-        # over abruptly: close its audio and its transcript row as an
-        # interruption rather than leaving a `pending` row that will never
-        # complete and a pump parked on a queue nobody feeds.
-        self._end_console_realtime_reply_audio(session, abort=True)
-        self._finish_console_realtime_reply_row(session, interrupted=True)
-        if provider_session is not None:
-            self.run_worker(
-                self._close_console_realtime_session(provider_session),
-                exclusive=False,
-                group="console-realtime-close",
-                exit_on_error=False,
-            )
-        self._start_console_realtime_connect(session)
 
-    def _console_realtime_silence_speech(self) -> None:
-        """`SilenceSpeech`: barge-in -- stop talking, tell the provider.
-
-        `cancel_response(played_ms)` is what keeps the provider's record of
-        the conversation honest: without it the model believes the user
-        heard the whole reply it was midway through generating.
-        """
-        session = self._console_realtime
-        if session is None:
-            return
-        # Read the count BEFORE tearing the audio down, then silence, then
-        # tell the provider -- in that order: the user must stop hearing the
-        # reply first, and `played_ms` must describe what they heard up to
-        # that moment.
-        played_ms = self._console_realtime_played_ms(session)
-        self._persist_console_realtime_event(
-            "realtime_barge",
-            operation="barge",
-            # Which input barged is the FIRST question asked of any
-            # barge-in report, and the intent itself does not carry it --
-            # `SilenceSpeech` is shared by both triggers, so the wiring
-            # records which one it just handed the FSM.
-            initiator=session.barge_trigger,
-            phase=session.controller.state,
-            duration_ms=played_ms,
-        )
-        # Latched before the abort: the pump is about to unwind and report
-        # playback finished, and a cancelled reply must complete nothing
-        # (Task 2's contract, mirrored in
-        # `_console_realtime_playback_finished`).
-        session.barged = True
-        self._end_console_realtime_reply_audio(session, abort=True)
-        self._finish_console_realtime_reply_row(session, interrupted=True)
-        provider_session = session.session
-        if provider_session is not None:
-            try:
-                sent = provider_session.cancel_response(played_ms)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).warning(
-                    "Console realtime: cancel_response failed"
-                )
-            else:
-                # The provider's own guard refuses a cancel for a response
-                # that already ended. "Told the provider" and "there was
-                # nothing left to cancel" are different incidents and were
-                # indistinguishable from outside the session.
-                self._persist_console_realtime_event(
-                    "realtime_cancel_sent"
-                    if sent is not False
-                    else "realtime_cancel_noop",
-                    operation="cancel",
-                    decision="sent" if sent is not False else "noop",
-                    duration_ms=played_ms,
-                )
-
-    def _console_realtime_played_ms(self, session: ConsoleRealtimeSession) -> int:
-        """Milliseconds of THIS reply's audio the user has plausibly heard.
-
-        Counted from bytes handed to the sink, not from bytes the device
-        actually rendered, so it OVER-counts by at most the sink's own
-        buffered depth. That is the safe direction on purpose: `played_ms`
-        drives the provider's `conversation.item.truncate`, and truncating
-        slightly LATE leaves a few words in the model's record that the
-        user nearly heard, while truncating early would delete words they
-        definitely did hear -- which then reads as the model denying it
-        ever said them.
-        """
-        return int(session.fed_bytes * 1000 / CONSOLE_REALTIME_BYTES_PER_SECOND)
-
-    def _console_realtime_exit_loop(self, reason: str | None) -> None:
-        """`ExitLoop`: tear the loop down, then say why it ended.
-
-        Teardown happens FIRST so nothing can keep streaming into a loop
-        the user has already been told is over.
-        """
-        session = self._console_realtime
-        if session is None:
-            return
-        failure = session.failure_text
-        self._persist_console_realtime_event(
-            "realtime_exit",
-            operation="exit",
-            # The FSM's own reason vocabulary is already token-shaped
-            # ("connect-failed", "connection-lost", "idle-timeout"); a
-            # user-initiated exit has no reason, which is itself the fact
-            # worth recording.
-            status=safe_metadata_token(reason or "user"),
-        )
-        self._teardown_console_realtime_loop()
-        if reason == "connect-failed":
-            self._console_realtime_fallback_to_pipeline(failure)
-            return
-        message = self._console_realtime_exit_message(reason, session)
-        if message:
-            self.app_instance.notify(message, severity="warning")
-
-    def _console_realtime_exit_message(
-        self, reason: str | None, session: ConsoleRealtimeSession
-    ) -> str:
-        """Turn an `ExitLoop` reason into user-facing copy.
-
-        A reasonless exit (the user pressed Esc or the mic) gets NO toast:
-        they know what they just did, and narrating it back is noise.
-        """
-        if reason == "connection-lost":
-            return CONSOLE_REALTIME_EXIT_CONNECTION_LOST_MESSAGE
-        if reason == "idle-timeout":
-            return CONSOLE_REALTIME_EXIT_IDLE_TEMPLATE.format(
-                minutes=round(session.idle_timeout_seconds / 60.0, 1)
-            )
-        return ""
-
-    def _console_realtime_fallback_to_pipeline(self, failure: str) -> None:
-        """The realtime engine could not start: fall back, loudly, or refuse.
-
-        "Loudly" is the whole point (rule 4). Silently downgrading to the
-        pipeline engine would leave the user believing they are talking to
-        a realtime session -- with its latency, its barge-in, and its
-        billing -- when they are not. And when the pipeline stack is not
-        usable either, BOTH reasons are named: a bare "hands-free
-        unavailable" sends the user hunting through the realtime config
-        for a fault that is really a missing microphone or speech model.
-        """
-        reason = failure or "the realtime session could not be opened"
-        # `_console_pipeline_hands_free_blocker`/`_enter_console_hands_free_
-        # pipeline_loop` moved to `ConsoleHandsFreeController` (wave-2
-        # console decomposition, task 1) -- called directly on
-        # `self._hands_free`, the same as `self._dictation`/`self._workspace`
-        # elsewhere on this screen; no injection needed for this direction
-        # (see `hands_free.py`'s module docstring, two-engine boundary
-        # section).
-        pipeline_reason = self._hands_free._console_pipeline_hands_free_blocker()
-        if pipeline_reason is None:
-            self.app_instance.notify(
-                CONSOLE_REALTIME_FALLBACK_TEMPLATE.format(reason=reason),
-                severity="warning",
-            )
-            self._hands_free._enter_console_hands_free_pipeline_loop(
-                capture_live=self._console_dictation_state == "recording"
-            )
-            return
-        self.app_instance.notify(
-            CONSOLE_REALTIME_NO_LOOP_TEMPLATE.format(
-                reason=reason, pipeline_reason=pipeline_reason
-            ),
-            severity="error",
-        )
 
     # -- chip, clock and teardown -------------------------------------------
 
-    def _tick_console_realtime(self) -> None:
-        """`set_interval(0.1, ...)`: the FSM's only clock input.
-
-        Also the transcript's repaint cadence. The ordinary Console
-        transcript timer is gated on a chat-controller run being in flight
-        and self-stops when there is none -- a realtime conversation has no
-        such run, so it would never repaint. Coalescing here (rather than
-        resyncing per delta) keeps one full UI rebuild per 0.1 s instead of
-        one per audio-transcript chunk.
-        """
-        session = self._console_realtime
-        if session is None:
-            return
-        now = time.monotonic()
-        if (
-            not session.ready
-            and session.connect_returned_at is not None
-            and now - session.connect_returned_at
-            >= CONSOLE_REALTIME_READY_TIMEOUT_SECONDS
-        ):
-            # `connect()` returned and then NOTHING arrived -- no ready, no
-            # error, no close. Whatever that is, it is not a live session,
-            # and the entry must not sit at `connecting…` waiting for it.
-            self._console_realtime_connect_failed(
-                session,
-                session.connect_attempt,
-                TimeoutError(
-                    CONSOLE_REALTIME_HANDSHAKE_INCOMPLETE_MESSAGE.format(
-                        seconds=CONSOLE_REALTIME_READY_TIMEOUT_SECONDS
-                    )
-                ),
-            )
-            return
-        session.controller.tick(now)
-        self._repaint_console_realtime_chip()
-        if session.transcript_dirty:
-            session.transcript_dirty = False
-            # `call_later`, not `run_worker`: this repaint is ordinary screen
-            # work with no lifetime of its own, and a worker outliving the
-            # screen (a repaint still mounting rows while the transcript is
-            # being pruned) is a teardown hazard -- a queued callback is
-            # simply dropped when the screen goes away.
-            self.call_later(self._sync_native_console_chat_ui)
 
     def _repaint_console_realtime_chip(self) -> None:
         """Paint the realtime loop's mode into the composer's voice chip.
@@ -8519,6 +6294,22 @@ class ChatScreen(BaseAppScreen):
             return
         composer.set_voice_status(session.controller.state, message=message)
 
+    @property
+    def _console_realtime(self) -> Any:
+        return self._realtime._console_realtime
+
+    @_console_realtime.setter
+    def _console_realtime(self, value: Any) -> None:
+        self._realtime._console_realtime = value
+
+    @property
+    def _console_realtime_close_worker(self) -> Any:
+        return self._realtime._console_realtime_close_worker
+
+    @_console_realtime_close_worker.setter
+    def _console_realtime_close_worker(self, value: Any) -> None:
+        self._realtime._console_realtime_close_worker = value
+
     def _restore_console_voice_chip(self) -> None:
         """Repaint the chip from the REAL one-shot dictation state.
 
@@ -8531,139 +6322,9 @@ class ChatScreen(BaseAppScreen):
         if composer is not None:
             composer.sync_dictation_state(self._console_dictation_state)
 
-    def _release_console_realtime_state(self) -> tuple[Any, Any, Any, Any] | None:
-        """Drop the loop and hand its resources to the async release.
 
-        What happens synchronously here is only what is instant: the tick
-        timer stops, the reply row closes, and the tap is GATED -- a plain
-        flag flip that stops it feeding the session immediately.
 
-        `tap.stop()` itself is deliberately NOT called here (fix round 1,
-        F3). It waits up to 2 s for in-flight `on_frames` callbacks to
-        quiesce and then joins the recorder thread, which is the exact
-        ~4 s frozen-UI class `_discard_console_dictation_session` already
-        documents. It moves to the async release, where it still runs
-        FIRST -- before the session close -- so the teardown ORDER (tap ->
-        session -> sink) is unchanged.
 
-        Returns:
-            The `(tap, provider_session, sink, audio_queue)` tuple still
-            needing an async release, or None when no loop was running.
-            The queue rides along so the reply's pump task -- parked on
-            `queue.get()` and therefore blind to a sink that went terminal
-            underneath it -- can be released once, at the END of teardown,
-            without racing the sink ordering above.
-        """
-        session = self._console_realtime
-        if session is None:
-            return None
-        self._console_realtime = None
-        # Exiting mid-reply IS an interruption: close the row that way
-        # rather than leaving a `pending` assistant message that nothing
-        # will ever complete.
-        self._finish_console_realtime_reply_row(session, interrupted=True)
-        if session.tick_timer is not None:
-            try:
-                session.tick_timer.stop()
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Console realtime: stopping the tick timer failed"
-                )
-        tap, session.tap = session.tap, None
-        if tap is not None:
-            try:
-                # Instant, non-blocking: frames are dropped from now on, so
-                # nothing reaches a session that is about to close even
-                # though the real `stop()` happens off-thread below.
-                tap.set_gated(True)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Console realtime: could not gate the mic tap for teardown"
-                )
-        provider_session, session.session = session.session, None
-        sink, session.sink = session.sink, None
-        queue, session.audio_queue = session.audio_queue, None
-        session.pump_worker = None
-        return tap, provider_session, sink, queue
-
-    def _teardown_console_realtime_loop(self) -> None:
-        """Exit teardown.
-
-        Order, end to end: gate + drop the loop state (sync, instant) ->
-        repaint the chip back to the ordinary dictation state (sync, so
-        the user sees the loop end immediately rather than after the
-        device teardown) -> tap.stop -> provider session close -> sink
-        stop -> pump released, all on a worker because the first three of
-        those block (fix round 1, F3/F10).
-        """
-        released = self._release_console_realtime_state()
-        if released is None:
-            return
-        tap, provider_session, sink, queue = released
-        # Handle retained (fix round 1, F7): once the loop state is
-        # dropped, this worker is the ONLY thing still holding the
-        # WebSocket and the microphone. An unmount landing before it runs
-        # -- exiting the loop and leaving the screen in the same breath is
-        # an ordinary thing to do -- has nothing else left to release them
-        # by, so `on_unmount` waits on this.
-        self._console_realtime_close_worker = self.run_worker(
-            self._close_console_realtime_resources(tap, provider_session, sink, queue),
-            exclusive=False,
-            group="console-realtime-close",
-            exit_on_error=False,
-        )
-        self._restore_console_voice_chip()
-
-    async def _close_console_realtime_resources(
-        self, tap: Any, provider_session: Any, sink: Any, queue: Any = None
-    ) -> None:
-        """Release the tap, then the session, then the sink -- in that order.
-
-        `tap.stop()` runs through `asyncio.to_thread`: it waits for
-        in-flight `on_frames` callbacks to quiesce (bounded at 2 s) and
-        then joins the recorder thread, which is seconds of frozen UI if
-        called inline -- the same reason `_discard_console_dictation_
-        session` exists. Still FIRST, so the microphone is released before
-        the session it was feeding.
-
-        Session before sink: closing it stops new audio arriving, so the
-        sink is never asked to play a chunk that outlived the
-        conversation. The pump's source is closed LAST, once the sink is
-        already terminal, so the pump returns immediately instead of
-        draining a reply the user has already left.
-        """
-        if tap is not None:
-            try:
-                await asyncio.to_thread(tap.stop)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).warning(
-                    "Console realtime: stopping the mic tap failed"
-                )
-        if provider_session is not None:
-            await self._close_console_realtime_session(provider_session)
-        if sink is not None:
-            try:
-                sink.stop()
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Console realtime: stopping the audio sink failed"
-                )
-        if queue is not None:
-            try:
-                queue.put_nowait(None)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Console realtime: could not release the audio pump"
-                )
-
-    async def _close_console_realtime_session(self, provider_session: Any) -> None:
-        """Close one provider session; failures are logged, never raised."""
-        try:
-            await provider_session.close()
-        except Exception:  # noqa: BLE001 - teardown must never raise at the user
-            logger.opt(exception=True).warning(
-                "Console realtime: closing the provider session failed"
-            )
 
     def _request_console_dictation_stop(self) -> None:
         """Stop the live capture and insert its transcript.
@@ -10543,6 +8204,14 @@ class ChatScreen(BaseAppScreen):
         """Return available screen width for responsive rail state."""
         width = getattr(getattr(self, "size", None), "width", None)
         return int(width) if width else None
+
+    def _console_rail_body_height(self) -> int | None:
+        """Return the measured rail viewport, or no measurement before layout."""
+        try:
+            height = self.query_one("#console-left-rail-body").size.height
+        except QueryError:
+            return None
+        return height if height > 0 else None
 
     def _current_console_run_status_value(self) -> str:
         """Return the current Console run status value for rail badging."""
@@ -13147,6 +10816,7 @@ class ChatScreen(BaseAppScreen):
                     agent_status_line=agent_status_line,
                     agent_steps_text=agent_steps_text,
                     agent_fleet_section_state=agent_fleet_section_state,
+                    open_agent_history=lambda: self._agent.open_fleet_history(),
                     agent_drilldown_active=bool(self._console_agent_drilldown_run_id),
                     agent_full_log_available=(
                         self._agent._console_agent_full_log_available()
@@ -13452,7 +11122,7 @@ class ChatScreen(BaseAppScreen):
         # timer or worker below can run the first tab sync -- whose
         # view-clear consumes the ACTIVE conversation's FLEET_UNSEEN mark
         # (Task 4's stated ordering hazard: read marks BEFORE activation).
-        self._claim_console_fleet_wake_marks()
+        self._fleet._claim_console_fleet_wake_marks()
         self._console_auto_speak.mount()
 
         # Restore collapsible states after mount
@@ -13472,13 +11142,13 @@ class ChatScreen(BaseAppScreen):
         # link (staged while Console was not mounted) and switch to the
         # settled conversation's session. Same 0.15s settle hedge as the
         # surrounding handoff timers.
-        self.set_timer(0.15, self.consume_pending_console_fleet_completion)
+        self.set_timer(0.15, self._fleet.consume_pending_console_fleet_completion)
         # PR3a-2 Task 4 (task-15664): mount hedge for the survivor tick --
         # the primary arming point is the transcript poll's self-stop
         # edge, but a controller wired at mount with survivors already
         # live (e.g. a future above-screen bridge) must not stay frozen.
         # A no-op when nothing is live.
-        self.set_timer(0.3, self._maybe_start_console_fleet_survivor_tick)
+        self.set_timer(0.3, self._fleet._maybe_start_console_fleet_survivor_tick)
         # Same hedge as the handoff timers above: the native composer is not
         # guaranteed to exist in the DOM yet at `call_after_refresh` time
         # either, and `_sync_console_dictation_availability` silently no-ops
@@ -13549,78 +11219,11 @@ class ChatScreen(BaseAppScreen):
                 )
             self.app_instance.notify(copy, severity="information")
 
-    def _claim_console_fleet_wake_marks(self) -> None:
-        """Claim staged auto-wakes from the durable marks (PR3a-2 Task 5).
 
-        Runs SYNCHRONOUSLY inside ``on_mount``, before the first
-        ``_sync_console_native_session_tabs`` can view-clear the ACTIVE
-        conversation's ``fleet_unseen`` mark (Task 4's ordering hazard:
-        the mark is the undelivered bit, and it must be read into the
-        wake coordinator's pending set BEFORE activation consumes it).
-        Cheap on the common path: one indexed mark listing, and only a
-        non-empty result touches the bridge/controller at all.
-        ``seed_from_marks`` itself honours ``autowake_enabled`` (the
-        mount fire point of the kill switch); the actual deliveries run
-        later as loop tasks under the full send gating.
-        """
-        try:
-            marked = fleet_unseen_conversation_ids(self.app_instance)
-            if not marked:
-                return
-            if self._ensure_console_agent_bridge() is None:
-                return
-            controller = self._ensure_console_chat_controller()
-            wake = getattr(controller, "fleet_wake", None)
-            if wake is None:
-                return
-            wake.wire(app=self.app_instance)
-            if wake.seed_from_marks():
-                wake.retry_soon()
-        except Exception as exc:  # noqa: BLE001 -- a failed claim must never break a mount
-            logger.warning(
-                "console fleet wake mount-claim failed (exception_type={})",
-                type(exc).__name__,
-            )
 
-    def _console_wake_user_priority(self, session_id: str) -> bool:
-        """User-wins-ties probe for the auto-wake coordinator.
-
-        True while the Console composer holds a non-empty draft -- for ANY
-        session, deliberately: the composer is the user's live claim on
-        sending, it clears only once a manual send is ACCEPTED (so this
-        also covers the dispatch gap between pressing Send and the run
-        state turning busy), and under cap contention a wake for one
-        session can cost another session's user their slot. A raising
-        probe defers too (coordinator-side: user wins on uncertainty).
-        The wake is retried when the composer empties
-        (``_on_console_composer_draft_changed``'s poke) and on every
-        terminal run-state transition.
-
-        task-15970: "the Console composer" means the one the user can
-        actually TYPE into. This screen can outlive its display (a
-        navigation issued while a pushed screen sat above it pops the
-        MODAL off the stack and leaves this screen resident-but-hidden --
-        the residue arc's live ``mounted=True`` state), and the live bug
-        was exactly this probe reading the hidden screen's own empty
-        composer while the user held a typed draft in the DISPLAYED
-        screen's: the wake fired straight through it, twice. When the
-        displayed screen is a different Console screen, ITS composer is
-        the user's hands; this screen's own composer is the fallback
-        (nobody can type into any composer while e.g. Library is
-        displayed, and a stale non-empty draft deferring is the probe's
-        conservative direction).
-
-        Args:
-            session_id: The session the wake would fire into (unused by
-                the any-session rule; part of the probe contract).
-
-        Returns:
-            Whether the user currently holds a sending claim.
-        """
+    def _console_user_draft_text(self) -> str:
         composer = self._console_wake_probe_composer()
-        if composer is None:
-            return False
-        return bool(composer.draft_text().strip())
+        return composer.draft_text() if composer is not None else ""
 
     def _console_wake_probe_composer(self) -> ConsoleComposerBar | None:
         """The composer the user's keystrokes actually reach (task-15970).
@@ -13667,110 +11270,9 @@ class ChatScreen(BaseAppScreen):
         except Exception:  # noqa: BLE001 -- no reachable app: fixtures
             return True
 
-    def _console_wake_conversation_in_view(
-        self, conversation_id: str, session_id: str
-    ) -> bool:
-        """Delivery-commit visibility probe (task-15971).
 
-        True only when this screen is the DISPLAYED one and the wake's
-        session is the ACTIVE session -- i.e. the user actually watched
-        the result land. Anything else (Library displayed, a resident
-        hidden Console, a non-active session tab) is off-view: the
-        coordinator leaves the FLEET_UNSEEN mark set so the ◈ badge
-        points at the delivered result until the user views it.
 
-        Args:
-            conversation_id: The delivered conversation (unused: the
-                active-session comparison already scopes the view).
-            session_id: The session the wake turn ran in.
 
-        Returns:
-            Whether the delivery landed in the user's view.
-        """
-        if not self._console_screen_displayed():
-            return False
-        store = getattr(self, "_console_chat_store", None)
-        active = getattr(store, "active_session_id", None)
-        return active is not None and active == session_id
-
-    def _poke_console_wake_retry(self) -> None:
-        """Retry a staged auto-wake (task-15864 AC#2: session-open trigger).
-
-        Called after a persisted conversation is resumed into a native
-        session -- the moment a mount-claimed pending wake finally has an
-        open session to deliver into. Session tabs do not restore across
-        restart, so before this trigger a restart-staged wake sat pending
-        until an unrelated composer keystroke. getattr-guarded like every
-        wake seam here (UI tests swap controller doubles).
-        """
-        controller = getattr(self, "_console_chat_controller", None)
-        wake = getattr(controller, "fleet_wake", None)
-        retry = getattr(wake, "retry_soon", None)
-        if callable(retry):
-            retry()
-
-    def _on_console_wake_delivery_started(self, session_id: str) -> None:
-        """Arm the transcript poll for a machine-injected wake turn.
-
-        task-15862: manual sends arm the 0.2s poll in
-        ``_submit_console_native_draft``; a wake turn bypasses that worker
-        entirely (``ConsoleFleetWakeCoordinator._deliver`` calls
-        ``controller.submit_draft`` directly), so before this hook nothing
-        repainted the wake turn's stream, its terminal tab glyph, or the
-        composer state until the user interacted. Runs on the app loop
-        (the coordinator's ``_attempt`` thread), with the coordinator's
-        ``_delivering`` already set -- so the poll's wake-delivery stop
-        guard holds it alive through the scheduling gap. The poll still
-        self-stops at the wake turn's terminal edge (15664 AC#2: no
-        recurring idle repaint).
-
-        Args:
-            session_id: The session the wake turn fires into (unused; the
-                poll repaints every session's surfaces).
-        """
-        if not self.is_mounted:
-            return
-        # Hop through the message pump before creating the timer. Textual's
-        # ``Timer._tick`` reads the ``active_app`` ContextVar, and an
-        # asyncio task inherits the context it was CREATED in -- this hook
-        # can run in a bare ``call_soon_threadsafe`` callback context (the
-        # coordinator's drain intake hops from the child's thread, whose
-        # copied context has no active_app), where a directly-created
-        # timer's task dies on its first tick without ever beating.
-        # Observed live (task-15862 diagnosis): "arm-poll" logged, zero
-        # beats, transcript frozen through the whole wake turn. A
-        # ``Callback`` message runs inside the pump's own task, which
-        # carries the app context, so the timer it creates ticks.
-        self.call_later(self._start_console_transcript_sync_timer)
-
-    def _console_wake_turn_active(self, session_id: str | None) -> bool:
-        """Whether the auto-wake coordinator is delivering into ``session_id``.
-
-        task-15862 AC#3: the composer's blocked-state copy must name the
-        actual blocker during a wake turn. getattr-guarded throughout --
-        several UI tests swap in hand-built controller doubles.
-
-        Args:
-            session_id: The session whose composer state is being synced.
-
-        Returns:
-            True while a wake delivery targets this session's conversation.
-        """
-        if not session_id:
-            return False
-        controller = getattr(self, "_console_chat_controller", None)
-        wake = getattr(controller, "fleet_wake", None)
-        delivering_read = getattr(wake, "delivering_conversation_id", None)
-        delivering = delivering_read() if callable(delivering_read) else None
-        if delivering is None:
-            return False
-        store = self._console_chat_store
-        if store is None:
-            return False
-        session = next((s for s in store.sessions() if s.id == session_id), None)
-        if session is None:
-            return False
-        return delivering in (session.persisted_conversation_id, session.id)
 
     async def confirm_navigation(self) -> bool:
         """Delegate revision-pinned Console loss confirmation."""
@@ -13819,7 +11321,7 @@ class ChatScreen(BaseAppScreen):
             self.app_instance._console_h3_image_edit_screen = None
         self._video._drain_pending_console_videos()
         self._stop_console_transcript_sync_timer()
-        self._stop_console_fleet_survivor_tick()
+        self._fleet._stop_console_fleet_survivor_tick()
         self._stop_console_cost_ttl_timer()
         await self._teardown_console_roleplay_persistence()
         # The pipeline hands-free loop's own two-statement abandon teardown
@@ -13832,10 +11334,10 @@ class ChatScreen(BaseAppScreen):
         # WebSocket, an audio device stream), so they are actually released
         # here rather than merely dropped -- and awaited inline, since a
         # worker dispatched from a screen already unmounting may never run.
-        released = self._release_console_realtime_state()
+        released = self._realtime._release_console_realtime_state()
         if released is not None:
             tap, provider_session, sink, queue = released
-            await self._close_console_realtime_resources(
+            await self._realtime._close_console_realtime_resources(
                 tap, provider_session, sink, queue
             )
         # A loop exited moments ago left its release on a worker that may
@@ -13860,7 +11362,7 @@ class ChatScreen(BaseAppScreen):
         self._hands_free.uninstall_console_hands_free_store_tap()
         controller = self._console_chat_controller
         if controller is not None:
-            await self._record_console_fleet_teardown(controller)
+            await self._fleet._record_console_fleet_teardown(controller)
         else:
             # No controller was ever built, but the view still has to let
             # go: `detach_view` clears the store's `on_scope_flushed` and
@@ -13868,49 +11370,6 @@ class ChatScreen(BaseAppScreen):
             await leave_console_runtime(self.app_instance, view=self)
         super().on_unmount()
 
-    async def _record_console_fleet_teardown(self, controller: Any) -> None:
-        """Snapshot this teardown's true fates, LEAVE, stage the notice.
-
-        TASK-1143 (F5) + PR3a-2 Task 4: snapshot BEFORE the teardown,
-        using ``fleet_teardown_split()`` -- the same union
-        ``busy_fleet_session_count`` (and the pre-navigate confirm) has
-        always counted, partitioned by what actually happens next.
-        Sessions with an in-flight turn or pending approval are killed by
-        the teardown below; sessions whose only work is a cross-turn
-        survivor KEEP RUNNING through it (Task 1 A1, executed) and their
-        results/spend land after the screen is gone. The app (not this
-        doomed screen) holds both counts so the NEXT Console mount -- a
-        fresh instance; screens are never cached -- reports each
-        truthfully via ``_notify_console_fleet_teardown_if_any``.
-
-        task-15860: the teardown is now ``leave_console_runtime`` -- this
-        VISIT ends, the runtime does not. The provider gateway is no longer
-        closed here either; it is app-owned and closes at
-        ``ConsoleRuntime.dispose``. An in-flight ``AGENT_WAKE`` turn is
-        exempt from the cancellation (owner ruling), so the ``killed``
-        count can over-report by one in the rare case a wake turn is
-        mid-flight at nav-away; ``fleet_teardown_split``'s own contract is
-        deliberately left untouched.
-
-        Qodo audit S1 (PR 1680): the staging is gated on
-        ``leave_console_runtime``'s return. On an overlapping
-        ChatScreen→ChatScreen navigation (a fleet-completion deep link
-        clicked while already on Console), the incoming screen claims the
-        runtime in ``restore_state`` BEFORE this screen unmounts, so this
-        superseded screen's leave is a designed no-op (``ConsoleRuntime.
-        detach_view``) and the sessions keep running under the successor.
-        Staging unconditionally toasted "N session(s) cancelled when you
-        left Console" for work that was never cancelled -- and never left
-        Console. A leave that did not end the visit reports nothing.
-        """
-        killed, surviving = controller.fleet_teardown_split()
-        ended = await leave_console_runtime(self.app_instance, view=self)
-        if not ended:
-            return
-        if killed:
-            self.app_instance._console_fleet_teardown_notice = killed
-        if surviving:
-            self.app_instance._console_fleet_survivor_notice = surviving
 
     @classmethod
     def _serialize_console_message(cls, message: ConsoleChatMessage) -> dict[str, Any]:
@@ -15294,45 +12753,7 @@ class ChatScreen(BaseAppScreen):
                         group="console-sync",
                     )
 
-    def _console_fleet_unseen_ids(self) -> frozenset[str]:
-        """Conversation ids carrying the durable unseen-completion mark.
 
-        PR3a-2 Task 4. Cached against the app-level revision counter the
-        fleet-attention consumer bumps on every mark write/clear, so the
-        0.2s sync tick pays a DB read only when something actually changed
-        (the TASK-251 discipline) -- and the badge still survives restart,
-        because a fresh screen's first read comes from the DB.
-        """
-        app = self.app_instance
-        revision = getattr(app, FLEET_UNSEEN_REVISION_ATTR, 0)
-        cache = getattr(self, "_console_fleet_unseen_cache", None)
-        if cache is not None and cache[0] == revision:
-            return cache[1]
-        ids = fleet_unseen_conversation_ids(app)
-        self._console_fleet_unseen_cache = (revision, ids)
-        return ids
-
-    def _console_run_marker_with_unseen(
-        self,
-        controller: Any,
-        session: ConsoleChatSession,
-        unseen_ids: frozenset[str],
-    ) -> ConsoleRunMarker:
-        """A session's fleet marker, backed by the durable unseen mark.
-
-        PR3a-2 Task 4: ``run_marker_for``'s derivation is untouched -- any
-        live or unvisited TURN state it reports outranks this -- but a
-        session whose conversation carries the ``fleet_unseen`` mark and
-        would otherwise show nothing gets ``SUBAGENT_UNSEEN``. Derived in
-        the screen layer because the mark lives in an app-level service the
-        controller deliberately has no handle on.
-        """
-        marker = controller.run_marker_for(session.id)
-        if marker is ConsoleRunMarker.NONE and (
-            (session.persisted_conversation_id or session.id) in unseen_ids
-        ):
-            return ConsoleRunMarker.SUBAGENT_UNSEEN
-        return marker
 
     async def _sync_console_native_session_tabs(self) -> None:
         """Refresh native Console session tabs from store state."""
@@ -15362,29 +12783,24 @@ class ChatScreen(BaseAppScreen):
         # so the mark (and with it every surface it drives) is cleared
         # through the named seam. Guarded by the cached set first, so the
         # common no-mark tick costs no DB access.
-        unseen_ids = self._console_fleet_unseen_ids()
+        unseen_ids = self._fleet._console_fleet_unseen_ids()
         if unseen_ids and store.active_session_id:
             active = next(
                 (s for s in sessions if s.id == store.active_session_id), None
             )
             if active is not None:
                 active_conversation_id = active.persisted_conversation_id or active.id
-                # task-15864 AC#3: the view-clear YIELDS while the wake
-                # coordinator still owes this conversation. The mark is
-                # both the unseen INDICATOR (viewing satisfies that) and
-                # the restart STAGING bit the marks-indexed mount-claim
-                # depends on -- clearing it mid-deferral (a draft holding
-                # a due wake, or the kill switch OFF) left an owed,
-                # unmarked run across restart that `seed_from_marks`
-                # could never seed. Delivery's own commit clears through
-                # the same named seam once nothing undelivered remains.
+                # Viewing a pause clears attention, not saved work or authority.
+                # Pending deliverable results retain attention until delivered.
                 wake = (
                     getattr(controller, "fleet_wake", None)
                     if controller is not None
                     else None
                 )
                 has_pending = getattr(wake, "has_pending", None)
-                wake_owed = callable(has_pending) and bool(
+                pause_reason = getattr(wake, "pause_reason", None)
+                paused = callable(pause_reason) and pause_reason(active_conversation_id)
+                wake_owed = not paused and callable(has_pending) and bool(
                     has_pending(active_conversation_id)
                 )
                 # task-15971: viewing means DISPLAYED. This screen can be
@@ -15401,7 +12817,7 @@ class ChatScreen(BaseAppScreen):
                         self.app_instance, active_conversation_id
                     )
                 ):
-                    unseen_ids = self._console_fleet_unseen_ids()
+                    unseen_ids = self._fleet._console_fleet_unseen_ids()
         # Parallel-agents spec PA-T8: per-session fleet marker (RUNNING /
         # NEEDS_APPROVAL / FINISHED_OK / FINISHED_FAILED), superseding the
         # legacy single-session `streaming_session_id` cursor above for tabs
@@ -15412,7 +12828,7 @@ class ChatScreen(BaseAppScreen):
         # the lowest-precedence marker (`_console_run_marker_with_unseen`).
         run_markers = (
             {
-                session.id: self._console_run_marker_with_unseen(
+                session.id: self._fleet._console_run_marker_with_unseen(
                     controller, session, unseen_ids
                 )
                 for session in sessions
@@ -15487,9 +12903,9 @@ class ChatScreen(BaseAppScreen):
             # self-stop -- the wake turn would then stream with no poll and
             # freeze exactly as before the delivery hook existed.
             wake = getattr(controller, "fleet_wake", None)
-            delivering_read = getattr(wake, "delivering_conversation_id", None)
+            delivering_read = getattr(wake, "delivering_conversation_ids", None)
             wake_delivering = (
-                callable(delivering_read) and delivering_read() is not None
+                callable(delivering_read) and bool(delivering_read())
             )
             if (
                 controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
@@ -15509,7 +12925,7 @@ class ChatScreen(BaseAppScreen):
                 # badge. Hand off to the 1s survivor tick, which runs only
                 # while a drain is still owed and stops itself after one
                 # final paint.
-                self._maybe_start_console_fleet_survivor_tick()
+                self._fleet._maybe_start_console_fleet_survivor_tick()
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
         self._record_ui_timer_created("console-transcript-sync")
@@ -15525,73 +12941,6 @@ class ChatScreen(BaseAppScreen):
 
     # -- PR3a-2 Task 4 (task-15664): the survivor tick ---------------------
 
-    def _console_fleet_survivors_live(self) -> bool:
-        """Whether any live session's fleet still owes a drain."""
-        controller = self._console_chat_controller
-        checker = (
-            getattr(controller, "fleet_has_unsettled_children", None)
-            if controller is not None
-            else None
-        )
-        try:
-            return bool(checker()) if callable(checker) else False
-        except Exception as exc:  # noqa: BLE001 -- a timer predicate must never raise
-            logger.debug(
-                "fleet survivor check failed (exception_type={})",
-                type(exc).__name__,
-            )
-            return False
-
-    def _maybe_start_console_fleet_survivor_tick(self) -> None:
-        """Arm the 1s survivor tick when survivors are live and it is not.
-
-        Called from the transcript poll's self-stop edge (the state
-        task-15664 describes: only survivors run, nothing else repaints)
-        and, as a mount hedge, shortly after ``on_mount``. Idempotent; a
-        no-op with no live survivors, so an idle Console never gains a
-        timer (15664 AC#2).
-        """
-        if self._console_fleet_survivor_timer is not None:
-            return
-        if not self._console_fleet_survivors_live():
-            return
-        self._console_fleet_survivor_timer = self.set_interval(
-            1.0, self._console_fleet_survivor_tick
-        )
-        self._record_ui_timer_created("console-fleet-survivor-tick")
-
-    def _stop_console_fleet_survivor_tick(self) -> None:
-        if self._console_fleet_survivor_timer is None:
-            return
-        try:
-            self._console_fleet_survivor_timer.stop()
-        finally:
-            self._record_ui_timer_stopped("console-fleet-survivor-tick")
-            self._console_fleet_survivor_timer = None
-
-    async def _console_fleet_survivor_tick(self) -> None:
-        """One survivor-tick beat: repaint, or stop when nothing is live.
-
-        While the 0.2s transcript poll is running it already repaints
-        everything this would (at 5x the cadence), so the beat is skipped
-        rather than doubled. When the last child has settled, the tick
-        stops itself FIRST and then paints once more -- that final pass is
-        what flips the rail rows to their terminal glyphs and surfaces the
-        unseen badge without any user interaction; it is a settle paint,
-        not a recurring repaint of an idle rail (15664 AC#2).
-        """
-        if self._console_transcript_sync_timer is not None:
-            return
-        controller = self._console_chat_controller
-        if controller is None:
-            self._stop_console_fleet_survivor_tick()
-            return
-        if not self._console_fleet_survivors_live():
-            self._stop_console_fleet_survivor_tick()
-            await self._sync_native_console_chat_ui()
-            return
-        await self._sync_native_console_chat_ui()
-
     async def _submit_console_native_draft(
         self, draft: str, session_id: str | None = None
     ) -> None:
@@ -15606,6 +12955,12 @@ class ChatScreen(BaseAppScreen):
         if session_id is None:
             session_id = controller.store.active_session_id or ""
         dispatch_composer = self._console_composer_or_none()
+        dispatch_snapshot = (
+            dispatch_composer.capture_draft_snapshot()
+            if dispatch_composer is not None
+            and self._console_visible_draft_session_id == session_id
+            else None
+        )
         dispatch_draft_revision = (
             (
                 dispatch_composer.edit_serial,
@@ -15683,12 +13038,24 @@ class ChatScreen(BaseAppScreen):
             composer is not None
             and self._console_visible_draft_session_id == session_id
         )
-        stash = self._console_inflight_send_stashes.pop(session_id, None)
+        stash = (
+            self._console_inflight_send_stashes.pop(session_id, None) or inflight_stash
+        )
         if not result.accepted and stash is not None and composer_reflects_session:
             # Controller-level refusal of a keyboard send: the composer was
             # cleared at the keypress, so hand the draft back (ahead of any
             # keystrokes typed since).
             composer.restore_stashed_draft(stash)
+        elif (
+            not result.accepted
+            and composer_visible_for_session
+            and dispatch_snapshot is not None
+            and composer.edit_serial == dispatch_snapshot.edit_serial
+            and not composer.draft_text()
+        ):
+            # Setup may refuse after the accepted hook cleared the draft.
+            # Restore its exact segments only if no newer user edit owns it.
+            composer.restore_snapshot(dispatch_snapshot)
         if result.session_closed:
             # Task 4 (D2 fix wave): `_session_closed_result` is `accepted`
             # (see its own docstring) so the restore above never fires, and
@@ -17923,7 +15290,7 @@ class ChatScreen(BaseAppScreen):
             # task-15862 AC#3: mid-wake, the queue tooltip above rode the
             # setup slot and painted as "finish provider setup"; the flag
             # makes the composer name the wake instead.
-            wake_turn_active=self._console_wake_turn_active(active_session_id),
+            wake_turn_active=self._fleet._console_wake_turn_active(active_session_id),
         )
         composer.sync_dictation_state(self._console_dictation_state)
         # sync_action_state resets the attach button's tooltip to generic copy
@@ -19373,7 +16740,7 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
         # PR3a-2 Task 4: mirrors the on_mount claim -- a completion staged
         # while the user was on another screen is claimed on resume too.
-        self.set_timer(0.15, self.consume_pending_console_fleet_completion)
+        self.set_timer(0.15, self._fleet.consume_pending_console_fleet_completion)
         self.call_after_refresh(self._restore_console_workbench_focus)
         repair_dispatched = self._consume_pending_console_roleplay_repair()
         if (
@@ -19783,6 +17150,19 @@ class ChatScreen(BaseAppScreen):
                 conversation_title=str(
                     getattr(event.button, "conversation_title", "") or ""
                 ),
+            )
+            return
+        if button_id and button_id.startswith("console-conversation-appearance-"):
+            # task-31207: the row's leftmost icon control opens the
+            # appearance picker (icon + color), star-handler pattern.
+            event.stop()
+            self._workspace._open_console_conversation_appearance_picker(
+                str(getattr(event.button, "conversation_id", "") or "").strip(),
+                conversation_title=str(
+                    getattr(event.button, "conversation_title", "") or ""
+                ),
+                icon=str(getattr(event.button, "icon", "") or ""),
+                color=str(getattr(event.button, "color", "") or ""),
             )
             return
         # NOTE: the `console-workspace-conversations-toggle` branch that stood

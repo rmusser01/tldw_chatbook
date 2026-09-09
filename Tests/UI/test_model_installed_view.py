@@ -345,8 +345,16 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
         for _ in range(6):
             await pilot.pause()
 
-        screen.query_one(LLMManagementWindow)
-        view = screen.query_one(InstalledView)
+        window = screen.query_one(LLMManagementWindow)
+        assert lifecycle_threads == []
+
+        window.active_view = "installed"
+        for _ in range(12):
+            await pilot.pause()
+            installed_views = list(screen.query(InstalledView))
+            if installed_views:
+                break
+        view = installed_views[0]
         assert [name for name, _thread in lifecycle_threads] == [
             "construct",
             "listener",
@@ -364,7 +372,9 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
             ensure_after_mount,
         )
 
-        view._service_factory = _Core
+        # First activation also starts the inventory load, so replace the
+        # already-created worker service used by this focused lifecycle test.
+        view._service = _Core()
         view._legacy_dir = tmp_path
         view._apply_lifecycle_result = MagicMock()
         await view._activate_model(root).wait()

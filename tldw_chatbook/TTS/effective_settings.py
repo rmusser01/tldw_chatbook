@@ -129,6 +129,50 @@ class TTSEffectiveResolutionError(ValueError):
         location = "provider" if source is None else source.value
         super().__init__(f"TTS {axis} {code.replace('_', ' ')} ({location})")
 
+    def recovery_message(self) -> str:
+        """Return actionable UI copy using only bounded resolution metadata."""
+        location = {
+            TTSSelectionSource.EXPLICIT: "the current speech request",
+            TTSSelectionSource.CHARACTER_PROFILE: "the character voice profile",
+            TTSSelectionSource.DEFAULT_PROFILE: "the default voice profile",
+            TTSSelectionSource.STUDIO_DRAFT: "the Speech Lab controls",
+            TTSSelectionSource.STUDIO_SAVED: "Studio preferences in Speech Lab",
+        }.get(self.source, "Settings > Speech & TTS")
+        if self.code == "catalog_unavailable":
+            return (
+                "TTS model or voice information is unavailable; "
+                "refresh the provider in Speech Lab and try again."
+            )
+        if self.code == "revision_incoherent":
+            if self.axis == "studio_preferences":
+                return (
+                    "Studio preferences could not be loaded consistently; "
+                    "reopen Speech Lab and try again."
+                )
+            return (
+                "TTS settings could not be loaded consistently; "
+                f"check {location} and try again."
+            )
+        setting = {
+            "provider_id": "provider",
+            "model_mode": "model selection",
+            "model_id": "model",
+            "voice_mode": "voice selection",
+            "voice_id": "voice",
+            "response_format": "audio format",
+            "speed": "speech speed",
+            "provider_options": "provider options",
+            "clone_audition": "voice clone audition",
+            "profile_reference": "voice profile reference",
+        }.get(self.axis, "settings")
+        problem = {
+            "invalid_selection": "invalid",
+            "unsupported_selection": "unsupported by this provider",
+            "missing_exact": "missing or no longer available",
+            "provider_unknown": "unavailable",
+        }.get(self.code, "unavailable")
+        return f"TTS {setting}: {problem}; check {location}."
+
 
 def _freeze_value(value: Any) -> Any:
     if isinstance(value, Mapping):

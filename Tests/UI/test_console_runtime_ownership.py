@@ -371,8 +371,9 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
         assert control not in app.screen_stack, "Console must actually unmount"
         # Harness precondition ONLY: stand in for `_attempt` having marked
         # a delivery in flight. Everything after this line is production.
-        wake._delivering = session_id
-        wake._delivering_session = session_id
+        from tldw_chatbook.Chat.console_fleet_wake import _WakeDelivery
+
+        wake._active[session_id] = _WakeDelivery(session_id)
         try:
             await app.handle_screen_navigation(NavigateToScreen("chat"))
             await pilot.pause()
@@ -386,8 +387,7 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
                 "poll armed -- this is the live 4+ minute freeze"
             )
         finally:
-            wake._delivering = None
-            wake._delivering_session = None
+            wake._active.pop(session_id, None)
 
 
 @pytest.mark.unit

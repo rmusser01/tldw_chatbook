@@ -1,0 +1,141 @@
+"""One-off capped development probe; does not alter the frozen comparison."""
+import asyncio
+from datetime import UTC, datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+sys.path.insert(0, str(Path.cwd()))
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway, ConsoleProviderResolution
+from tldw_chatbook.Evals.source_reader import experiment as ex
+from tldw_chatbook.Evals.source_reader.deepseek_pricing import peak_catalog
+from tldw_chatbook.Evals.source_reader.deepseek_transport import complete_deepseek
+from tldw_chatbook.Evals.source_reader.reader import READER_INSTRUCTION, ReaderSession, build_reader_request, request_input_bound, validate_findings
+from tldw_chatbook.Evals.source_reader.sources import pack_sources
+
+ROOT = Path('/private/tmp/library-source-reader-qualification-20260908-01')
+OUTPUT = ROOT / 'deepseek-negative-evidence-probe1'
+BASE = ROOT / 'deepseek-development-run1'
+CASES = ('dev-03', 'dev-04')
+
+async def main():
+    if OUTPUT.exists():
+        raise SystemExit('Existing probe output; refusing duplicate dispatch')
+    prior = json.loads((BASE / 'attempts.json').read_text())
+    config = json.loads((BASE / 'run_manifest.json').read_text())
+    manifest = ex._manifest(ROOT / 'prepared')
+    prior_calls = [call for row in prior for call in row['calls']]
+    if len(prior_calls) != 20 or not all(call['cost_usd'] is not None for call in prior_calls):
+        raise ValueError('prior_usage_not_qualified')
+    prior_cost = sum(call['cost_usd'] for call in prior_calls)
+    if not 0 <= prior_cost < 1.0:
+        raise ValueError('prior_spend_not_qualified')
+    max_calls = 4
+    limits = config['limits']
+    catalog = peak_catalog()
+    reserve = max_calls * (limits['input_limit'] + limits['output_limit']) * 3.96 / 1_000_000
+    if len(prior_calls) + max_calls > 24 or not prior_cost + reserve <= 1.0:
+        raise ValueError('cumulative_budget_exceeded')
+    credential = os.environ['LIBRARY_READER_DEEPSEEK_KEY']
+    resolutions = [ConsoleProviderResolution(**row, api_key=credential, api_key_source='operator_environment') for row in config['resolutions']]
+    main_resolution, worker_resolution = resolutions
+    database, library = ex._library(ROOT / 'prepared/library.sqlite')
+    gateway = ConsoleProviderGateway(config_provider=dict, environ={}, chat_api_call_fn=complete_deepseek)
+    session = ReaderSession(gateway)
+    attempts, requests = [], []
+    stop = False
+    owned_output = False
+    try:
+        cases = {row['case_id']:row for row in manifest['cases']}
+        packets_by_case = {}
+        for case_id in CASES:
+            if cases[case_id]['split'] != 'development':
+                raise ValueError('development_only')
+            sources = ex._fixture_sources(library, manifest, cases[case_id])
+            packets = pack_sources(sources)
+            build_reader_request(worker_resolution, cases[case_id]['question'], packets, **limits)
+            packets_by_case[case_id] = packets
+        OUTPUT.mkdir(exist_ok=False)
+        owned_output = True
+        ex._write(OUTPUT / 'probe_manifest.json', {
+            'purpose':'focused_development_probe; not a full or paired comparison',
+            'case_ids':CASES, 'prior_request_count':len(prior_calls), 'request_cap':max_calls,
+            'cumulative_request_cap':24, 'prior_known_cost_usd':prior_cost,
+            'cumulative_spend_cap_usd':1.0, 'reserved_probe_spend_usd':reserve,
+            'manifest_sha256':manifest['manifest_sha256'],
+            'base_run_manifest_sha256':hashlib.sha256((BASE/'run_manifest.json').read_bytes()).hexdigest(),
+            'prompt_sha256':{'reader':ex._digest(READER_INSTRUCTION),'answer':ex._digest(ex.ANSWER_INSTRUCTION)},
+            'resolutions':config['resolutions'], 'thinking_mode':'disabled',
+            'limits':limits, 'retry_policy':'none', 'fallback_policy':'none',
+            'request_artifact_boundary':config['request_artifact_boundary'],
+            'regression_check_sha256':hashlib.sha256((ROOT/'check_negative_evidence.py').read_bytes()).hexdigest(),
+        })
+        for case_id in CASES:
+            row = {'case_id':case_id,'repeat':1,'arm':'reader','split':'development',
+                   'scenario':'focused_development_probe','status':'stopped' if stop else 'pending',
+                   'cost_usd':None,'calls':[]}
+            attempts.append(row)
+            started = time.monotonic()
+            if stop:
+                continue
+            evidence = None
+            for leg in ('worker','main'):
+                request = (build_reader_request(worker_resolution, cases[case_id]['question'], packets_by_case[case_id], **limits)
+                           if leg=='worker' else ex._answer_request(main_resolution, cases[case_id]['question'], evidence, **limits))
+                if len(requests) >= max_calls or len(prior_calls) + len(requests) >= 24:
+                    raise ValueError('cumulative_request_cap_exceeded')
+                requests.append({'case_id':case_id,'leg':leg,'model':request.resolution.model,
+                                 'messages':[dict(item) for item in request.messages],
+                                 'max_output_tokens':request.max_output_tokens,'input_token_bound':request_input_bound(request)})
+                ex._write(OUTPUT/'requests.json', requests)
+                call = {'leg':leg,'model':request.resolution.model,'status':'pending',
+                        'usage':None,'cost_usd':None,'started_at':datetime.now(UTC).isoformat()}
+                row['calls'].append(call)
+                ex._write(OUTPUT/'attempts.json', attempts)
+                outcome = await session.complete(request)
+                completion = outcome['completion']
+                call.update(ex._observed_usage(completion.usage if completion else None, catalog, 'deepseek', datetime.fromisoformat(call['started_at']), datetime.now(UTC)), status=outcome['status'])
+                if outcome['status'] != 'ok' or (call['cost_usd'] is None and call.get('cost_upper_bound_usd') is None):
+                    row['status'] = outcome['status'] if outcome['status']!='ok' else 'unknown_usage'
+                    stop = True
+                    break
+                usage = completion.usage
+                if (usage.provider!='deepseek' or usage.model!=request.resolution.model
+                    or usage.output>request.max_output_tokens
+                    or usage.uncached_input+usage.cache_read+usage.cache_write>request_input_bound(request)):
+                    row['status'], stop = 'usage_protocol_deviation', True
+                    break
+                call['response'] = completion.text
+                if leg == 'worker':
+                    evidence = validate_findings(completion.text, packets_by_case[case_id])
+                    row['validated_evidence'] = evidence
+                    if evidence['status'] not in ('ok','partial') or not evidence.get('accepted'):
+                        row['status'] = evidence['status']
+                        break
+                else:
+                    row['answer'] = completion.text
+                    row['status'] = 'ok' if completion.text.strip() else 'empty_answer'
+            row['latency_seconds'] = time.monotonic()-started
+            ex._write(OUTPUT/'attempts.json', attempts)
+    finally:
+        late = await session.drain()
+        if late is not None:
+            call = next(row for row in reversed(attempts) if row['calls'])['calls'][-1]
+            call.update(ex._observed_usage(late.get('usage'),catalog,'deepseek',datetime.fromisoformat(call['started_at']),datetime.now(UTC)),late_status=late['status'])
+        if owned_output:
+            for row in attempts:
+                row['known_cost_usd'] = sum(call.get('cost_usd') or call.get('known_cost_usd') or 0 for call in row['calls'])
+                if row['calls'] and all(call['cost_usd'] is not None for call in row['calls']):
+                    row['cost_usd'] = sum(call['cost_usd'] for call in row['calls'])
+            ex._write(OUTPUT/'attempts.json', attempts)
+        await gateway.aclose()
+        database.close()
+    print(json.dumps({'probe_requests':len(requests),'cumulative_requests':len(prior_calls)+len(requests),
+                      'probe_known_cost_usd':sum(row['known_cost_usd'] for row in attempts),
+                      'cumulative_known_cost_usd':prior_cost+sum(row['known_cost_usd'] for row in attempts),
+                      'statuses':{row['case_id']:row['status'] for row in attempts}}))
+
+asyncio.run(main())

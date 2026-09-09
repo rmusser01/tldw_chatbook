@@ -61,6 +61,70 @@ _QUEUED = "#console-agent-steering-queued"
 _NOTE = "#console-agent-steering-note"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retain", [True, False])
+async def test_terminal_unread_steering_paints_recovery_state(retain):
+    coordinator, handle_id = _fleet_with_live_child()
+    coordinator.set_retention_caps(5 if retain else 0, 200000)
+    assert coordinator.post_steering(handle_id, "user", "late correction")
+    coordinator.finish(
+        handle_id, "done", transcript=[{"role": "user", "content": "go"}]
+    )
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _setup_console(pilot, host, _SteeringFleetBridge(coordinator))
+        console.query_one("#console-agent-section-subagents").set_open(True)
+        await pilot.pause()
+        await _scroll_into_view(
+            pilot, console, f"#console-inspector-section-{_SECTION_ID}-row-0"
+        )
+        secondary = console.query_one(
+            f"#console-inspector-section-{_SECTION_ID}-row-0-secondary", Static
+        )
+        _assert_painted_at_own_region(host, secondary)
+        painted = " ".join(
+            " ".join(
+                strip.crop(secondary.region.x, secondary.region.right).text
+                for strip in host.screen._compositor.render_strips()[
+                    secondary.region.y : secondary.region.bottom
+                ]
+            ).split()
+        )
+        assert "steering unread (1)" in painted
+        expected = "ask supervisor to resume" if retain else "cannot resume"
+        assert expected in painted
+
+
+@pytest.mark.asyncio
+async def test_full_queue_refusal_keeps_draft_and_explains_the_failure():
+    coordinator, handle_id = _fleet_with_live_child()
+    for i in range(32):
+        assert coordinator.post_steering(handle_id, "user", str(i))
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _setup_console(pilot, host, _SteeringFleetBridge(coordinator))
+        await _drill_in(pilot, console, "run-1")
+        await _scroll_into_view(pilot, console, _BAR)
+        field = console.query_one(_INPUT, Input)
+        field.value = "keep this draft"
+        field.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert field.value == "keep this draft"
+        note = console.query_one(_NOTE, Static)
+        _assert_painted_at_own_region(host, note)
+        painted = " ".join(
+            " ".join(
+                strip.crop(note.region.x, note.region.right).text
+                for strip in host.screen._compositor.render_strips()[
+                    note.region.y : note.region.bottom
+                ]
+            ).split()
+        )
+        assert "queue is full" in painted
+        assert "Your draft was kept." in painted
+
+
 class _SteeringFleetBridge:
     """Fake bridge exposing the fleet surface the Agent rail reads, whose
     steering path IS the real ``ConsoleAgentBridge.steer_subagent``."""

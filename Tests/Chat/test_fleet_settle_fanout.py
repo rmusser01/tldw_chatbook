@@ -152,10 +152,10 @@ def test_drain_row_is_terminal_at_fire_time_on_the_raise_path_too(
     after `run_child`'s finally `set_status` fallback."""
     original_persist = AgentService._persist
 
-    def raising_persist(self, run_id, outcome):
+    def raising_persist(self, run_id, outcome, **kwargs):
         if threading.current_thread().name.startswith("fleet-"):
             raise RuntimeError("induced: _run_one unwinds past _persist")
-        return original_persist(self, run_id, outcome)
+        return original_persist(self, run_id, outcome, **kwargs)
 
     monkeypatch.setattr(AgentService, "_persist", raising_persist)
 

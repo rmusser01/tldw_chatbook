@@ -87,6 +87,22 @@ run is not clearance for that form. If the guard fails, fix the default — neve
 
 ---
 
+## Removing menu borders cannot make too many actions fit
+
+**TASK-32033, Copy selection.** Adding the eighth action to the Console
+selection menu made its seven-row transcript fixture fail containment:
+removing the border and hint still left eight action rows, and clamping the
+offset put the last action over the composer. The menu now caps its height
+to the owner and scrolls after the existing compacting pass. The regression
+checks normal and ANSI modes, including keyboard wrap from the first action
+to the last and back, with both focused labels visible inside the owner.
+
+**What to do.** When adding an action to a floating menu, exercise an owner
+shorter than the action count. Compact styling needs a scrolling fallback
+when the actions alone exceed the available rows.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget

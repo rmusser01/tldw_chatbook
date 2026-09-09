@@ -1347,14 +1347,19 @@ class ConsoleMarkdownMessage(Vertical):
         """Return the markdown source this row renders (selection domain)."""
         return self._body_text
 
-    def get_selection_text(self) -> str:
-        """Return the selected whole source lines, capped for quoting."""
+    def get_selection_text(self, *, capped: bool = True) -> str:
+        """Return selected source text.
+
+        Args:
+            capped: Apply the quote limit; False preserves the full clipboard text.
+        """
         if self._selection_line_range is None:
             return ""
         start, end = self._selection_line_range
         text = self.get_display_text()
         start, end = max(0, start), min(end, len(text))
-        return cap_quote(text[start:end])
+        selected = text[start:end]
+        return cap_quote(selected) if capped else selected
 
     def set_selection_range(self, start: int, end: int) -> None:
         """Highlight the character range ``[start, end)`` of the source.
@@ -1669,14 +1674,19 @@ class ConsoleTranscriptMessage(Vertical):
         """Return the plain body text this row renders (selection domain)."""
         return _message_body_render_text(self._message, self._presentation).plain
 
-    def get_selection_text(self) -> str:
-        """Return the currently highlighted text, capped for quoting."""
+    def get_selection_text(self, *, capped: bool = True) -> str:
+        """Return the currently highlighted text.
+
+        Args:
+            capped: Apply the quote limit; False preserves the full clipboard text.
+        """
         if self._selection_range is None:
             return ""
         start, end = sorted(self._selection_range)
         text = self.get_display_text()
         start, end = max(0, start), min(end, len(text))
-        return cap_quote(text[start:end])
+        selected = text[start:end]
+        return cap_quote(selected) if capped else selected
 
     def set_selection_range(self, start: int, end: int) -> None:
         """Highlight ``[start, end)`` in the body and re-render it."""
@@ -1887,14 +1897,19 @@ class ConsoleToolDiffRow(Vertical):
             self._display_text = _tool_diff_display_text(self._diff)
         return self._display_text
 
-    def get_selection_text(self) -> str:
-        """Return the selected whole diff lines, capped for quoting."""
+    def get_selection_text(self, *, capped: bool = True) -> str:
+        """Return the selected whole diff lines.
+
+        Args:
+            capped: Apply the quote limit; False preserves the full clipboard text.
+        """
         if self._selection_range is None:
             return ""
         start, end = self._selection_range
         text = self.get_display_text()
         start, end = max(0, start), min(end, len(text))
-        return cap_quote(text[start:end])
+        selected = text[start:end]
+        return cap_quote(selected) if capped else selected
 
     def set_selection_range(self, start: int, end: int) -> None:
         """Highlight ``[start, end)`` of the projection, snapped to whole lines.
@@ -4945,6 +4960,20 @@ class ConsoleTranscript(VerticalScroll):
         degenerate boxes thinner than the margin.
         """
         return max(low, min(value, max(low, high - margin)))
+
+    @on(ConsoleSelectionMenu.CopySelection)
+    def _selection_copy(self, event: ConsoleSelectionMenu.CopySelection) -> None:
+        """Copy the full highlighted span and dismiss the selection UI."""
+        event.stop()
+        row = self._active_selection_row()
+        if row is not None:
+            text = row.get_selection_text(capped=False)
+            if text:
+                self.app.copy_to_clipboard(text)
+                self.notify("Selection sent to clipboard.")
+        self._remove_selection_menu()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
 
     @on(ConsoleSelectionMenu.AddToChat)
     def _selection_add_to_chat(self, event: ConsoleSelectionMenu.AddToChat) -> None:

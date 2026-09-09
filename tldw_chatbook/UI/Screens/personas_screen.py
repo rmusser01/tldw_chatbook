@@ -154,6 +154,7 @@ from ...Widgets.Persona_Widgets.personas_persona_visual_pack_widget import (
     PersonaVisualPreviewRequested,
     PersonaVisualReplaceRequested,
     PersonaVisualSaveRequested,
+    PersonaVisualUseForBuddyRequested,
     PersonasPersonaVisualPackWidget,
 )
 from ...Widgets.Persona_Widgets.personas_character_card_widget import (
@@ -6268,6 +6269,30 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_validation_editing()
         self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_editor_name)
+
+    @on(PersonaVisualUseForBuddyRequested)
+    async def _use_visual_persona_for_buddy(
+        self, message: PersonaVisualUseForBuddyRequested
+    ) -> None:
+        """Pin only an explicitly chosen, saved local Persona to the Buddy."""
+        message.stop()
+        snapshot = self._persona_visual_snapshot()
+        state = self._persona_visual_authoring
+        if snapshot is None or state is None or state.dirty:
+            self._notify("Save a local Persona and its visual pack first.", "warning")
+            return
+        select = getattr(self.app_instance, "use_persona_for_buddy", None)
+        if select is None:
+            self._notify("Buddy is unavailable in this app session.", "warning")
+            return
+        if not self._persona_visual_snapshot_is_current(snapshot):
+            return
+        selected = await select(snapshot.persona_id, source="local")
+        if self._persona_visual_snapshot_is_current(snapshot):
+            if selected:
+                self._notify("Buddy enabled. Focus its window for move and resize controls.", "information")
+            else:
+                self._notify("Buddy unavailable. Enable this local Persona and save its pack.", "warning")
 
     def _persona_visual_snapshot(
         self, editor: PersonaProfileEditorWidget | None = None

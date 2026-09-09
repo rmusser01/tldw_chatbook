@@ -205,6 +205,8 @@ def _browser_row(
     updated_sort: str = "",
     run_marker: str = "",
     queued_count: int = 0,
+    icon: str = "",
+    color: str = "",
 ) -> ConsoleConversationBrowserInputRow:
     return ConsoleConversationBrowserInputRow(
         row_key=row_key,
@@ -224,6 +226,8 @@ def _browser_row(
         updated_sort=updated_sort,
         run_marker=run_marker,
         queued_count=queued_count,
+        icon=icon,
+        color=color,
     )
 
 
@@ -3525,3 +3529,250 @@ def test_conversation_search_input_is_tall_enough_to_show_its_value() -> None:
     assert heights[0] == "3", (
         f"search input height {heights[0]!r} leaves no content row for its value"
     )
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_uses_mounted_rail_height_after_resize() -> None:
+    """The real wiring must supply usable geometry, including before first paint."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        await pilot.pause()
+        rail = console.query_one("#console-left-rail-body")
+        first_height = rail.size.height
+        assert first_height > 0
+        assert console._workspace._console_rail_body_height == first_height
+        await pilot.resize_terminal(160, 60)
+        await pilot.pause()
+        assert rail.size.height > first_height
+        assert console._workspace._console_rail_body_height == rail.size.height
+
+
+@pytest.mark.asyncio
+async def test_conversation_row_renders_colored_icon_left_of_the_name():
+    """task-31207: the icon control is the row's leftmost element and shows
+    the colored custom icon; unset rows show the dim placeholder."""
+    decorated = _browser_row("conv-icon", "Lab chat", icon="🧪", color="#f87171")
+    plain = _browser_row("conv-plain", "Plain chat")
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        # The context rail starts collapsed under the fresh test config;
+        # open it so the row geometry is actually laid out.
+        console._set_console_rail_preference(left_open=True)
+        await pilot.pause()
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(decorated, plain))
+        )
+        await pilot.pause()
+
+        controls = list(console.query(".console-conversation-appearance"))
+        assert len(controls) == 2
+        by_conversation = {
+            str(getattr(control, "conversation_id", "") or ""): control
+            for control in controls
+        }
+        decorated_control = by_conversation["conv-icon"]
+        plain_control = by_conversation["conv-plain"]
+
+        # Set icon renders colored via Rich markup (Text label carries the
+        # style span); unset renders the placeholder glyph dim.
+        decorated_label = decorated_control.label
+        assert "🧪" in str(decorated_label)
+        # The Button's internal conversion produces a textual Style whose
+        # str() renders as "rgb(248,113,113)"; a plain string style would
+        # carry the literal "#f87171". Match either form.
+        def _tinted(span) -> bool:
+            rendered = str(getattr(span, "style", "") or "")
+            return rendered in {"rgb(248,113,113)", "#f87171"}
+
+        assert any(_tinted(span) for span in getattr(decorated_label, "spans", []))
+        plain_label = plain_control.label
+        assert "▢" in str(plain_label)
+
+        # The icon control is the leftmost child of its row line, left of
+        # the conversation name button, with the star still on the right.
+        row_line = decorated_control.parent
+        children = list(row_line.children)
+        assert children[0] is decorated_control
+        title_button = console.query_one(
+            "#console-workspace-conversation-0", Button
+        )
+        assert children.index(decorated_control) < children.index(title_button)
+        assert isinstance(children[-1], Button) and children[-1].has_class(
+            "console-conversation-star"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_row_appearance_control_geometry_stays_contained():
+    """task-31207 + lessons-testing-evidence: a new widget in a shared row
+    needs neighbor geometry assertions, not just display/text. The title
+    button and the star must stay fully on-screen with the icon control
+    mounted at a narrow rail width."""
+    row = _browser_row(
+        "conv-geometry",
+        "A reasonably long conversation title that used to fit exactly",
+        icon="🧪",
+        color="#22d3ee",
+    )
+    app = _build_test_app()
+    # StyledConsoleHarness loads the production CSS bundle -- a bare harness
+    # has no `.console-conversation-appearance` width rule and the control
+    # collapses, which is precisely the "geometry harness must mount the
+    # production stylesheet" lesson.
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(120, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        # The context rail starts collapsed under the fresh test config;
+        # open it so the row geometry is actually laid out.
+        console._set_console_rail_preference(left_open=True)
+        await pilot.pause()
+        tray.sync_state(_base_grouped_workspace_state(rows=(row,)))
+        await pilot.pause()
+
+        screen_width = console.size.width
+        icon_region = console.query_one(
+            "#console-conversation-appearance-0", Button
+        ).region
+        title_region = console.query_one(
+            "#console-workspace-conversation-0", Button
+        ).region
+        star_region = console.query_one(
+            "#console-conversation-star-0", Button
+        ).region
+        for name, region in (
+            ("icon", icon_region),
+            ("title", title_region),
+            ("star", star_region),
+        ):
+            assert region.width > 0, f"{name} collapsed to zero width"
+            assert (
+                region.x >= 0 and region.x + region.width <= screen_width
+            ), f"{name} escapes the screen: {region}"
+        # Left-to-right ordering with no overlap: icon, then title, then
+        # star — the icon is left of the name and steals no title cells.
+        assert icon_region.x < title_region.x
+        assert icon_region.right <= title_region.x
+        assert title_region.right <= star_region.x
+
+
+@pytest.mark.asyncio
+async def test_conversation_row_appearance_control_ascii_mode_substitutes():
+    """task-31207: ASCII-glyph mode replaces both set icons and the
+    placeholder with fixed pure-ASCII glyphs (emoji are exactly what that
+    mode exists to avoid)."""
+    from tldw_chatbook.Widgets import glyph_fallback
+
+    decorated = _browser_row("conv-ascii", "Lab chat", icon="🧪", color="#f87171")
+    plain = _browser_row("conv-ascii-plain", "Plain chat")
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    previous_mode = glyph_fallback.ascii_glyph_mode()
+    glyph_fallback.set_ascii_glyph_mode(True)
+    try:
+        async with host.run_test(size=(160, 44)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(
+                console, pilot, "#console-workspace-context"
+            )
+            tray = console.query_one(
+                "#console-workspace-context", ConsoleWorkspaceContextTray
+            )
+            tray.sync_state(
+                _base_grouped_workspace_state(rows=(decorated, plain))
+            )
+            await pilot.pause()
+
+            labels = {
+                str(getattr(control, "conversation_id", "") or ""): str(
+                    control.label
+                )
+                for control in console.query(".console-conversation-appearance")
+            }
+            assert labels["conv-ascii"].strip() == "*"
+            assert labels["conv-ascii-plain"].strip() == "+"
+    finally:
+        glyph_fallback.set_ascii_glyph_mode(previous_mode)
+
+
+@pytest.mark.asyncio
+async def test_unpersisted_native_row_disables_appearance_control():
+    """task-31207: an unsaved native session has no conversations row to
+    carry metadata, so its icon control is disabled like its star."""
+    native = _browser_row(
+        "native:session-1",
+        "Draft chat",
+        conversation_id=None,
+        native_session_id="session-1",
+        source_kind="native",
+        star_enabled=False,
+    )
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state(rows=(native,)))
+        await pilot.pause()
+
+        for control in console.query(".console-conversation-appearance"):
+            if str(getattr(control, "conversation_id", "") or "") == "":
+                assert control.disabled
+
+
+@pytest.mark.asyncio
+async def test_appearance_control_press_opens_the_picker():
+    """task-31207: pressing the icon control routes to the workspace
+    controller's picker-open with the row's identity and appearance."""
+    decorated = _browser_row("conv-route", "Routed chat", icon="🎨", color="#a78bfa")
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state(rows=(decorated,)))
+        await pilot.pause()
+
+        control = console.query_one(
+            "#console-conversation-appearance-0", Button
+        )
+        opened: list[dict[str, object]] = []
+
+        def _capture(conversation_id, **kwargs):
+            opened.append({"conversation_id": conversation_id, **kwargs})
+
+        console._workspace._open_console_conversation_appearance_picker = _capture
+        await console.on_button_pressed(Button.Pressed(control))
+        await pilot.pause()
+
+        assert opened == [
+            {
+                "conversation_id": "conv-route",
+                "conversation_title": "Routed chat",
+                "icon": "🎨",
+                "color": "#a78bfa",
+            }
+        ]

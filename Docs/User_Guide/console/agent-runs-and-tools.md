@@ -216,6 +216,14 @@ already streaming.
   model at spawn time) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
 
+For a read-only example, Settings includes an unsaved **Bulk reader** preset.
+Its four local file tools still pass through the normal workspace and approval
+rules, and its requested file list remains advisory within that workspace. The
+[bulk-reader comparison pilot](../../Examples/agents/bulk-reader/README.md)
+explains compatible same-provider model selection and the opt-in synthetic
+evaluation. It does not enable automatic routing or establish savings by
+itself.
+
 ### Change review — reviewing a turn's file changes
 
 When an agent turn edits files, the transcript shows a **turn file card**
@@ -405,12 +413,13 @@ own task concurrently. The Agent rail shows this directly: several
   that is still working when its reply finishes keeps holding its slot, so
   the next message you send can only start as many new sub-agents as there
   are free slots left (see [When a sub-agent outlives the
-  reply](#when-a-sub-agent-outlives-the-reply)). Be aware of what the cap
-  is *not*: it is per conversation **and** per running app, so two
-  conversations can each run the full cap at the same time, and nothing
-  caps the total across all of them.
-  Setting it to `1` turns the fleet off entirely: sub-agents go back to
-  running one at a time, synchronously, exactly as before. Trying to spawn
+  reply](#when-a-sub-agent-outlives-the-reply)). All conversations also
+  share `[agents] max_runtime_subagents` (default **6**) within one Console
+  runtime. Automatic wakes and their children may occupy at most four slots
+  by default; `reserved_manual_subagents` (default **2**) leaves room for
+  manual and queued user work.
+  Setting `max_live_subagents` to `1` runs children synchronously; inline
+  and skill children still require a shared runtime slot. Trying to spawn
   a sub-agent past the live cap is refused ("live sub-agent limit reached
   (N already running); call wait_agents to collect a finished sub-agent
   before starting another") rather than queued — the supervisor collects
@@ -421,37 +430,84 @@ own task concurrently. The Agent rail shows this directly: several
   falls back to the default of `3` (fleet on) — either way the run
   proceeds instead of erroring.
 
+**Child slots follow actual work.** A cancelled or finished child still holds
+its runtime slot while its worker, timed-out tool, or model cleanup is running.
+A terminal row, pruned handle, closed session, or replacement Console view does
+not release that slot. A capacity refusal creates no child row or worker and
+spends no spawn allowance; once the work and cleanup finish, a later attempt can
+use the slot. Continuing a finished child acquires a new slot. Failed starts
+release their reservations, and manual primaries do not require child slots.
+
+The runtime child settings can also be overridden using
+`TLDW_AGENTS_MAX_RUNTIME_SUBAGENTS` and `TLDW_AGENTS_RESERVED_MANUAL_SUBAGENTS`.
+They are read before admission. Lowering a limit keeps existing owners and holds
+new launches until space is available; invalid totals fall back to six and
+manual reserves are clamped between zero and the total.
+
+**Shared tool capacity.** All conversations in one Console runtime share
+`[agents] max_runtime_tool_workers` (default **8**). Automatic completion wakes
+may occupy at most six slots by default; `reserved_manual_tool_workers`
+(default **2**) leaves room for manual and queued user work. Children inherit
+the origin of the submission that launched them. These settings can be edited
+in `config.toml` or overridden with `TLDW_AGENTS_MAX_RUNTIME_TOOL_WORKERS` and
+`TLDW_AGENTS_RESERVED_MANUAL_TOOL_WORKERS`.
+
+A tool that times out or is cancelled can still be running. It keeps its slot
+until it finishes, even if its run is marked done or the Console view closes.
+That run cannot start another tool while its timed-out worker remains alive.
+Calls refused for capacity return a tool error; they do not start a worker.
+Inline calls with their timeout disabled also consume capacity. Limits are
+checked before each admission; lowering them leaves existing work running and
+holds new work until space is available. Invalid totals fall back to eight;
+manual reserves are clamped between zero and the total. Zero total is not an
+unlimited setting.
+
+These limits cover local tool execution. A runtime snapshot also retains model
+cleanup that outlasts its bounded join. A cumulative automatic-wake spending budget remains planned; these
+concurrency limits do not bound the total spend of successive wake turns.
+
 #### The fleet panel — three states
 
 The **Sub-agents** panel inside the Agent rail section has its own header
 (title + chevron), independent of the Agent section's own collapse state —
-it only appears once the reply has spawned at least one sub-agent, and it
-reaches a real terminal status (done/error/stuck/cancelled) for each child
+it offers **Run history** for the selected conversation even when the current
+reply has no children. Its rows reach a terminal status (done/error/stuck/cancelled) for each child
 **while the turn is still running**, not only after the whole reply
 finishes.
 
-1. **Collapsed** (its default state the first time it appears). Just the
-   header: "Sub-agents" plus a right-aligned summary — one status glyph per
-   child, in spawn order (e.g. `●●✓`), then "N working, M done". "Working"
+1. **Collapsed** (its default state the first time it appears). The
+   header shows "Sub-agents" plus a summary — "N working, M done",
+   with individual status glyphs when there are four or fewer children
+   (e.g. `●●✓`). "Working"
    means still running; done/error/stuck/cancelled all count toward "done"
-   here.
-2. **Expanded** — click the chevron: one two-line row per child.
-   - Primary line: status glyph, the child's name/task, and — for a child
-     still live in the current process — an elapsed segment (`· 12s`,
-     `· 1m 4s`). A historical/resumed row (a conversation reopened after a
-     restart, or one this process never ran live) shows no elapsed segment;
-     see *Known gaps* below.
+   here. **View all runs** remains available while the preview is collapsed.
+2. **Expanded** — click the chevron: a preview of up to four two-line rows,
+   with **View all runs** below them. Expansion scrolls the action into view;
+   routine refreshes preserve your reading position.
+   - Primary line: status glyph, the child's name/task, and an elapsed
+     segment (`12s`, `1m 4s`). Saved terminal rows put an approximate span
+     first, such as `~1m 4s · Research sources`. This uses saved creation
+     and last-update timestamps; later bookkeeping can extend it, so it
+     is not an exact runtime. Missing or invalid timestamps and unfinished
+     historical rows omit the span. Stuck rows use the warning color;
+     cancelled rows use a muted color as well as their distinct glyphs.
    - Secondary line: the child's last step, result, or error text, dimmed,
-     with the child's measured token spend appended once it finishes — see
-     *Token spend*, below. Both are **transient**: they come from the live
-     fleet, so when the whole turn ends every row falls back to the sparser
-     historical rendering (name and task only). See *Known gaps*.
+     with the child's budget-token count appended once it finishes — see
+     *Budget tokens and billing*, below. Historical rows restore their own
+     saved result or last useful step and their saved budget count.
 3. **Drilled in** — click a specific row: the whole Agent section switches
    to that one child's own view (`Sub-agent · <status> (Back)` plus its own
-   step lines), and the Sub-agents panel itself is hidden while you're
+   step lines and saved budget count), and the Sub-agents panel itself is hidden while you're
    drilled in. **Back** returns to the overview. Each row resolves directly
    to its own run — clicking never cycles you through other sub-agent runs
    first.
+
+**View all runs** opens the selected conversation's saved sub-agent history,
+including earlier and superseded runs, in pages of 50. **Previous** and **Next**
+move between pages; **Refresh** returns to the newest page. Select a row with
+the mouse, or use the arrow/Page Up/Page Down keys and Enter, to open that
+child in the existing inspector. Escape or **Close** dismisses the picker.
+The picker is read-only; it does not restart or steer a run.
 
 **Cancel one child.** Focus a still-running row (Tab into the panel, or
 click a row then Tab) and press **Delete** — this cooperatively cancels
@@ -470,17 +526,18 @@ finished rows doesn't offer it. See
 [Stopping a run vs. stopping its sub-agents](#stopping-a-run-vs-stopping-its-sub-agents)
 for how this differs from **Stop**.
 
-**Token spend.** A live child's measured token spend (prompt and
-completion combined) appears on its row once it finishes — but only while
-some part of the turn is still live; see *Known gaps* for what happens to
-the row afterwards. The same figure is folded into the Console cost chip's
-token total — the chip's
-tooltip breaks it out separately as "Sub-agents: N tok (not priced)". It
-never becomes a dollar figure: the measurement is one combined number with
-no input/output split, so there is no honest per-model rate to price it
-at — an unpriced count was chosen over either fabricating a dollar amount
-or discounting the primary transcript's own already-priced total just
-because a fleet ran underneath it.
+**Budget tokens and billing.** A finished child's row shows its run-budget
+counter as `N budget tok`. This counter can include estimates when provider
+usage is missing and discounted cache reads; it is not necessarily the raw
+number of tokens sent. Completed counters are saved per run, survive pruning
+and app restarts, and appear in historical rows and the child's drill-in.
+Older runs without a saved counter show **Budget unavailable**, rather than
+zero. A crash before accounting is saved also leaves usage unavailable.
+
+The live fleet still supplies the cost chip's temporary "Sub-agents: N tok
+(not priced)" line. Saved budget history is kept out of that feed so the same
+usage is not added twice. These budget counters are never converted to dollars;
+the chip's billed amounts use provider usage with its input/output/cache split.
 
 When the **last child of a conversation's fleet finishes**, the whole
 turn's provider-reported usage — the reply's own calls plus everything its
@@ -489,29 +546,17 @@ assistant message's own usage row, saved with the conversation, and the
 chip's unpriced sub-agent line falls back to zero. Until that moment a
 survivor's post-turn spend shows on the chip line only.
 
-**Known gaps** (filed, not fixed):
-- Historical/resumed rows never show elapsed time. The timestamps exist in
-  the run database, but the code path that rebuilds a resumed row doesn't
-  read them yet (task-15200). The same task also covers `stuck` and
-  `cancelled` rows not getting their own status color — they still render
-  distinctly by glyph (`⚠`/`✗`), just not by color, so they're
-  distinguishable but not visually called out.
-- Row detail is transient, not durable. Elapsed time, the secondary line
-  and the token count are read from the live fleet, so they exist only for
-  a child this app process actually ran. A row for a child that has already
-  reached a terminal status is dropped from the panel when your **next**
-  message starts, and a conversation you reopen later (or after a restart)
-  falls back to the sparser historical rendering — name and task only. A
-  child that is *still working* keeps its full row across the reply and
-  across later turns; that part changed in fleet PR 3a-1 (task-15200 covers
-  restoring the elapsed time and the secondary line from the run database;
-  the token count cannot be restored that way at all — `agent_runs` has no
-  column for it — so that dimension stays live-only until the schema gains
-  one).
-- There is no "View all" tail, and expanding the panel does not scroll it
-  into view. With a dozen-plus children, or several rail sections open
-  above it, you may need to scroll the rail manually to reach the last
-  rows (task-15201).
+If an automatic completion wake is refused before acceptance, its results
+remain pending. Automatic retries wait at least one second, and another
+ready conversation can receive its completion while that retry waits.
+
+**Overview scope.** The preview follows the current fleet or the latest primary
+run's saved children. A finished child can leave that preview when your next
+message starts; use **View all runs** to inspect earlier saved runs. A child
+that is still working keeps its live row across replies. A newly reserved
+child becomes available in saved history once its run record is created.
+Saved budget counts remain available in run detail, and continued runs
+include their ancestors in the chain total.
 
 #### Steering a running sub-agent
 
@@ -554,6 +599,17 @@ What steering **never** does:
 
 One message is capped at 4,000 characters; the panel input refuses an
 oversize entry with a note and keeps your draft so you can shorten it.
+Each child's pending queue is also capped at 32 entries and 64,000 text
+characters. A full queue refuses new messages and keeps the panel draft;
+wait for the child to consume its queue before retrying.
+
+If steering arrives during the child's final model call, the child may
+finish without reading it. Its terminal row then shows `steering unread (N)`.
+When the transcript is retained, ask the supervisor to resume the child;
+the unread messages will accompany that continuation. If the row says
+`cannot resume`, send the correction with a fresh task. A disappearing
+queued indicator alone is not a delivery acknowledgement.
+
 The **primary** agent has no steering input — you steer it by talking to
 it — and inline (non-fleet) sub-agents cannot be steered at all.
 
@@ -567,14 +623,20 @@ message. This is supervisor-only: the panel watches and steers, it never
 launches — ask the supervisor in chat ("ask the researcher to also check
 X") and it resumes the child itself.
 
+The retained size limit counts both the transcript and unread steering.
+Oversized history is not retained; it is never truncated through a tool-call
+batch. Retained history is process-local and may be evicted by newer children.
+
 - **It is a new run, honestly labeled.** The old run is not restarted —
   the supervisor's confirmation names the new run's id, the panel gets a
   fresh row, and the drill-in header of the resumed run reads
   `· resumed from <old run id>`. A resume costs a spawn slot and counts
-  against the live cap, exactly like any spawn. Its token figure is the
-  new run's own — the finished original's spend stays with the original
-  row while it lasts, so a continued task's *combined* spend is never
-  shown as one number (task-18311).
+  against the live cap, exactly like any spawn. Its row's budget figure is
+  the new run's own. The drill-in also shows a **Chain** total across that
+  run and its continuation ancestors, excluding sibling forks. If any
+  ancestor's accounting is missing or unfinished, the total is labeled
+  **partial** with the number of recorded runs. Shared ancestors may appear
+  in several forks' chain totals; do not add those totals together as a bill.
 - **What can be resumed.** Retention is per-conversation and in-memory:
   the last `[agents] retained_transcripts` finished children (default
   **5**; `0` disables retention entirely) with transcripts up to
@@ -587,10 +649,19 @@ X") and it resumes the child itself.
   told the transcript "does not survive an app restart — spawn a fresh
   sub-agent instead". Cross-restart resurrection is deliberately out of
   scope.
+- **Old IDs get an accurate refusal.** The most recent 256 pruned children
+  keep only their handle ID, run ID, and terminal status in memory. This lets
+  the supervisor recognize a finished child even when its transcript is gone;
+  it does not make that child resumable. Older handle IDs can expire. Use the
+  run ID from run history for an older child, or start a fresh task.
 - A second resume of the same finished child forks from the same snapshot
   (the first resume does not consume it).
 
 #### When a sub-agent outlives the reply
+
+Each primary turn and fleet child releases its provider connections when its
+work finishes. A child's connection stays open while that child is still
+working, even if the supervisor's turn has already ended.
 
 The supervisor doesn't have to wait for every sub-agent it started. If it
 answers you without collecting one, that sub-agent **keeps working after
@@ -773,60 +844,49 @@ or consent to anything — a pending approval card is only ever resolved
 by your explicit decision. Every cap (parallel runs, per-child wall
 clock, token ceilings) applies to a wake turn unchanged.
 
-**Exactly-once, by ledger.** Every sub-agent run has a durable
-wake-delivery stamp in the run database (`agent_runs.wake_delivered_at`
-— the ledger). One wake bundles *all* of a conversation's undelivered
-completions; each delivered run is stamped only after the wake turn was
-actually accepted, and a run whose stamp is set is never announced
-again. That is why a restart after a wake has been delivered does not
-re-announce anything at the next launch, and why a sub-agent that
-finishes *during* a wake turn simply rides the next one. The `◈` mark is
-only the trigger and indicator; the ledger is what defines which
-completions are still owed.
+**Automatic follow-up has a finite allowance.** A completed survivor becomes
+eligible after a fixed 250 ms grouping window, even while a sibling continues
+working. Each wake carries results from one originating user request. A result
+arriving during delivery stays pending for a later wake.
 
-There is one narrow gap, and it is a deliberate trade rather than an
-oversight: the stamp is written *just after* the wake turn is accepted,
-so an app that is killed in the instant between those two — or a wake
-turn that is still running when you quit — leaves a completion the
-ledger still shows as owed. The next launch announces that completion
-once more. You may therefore see the same sub-agent result reported
-twice; you will never see it lost, and it cannot repeat beyond that one
-extra time, because the second delivery does stamp. (Measured on
-2026-08-17, both in a test and in a live run.)
+The default shared allowance for each request is three accepted wakes, six
+automatic child launches, 32 model calls, 500,000 budget tokens, at most 8,192
+output tokens per call, and 900 elapsed seconds. Helpers and children share
+these limits. Failed accepted turns still consume allowance; missing usage is
+kept conservatively and pauses further automatic work. Lowering a configured
+limit affects active work; raising it does not replenish an existing chain.
 
-**You always win ties.**
+These settings live under `[agents]`: `max_autowake_generations`,
+`max_autowake_child_launches`, `max_autowake_model_calls`,
+`max_autowake_budget_tokens`, `max_autowake_output_tokens`, and
+`max_autowake_wall_seconds`.
 
-- A wake defers while the Console composer holds a non-empty draft — in
-  *any* session, not just the one being woken — and fires only once the
-  draft is sent or cleared. If the app cannot tell whether you're mid-
-  thought, you win.
-- A wake also waits like anything else would: it defers while its
-  session is busy — streaming, holding a pending approval card, or
-  draining a queue — and retries when the session goes idle.
-- You cannot queue prompts *behind* a wake turn: queueing rides an
-  accepted prompt chain, and a wake starts none. While a wake turn is
-  streaming, sending behaves like any other busy moment — it waits.
+**Saved results survive a pause.** The fleet inspector explains why automatic
+follow-up paused and points to Run history or a new manual message. Viewing the
+conversation does not clear the execution pause. New user work starts a fresh
+chain; old survivors keep their original allowance.
 
-**Leaving Console no longer parks the supervisor.** A sub-agent that
-finishes while you are on Library, Watchlists, or any other screen wakes
-its supervisor there and then: the wake turn runs, its result is written
-to the conversation, and the `◈` mark stays set so you can see on return
-that something happened while you were away. Navigating back shows the
-completed turn already in the transcript.
+**Interrupted delivery is not automatically replayed.** The runtime durably
+claims each result and accepts its attempt before model or tool work. It records
+completion and delivery stamps together after the turn returns. Interrupted or
+uncertain attempts keep their claims and charges for review, including when the
+unseen badge was cleared. Review previous tools before continuing manually:
+this does not guarantee exactly-once external side effects.
 
-**A wake you were owed is delivered at the next launch, without opening
-Console.** Nothing runs while the app is closed — a completion that
-lands then is recorded durably (the `◈` mark plus the ledger) and waits.
-At the next start, once the app is up and interactive, any conversation
-that still carries a `◈` mark *and* still owes a result has its
-supervisor woken there and then: the conversation is reopened in the
-background, the turn runs, and you find it already in the transcript
-with its `◈` still lit when you open Console. Nothing else is woken —
-never a conversation without a mark, and never one whose results were
-already delivered — and the whole thing is off when `[agents]
-autowake_enabled` is off (there is no separate launch switch). If you
-have never run a background sub-agent, launch does exactly what it did
-before: one indexed check that finds nothing.
+Up to two conversations can run automatic follow-up concurrently. Admission
+leaves one configured primary slot for manual work; a primary limit of one
+therefore disables automatic admission. A draft or queued send takes priority.
+Eligible conversations take turns, and a waiting approval in one conversation
+does not consume the other automatic slot. Final fleet usage reconciliation
+still waits for every sibling to finish.
+
+**Saved work is checked at the next launch without opening Console.** Startup
+reads existing run history independently of unseen badges, audits interrupted
+attempts, and hydrates conversations with saved results. Eligible unclaimed
+results may wake their supervisor; uncertain attempts and legacy results without
+a chain stay paused for review. No agent runs while the app is closed. With
+`[agents] autowake_enabled = false`, launch does not dispatch automatic work.
+An absent or empty run history does not construct the Console runtime.
 
 If Console is your startup tab, the woken conversation opens as another
 tab beside the one you landed on; it never switches you away from the tab
@@ -867,18 +927,9 @@ terminal the fresh Console screen's first paint delivered that hide
 hide is now construction state, so it cannot land on top of a rendered
 card.
 
-**While an approval waits, other conversations' owed wakes wait behind
-it — by design.** Wake deliveries are serialized app-wide (one delivery
-at a time for the whole app), so a pending approval round in one
-conversation holds every other conversation's owed wake until you answer
-it. Nothing is lost while it waits: the other conversations' `◈` marks
-and ledger rows are already durable, and answering (or denying) the
-round releases them immediately — observed live as a stalled
-conversation delivering the instant a blocked round was denied. This is
-the deliberate trade of the app-wide serialization invariant (one
-`_delivering` per runtime; see the headless-wake close-out report). With
-the card rendering correctly the hold is always answerable, so it lasts
-exactly as long as you leave the question open.
+**While an approval waits, another conversation can proceed** if the second
+automatic slot and the manual reserve allow it. The waiting card keeps its
+original decision and authority; another wake cannot approve or deny it.
 
 One further limitation: if a woken turn arms two approval rounds for the
 same conversation, only the most recent one has a card to mount; the
@@ -1077,7 +1128,7 @@ prompt to the agent's final reply — however many tool rounds that takes.
 
 | Limit | Default | What it bounds |
 |---|---|---|
-| Token budget (per run) | 25,000,000 | Prompt + completion tokens spent by one run |
+| Token budget (per run) | 25,000,000 | Run-budget tokens, including cache weighting and estimates when usage is missing |
 | Wall-clock limit | 86,400 s (24 h) | How long one run may take end to end |
 | Per-tool-call limit | 3,600 s (1 h) | How long a *single* tool call may take |
 | Model turns | 2,000 | Tool-calling rounds per message |

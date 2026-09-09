@@ -12,16 +12,14 @@ inference in the fires report's §9; `Tests/UI/test_probe_launch_wake.py`
 executed it: with Console never opened the runtime holds
 `chat_controller=None, chat_store=None, agent_bridge=None`.)
 
-The owner's ruling, implemented literally and pinned here:
+ADR-135's startup contract:
 
-* wake at launch is **YES**, and **mark-gated** -- one cheap indexed read,
-  and delivery only for a conversation that already carries a
-  `FLEET_UNSEEN` mark AND an owed `agent_runs` row;
+* saved survivor results are discovered from existing native run history,
+  independently of attention badges; interrupted claims remain paused;
 * it stays behind the existing `[agents] autowake_enabled`; there is no
   separate launch switch;
-* **when there are no marks, construct NOTHING** -- startup is
-  byte-identical to before. That is
-  `test_a_launch_with_no_marks_constructs_nothing_and_reads_once`, and it
+* **when there is no runs database, construct NOTHING**. That is
+  `test_a_launch_without_a_runs_database_constructs_nothing`, and it
   is the pin that protects every user who never touches the fleet.
 
 Rig notes:
@@ -429,7 +427,9 @@ async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
 
 
 @pytest.mark.asyncio
-async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_path):
+async def test_a_launch_built_controller_is_not_sticky_when_console_opens(
+    tmp_path, monkeypatch
+):
     """The hazard this task introduces, pinned.
 
     `ConsoleRuntime.ensure_chat_controller` is idempotent and IGNORES its
@@ -439,9 +439,9 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
     `_ensure_console_chat_controller()`, a user whose launch happened to
     wake a supervisor would run the whole session on the launch's guesses.
 
-    Executed rather than read: the config's model is CHANGED between the
-    launch and the Console mount, and the controller must end up on the new
-    one.
+    A fresh Settings read changes the configured fallback between launch
+    and mount. The session's explicit model remains selected, and the reused
+    controller must receive both selection fields.
     """
     conversation_id, _run_id, _rows = await _seed_a_finished_background_job(tmp_path)
     app, _marks, gateway = _launch_app(tmp_path, real_service=True)
@@ -454,11 +454,13 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
         assert controller is not None
         _assert_console_never_mounted(app)
 
-        # The user changes their model in Settings, then opens Console.
-        # `configured_model` is derived from `[api_settings.<provider>]`,
-        # not `[chat_defaults]` -- the first draft changed the wrong key and
-        # the test's own vacuity guard caught it.
+        # Settings updates the live loader, not the app's boot snapshot.
+        # Supply that fresh read while retaining the session's explicit model.
         app.app_config["api_settings"]["llama_cpp"]["model"] = "mounted-model"
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.load_settings",
+            lambda: app.app_config,
+        )
         chat = await _navigate(app, pilot, "chat", expect="ChatScreen")
         assert isinstance(chat, ChatScreen)
         await pilot.pause()
@@ -469,7 +471,10 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
         expected = chat._build_console_provider_selection()
         assert await _settle(
             pilot,
-            lambda: controller.configured_model == expected.configured_model,
+            lambda: (
+                controller.configured_model == expected.configured_model
+                and controller.model == expected.explicit_model
+            ),
         ), (
             "the launch-built controller kept the launch's model after Console "
             f"opened: controller={controller.configured_model!r} "
@@ -479,6 +484,7 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
             "the fixture never changed anything, so the comparison above is "
             f"vacuous: {expected.configured_model!r}"
         )
+        assert expected.explicit_model == "local-model"
         del conversation_id
 
 
@@ -489,14 +495,13 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(tmp_path):
-    """With no marks, a launch does ONE indexed read and nothing else.
+async def test_a_launch_without_a_runs_database_constructs_nothing(tmp_path):
+    """Absent native history returns before marks or runtime construction.
 
     Four independent observations, because "nothing was constructed" is
     exactly the claim a weak test states and never checks:
 
-    1. the marks service saw exactly ONE `list_marked_conversation_ids`
-       call, for `fleet_unseen`;
+    1. the marks service is never consulted for execution discovery;
     2. the runtime holds no store, no gateway, no bridge, no controller;
     3. **no `agent_runs.db` file exists on disk** -- constructing the
        bridge opens (and creates) it, so the filesystem is an observer the
@@ -505,7 +510,7 @@ async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(tmp_path
 
     The control against vacuity is
     `test_the_startup_cost_pin_is_not_vacuous` below, which runs the same
-    probes WITH a mark and sees every one of them flip.
+    probes with a saved result and observes runtime construction and delivery.
     """
     app = _build_test_app("library")
     marks = _attach_real_dbs(app, tmp_path)
@@ -534,27 +539,26 @@ async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(tmp_path
             )
             await pilot.pause(0.2)
             _assert_console_never_mounted(app)
-            assert calls == [ConversationLocalMarksService.FLEET_UNSEEN], (
-                "a launch with no marks must cost exactly one indexed mark "
-                f"listing; got {calls}"
-            )
+            assert calls == [], "attention marks are not the discovery index"
             runtime = app.console_runtime
-            assert runtime.chat_store is None, "a launch with no marks built a store"
+            assert runtime.chat_store is None, (
+                "a launch with no run history built a store"
+            )
             assert runtime.provider_gateway is None, (
-                "a launch with no marks built a provider gateway"
+                "a launch with no run history built a provider gateway"
             )
             assert runtime.agent_bridge is None, (
-                "a launch with no marks built an agent bridge"
+                "a launch with no run history built an agent bridge"
             )
             assert runtime.chat_controller is None, (
-                "a launch with no marks built a chat controller"
+                "a launch with no run history built a chat controller"
             )
             assert not (tmp_path / "agent_runs.db").exists(), (
-                "a launch with no marks opened the agent runs DB -- the bridge "
+                "a launch with no run history created the agent runs DB -- the bridge "
                 "was constructed after all"
             )
             assert "deferred_launch_wake" not in task_names, (
-                f"a launch with no marks scheduled the wake task: {task_names}"
+                f"a launch with no run history scheduled the wake task: {task_names}"
             )
     finally:
         type(app)._create_deferred_startup_task = real_create
@@ -562,13 +566,13 @@ async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(tmp_path
 
 @pytest.mark.asyncio
 async def test_the_startup_cost_pin_is_not_vacuous(tmp_path):
-    """The control for the pin above: with a mark present, every one of its
-    four observations flips. Without this, a launch hook that never ran at
-    all would satisfy the pin perfectly."""
+    """Unmarked saved results construct a runtime and deliver at launch."""
     conversation_id, _run_id, rows = await _seed_a_finished_background_job(tmp_path)
-    app, _marks, gateway = _launch_app(
+    app, marks, gateway = _launch_app(
         tmp_path, tree=_fixture_tree(conversation_id, rows)
     )
+    marks.clear_mark(conversation_id, FLEET_UNSEEN)
+    assert marks.list_marked_conversation_ids(FLEET_UNSEEN) == ()
     task_names: list[str] = []
     real_create = type(app)._create_deferred_startup_task
 
@@ -592,22 +596,22 @@ async def test_the_startup_cost_pin_is_not_vacuous(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# AC#3's phantom-wake case, at the launch fire point.
+# Legacy crash results are inspectable without receiving fresh allowance.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch(tmp_path):
+async def test_unmarked_legacy_crash_result_is_recovered_for_review_without_a_wake(
+    tmp_path,
+):
     """A child left `running` by a crash is swept to `error` by the next
     `AgentRunsDB.__init__`, which makes it terminal, undelivered and
     therefore OWED by the ledger's own definition -- and it carries no
     mark, because nothing ever settled it through the fan-out.
 
-    Seeding from the ledger alone would manufacture a wake here. The claim
-    is marks-indexed, so nothing fires. The assertion that stops this
-    passing for the wrong reason: `undelivered_wake_runs` genuinely DOES
-    report the orphan, so the silence is the mark gate's doing, not an
-    empty ledger.
+    ADR-135 discovers this unmarked result but grants legacy chainless
+    work no new automatic allowance. Recovery must expose its saved result
+    and pause reason while keeping the provider silent.
     """
     app0 = _build_test_app("library")
     _attach_real_dbs(app0, tmp_path)
@@ -635,23 +639,39 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch(tmp_pa
         child_id
     ], (
         "harness precondition: the ledger must consider this orphan OWED -- "
-        "otherwise the silence below proves nothing about the mark gate"
+        "otherwise the discovery and pause assertions below prove nothing"
     )
     swept.close()
 
-    app, marks, gateway = _launch_app(tmp_path)
+    app, marks, gateway = _launch_app(tmp_path, real_service=True)
     assert marks.list_marked_conversation_ids(FLEET_UNSEEN) == (), (
         "harness precondition: a crash-killed child leaves no ◈ mark"
     )
     async with app.run_test(size=(120, 40)) as pilot:
+        assert await _settle(
+            pilot,
+            lambda: (
+                app.console_runtime.chat_controller is not None
+                and app.console_runtime.chat_controller.fleet_wake.pause_reason(
+                    "conv-crashed"
+                )
+                == "legacy_lineage"
+            ),
+        ), "an unmarked saved result must be discovered and paused for review"
         assert await _quiet(pilot, lambda: bool(gateway.payloads), seconds=5.0), (
-            "a crash-killed child with no ◈ mark woke the supervisor at "
-            f"launch -- a phantom wake: {gateway.payloads!r}"
+            "a legacy chainless result received unauthorized automatic work: "
+            f"{gateway.payloads!r}"
         )
         _assert_console_never_mounted(app)
-        assert app.console_runtime.chat_controller is None, (
-            "an unmarked owed row still built the whole Console runtime at "
-            "launch"
+        controller = app.console_runtime.chat_controller
+        assert controller.fleet_wake.has_pending("conv-crashed")
+        assert any(
+            session.persisted_conversation_id == "conv-crashed"
+            for session in controller.store.sessions()
+        )
+        assert (
+            controller._agent_bridge.runs_db.get_run(child_id)["wake_delivered_at"]
+            is None
         )
 
 

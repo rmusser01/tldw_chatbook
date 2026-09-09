@@ -1,0 +1,735 @@
+{
+  "manifest_sha256": "de780141a7bb09c8007c8f93ab24cf38924cfe4fd68b8f26a60c30ae761f35e5",
+  "retrieval": {
+    "status": "index_unavailable",
+    "profile": "semantic",
+    "top_k": 6,
+    "excerpt_char_limit": 8000,
+    "query_embedding_cost_usd": null,
+    "rerank_cost_usd": null,
+    "index_build_cost_usd": null
+  },
+  "live_evaluation_complete": false,
+  "unassigned_attempts": [],
+  "accounting": {
+    "known_total_usd": 0.003328,
+    "observed_attempts": 24,
+    "unknown_total_is_not_zero": true
+  },
+  "primary": {
+    "decision": "inconclusive",
+    "reasons": [
+      "missing_attempts",
+      "missing_grades",
+      "undefined_cost_ratio",
+      "undefined_latency_delta"
+    ],
+    "expected_attempt_count": 72,
+    "observed_attempt_count": 0,
+    "spend": {
+      "known_total_usd": 0.0,
+      "complete": false,
+      "observed_costs_complete": true,
+      "unknown_cost_count": 0,
+      "by_arm": {
+        "direct": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 0
+        },
+        "retrieval": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 0
+        },
+        "reader": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 0
+        },
+        "unassigned": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 0
+        }
+      }
+    },
+    "failures": {
+      "total": 0,
+      "by_arm": {
+        "direct": 0,
+        "retrieval": 0,
+        "reader": 0,
+        "unassigned": 0
+      }
+    },
+    "quality": {
+      "direct": {
+        "graded_count": 0,
+        "expected_count": 24,
+        "task_success_rate": null,
+        "macro_essential_recall": null,
+        "critical_error_count": 0
+      },
+      "retrieval": {
+        "graded_count": 0,
+        "expected_count": 24,
+        "task_success_rate": null,
+        "macro_essential_recall": null,
+        "critical_error_count": 0
+      },
+      "reader": {
+        "graded_count": 0,
+        "expected_count": 24,
+        "task_success_rate": null,
+        "macro_essential_recall": null,
+        "critical_error_count": 0
+      }
+    },
+    "paired": {
+      "reader_direct": {
+        "count": 24,
+        "cost_pair_count": 0,
+        "latency_pair_count": 0,
+        "median_cost_ratio": null,
+        "median_latency_delta_seconds": null,
+        "per_case": [
+          {
+            "case_id": "held-01",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-01",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-02",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-02",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-03",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-03",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-04",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-04",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-05",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-05",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-06",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-06",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-07",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-07",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-08",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-08",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-09",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-09",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-10",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-10",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-11",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-11",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-12",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-12",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          }
+        ]
+      },
+      "retrieval_reader": {
+        "count": 24,
+        "cost_pair_count": 0,
+        "latency_pair_count": 0,
+        "median_cost_ratio": null,
+        "median_latency_delta_seconds": null,
+        "per_case": [
+          {
+            "case_id": "held-01",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-01",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-02",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-02",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-03",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-03",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-04",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-04",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-05",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-05",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-06",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-06",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-07",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-07",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-08",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-08",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-09",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-09",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-10",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-10",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-11",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-11",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-12",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "held-12",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          }
+        ]
+      }
+    }
+  },
+  "development": {
+    "decision": "inconclusive",
+    "reasons": [
+      "failed_attempts",
+      "missing_grades",
+      "unknown_or_invalid_cost"
+    ],
+    "expected_attempt_count": 24,
+    "observed_attempt_count": 24,
+    "spend": {
+      "known_total_usd": 0.003328,
+      "complete": false,
+      "observed_costs_complete": false,
+      "unknown_cost_count": 8,
+      "by_arm": {
+        "direct": {
+          "known_total_usd": 0.001765,
+          "unknown_cost_count": 0
+        },
+        "retrieval": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 8
+        },
+        "reader": {
+          "known_total_usd": 0.001563,
+          "unknown_cost_count": 0
+        },
+        "unassigned": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 0
+        }
+      }
+    },
+    "failures": {
+      "total": 12,
+      "by_arm": {
+        "direct": 0,
+        "retrieval": 8,
+        "reader": 4,
+        "unassigned": 0
+      }
+    },
+    "quality": {
+      "direct": {
+        "graded_count": 0,
+        "expected_count": 8,
+        "task_success_rate": null,
+        "macro_essential_recall": null,
+        "critical_error_count": 0
+      },
+      "retrieval": {
+        "graded_count": 0,
+        "expected_count": 8,
+        "task_success_rate": null,
+        "macro_essential_recall": null,
+        "critical_error_count": 0
+      },
+      "reader": {
+        "graded_count": 0,
+        "expected_count": 8,
+        "task_success_rate": null,
+        "macro_essential_recall": null,
+        "critical_error_count": 0
+      }
+    },
+    "paired": {
+      "reader_direct": {
+        "count": 8,
+        "cost_pair_count": 8,
+        "latency_pair_count": 8,
+        "median_cost_ratio": 0.7517006802721088,
+        "median_latency_delta_seconds": -0.03896781301591545,
+        "per_case": [
+          {
+            "case_id": "dev-01",
+            "repeat": 1,
+            "cost_ratio": 1.5613382899628254,
+            "latency_delta_seconds": 1.652887708041817
+          },
+          {
+            "case_id": "dev-01",
+            "repeat": 2,
+            "cost_ratio": 1.5913978494623655,
+            "latency_delta_seconds": 1.4515573750250041
+          },
+          {
+            "case_id": "dev-02",
+            "repeat": 1,
+            "cost_ratio": 1.3333333333333333,
+            "latency_delta_seconds": 0.6365361239295453
+          },
+          {
+            "case_id": "dev-02",
+            "repeat": 2,
+            "cost_ratio": 1.7368421052631577,
+            "latency_delta_seconds": 1.0100257510785013
+          },
+          {
+            "case_id": "dev-03",
+            "repeat": 1,
+            "cost_ratio": 0.0777027027027027,
+            "latency_delta_seconds": -1.3998677500057966
+          },
+          {
+            "case_id": "dev-03",
+            "repeat": 2,
+            "cost_ratio": 0.1631205673758865,
+            "latency_delta_seconds": -0.7144717499613762
+          },
+          {
+            "case_id": "dev-04",
+            "repeat": 1,
+            "cost_ratio": 0.11061946902654868,
+            "latency_delta_seconds": -0.9922607510816306
+          },
+          {
+            "case_id": "dev-04",
+            "repeat": 2,
+            "cost_ratio": 0.17006802721088438,
+            "latency_delta_seconds": -0.8200004170648754
+          }
+        ]
+      },
+      "retrieval_reader": {
+        "count": 8,
+        "cost_pair_count": 0,
+        "latency_pair_count": 8,
+        "median_cost_ratio": null,
+        "median_latency_delta_seconds": -2.0102842072956264,
+        "per_case": [
+          {
+            "case_id": "dev-01",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": -3.4882730410899967
+          },
+          {
+            "case_id": "dev-01",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": -3.3308436248917133
+          },
+          {
+            "case_id": "dev-02",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": -2.9809273737482727
+          },
+          {
+            "case_id": "dev-02",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": -3.5037691260222346
+          },
+          {
+            "case_id": "dev-03",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": -0.8798179179430008
+          },
+          {
+            "case_id": "dev-03",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": -0.9647336257621646
+          },
+          {
+            "case_id": "dev-04",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": -0.864369748858735
+          },
+          {
+            "case_id": "dev-04",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": -1.0396410408429801
+          }
+        ]
+      }
+    }
+  },
+  "followup": {
+    "decision": "inconclusive",
+    "reasons": [
+      "missing_attempts",
+      "missing_grades",
+      "undefined_cost_ratio",
+      "undefined_latency_delta"
+    ],
+    "expected_attempt_count": 18,
+    "observed_attempt_count": 0,
+    "spend": {
+      "known_total_usd": 0.0,
+      "complete": false,
+      "observed_costs_complete": true,
+      "unknown_cost_count": 0,
+      "by_arm": {
+        "direct": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 0
+        },
+        "retrieval": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 0
+        },
+        "reader": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 0
+        },
+        "unassigned": {
+          "known_total_usd": 0.0,
+          "unknown_cost_count": 0
+        }
+      }
+    },
+    "failures": {
+      "total": 0,
+      "by_arm": {
+        "direct": 0,
+        "retrieval": 0,
+        "reader": 0,
+        "unassigned": 0
+      }
+    },
+    "quality": {
+      "direct": {
+        "graded_count": 0,
+        "expected_count": 6,
+        "task_success_rate": null,
+        "macro_essential_recall": null,
+        "critical_error_count": 0
+      },
+      "retrieval": {
+        "graded_count": 0,
+        "expected_count": 6,
+        "task_success_rate": null,
+        "macro_essential_recall": null,
+        "critical_error_count": 0
+      },
+      "reader": {
+        "graded_count": 0,
+        "expected_count": 6,
+        "task_success_rate": null,
+        "macro_essential_recall": null,
+        "critical_error_count": 0
+      }
+    },
+    "paired": {
+      "reader_direct": {
+        "count": 6,
+        "cost_pair_count": 0,
+        "latency_pair_count": 0,
+        "median_cost_ratio": null,
+        "median_latency_delta_seconds": null,
+        "per_case": [
+          {
+            "case_id": "followup-01",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-01",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-02",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-02",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-03",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-03",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          }
+        ]
+      },
+      "retrieval_reader": {
+        "count": 6,
+        "cost_pair_count": 0,
+        "latency_pair_count": 0,
+        "median_cost_ratio": null,
+        "median_latency_delta_seconds": null,
+        "per_case": [
+          {
+            "case_id": "followup-01",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-01",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-02",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-02",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-03",
+            "repeat": 1,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          },
+          {
+            "case_id": "followup-03",
+            "repeat": 2,
+            "cost_ratio": null,
+            "latency_delta_seconds": null
+          }
+        ]
+      }
+    }
+  }
+}

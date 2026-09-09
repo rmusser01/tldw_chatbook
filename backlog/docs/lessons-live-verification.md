@@ -5,6 +5,57 @@ structurally could not surface. Every entry states the incident that produced it
 
 ---
 
+## Textual modal ownership is stricter than `is_current` (TASK-19055, 2026-09-04)
+
+**Incident.** Buddy overlay tests found that Textual 8 keeps the background screen's
+`is_current` true while a modal is on the stack. Using that property as an input
+guard allowed the hidden companion to handle gestures behind the modal. A
+mounted modal test failed before the guard changed and a mutation restoring the
+old check failed again. Require `app.screen is view.screen` at the input and
+post-await paint boundaries. Visibility alone does not establish input ownership.
+
+**Live verification limit.** In this run, CUA point clicks and function/arrow keys
+worked in textual-serve, including collapse, close, navigation, and restart
+persistence. CUA drag selected terminal text without changing Buddy geometry.
+Record that as unverified physical dragging; passing mounted gesture tests and
+working button clicks do not prove the browser's drag transport reached the TUI.
+
+**Follow-up diagnosis (2026-09-05).** Native Terminal reproduced the same
+selection symptom. Textual's XTermParser creates mouse events with `widget=None`,
+whereas Pilot supplies a widget. Buddy rejected the native event before capturing
+the mouse. Resolving its target against the current compositor fixed that seam.
+The OS driver also coalesced move events; applying the release coordinates made
+the final geometry match the endpoint. Parser-to-mounted-screen regressions
+failed before both fixes, and native move/resize plus persisted geometry passed
+afterward. A failed browser gesture alone did not identify its cause.
+
+## A provider control request does not verify the first-send setup path (TASK-31553)
+
+Live Migu UAT got a successful direct DeepSeek reply while mounted Chatbook stayed
+in `validating`: disabling project instructions returned without terminating the
+run. The accepted hook had already consumed the draft. Regressions now require a
+terminal blocked state, failed unsent rows, and draft recovery that preserves newer
+editing. The visible New Chat → Send → Disable → Send flow then returned the exact
+synthetic reply and Buddy returned to idle.
+
+The harness initially called `chat_controller.new_session()` directly, leaving the
+visible composer's owner stale. That made correct owner-fenced restoration appear
+broken. Use the actual New Chat action and wait for its owner to match before
+loading the draft; also wait for submit cleanup before testing retryability.
+
+---
+
+## Readback shortcuts can outlive the speech lifecycle they copied (TASK-19055)
+
+**Incident (2026-09-05).** Real Kokoro readback drained 128,000 PCM bytes but
+Migu stayed speaking. Manual Speak had acquired a trusted snapshot and owned
+playback lifecycle; the older voice-command helper still posted global speech
+and assigned a bare speaking ID. Delegate alternate entry points to the shared
+request method, and exercise actual completion rather than merely asserting
+that a request was posted. The mounted stopped/failed tests were born red;
+real readback then painted idle→speaking→idle. Sounddevice handled the complete
+WAV, so the legacy afplay player's idle state was not evidence of absent audio.
+
 ## The suite cannot see a contract you guessed
 
 **What happened.** The Library ingest UAT (tasks 673–702) found **seven** defects
@@ -1209,3 +1260,76 @@ driving it (`Button.press()` and `focus()` are synchronous schedulers;
 settle then re-check side-effect-free predicates. App startup readiness does not
 prove a destination screen has loaded. A correct harness can then reveal a real
 focus race instead of manufacturing one.
+
+---
+
+## In a textual-serve browser session, synthetic clicks and modifier keys never reach the app — read `document.body.innerText` and inject `["stdin", …]` frames instead (task-21513, 2026-08-30)
+
+**What happened.** Verifying the Console's token readouts in the served web UI
+(`tldw-serve`, port 8765), Playwright-style `click()`/`press()` and synthetic
+`KeyboardEvent`s all silently did nothing: xterm.js inside textual-web only
+forwards keys its own textarea keydown evaluator produces (it reads legacy
+`keyCode`, which synthetic events don't carry), and its mouse layer ignored
+CDP-level clicks. Roughly an hour went into escalating click/keypress variants
+before the working transports were found:
+
+- **Reading the screen:** `document.body.innerText` of the served page mirrors
+  the whole terminal as text — cheaper and more reliable than screenshots
+  (which also intermittently timed out at 30s on this stack).
+- **Driving input:** stash the page's terminal websocket
+  (`WebSocket.prototype.send` patch + a forced resize to trigger one real
+  send), then send `["stdin", "<terminal bytes>"]` frames. Single-byte keys
+  that worked: printables, `\x7f` backspace. Escape sequences and `\x10`
+  (ctrl+p) worked on one app instance and not another — never depended on
+  them; the palette became unreachable on a second instance with no error
+  anywhere (app log clean, socket healthy).
+
+**What to do.** Plan web-UI verification around paste-sized input and what a
+fresh conversation already carries; treat modifier-key journeys as
+best-effort. If a scenario needs a system prompt or palette-only commands,
+cover it with a mounted-`run_test()` harness (which drives the composer
+reliably) and use the web UI to confirm the surface renders — not as the only
+evidence. `TLDW_CONFIG_PATH` + a second `tldw-serve --port` gives a
+disposable instance with a copied config; delete the copy afterwards (it
+holds provider keys).
+
+---
+
+## Verify supposedly neutral provider controls at the wire (TASK-32029, 2026-09-08)
+
+**Incident.** While pinning the Library reader experiment's settings, explicitly
+setting `reasoning_effort="none"` caused the canonical OpenAI adapter to switch
+GPT-4o requests from Chat Completions to Responses. The recording-double tests
+still passed; the three real loopback transport cases failed. Omitting the
+parameter restored the intended route, and all 143 targeted experiment tests
+then passed. The adapter treats explicit `none` as protocol-neutral only for
+its specific GPT-5.6 branch.
+
+**What to do.** After changing provider controls, inspect the actual HTTP route
+and body through the production adapter. A configuration value that sounds like
+the absence of a feature is not necessarily equivalent to an omitted parameter.
+
+## A reader can look cheaper because it never answers (TASK-32029, 2026-09-08)
+
+**Incident.** The first approved DeepSeek source-reader development run made 20
+calls for an estimated $0.003328. Its eight-pair median reader/direct cost ratio
+was 0.752, apparently under the proposed 0.80 threshold. But four reader workers
+returned no findings, so those pairs never made an answer call. Every completed
+reader answer actually cost more than direct reading. The failed cases included
+explicit source evidence that pets were not discussed and that a committee had
+not voted. Exact-quote validation passed the four quotations the reader returned
+and could not expose the relevant evidence it omitted.
+
+**What to do.** Retain failed rows and all their spend, and gate financial claims
+on answer delivery and independently reviewed quality. Extract explicit negative
+facts and statements of unspecified information as evidence; distinguish them
+from a worker finding no evidence. Do not repair the metrics by dropping failed
+pairs or silently adding a direct-reading fallback. The complete frozen run and
+limitations are in [the development report](library-source-reader-deepseek-development-2026-09-08.md).
+
+**Follow-up.** Clarifying the reader's relevance rule to retain explicit negative
+facts and source-scoped uncertainty repaired both observed failures in a focused
+four-call probe. The offline check was red on the original live outputs and
+green on both revised outputs. This validates those two repairs, not the entire
+reader: positive controls and full comparison remain pending. See the
+[revision report](library-source-reader-negative-evidence-revision-2026-09-08.md).

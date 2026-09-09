@@ -195,6 +195,10 @@ class ToolResult:
     error: str = ""
 
 
+class SpawnAdmissionRefusal(ToolResult):
+    """A spawn refused before child execution; it consumes no spawn allowance."""
+
+
 @dataclass(frozen=True)
 class ContinuationEventContext:
     """Durable owner and run identity for one continuation lineage."""

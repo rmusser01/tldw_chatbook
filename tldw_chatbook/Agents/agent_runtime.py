@@ -60,6 +60,7 @@ from .agent_models import (
     ModelTurn,
     ProviderContinuationEvent,
     RunOutcome,
+    SpawnAdmissionRefusal,
     ToolBatchReady,
     ToolCall,
     ToolCallExecuting,
@@ -1432,27 +1433,13 @@ def run_agent_loop(
                                 result = deps.spawn(task, agent=agent_name)
                             else:
                                 result = deps.spawn(task)
-                            # Named-agent resolution (fleet spec §4) gave
-                            # deps.spawn a NEW failure mode this loop-level
-                            # check does not pre-screen: deps.spawn can now
-                            # refuse a NAMED spawn for an unknown `agent`
-                            # (or its own budget check) after this branch
-                            # was already entered. This is a redundant
-                            # secondary bound; the service's own
-                            # sub_agent_spawns counter remains authoritative.
-                            #
-                            # Increment accounting differs by path:
-                            # - No-agent path: increment is unconditional,
-                            #   byte-identical to pre-task-5 behavior, including
-                            #   spawns whose child ran and ended non-DONE.
-                            # - Named path: increment only when result.ok.
-                            #   Any named-spawn failure (unknown agent, budget
-                            #   refusal before dispatch, or child ending
-                            #   non-DONE) skips the counter; otherwise a later
-                            #   VALID named spawn would be wrongly refused here
-                            #   before ever reaching deps.spawn's own (real)
-                            #   budget check.
-                            if result.ok or not agent_name:
+                            # Admission refusals create no child and must not
+                            # consume this loop's secondary spawn allowance.
+                            # Preserve existing accounting for children that
+                            # started and subsequently failed.
+                            if not isinstance(result, SpawnAdmissionRefusal) and (
+                                result.ok or not agent_name
+                            ):
                                 spawned += 1
                 elif (
                     call.name == WAIT_AGENTS_TOOL_NAME

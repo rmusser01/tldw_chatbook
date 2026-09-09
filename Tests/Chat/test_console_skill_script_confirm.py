@@ -900,8 +900,15 @@ def _capturing_run_reply(captured: list[dict[str, Any]]):
 
 
 def _bridged_controller(tmp_path) -> tuple[ConsoleChatController, list[dict[str, Any]]]:
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+
     gateway = _StubGateway()
     store = ConsoleChatStore()
+    store.create_session(
+        project_instruction_state=ProjectInstructionControlState.legacy_disabled()
+    )
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
