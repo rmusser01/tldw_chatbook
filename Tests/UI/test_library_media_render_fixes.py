@@ -3564,7 +3564,10 @@ async def test_analysed_secondary_is_bounded_at_custom_items_widths(
         screen._sync_library_media_reader_layout_from_shell()
         await _wait_for_condition(
             pilot,
-            lambda: _items_pane_width(screen) == items_width - 4,
+            lambda: (
+                screen._media_state.reader_layout.items_width == items_width
+                and _items_pane_width(screen) == items_width - 4
+            ),
             message=lambda: (
                 f"Items canvas width={_items_pane_width(screen)}; "
                 f"view={screen._media_state.view}; "
