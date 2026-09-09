@@ -130,7 +130,8 @@ garbage collection or empty GPU caches to improve those numbers.
 
 ## Verify full content separately
 
-Use an already-present faster-whisper model directory. An English-only model
+Use an environment with Chatbook and its optional faster-whisper runtime,
+plus an already-present faster-whisper model directory. An English-only model
 cannot qualify non-English content; supply a multilingual snapshot and the
 desired ASR language (or omit `--language` for detection).
 
@@ -155,10 +156,20 @@ and exact normalized text must match for `content_passed` (exit 0).
 it does not rewrite them or imply a model defect. The runtime report remains
 unchanged.
 
+Both commands apply the shared path validator before filesystem work. The
+content verifier validates the evidence schema and unique phase IDs, derives
+audio authority from the selected evidence file's parent, and rejects audio
+outside that run, symlinks and nonregular files. ASR consumes an opened,
+hash-verified stream with no-follow descriptor traversal; this guarded reader
+currently requires macOS or Linux support. Windows qualification remains in
+TASK-32156. Optional dependency lookup uses a disposable private profile and
+restores its environment afterward. Invalid input or missing dependencies
+produce a CLI error (exit 2), before transcription.
+
 ## Cheap regression checks
 
 ```sh
-python -m pytest Tests/TTS/test_live_validation_harness.py -q
+python -m pytest Tests/TTS/test_live_validation_harness.py Tests/TTS/test_live_tts_input_validation.py -q
 ```
 
 The targeted module uses synthetic records and small local WAVs. It checks

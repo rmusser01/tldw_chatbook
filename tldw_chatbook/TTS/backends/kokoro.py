@@ -269,6 +269,7 @@ class KokoroTTSBackend(LocalTTSBackend):
         self._native_tasks: dict[asyncio.Task[Any], Callable[[], None] | None] = {}
         self._onnx_tasks: dict[asyncio.Task[None], Callable[[], None]] = {}
         self._onnx_phonemizers: dict[str, Any] = {}
+        self._onnx_phonemizer_lock = threading.Lock()
         self._closing = False
         self._close_task: asyncio.Task[None] | None = None
 
@@ -718,9 +719,15 @@ class KokoroTTSBackend(LocalTTSBackend):
 
             stream_text, stream_options = text, dict(kwargs)
             if not stream_options.get("is_phonemes"):
-                stream_text, language, phonemes = prepare_onnx_text(
-                    text, stream_options.get("lang", "en-us"), self._onnx_phonemizers
-                )
+                # Each stream has a native worker. Frontends are shared and may
+                # keep mutable state, so serialize construction and invocation
+                # here, outside the application loop and inference/delivery.
+                with self._onnx_phonemizer_lock:
+                    if stopped.is_set():
+                        return
+                    stream_text, language, phonemes = prepare_onnx_text(
+                        text, stream_options.get("lang", "en-us"), self._onnx_phonemizers
+                    )
                 stream_options["lang"] = language
                 if phonemes:
                     stream_options["is_phonemes"] = True

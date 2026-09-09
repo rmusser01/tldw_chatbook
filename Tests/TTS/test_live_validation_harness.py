@@ -289,10 +289,10 @@ def test_content_denominator_includes_every_success_and_checks_hashes(tmp_path):
     ]
     rows.append({"id": "cancelled", "outcome": "cancelled"})
     evidence = {"phases": rows}
-    assert len(verifier.success_audio(evidence)) == 6
+    assert len(verifier.success_audio(evidence, tmp_path.resolve())) == 6
     rows[-2]["audio"] = {**audio, "sha256": "changed"}
     with pytest.raises(ValueError, match="hash"):
-        verifier.success_audio(evidence)
+        verifier.success_audio(evidence, tmp_path.resolve())
 
 
 @pytest.mark.parametrize(
@@ -330,7 +330,9 @@ def test_content_normalization_preserves_hindi_vowels_and_nasal_marks():
     assert verifier.normalize("चाँदी") != verifier.normalize("चदी")
 
 
-def test_missing_success_audio_fails_instead_of_shrinking_the_denominator():
+def test_missing_success_audio_fails_instead_of_shrinking_the_denominator(tmp_path):
     verifier = script("verify_live_tts_content")
     with pytest.raises(ValueError, match="audio"):
-        verifier.success_audio({"phases": [{"id": "retry", "outcome": "success"}]})
+        verifier.success_audio(
+            {"phases": [{"id": "retry", "outcome": "success"}]}, tmp_path.resolve()
+        )

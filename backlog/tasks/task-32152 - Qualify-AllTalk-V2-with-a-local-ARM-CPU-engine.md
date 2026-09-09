@@ -1,11 +1,11 @@
 ---
 id: TASK-32152
 title: Qualify AllTalk V2 with a local ARM CPU engine
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 05:50'
-updated_date: '2026-09-09 08:40'
+updated_date: '2026-09-09 09:01'
 labels: []
 dependencies: []
 ---
@@ -24,6 +24,7 @@ AllTalk has no configured server here and upstream Mac support is unqualified. P
 - [x] #4 OpenAI-compatible generation preserves canonical voice aliases and explicit custom IDs without inventing file suffixes; only endpoint-accepted custom voices succeed, and the pinned V2 catalog advertises its six supported aliases.
 - [x] #5 Initialization awaits the actual HTTP health/discovery request and safely reports connection/status failures without leaking request data or leaving an unawaited coroutine; failure-first targeted regressions cover the reproduced contract defects.
 - [x] #6 Fresh AllTalk Settings controls select a supported OpenAI alias and offer only the six pinned aliases; historical saved-default migration behavior is preserved.
+- [ ] #7 The shipped and inherited AllTalk default reaches a supported endpoint alias while explicit opaque voice selections and historical migration intent are preserved or report an actionable exact-selection failure without silent voice substitution.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,6 +43,8 @@ Reason: Correct request identifiers and awaited httpx use preserve the existing 
 Pinned schema evidence: erew123/alltalk_tts@f16117e95b540e9bbbd8247b49ca6c6b1350b172 tts_server.py OpenAIInput; /private/tmp/tts-macos-burndown/alltalk/voice-contract-probe.json.
 
 6. Cover the active AllTalk Settings default and mounted voice selector with a failure-first regression, then share the pinned alias catalog there. Preserve the historical Studio migration sentinel for untouched legacy settings.
+
+7. PR #2545 review: trace shipped defaults through persisted migration, exact catalog resolution and the provider request; reproduce invalid inherited legacy defaults, correct their source or unambiguous default semantics without rewriting explicit custom IDs, add targeted end-to-end resolution/adapter regression coverage, and document list_voices return semantics. ADR required: no; retain ADR-023/039/040 voice ownership and the existing OpenAI endpoint boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

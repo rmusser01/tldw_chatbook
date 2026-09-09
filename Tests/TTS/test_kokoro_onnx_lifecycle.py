@@ -61,6 +61,198 @@ async def collect(backend, mode, text="first|second"):
     return b"".join([chunk async for chunk in backend.generate_speech_stream(request)])
 
 
+def controlled_frontend(monkeypatch, backend, language, stage):
+    """Observe a real lock attempt or the unsynchronized frontend overlap."""
+    from tldw_chatbook.TTS import kokoro_languages
+
+    loop_thread = threading.get_ident()
+    state = SimpleNamespace(
+        entered=threading.Event(),
+        contended=threading.Event(),
+        release=threading.Event(),
+        constructors=0,
+        calls=[],
+        active=0,
+        peak_active=0,
+    )
+    state_lock = threading.Lock()
+
+    class ObservedLock:
+        def __init__(self):
+            self.lock = threading.Lock()
+
+        def __enter__(self):
+            assert threading.get_ident() != loop_thread
+            if not self.lock.acquire(blocking=False):
+                state.contended.set()
+                self.lock.acquire()
+
+        def __exit__(self, *args):
+            self.lock.release()
+
+    def frontend(text):
+        assert threading.get_ident() != loop_thread
+        with state_lock:
+            state.calls.append(text)
+            state.active += 1
+            state.peak_active = max(state.peak_active, state.active)
+            if stage == "invocation" and state.active > 1:
+                state.contended.set()
+        try:
+            if stage == "invocation":
+                state.entered.set()
+                assert state.release.wait(5)
+            return f"phonemes:{text}", None
+        finally:
+            with state_lock:
+                state.active -= 1
+
+    def construct(**kwargs):
+        assert threading.get_ident() != loop_thread
+        with state_lock:
+            state.constructors += 1
+            if state.constructors > 1:
+                state.contended.set()
+        if stage == "construction":
+            state.entered.set()
+            assert state.release.wait(5)
+        return frontend
+
+    monkeypatch.setattr(kokoro_languages, "check_dependency", lambda *args: True)
+    monkeypatch.setattr(
+        kokoro_languages,
+        "import_module",
+        lambda _: SimpleNamespace(JAG2P=construct, ZHG2P=construct),
+    )
+    backend._onnx_phonemizer_lock = ObservedLock()
+    if stage == "invocation":
+        backend._onnx_phonemizers["ja" if language == "ja" else "cmn"] = frontend
+    return state
+
+
+async def collect_language(backend, language, text):
+    request = OpenAISpeechRequest(
+        model="kokoro",
+        input=text,
+        voice="jf_alpha" if language == "ja" else "zf_xiaobei",
+        response_format="pcm",
+    )
+    return b"".join([chunk async for chunk in backend.generate_speech_stream(request)])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["ja", "zh"])
+@pytest.mark.parametrize("stage", ["construction", "invocation"])
+async def test_concurrent_onnx_frontend_construction_and_use_are_serialized(
+    tmp_path, monkeypatch, language, stage
+):
+    calls = []
+
+    async def stream(text, **kwargs):
+        calls.append(text)
+        yield np.ones(10, dtype=np.float32), 24000
+
+    backend = make_backend(tmp_path, SimpleNamespace(create_stream=stream))
+    state = controlled_frontend(monkeypatch, backend, language, stage)
+    tasks = [asyncio.create_task(collect_language(backend, language, "first"))]
+    try:
+        assert await asyncio.to_thread(state.entered.wait, 2)
+        tasks.append(asyncio.create_task(collect_language(backend, language, "second")))
+        # Either the real lock is contended or the unfixed second frontend has
+        # entered. This cannot pass merely because worker two was not scheduled.
+        assert await asyncio.to_thread(state.contended.wait, 2)
+        assert state.constructors == (1 if stage == "construction" else 0)
+        assert state.peak_active <= 1
+        state.release.set()
+        assert all(await asyncio.gather(*tasks))
+        assert sorted(state.calls) == ["first", "second"]
+        assert sorted(calls) == ["phonemes:first", "phonemes:second"]
+        assert state.peak_active == 1
+        assert len(backend._onnx_phonemizers) == 1
+        assert not backend._onnx_tasks
+    finally:
+        state.release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await backend.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["ja", "zh"])
+@pytest.mark.parametrize("stage", ["construction", "invocation"])
+@pytest.mark.parametrize("action", ["cancel", "close"])
+async def test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner(
+    tmp_path, monkeypatch, language, stage, action
+):
+    calls = []
+
+    async def stream(text, **kwargs):
+        calls.append(text)
+        yield np.ones(10, dtype=np.float32), 24000
+
+    runtime = SimpleNamespace(create_stream=stream)
+    backend = make_backend(tmp_path, runtime)
+    state = controlled_frontend(monkeypatch, backend, language, stage)
+    tasks = [asyncio.create_task(collect_language(backend, language, "first"))]
+    closing = None
+    try:
+        assert await asyncio.to_thread(state.entered.wait, 2)
+        tasks.append(asyncio.create_task(collect_language(backend, language, "second")))
+        assert await asyncio.to_thread(state.contended.wait, 2)
+        if action == "cancel":
+            tasks[1].cancel()
+            # The cancelled task's already-queued wakeup runs before this
+            # heartbeat, delivering Stop without a wall-clock sleep.
+            heartbeat = asyncio.Event()
+            asyncio.get_running_loop().call_soon(heartbeat.set)
+            await heartbeat.wait()
+        else:
+            stopped = asyncio.Event()
+            stop_count = 0
+
+            def observe_stop(stop):
+                def observed():
+                    nonlocal stop_count
+                    stop()
+                    stop_count += 1
+                    if stop_count == 2:
+                        stopped.set()
+
+                return observed
+
+            for worker, stop in tuple(backend._onnx_tasks.items()):
+                backend._onnx_tasks[worker] = observe_stop(stop)
+            closing = asyncio.create_task(backend.close())
+            await asyncio.wait_for(stopped.wait(), 2)
+            assert not closing.done()
+        assert not any(task.done() for task in tasks)
+        assert len(backend._onnx_tasks) == 2
+        assert backend.kokoro_instance is runtime
+        if stage == "invocation":
+            assert backend._onnx_phonemizers
+        state.release.set()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        assert isinstance(results[1], asyncio.CancelledError)
+        assert state.calls == ["first"], "Stopped waiter entered the frontend"
+        if action == "cancel":
+            assert results[0]
+            assert calls == ["phonemes:first"]
+            assert await collect_language(backend, language, "successor")
+            assert state.calls == ["first", "successor"]
+        else:
+            await closing
+            assert isinstance(results[0], asyncio.CancelledError)
+            assert calls == []
+            assert backend.kokoro_instance is None
+            assert not backend._onnx_phonemizers
+        assert not backend._onnx_tasks
+    finally:
+        state.release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if closing:
+            await closing
+        await backend.close()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["pcm", "wav", "timestamps"])
 async def test_language_frontend_reaches_onnx_in_every_output_path(

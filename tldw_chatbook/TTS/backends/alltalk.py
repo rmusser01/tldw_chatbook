@@ -54,10 +54,13 @@ class AllTalkTTSBackend(APITTSBackend):
             or _DEFAULT_BASE_URL
         ).rstrip("/")
 
-        self.default_voice = self.config.get(
-            "ALLTALK_TTS_VOICE",
-            self.config.get("ALLTALK_TTS_VOICE_DEFAULT", "alloy"),
-        )
+        inherited_voice = self.config.get("ALLTALK_TTS_VOICE_DEFAULT", "alloy")
+        # This historical shipped default was a native-API filename. Only its
+        # inherited default meaning maps to the OpenAI endpoint's default alias;
+        # explicit request/model voice IDs remain opaque.
+        if inherited_voice == "female_01.wav":
+            inherited_voice = "alloy"
+        self.default_voice = self.config.get("ALLTALK_TTS_VOICE", inherited_voice)
 
         self.default_language = self.config.get(
             "ALLTALK_TTS_LANGUAGE",
@@ -252,7 +255,11 @@ class AllTalkTTSBackend(APITTSBackend):
             raise ValueError("AllTalk TTS generation failed.") from None
 
     async def list_voices(self) -> list[str]:
-        """Return OpenAI aliases; /api/voices exposes a different native API."""
+        """Return OpenAI aliases; /api/voices exposes a different native API.
+
+        Returns:
+            The six supported endpoint aliases, independent of native speakers.
+        """
         return list(ALLTALK_VOICES)
 
     def get_capabilities(self) -> Dict[str, Any]:

@@ -1,11 +1,11 @@
 ---
 id: TASK-32148
 title: Add repeatable opt-in live TTS cancellation and playback validation
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 05:34'
-updated_date: '2026-09-09 08:40'
+updated_date: '2026-09-09 09:01'
 labels: []
 dependencies: []
 ---
@@ -23,6 +23,8 @@ Turn the saved speech validation probes into a reproducible developer tool, and 
 - [x] #3 Repeated synthesis and playback retain complete audio and record bounded observer memory, resource snapshots and cleanup assertions rather than unconditional success flags.
 - [x] #4 Validation artifacts identify tested application, packages, models, audio bytes and physical playback outcomes; full-content transcription remains separate from transport and cleanup evidence.
 - [x] #5 Targeted harness regressions and real macOS CPU, MPS and ONNX runs pass; any unavailable cases have concrete backlog follow-ups and prerequisite evidence.
+- [ ] #6 CLI and evidence input paths pass centralized validation; audio references remain within the selected evidence run, malformed evidence yields a consistent validation error, and optional recognizer absence has actionable guidance before work starts.
+- [ ] #7 New validation helpers document and type their callable contracts while help and import remain inert.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,6 +39,8 @@ Reason: Test-only promotion of existing live validation seams; production fixes 
 3. Observe unchanged real PyTorch forward and ONNX session calls, prove cancellation falls between entry and exit, and verify terminal lifecycle plus successor playback and bounded repeated runs.
 4. Execute serialized macOS CPU, MPS and ONNX qualification with complete source/playback artifacts and separate content results. Record any production defect before fixing it.
 5. Run targeted harness and affected lifecycle tests, verify real cleanup and unchanged user configuration, and file remaining hardware/provider prerequisites.
+
+6. PR #2545 review: add failure-first negative controls for central CLI path validation, evidence shape and run confinement, missing optional ASR dependencies, and inert import/help. Repair those admission boundaries and complete helper docstrings/type hints without weakening content criteria; rerun targeted harness checks and a bounded real verifier/runner compatibility check. ADR required: no; apply existing path/input/dependency policies within this test-only tool, with no new trust root or provider contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

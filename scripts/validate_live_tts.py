@@ -23,9 +23,11 @@ import time
 import traceback
 import wave
 from array import array
-from contextlib import ExitStack, nullcontext
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, ExitStack, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 DEFAULT_TEXT = (
@@ -47,6 +49,10 @@ VOICE_LANGUAGES = {
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the inert command-line parser.
+
+    Returns:
+        A parser for explicit assets, runtime selection and playback admission."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", choices=("pytorch", "onnx"), required=True)
     parser.add_argument("--device", choices=("cpu", "mps"), default="cpu")
@@ -80,7 +86,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(args: argparse.Namespace) -> None:
-    """Reject unsafe or incomplete invocations before creating a run/profile."""
+    """Reject unsafe or incomplete invocations before creating a run/profile.
+
+    Args:
+        args: Parsed options, updated in place with centrally validated paths.
+
+    Raises:
+        ValueError: Admission, assets, paths or worker ownership are invalid.
+        OSError: A required local path cannot be inspected."""
     if not args.play_audio:
         raise ValueError("Real device playback requires --play-audio")
     if not 1 <= args.repeats <= 12:
@@ -104,6 +117,32 @@ def validate_args(args: argparse.Namespace) -> None:
     if language is None or (args.language and args.language.lower() != language):
         raise ValueError("language must match the selected voice prefix")
     args.language = language
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    for name in (
+        "model",
+        "voice_dir",
+        "voices",
+        "text_file",
+        "cancel_text_file",
+        "expected_package_root",
+    ):
+        value = getattr(args, name)
+        if value is not None:
+            validated = validate_path_simple(value.expanduser(), require_exists=True)
+            setattr(args, name, validated.resolve())
+    for name in ("voice_dir", "expected_package_root"):
+        value = getattr(args, name)
+        if value is not None and not value.is_dir():
+            raise ValueError(f"{name} must be an existing directory")
+    output = validate_path_simple(args.output.expanduser(), probe_existing=False)
+    if output.is_symlink() or (os.path.lexists(output) and not args.worker):
+        raise ValueError(f"Output already exists or is a symlink: {output}")
+    if not output.parent.is_dir() or (args.worker and not output.is_dir()):
+        raise ValueError(
+            "Output requires an existing parent and a real worker directory"
+        )
+    args.output = output.parent.resolve() / output.name
     required = [args.model, args.expected_package_root / "__init__.py"]
     if args.engine == "pytorch":
         if args.voice_dir is None:
@@ -118,22 +157,9 @@ def validate_args(args: argparse.Namespace) -> None:
         required.append(args.voices)
     required += [value for value in (args.text_file, args.cancel_text_file) if value]
     for path in required:
-        if not path.expanduser().is_file():
-            raise ValueError(f"Required local asset is missing: {path}")
-    for name in (
-        "model",
-        "voice_dir",
-        "voices",
-        "text_file",
-        "cancel_text_file",
-        "expected_package_root",
-        "output",
-    ):
-        value = getattr(args, name)
-        if value is not None:
-            setattr(args, name, value.expanduser().resolve())
-    if args.output.exists() and not args.worker:
-        raise ValueError(f"Output already exists: {args.output}")
+        validated = validate_path_simple(path)
+        if not validated.is_file():
+            raise ValueError(f"Required local asset is missing: {validated}")
     if args.worker and os.environ.get("TLDW_LIVE_VALIDATION_WORKER") != str(
         args.output
     ):
@@ -150,6 +176,14 @@ def validate_args(args: argparse.Namespace) -> None:
 
 
 def check_package_root(actual: Path, expected: Path) -> None:
+    """Require the imported package to match the selected installation.
+
+    Args:
+        actual: Imported package directory.
+        expected: Explicitly selected package directory.
+
+    Raises:
+        ValueError: The package locations differ."""
     if actual.resolve() != expected.resolve():
         raise ValueError(
             f"Imported package {actual} differs from requested package {expected}"
@@ -157,6 +191,16 @@ def check_package_root(actual: Path, expected: Path) -> None:
 
 
 def sha256(path: Path) -> str:
+    """Hash a caller-validated file using bounded reads.
+
+    Args:
+        path: Local file admitted by the runner.
+
+    Returns:
+        The complete file's lowercase SHA256 digest.
+
+    Raises:
+        OSError: The file cannot be read."""
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for block in iter(lambda: source.read(1024 * 1024), b""):
@@ -165,6 +209,14 @@ def sha256(path: Path) -> str:
 
 
 def write_evidence(path: Path, evidence: dict) -> None:
+    """Atomically replace the run's private JSON checkpoint.
+
+    Args:
+        path: Evidence destination inside the admitted private run.
+        evidence: Complete current observations, including partial failures.
+
+    Raises:
+        OSError: Writing, securing or replacing the checkpoint fails."""
     temporary = path.with_suffix(".tmp")
     temporary.write_text(
         json.dumps(evidence, indent=2, ensure_ascii=False, default=str) + "\n"
@@ -173,8 +225,23 @@ def write_evidence(path: Path, evidence: dict) -> None:
     temporary.replace(path)
 
 
-def observe_native(function, calls: list, details: dict, *, lock=None):
-    """Observe an unchanged synchronous call, including its exceptional exit."""
+def observe_native(
+    function: Callable[..., Any],
+    calls: list[dict[str, Any]],
+    details: dict[str, Any],
+    *,
+    lock: AbstractContextManager[Any] | None = None,
+) -> Callable[..., Any]:
+    """Observe an unchanged synchronous call, including its exceptional exit.
+
+    Args:
+        function: Native callable to delegate without changing its arguments.
+        calls: Mutable observation ledger receiving monotonic entry/exit rows.
+        details: Fixed runtime and request identity attached to each row.
+        lock: Optional shared context manager protecting ledger updates.
+
+    Returns:
+        A wrapper that preserves the callable's result and exceptions."""
 
     def observed(*args, **kwargs):
         row = {
@@ -198,6 +265,13 @@ def observe_native(function, calls: list, details: dict, *, lock=None):
 
 
 def validate_cancellation(row: dict) -> None:
+    """Require Stop to overlap native work and settlement to follow its exit.
+
+    Args:
+        row: Internal phase observations with native intervals and Stop/settlement.
+
+    Raises:
+        ValueError: Work did not overlap Stop, outlived settlement or restarted."""
     calls = row["native_calls"]
     stop = row["stop_requested_at"]
     if not any(call["enter_at"] < stop < call.get("exit_at", -1) for call in calls):
@@ -211,12 +285,26 @@ def validate_cancellation(row: dict) -> None:
 
 
 def assert_quiescent(resources: dict) -> None:
+    """Require all recorded resource owners to have joined.
+
+    Args:
+        resources: Internal resource counts or active-owner flags.
+
+    Raises:
+        ValueError: Any owner remains active."""
     active = {key: value for key, value in resources.items() if value}
     if active:
         raise ValueError(f"Resources have not joined: {active}")
 
 
 def validate_playback(row: dict) -> None:
+    """Require full-duration physical output and successful drain or player exit.
+
+    Args:
+        row: Internal audio and playback observations for a successful phase.
+
+    Raises:
+        ValueError: Playback was incomplete, failed or did not fully drain."""
     audio, playback = row["audio"], row["playback"]
     if playback["elapsed_seconds"] < audio["seconds"] - 0.25:
         raise ValueError("Player finished before the complete decoded audio duration")
@@ -231,7 +319,17 @@ def validate_playback(row: dict) -> None:
 
 
 def inspect_wav(path: Path) -> dict:
-    """Read every PCM16 frame in bounded blocks, rejecting truncated containers."""
+    """Read every PCM16 frame in bounded blocks, rejecting truncated containers.
+
+    Args:
+        path: Admitted local WAV file.
+
+    Returns:
+        Full encoded/PCM hashes, frame count, duration and signal statistics.
+
+    Raises:
+        ValueError: Audio is unsupported, truncated, empty or silent.
+        OSError: The file cannot be read."""
     frames = count = 0
     squares = peak = 0
     pcm_hash = hashlib.sha256()
@@ -269,6 +367,18 @@ def inspect_wav(path: Path) -> dict:
 
 
 def inspect_audio(path: Path) -> dict:
+    """Decode an admitted clip and inspect every audio frame.
+
+    Args:
+        path: Local WAV or encoded clip inside the private run.
+
+    Returns:
+        Complete audio statistics with original and decoded file identities.
+
+    Raises:
+        ValueError: Decoded audio fails complete-frame validation.
+        subprocess.SubprocessError: The bounded ffmpeg decode fails.
+        OSError: Audio files or the decoder cannot be accessed."""
     if path.suffix == ".wav":
         return inspect_wav(path)
     decoded = path.with_suffix(".decoded.wav")
@@ -301,6 +411,13 @@ def inspect_audio(path: Path) -> dict:
 
 
 def setup_environment(root: Path) -> None:
+    """Prepare the admitted worker's private directories and offline environment.
+
+    Args:
+        root: Existing private run directory created by the controller.
+
+    Raises:
+        OSError: Private directories cannot be created."""
     for name in ("KOKORO_MODEL_PATH", "KOKORO_VOICES_PATH"):
         os.environ.pop(name, None)
     for name in ("profile", "data", "cache", "audio", "blends"):
@@ -324,8 +441,15 @@ def setup_environment(root: Path) -> None:
     )
 
 
-def check_backend_assets(backend, args) -> None:
-    """Reject ambient overrides and fallback before loading any native model."""
+def check_backend_assets(backend: Any, args: argparse.Namespace) -> None:
+    """Reject ambient overrides and fallback before loading any native model.
+
+    Args:
+        backend: Constructed Kokoro backend before model initialization.
+        args: Admitted explicit engine and local asset paths.
+
+    Raises:
+        ValueError: The backend engine or asset paths differ from admission."""
     if backend.use_onnx != (args.engine == "onnx"):
         raise ValueError("Backend selected a different inference engine")
     paths = {"model": (backend.model_path, args.model)}
@@ -349,6 +473,13 @@ def _deny_network(event, arguments):
 
 
 def memory_snapshot() -> dict:
+    """Observe bounded process and already-loaded MPS memory statistics.
+
+    Returns:
+        Monotonic timestamp, active threads and supported RSS/MPS measurements.
+
+    Raises:
+        subprocess.SubprocessError: The process memory probe fails."""
     result = {"at": time.monotonic(), "threads": threading.active_count()}
     if sys.platform in {"darwin", "linux"}:
         import resource
@@ -384,7 +515,15 @@ def _versions(names) -> dict:
 
 
 async def run_live(args: argparse.Namespace, evidence: dict) -> None:
-    """Run mounted production paths; optional imports occur only in the worker."""
+    """Run mounted production paths with optional imports isolated to the worker.
+
+    Args:
+        args: Validated runtime, assets, scenarios and private output directory.
+        evidence: Mutable checkpoint ledger receiving real observations.
+
+    Raises:
+        Exception: Runtime, playback or lifecycle validation fails; the controller
+            records partial evidence and never treats forced exit as clean join."""
     import toml
     from loguru import logger
 
@@ -1181,7 +1320,18 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
             evidence["cleanup_joined"] = True
 
 
-def main(argv=None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    """Admit a live run and supervise its isolated worker to completion.
+
+    Args:
+        argv: CLI arguments, or None to use the process arguments.
+
+    Returns:
+        Zero for validated completion, otherwise a failing worker/control status.
+
+    Raises:
+        SystemExit: Help is requested or admission fails.
+        OSError: Private output or worker creation fails."""
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

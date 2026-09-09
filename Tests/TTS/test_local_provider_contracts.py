@@ -240,3 +240,43 @@ async def test_mounted_alltalk_settings_picker_offers_pinned_endpoint_aliases():
             tuple(value for _, value in selector._options if isinstance(value, str))
             == _PINNED_ALLTALK_VOICES
         )
+
+
+def test_shipped_alltalk_default_is_an_endpoint_alias():
+    import tomllib
+    from pathlib import Path
+
+    config = tomllib.loads(
+        (Path(__file__).resolve().parents[2] / "config.toml").read_text()
+    )
+    assert config["TTSSettings"]["ALLTALK_TTS_VOICE_DEFAULT"] == "alloy"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        ({"ALLTALK_TTS_VOICE_DEFAULT": "female_01.wav"}, "alloy"),
+        ({"ALLTALK_TTS_VOICE_DEFAULT": "nova"}, "nova"),
+        ({"ALLTALK_TTS_VOICE_DEFAULT": "narrator.wav"}, "narrator.wav"),
+        ({"ALLTALK_TTS_VOICE": "female_01.wav"}, "female_01.wav"),
+    ],
+)
+async def test_alltalk_inherited_default_and_explicit_voice_are_distinct(
+    config, expected
+):
+    submitted = []
+
+    def handler(request):
+        submitted.append(json.loads(request.content)["voice"])
+        return httpx.Response(200, content=b"speech")
+
+    backend = AllTalkTTSBackend({"ALLTALK_TTS_URL": "http://alltalk.test", **config})
+    await backend.client.aclose()
+    backend.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        assert await _synthesize(backend, "default") == b"speech"
+        assert await _synthesize(backend, "female_01.wav") == b"speech"
+        assert submitted == [expected, "female_01.wav"]
+    finally:
+        await backend.close()

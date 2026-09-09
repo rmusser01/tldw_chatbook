@@ -12,7 +12,15 @@ from tldw_chatbook.Utils.optional_deps import check_dependency
 def japanese_dictionary_error(
     error: RuntimeError, *, operation_id: str
 ) -> TTSOperationError | None:
-    """Classify a MeCab setup failure without exposing its private file paths."""
+    """Classify a MeCab setup failure without exposing its private file paths.
+
+    Args:
+        error: Runtime failure raised by Japanese frontend setup or use.
+        operation_id: Calling operation to attach to the structured error.
+
+    Returns:
+        A non-retryable dictionary setup error, or None for an unrelated failure.
+    """
     if "mecab" not in str(error).lower():
         return None
     return TTSOperationError(

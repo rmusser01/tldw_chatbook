@@ -2227,8 +2227,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 18,
-      "diagnostic_digest": "cb9f264116e53eb7660d",
+      "call_count": 15,
+      "diagnostic_digest": "b9ed83dfddbba0812747",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/alltalk.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2262,8 +2262,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 92,
-      "diagnostic_digest": "15a2bc7a4e501acc7bfd",
+      "call_count": 93,
+      "diagnostic_digest": "7bf2c7aa8627f6aa5f28",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/higgs.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2276,8 +2276,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 63,
-      "diagnostic_digest": "9e314411724cb02ec127",
+      "call_count": 62,
+      "diagnostic_digest": "b0fe354e2504adebacc3",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/kokoro.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11498,6 +11498,6 @@
     "persistent_sink_files": 12,
     "task_31551_calls": 55,
     "task_492_calls": 1351,
-    "task_494_calls": 7666
+    "task_494_calls": 7663
   }
 }

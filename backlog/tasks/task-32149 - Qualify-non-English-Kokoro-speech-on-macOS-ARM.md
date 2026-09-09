@@ -1,11 +1,11 @@
 ---
 id: TASK-32149
 title: Qualify non-English Kokoro speech on macOS ARM
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 05:34'
-updated_date: '2026-09-09 08:40'
+updated_date: '2026-09-09 09:01'
 labels: []
 dependencies: []
 ---
@@ -23,6 +23,7 @@ Exercise the supported non-English Kokoro voices with real local model output an
 - [x] #3 Complete source and playback evidence plus language-capable independent transcription preserve raw differences and do not claim pronunciation quality from an English-only recognizer.
 - [x] #4 Targeted regressions cover any discovered application defects and remaining asset, provider or language-quality blockers have explicit backlog records.
 - [x] #5 French aliases and Japanese/Mandarin frontends reach the selected ONNX model correctly; missing language dependencies or Japanese dictionary data have actionable setup errors, and cancellation during phonemization cannot start later inference.
+- [ ] #6 Concurrent Japanese or Mandarin ONNX requests do not construct duplicate cached frontends or invoke a shared frontend concurrently; cancellation and backend close retain real frontend work until it finishes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -38,6 +39,8 @@ Reason: Real ONNX Japanese output exposed the need to select the model-aligned o
 4. Independently transcribe complete clips with a multilingual recognizer, retain source/PCM hashes and raw differences, and separate transport success from pronunciation/content uncertainty.
 5. For each discovered application defect, add a failing targeted regression before a minimal fix; record concrete remaining limitations in Backlog and the qualification report.
 6. Add failure-first regressions for French aliases, model-aligned ONNX Japanese/Mandarin phonemes, missing Japanese dictionary guidance, and cancellation during frontend work. Implement ADR-142 within the retained worker and rerun affected live languages. Preserve initial failures and check lexical differences with an additional local multilingual recognizer where useful.
+
+7. PR #2545 review: reproduce concurrent frontend construction/invocation with controlled threads, serialize frontend cache construction and use inside retained native workers, document the dictionary error contract, and verify responsive event-loop cancellation and join behavior. ADR required: no new ADR; implement the retained frontend ownership already specified by ADR-142 and ADR-023.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

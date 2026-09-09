@@ -520,29 +520,7 @@ class SpeechSettingsMixin:
                 logger.debug(f"Could not set default ElevenLabs voice value: {e}")
         elif provider == "kokoro":
             logger.info(f"Setting up Kokoro voices for provider: {provider}")
-            voice_options = [
-                # American Female voices
-                ("Alloy (US Female)", "af_alloy"),
-                ("Aoede (US Female)", "af_aoede"),
-                ("Bella (US Female)", "af_bella"),
-                ("Heart (US Female)", "af_heart"),
-                ("Jessica (US Female)", "af_jessica"),
-                ("Kore (US Female)", "af_kore"),
-                ("Nicole (US Female)", "af_nicole"),
-                ("Nova (US Female)", "af_nova"),
-                ("River (US Female)", "af_river"),
-                ("Sarah (US Female)", "af_sarah"),
-                ("Sky (US Female)", "af_sky"),
-                # American Male voices
-                ("Adam (US Male)", "am_adam"),
-                ("Michael (US Male)", "am_michael"),
-                # British Female voices
-                ("Emma (UK Female)", "bf_emma"),
-                ("Isabella (UK Female)", "bf_isabella"),
-                # British Male voices
-                ("George (UK Male)", "bm_george"),
-                ("Lewis (UK Male)", "bm_lewis"),
-            ]
+            voice_options = list(LEGACY_VOICE_OPTIONS["kokoro"])
 
             # Add saved voice blends
             blend_file = kokoro_ui_blend_file()

@@ -114,3 +114,38 @@ async def test_official_language_voice_survives_fresh_catalog_projection(
         await _wait_until(pilot, lambda: bool(host.requests))
         assert host.requests[0].voice_id == voice
         assert host.requests[0].options["language"] == language
+
+
+@pytest.mark.asyncio
+async def test_settings_default_picker_accepts_all_official_language_voices(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.UI.Speech import speech_settings_mixin
+
+    monkeypatch.setattr(
+        speech_settings_mixin, "kokoro_ui_blend_file", lambda: tmp_path / "absent.json"
+    )
+
+    class SettingsHost(speech_settings_mixin.SpeechSettingsMixin, App):
+        def compose(self):
+            yield Select([], id="default-voice-select")
+
+    host = SettingsHost()
+    async with host.run_test() as pilot:
+        host._update_default_voice_options("kokoro")
+        selector = host.query_one("#default-voice-select", Select)
+        for voice in (
+            "af_heart",
+            "bf_emma",
+            "ef_dora",
+            "ff_siwis",
+            "hf_alpha",
+            "if_sara",
+            "jf_alpha",
+            "pf_dora",
+            "zf_xiaobei",
+        ):
+            selector.value = voice
+            await pilot.pause()
+            assert selector.value == voice
+        assert not (tmp_path / "absent.json").exists()

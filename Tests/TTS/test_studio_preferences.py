@@ -843,3 +843,20 @@ def test_unrecoverable_studio_record_can_reset_without_touching_other_scopes(
     }
     assert saved["app_tts"] == raw["app_tts"]
     assert saved["character_tts"] == raw["character_tts"]
+
+
+def test_alltalk_historical_default_inherits_without_rewriting_saved_config(
+    tmp_path, monkeypatch
+):
+    raw = {
+        "app_tts": {
+            "default_provider": "alltalk",
+            "ALLTALK_TTS_VOICE_DEFAULT": "female_01.wav",
+        }
+    }
+    store, config_path = _store(tmp_path, monkeypatch, raw)
+    before = config_path.read_bytes()
+    loaded = store.load()
+    assert loaded.state is StudioTTSLoadState.MISSING
+    assert loaded.snapshot.selection.voice_mode is None
+    assert config_path.read_bytes() == before
