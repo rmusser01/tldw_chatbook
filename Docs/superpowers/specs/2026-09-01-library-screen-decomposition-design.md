@@ -451,9 +451,20 @@ precondition: while `_select_library_rail_row_after_source_admission` awaits
 
 1. Extend the targeted route update so a media↔notes switch no longer needs the
    whole-screen seam — the two routes' structural delta is small and known
-   (media wraps its panes in `LibraryMediaReaderShell`; notes adds
-   `#library-notes-source-strip`), and the rail, nav bar, footer and chrome are
-   identical across them.
+   (media wraps its panes in `LibraryMediaReaderShell`, a **subclass** of the
+   `LibraryAdaptiveReaderShell` notes uses; notes adds
+   `#library-notes-source-strip` above the grid), and the nav bar, footer and
+   chrome are identical across them.
+   **The rail is the constraint here, and it is not obvious from the outside.**
+   `LibraryRail#library-rail` is a CHILD of the route's reader shell, not a
+   sibling of it (`#library-shell-grid > LibraryMediaReaderShell >
+   LibraryRail`), so the rail's 52 mounts are unavoidable for as long as the
+   shell is swapped per route. Keeping the rail resident therefore requires the
+   shell itself to be resident or shared, and the two shells' ids differ
+   (`#library-media-reader-shell` vs `#library-notes-reader-shell`) precisely so
+   they can be told apart. That id split is what step 1 has to resolve — it is
+   the reason **55** of the 177 mounts exist at all (rail 52 + the shell and its
+   two pane grips 3, straight off the region table above).
 2. Keep each visited canvas mounted in the canvas host and toggle visibility on
    switch, mounting a canvas the first time its route is entered.
 3. Gate a resident-but-unselected canvas out of event handling (finding 3) and
