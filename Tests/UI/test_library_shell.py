@@ -14607,6 +14607,13 @@ async def test_library_conversation_disabled_reason_stale_actions_and_notice(siz
     """Stale rows are read-only while filter and mounted Retry recover them."""
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(25))
+    # Keep workspace eligibility independent from the stale browse authority.
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    registry.set_active_workspace("workspace-a")
+    registry.link_membership(
+        "workspace-a", item_type="conversation", item_id="chat-001"
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=size) as pilot:
