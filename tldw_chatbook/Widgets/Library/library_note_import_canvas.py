@@ -26,6 +26,7 @@ _CLASSIFICATION_LABELS = {
     "changed_repeat": "Changed repeat",
     "uncertain_match": "Uncertain match",
     "unsupported": "Unsupported",
+    "skipped": "Skipped",
     "failed": "Failed",
 }
 
@@ -76,6 +77,10 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         overflow-y: auto;
     }
 
+    LibraryNoteImportCanvas #notes-import-review-options {
+        height: auto;
+    }
+
     LibraryNoteImportCanvas Static,
     LibraryNoteImportCanvas Input,
     LibraryNoteImportCanvas Button {
@@ -113,6 +118,13 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     class CheckRequested(Message):
         """Request read-only discovery and planning."""
+
+    class ObsidianModeToggled(Message):
+        """Report the requested Obsidian-vault reading mode."""
+
+        def __init__(self, enabled: bool) -> None:
+            super().__init__()
+            self.enabled = enabled
 
     class CollisionChoiceRequested(Message):
         """Report one explicit imported-root collision choice."""
@@ -405,6 +417,22 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             )
 
     def _compose_review(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
+        if state.obsidian_available:
+            with Vertical(id="notes-import-review-options"):
+                yield Button(
+                    _choice_label(
+                        selected=state.obsidian_mode, text="Obsidian vault"
+                    ),
+                    id="note-import-obsidian-mode",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Static(
+                    state.obsidian_reason,
+                    id="note-import-obsidian-reason",
+                    classes="note-import-quiet",
+                    markup=False,
+                )
         if state.collision_kind:
             yield Static(
                 f"Folder collision: {state.collision_name}",
@@ -528,7 +556,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             classes="library-canvas-action note-import-item-action",
             compact=True,
         )
-        if item.classification not in {"unsupported", "failed"}:
+        if item.classification not in {"unsupported", "skipped", "failed"}:
             yield Button(
                 _choice_label(selected=item.action == "create_new", text="Create new"),
                 id=f"note-import-action-{dom_token}-create",
@@ -629,6 +657,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     def _check(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(self.CheckRequested())
+
+    @on(Button.Pressed, "#note-import-obsidian-mode")
+    def _toggle_obsidian_mode(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.ObsidianModeToggled(not self.snapshot.obsidian_mode))
 
     @on(Button.Pressed, ".note-import-collision-choice")
     def _choose_collision(self, event: Button.Pressed) -> None:

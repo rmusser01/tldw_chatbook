@@ -479,6 +479,31 @@ hide a running import without stopping it; the list then offers **View import**
 or **Continue import** until it settles. **Last import** reopens the same-session
 receipt afterward.
 
+#### Obsidian vaults
+
+If the folder you chose holds an `.obsidian/` directory, the review shows an
+**Obsidian vault** toggle, on by default, and one line saying what it does.
+With it on:
+
+- `.obsidian/`, `.trash/` and `Templates/` are listed under **Skipped** with a
+  plain reason instead of failing as unreadable files.
+- YAML frontmatter is read: `title` becomes the note title, and `tags` and
+  `aliases` become keywords (there is no separate alias field, and keeping them
+  as keywords is what makes the note findable by its alternate names). The
+  frontmatter block is removed from the note body.
+- A template placeholder such as `# {{date:YYYY-MM-DD}}` is never used as a
+  title; the file name is used instead.
+- `[[wikilinks]]` and `[[link|alias]]` whose target is imported in the same
+  batch become note links; a link to anything else stays as plain text.
+
+Turn the toggle off to import the vault exactly as any other folder — every
+directory walked, frontmatter left in the body, links left as text. Toggling
+re-runs the read-only check, so nothing is written either way, and Import once
+never modifies the vault on disk.
+
+Review rows for new notes state what will be created — the resulting title and
+the keyword and link counts — before you approve anything.
+
 ## Common tasks
 
 ### Create a note from a template
@@ -494,7 +519,8 @@ receipt afterward.
 2. For files, click **Add another file** as needed and enter the Database Notes
    destination. A folder already supplies its proposed hierarchy.
 3. Click **Check selection** and review classifications, actions, matches, and
-   any top-level folder collision.
+   any top-level folder collision. For an Obsidian vault, check the
+   **Obsidian vault** toggle first — see "Obsidian vaults" above.
 4. Click **Import selected items**. You can cancel cooperatively, retry work
    identified by the receipt, or return to Notes and reopen **Last import**.
 
@@ -693,3 +719,8 @@ New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
 rows with a visible cursor, the footer's "enter create note" follows the
 focused control, and Tab no longer leaves the Library screen for the
 navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*
+
+*Verified against fix/library-notes-obsidian — 2026-09-09 (task-32129: Import
+once detects an Obsidian vault, skips `.obsidian/`, `.trash/` and `Templates/`
+with reasons, reads frontmatter titles and tags, and links wikilinks resolved
+within the batch).*

@@ -8,10 +8,13 @@ use :meth:`NoteImportPlan.to_diagnostic` for the supported redacted projection.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import TypeVar
+from unicodedata import normalize
 
 
 class ImportClassification(str, Enum):
@@ -22,6 +25,7 @@ class ImportClassification(str, Enum):
     CHANGED_REPEAT = "changed_repeat"
     UNCERTAIN_MATCH = "uncertain_match"
     UNSUPPORTED = "unsupported"
+    SKIPPED = "skipped"
     FAILED = "failed"
 
 
@@ -77,6 +81,51 @@ MAX_IMPORT_KEYWORD_LENGTH = 512
 
 MAX_IMPORT_ITEM_ID_LENGTH = 256
 """Absolute length ceiling for opaque preview item identifiers."""
+
+WIKILINK = re.compile(
+    r"(?<!!)\[\[([^\[\]|#^]+)(?:[#^][^\[\]|]*)?(?:\|([^\[\]]*))?\]\]"
+)
+"""One non-embedded `[[target]]`, `[[target#heading]]` or `[[target|alias]]`.
+
+The single definition of the Obsidian link grammar: the parser records targets
+with it and the executor rewrites the same spans with it.
+"""
+
+
+def wikilink_key(target: str) -> str:
+    """Return the comparable form of one link target or vault-relative path."""
+    return normalize("NFC", target).strip().strip("/").casefold()
+
+
+def rewrite_wikilinks(
+    payload: ParsedNotePayload,
+    note_ids: Mapping[str, str],
+) -> ParsedNotePayload:
+    """Return `payload` with resolvable `[[links]]` rewritten as note links.
+
+    A target with no entry in `note_ids` — a note outside the batch, an
+    attachment, a heading-only link — is left exactly as the author wrote it.
+
+    Args:
+        payload: One parsed note, whose `wikilinks` licence the rewrite.
+        note_ids: Comparable link keys mapped to the note id each will get.
+
+    Returns:
+        The same payload when nothing resolves, else a copy with linked content.
+    """
+    if not payload.wikilinks or not note_ids:
+        return payload
+
+    def _link(match: re.Match[str]) -> str:
+        target = match.group(1).strip()
+        note_id = note_ids.get(wikilink_key(target))
+        if note_id is None:
+            return match.group(0)
+        label = (match.group(2) or "").strip() or target
+        return f"[{label}](note://{note_id})"
+
+    content = WIKILINK.sub(_link, payload.content)
+    return payload if content == payload.content else replace(payload, content=content)
 
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
@@ -139,6 +188,13 @@ class ParsedNotePayload:
     content: str = field(repr=False)
     keywords: tuple[str, ...] = field(default=(), repr=False)
     template_name: str | None = field(default=None, repr=False)
+    wikilinks: tuple[str, ...] = field(default=(), repr=False)
+    """Obsidian ``[[target]]`` names found in ``content``, in first-use order.
+
+    Only an Obsidian-mode parse fills this; it is the executor's sole licence to
+    rewrite links, so an ordinary import that happens to contain ``[[…]]`` text
+    keeps it literal.
+    """
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not isinstance(self.content, str):
@@ -159,7 +215,14 @@ class ParsedNotePayload:
             and len(self.template_name) > MAX_IMPORT_TEMPLATE_NAME_LENGTH
         ):
             raise ValueError("template_name exceeds its absolute safety ceiling.")
+        wikilinks = _as_tuple(self.wikilinks, field_name="wikilinks")
+        if not all(
+            isinstance(link, str) and link.strip() and len(link) <= MAX_IMPORT_TITLE_LENGTH
+            for link in wikilinks
+        ):
+            raise ValueError("wikilinks must contain bounded non-blank text values.")
         object.__setattr__(self, "keywords", keywords)
+        object.__setattr__(self, "wikilinks", wikilinks)
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,8 +392,19 @@ _DEFAULT_ACTIONS = {
     ImportClassification.CHANGED_REPEAT: ImportAction.CREATE_NEW,
     ImportClassification.UNCERTAIN_MATCH: ImportAction.CREATE_NEW,
     ImportClassification.UNSUPPORTED: ImportAction.SKIP,
+    ImportClassification.SKIPPED: ImportAction.SKIP,
     ImportClassification.FAILED: ImportAction.SKIP,
 }
+
+
+_NON_IMPORTABLE_CLASSIFICATIONS = frozenset(
+    {
+        ImportClassification.UNSUPPORTED,
+        ImportClassification.SKIPPED,
+        ImportClassification.FAILED,
+    }
+)
+"""Classifications that carry no payload and only ever allow Skip."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,10 +493,7 @@ class ImportPreviewItem:
             raise ValueError("selected_action must be present in allowed_actions.")
         if self.default_action is not _DEFAULT_ACTIONS[self.classification]:
             raise ValueError("default_action does not match the classification.")
-        importable = self.classification not in {
-            ImportClassification.UNSUPPORTED,
-            ImportClassification.FAILED,
-        }
+        importable = self.classification not in _NON_IMPORTABLE_CLASSIFICATIONS
         if importable and not payloads:
             raise ValueError("Importable items require at least one payload.")
 
@@ -462,10 +533,7 @@ class ImportPreviewItem:
         allowed_actions: tuple[ImportAction, ...],
     ) -> None:
         """Reject classification, match, and action combinations that cannot run."""
-        if self.classification in {
-            ImportClassification.UNSUPPORTED,
-            ImportClassification.FAILED,
-        }:
+        if self.classification in _NON_IMPORTABLE_CLASSIFICATIONS:
             if allowed_actions != (ImportAction.SKIP,):
                 raise ValueError("Unsupported and failed items must only allow Skip.")
             if self.match is not None:

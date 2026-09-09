@@ -2626,6 +2626,10 @@
         overflow-y: auto;
     }
 
+    LibraryNoteImportCanvas #notes-import-review-options {
+        height: auto;
+    }
+
     LibraryNoteImportCanvas Static,
     LibraryNoteImportCanvas Input,
     LibraryNoteImportCanvas Button {

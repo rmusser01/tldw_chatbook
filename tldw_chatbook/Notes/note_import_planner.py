@@ -362,6 +362,19 @@ def _classify_parsed_source(
     )
 
 
+def _issue_reason(issue: ImportParseIssue) -> str:
+    """Return the public reason for one unsupported, skipped or failed source.
+
+    A skip states why it was skipped -- the reason is the whole point of showing
+    it -- while unsupported and failed sources keep their generic public copy.
+    """
+    if issue.classification is ImportClassification.UNSUPPORTED:
+        return _UNSUPPORTED_REASON
+    if issue.classification is ImportClassification.SKIPPED:
+        return issue.user_message
+    return _FAILED_REASON
+
+
 def _issue_item(
     issue: ImportParseIssue,
     item_id: str,
@@ -382,12 +395,7 @@ def _issue_item(
         payloads=(),
         memberships=(),
         classification=issue.classification,
-        reason=_bounded_reason(
-            _UNSUPPORTED_REASON
-            if issue.classification is ImportClassification.UNSUPPORTED
-            else _FAILED_REASON,
-            bounds,
-        ),
+        reason=_bounded_reason(_issue_reason(issue), bounds),
         default_action=ImportAction.SKIP,
         selected_action=ImportAction.SKIP,
         allowed_actions=(ImportAction.SKIP,),

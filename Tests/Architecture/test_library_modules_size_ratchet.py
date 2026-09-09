@@ -378,7 +378,18 @@ _BUDGETS: dict[str, int] = {
     # `Tests/UI/test_library_crit8_keyboard.py::
     # test_ctrl_n_into_new_note_also_focuses_blank_note` -- reverting the
     # guard reds it (focus lands on a notes-tree row, not Blank note).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5283,
+    #
+    # 2026-09-09, task-32129 (Obsidian mode for Import once): 5284 -> 5300
+    # (+16), a BEHAVIOUR ADD, not a move -- one new `@on` handler
+    # (`handle_library_note_import_obsidian_mode`) that re-runs the read-only
+    # check when the review's Obsidian-vault toggle changes. The row was
+    # already 1 line under the file when this branch started (5284 measured
+    # against a 5283 pin), so this re-pin also corrects that drift. Pinned by
+    # `Tests/UI/test_library_note_import_flow.py::
+    # test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault`
+    # -- without the handler the toggle press never re-checks and the test reds
+    # on "Turning Obsidian vault off never re-ran the check."
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5300,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -388,7 +399,11 @@ _BUDGETS: dict[str, int] = {
     # replaced in place).
     "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 198,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
-    "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
+    # 2026-09-09, task-32129 (Obsidian mode for Import once): 587 -> 602
+    # (+15), a BEHAVIOUR ADD -- `set_obsidian_mode` (6 lines) plus the
+    # vault-detection flag and the two `obsidian_mode` arguments threaded
+    # through `_plan_selection`/`check`.
+    "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 602,
     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born

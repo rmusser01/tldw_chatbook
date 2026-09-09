@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from contextlib import contextmanager
 from dataclasses import replace
 import inspect
 from pathlib import Path
@@ -11,8 +13,9 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
+from Tests.Notes.test_note_import_obsidian import _build_vault
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.background_signals import wait_for_signal
 from Tests.UI.test_library_shell import (
@@ -488,3 +491,129 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         screen.query_one("#library-notes-add-from-files").press()
         await _wait_for_selector(screen, pilot, "#notes-add-import-once")
         assert screen._notes_state.view == "lasting_add"
+
+
+def _vault_tree_digest(root: Path) -> str:
+    """Return one digest over every path and byte under `root`."""
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        digest.update(str(path.relative_to(root)).encode("utf-8"))
+        digest.update(b"\x00")
+        if path.is_file():
+            digest.update(path.read_bytes())
+        digest.update(b"\x01")
+    return digest.hexdigest()
+
+
+def _review_text(screen) -> str:
+    """Return the rendered review copy of the import canvas."""
+    return "\n".join(
+        str(static.renderable)
+        for static in screen.query("#note-import-body Static")
+    )
+
+
+async def _reach_import_review(screen, pilot, source: Path) -> None:
+    await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+    _resolve_picker_immediately(screen, source)
+    screen.query_one("#library-notes-add-from-files").press()
+    await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+    screen.query_one("#notes-add-import-once").press()
+    await _wait_for_selector(screen, pilot, "#note-import-check")
+    screen.query_one("#note-import-check").press()
+    await _wait_for_selector(screen, pilot, "#note-import-import")
+
+
+@contextmanager
+def _import_ready_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Yield a Library harness whose Import once has real local authorities."""
+    database = CharactersRAGDB(tmp_path / "notes.sqlite", client_id="library-obsidian")
+    folders = LocalNoteFolderRepository(database)
+    interop = NotesInteropService(
+        base_db_directory=tmp_path,
+        api_client_id="library-obsidian",
+        global_db_to_use=database,
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "get_notes_sync_state_db_path",
+        lambda: tmp_path / "import-receipts.sqlite",
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    app.chachanotes_db = database
+    app.notes_scope_service = NotesScopeService(
+        local_notes_service=interop,
+        server_service=None,
+        folder_repository=folders,
+    )
+    try:
+        yield LibraryHarness(app)
+    finally:
+        interop.close_all_user_connections()
+        database.close_connection()
+
+
+async def test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A detected vault reviews with the toggle on, and toggling re-checks it."""
+    vault = _build_vault(tmp_path / "vault")
+    digest_before = _vault_tree_digest(vault)
+
+    with _import_ready_host(tmp_path, monkeypatch) as host:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-notes").press()
+            await _reach_import_review(screen, pilot, vault)
+
+            toggle = screen.query_one("#note-import-obsidian-mode", Button)
+            assert str(toggle.label) == "✓ Obsidian vault"
+            assert "skips .obsidian" in str(
+                screen.query_one("#note-import-obsidian-reason", Static).renderable
+            )
+            review = _review_text(screen)
+            assert "Skipped (3)" in review
+            assert "Obsidian configuration" in review
+            assert "Obsidian trash" in review
+            assert "Obsidian template" in review
+            assert "Failed (" not in review
+            assert "Library review · 4 keywords · 3 links." in review
+
+            toggle.press()
+            await _wait_for_condition(
+                pilot,
+                lambda: str(
+                    screen.query_one("#note-import-obsidian-mode", Button).label
+                ).startswith("○"),
+                message="Turning Obsidian vault off never re-ran the check.",
+            )
+            review_off = _review_text(screen)
+            assert "Skipped (" not in review_off
+            assert "Failed (" in review_off
+
+            assert _vault_tree_digest(vault) == digest_before
+
+
+async def test_a_plain_folder_offers_no_obsidian_toggle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The vault toggle appears only for a folder that really is a vault."""
+    folder = tmp_path / "Plain"
+    (folder / "Templates").mkdir(parents=True)
+    (folder / "Templates" / "Daily.md").write_text(
+        "# Daily\n\nBody.\n", encoding="utf-8"
+    )
+
+    with _import_ready_host(tmp_path, monkeypatch) as host:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-notes").press()
+            await _reach_import_review(screen, pilot, folder)
+
+            assert not screen.query("#note-import-obsidian-mode")
+            assert "Daily" in _review_text(screen)
