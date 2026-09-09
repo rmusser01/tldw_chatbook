@@ -32343,7 +32343,7 @@ async def test_late_notes_sync_preserves_newer_row_focus_and_scroll(
             await pilot.pause()
             assert notes_list.scroll_y == 7
         elif claimed is False:
-            screen.query_one("#library-notes-items-grip", Button).focus()
+            screen.query_one("#library-browse-items-grip", Button).focus()
             await pilot.pause()
         else:
             screen.set_focus(None)

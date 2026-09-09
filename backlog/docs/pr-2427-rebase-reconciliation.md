@@ -2801,6 +2801,50 @@ GREEN: all three complete boundary, architecture-inventory and settings files,
 Independent review, scoped Ruff and whitespace checks pass. Whole-file formatter
 differences in the architecture file are pre-existing and outside this change.
 
-Fresh dev is now `fa313e901e4462baae44977f41d15ef660fd379c` (Library phase-C
-residency, PR #2546). Integration and affected-owner qualification remain pending;
-the earlier green Library run is not evidence for these newly changed owners.
+Fresh dev is `fa313e901e4462baae44977f41d15ef660fd379c` (Library phase-C
+residency, PR #2546). The 232-commit rebase completed, preserving incoming
+residency/region ownership and prior focus, blank-GC and resource repairs.
+Independent source/AST review found no lost behavior beyond the explicitly
+repaired integration issues below.
+
+- Two PR-only old shell probes lost ordinary-width pane priority and replaced
+  existing Items canvas identity. Two behavior tests failed after test-selector
+  migration, then passed after using the established Media route marker.
+- Export's newly canvas-owned async handler awaited removal of its own ancestor;
+  ancestor teardown awaited that message task. The unchanged mounted test hit its
+  300-second timeout. Queueing the same controller action through existing
+  Screen-owned `call_next` breaks the cycle without a new worker or export path.
+  Queue ownership/refusal and mounted Export now pass (3 cases; mounted 1.67s).
+- Complete crit8/per-click files: 36 passed, 1 existing Search/RAG-owned skip;
+  `/private/tmp/pr2427-ui-rebase-green.log`. Original reconciliation RED was
+  9 failed, 32 passed, 1 skipped in 371.19s (`pr2427-selector-red.log`).
+- Two previously omitted module cap rows exposed documentation-only overruns.
+  Redundant historical commentary was shortened; requested public documentation
+  and executable ASTs remain intact. MediaBrowseState is 295/295, wiring 338/338;
+  complete state/assembly files pass 85 tests (`pr2427-docs-state.log`). Screen
+  and Media controller pins were lowered to measured 31692/1213 and 4646.
+- The existing strict canvas-sync diagnostic guard remains unchanged: no new
+  traceback capture. Statement review found only two fixed-kind/allowlisted-ID
+  refusal messages and an exact mouse-capture diagnostic move. Regenerated the
+  manifest after this review. Nine complete architecture/diagnostic files pass
+  183 tests, with 8 warnings (`pr2427-rebase-guards-green.log`). All seven derived
+  checks pass (`pr2427-rebase-preflight.log`), including 3686 task files without
+  collisions. Broad changed-file Ruff comparison has the same 48 inherited
+  findings and no new findings; scoped repair files pass.
+
+The initial four complete phase-C files passed 98 cases in 70.97s with zero
+terminal SQLite/instance-lock handles (six total native handles). No fixture
+expansion was made solely on a static ownership concern. The final affected
+Library run is broader: 2184 cases in 34 complete files, native observation only,
+with source held fixed. Log: `/private/tmp/pr2427-rebase-native-final.log`;
+descriptor evidence: `$TMPDIR/pr2427-rebase-native-final.7phLag/fd_identity.jsonl`.
+Early aligned failures involve the single-app route cycle, narrow Media Items
+width, and graduation-toast/route replacement. They remain under diagnosis.
+This is a saved progress checkpoint, not a passing final qualification or merge.
+
+Frozen source SHA-256:
+
+- LibraryScreen: `800fb17fafda1e199e5e9aba5f1d75ebed6f3ad22623631c71e2096b262abbf1`
+- canvas_sync: `15207abfef2e31768894dfe2a5b12b263c56cec61c1275da5a66bff1831b9468`
+- Media canvas: `1626ad389a3c3242cfa6f26299576a5d81e03e6d7fe91b3f997a81a8586077af`
+- phase-C region test: `c224e0ba8fcc79836e23b8b5af922a689dd9384c69e7a06748c2228677b17be1`

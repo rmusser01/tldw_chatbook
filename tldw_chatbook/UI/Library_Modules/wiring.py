@@ -121,15 +121,9 @@ def build_library_controllers(screen: LibraryScreen) -> None:
             lambda: screen._selected_conversation_handoff_payload()
         ),
     )
-    # Sentinel: `self._export_state` does NOT exist yet at this point in
-    # `__init__` -- it is constructed later, at ~:3288, specifically to
-    # preserve the computed `form` default's original `__init__`
-    # evaluation position (see `LibraryExportState`'s module docstring).
-    # Every dependency below is a lazy accessor (a `lambda`, not a bound
-    # value), and no controller method may run during `__init__` -- an
-    # eager `export_state_accessor()` call made from here would raise
-    # `AttributeError: 'LibraryScreen' object has no attribute
-    # '_export_state'`.
+    # _export_state is constructed later to preserve its form-default timing
+    # (see LibraryExportState). Keep dependencies lazy: evaluating the state
+    # accessor or running controller methods here would raise AttributeError.
     screen._export_controller = LibraryExportController(
         screen,
         export_state_accessor=lambda: screen._export_state,

@@ -32465,7 +32465,7 @@ class LibraryScreen(BaseAppScreen):
             self._close_library_media_find()
             self._media_state.content_mode = "raw"
             if not entry_origin:
-                if self.query("#library-media-reader-shell"):
+                if self.query(".library-media-route"):
                     await self._apply_library_media_active_surface()
                 else:
                     await self._apply_library_open_item_surface(

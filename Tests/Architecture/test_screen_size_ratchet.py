@@ -888,7 +888,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # PR-2427 after wave-8 reconciliation: ordered assembly/private cleanup and
     # removal of the superseded unreachable placement block retain tighter pins.
     # TASK-31932 wave 9: seven dead/obsolete helpers removed; keyboard kept.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31868, 1229),
+    # PR-2427 phase-C rebase retains its prior cleanup and the 16 canvas-owned
+    # handler removals; measured 31692 lines / 1213 methods, no raised ceiling.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31692, 1213),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

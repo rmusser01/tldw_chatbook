@@ -35,6 +35,8 @@ import ast
 import inspect
 import pathlib
 import re
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.widgets import Button, Input
@@ -53,6 +55,38 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
 )
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admitted", [False, True])
+async def test_export_dispatch_queues_on_the_surviving_screen(admitted: bool) -> None:
+    """Release the canvas message pump before Export can remove its ancestor.
+
+    Args:
+        admitted: Whether the existing resident-canvas gate accepts the press.
+    """
+    from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
+
+    queued = []
+    stopped = []
+    export = AsyncMock()
+    actions = SimpleNamespace(
+        call_next=queued.append, handle_library_media_export=export
+    )
+    canvas = SimpleNamespace(
+        _media_actions_for_press=lambda event: actions if admitted else None
+    )
+    event = SimpleNamespace(stop=lambda: stopped.append(True))
+    result = LibraryMediaCanvas.handle_library_media_export(canvas, event)
+    if inspect.isawaitable(result):
+        await result
+
+    export.assert_not_awaited()
+    assert stopped == ([True] if admitted else [])
+    assert len(queued) == int(admitted)
+    if admitted:
+        await queued[0]()
+        export.assert_awaited_once_with(event)
+
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SCREEN_PATH = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py"

@@ -979,10 +979,9 @@ def _sync_library_canvas(
         # route-ownership guard, which is what stops residency from silently
         # redirecting the sync storm onto invisible canvases.
         #
-        # Kept from that round: the traceback. It used to be discarded, so an
-        # AttributeError inside a state builder left one debug line and no
-        # clue -- the exact shape wave 8 spent a round finding.
-        logger.opt(exception=True).debug(f"Library {kind} canvas sync failed.")
+        # Retain the reviewed failure-category diagnostic without capturing
+        # exception text/frames; the recovery contract does not require them.
+        logger.debug(f"Library {kind} canvas sync failed.")
         if kind == "prompts" and prompt_work is not None:
             try:
                 prompt_work.sync_state(**prompt_work_kwargs)

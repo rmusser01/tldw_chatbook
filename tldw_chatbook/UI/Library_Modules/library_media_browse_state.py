@@ -24,9 +24,7 @@ from ..destination_recovery import (
 )
 
 _SERVICE_WHAT = "Couldn't load media"
-# task-31632: the single Media Retry, rendered INSIDE the failure callout,
-# and the callout's own selector -- both failure fences publish one state
-# through ``failure`` because the canvas paints one callout.
+# TASK-31632: both failure fences share the canvas's one Retry callout.
 _RETRY_ID = "library-media-retry"
 _FAILURE_SELECTOR = "#library-media-load-failure"
 _MUTATION_COPY = "Media changed; retry to load a current page."
@@ -53,9 +51,7 @@ def _raised_failure(
     Args:
         what: What could not be loaded, as a clause.
         exc: The exception the failed request raised.
-        repeated: True when this same reason has just recurred on a
-            consecutive Retry (task-31982 AC#2). The failure then names the
-            reopen recovery step instead of repeating its one sentence.
+        repeated: Same-reason consecutive Retry; add the reopen recovery step.
     """
     reason = _retry_failure_reason(exc)
     if repeated:
@@ -79,30 +75,16 @@ class MediaBrowseState:
     loading: bool = False
     error_copy: str = ""
     stale_copy: str = ""
-    # Final review M-3: the reason the PAGE went stale, kept separate
-    # from ``stale_copy`` (the pager's own status line, which a failed
-    # Retry overwrites with "Couldn't retry · <reason>"). Every gated
-    # action's tooltip reads this one instead, so it keeps explaining
-    # why the action is off across repeated failed retries.
+    # M-3: gated-action tooltips retain the stale reason when Retry changes
+    # the pager's stale_copy to "Couldn't retry · <reason>".
     stale_reason: str = ""
-    # task-31632: the recovery state behind ``error_copy``/
-    # ``facet_error_copy`` -- same event, with the reason and a Retry
-    # target. Each is cleared by its OWN success, so a page failure
-    # never outlives a facet reload (or the reverse); ``failure`` is
-    # the one the canvas paints.
+    # TASK-31632: each fence clears only its own recovery state on success;
+    # failure selects the page/facet callout shown by the canvas.
     page_failure: DestinationRecoveryState | None = None
     facet_failure: DestinationRecoveryState | None = None
-    # task-31982 AC#2: the reason each fence last failed with, kept
-    # across Retries (``begin`` clears ``page_failure`` on every request,
-    # so it cannot tell a repeat from a first failure). A consecutive
-    # failure with the SAME reason names the reopen recovery step; a
-    # success on either fence clears its own tracker.
-    # task-32039 AC#1: the reason alone was not enough -- a resume
-    # auto-refresh or a page/query/type change that hit the same reason
-    # read as a consecutive Retry. Each reason is now paired with the
-    # context fingerprint it failed in (the page scope, the facet
-    # request), so "repeated" means the SAME context failed again; a new
-    # visit clears the episode via ``clear_fault_episode``.
+    # TASK-31982/32039: retain each reason and request fingerprint across
+    # begin(), which clears page_failure. Only a same-context Retry escalates;
+    # that fence's success or clear_fault_episode() resets its history.
     _page_fault_reason: str = ""
     _page_fault_context: str = ""
     _facet_fault_reason: str = ""
@@ -118,9 +100,7 @@ class MediaBrowseState:
         """Return the load failure to show: the page's, else the facets'.
 
         Returns:
-            ``page_failure`` when a page load has failed; otherwise
-            ``facet_failure`` when the type facets have failed; otherwise
-            ``None`` when both fences are clean.
+            The page failure, else facet failure, else None when both are clean.
         """
         return self.page_failure or self.facet_failure
 
@@ -137,8 +117,7 @@ class MediaBrowseState:
     def mutation_refresh_scope(self) -> MediaBrowseScope:
         """Return the applied scope, falling back to the requested scope.
 
-        Mutations refresh the page whose items remain visible, even when a
-        different requested page has not successfully replaced it.
+        Refresh visible items even when a different requested page has not applied.
 
         Returns:
             The retained result's scope, or the requested scope without a result.
@@ -238,17 +217,10 @@ class MediaBrowseState:
     def note_analysis_state(self, media_id: str, *, has_analysis: bool) -> bool:
         """Re-project one retained row's ``has_analysis`` after an analysis write.
 
-        Qodo on #2475: ``has_analysis`` is a SQL projection frozen into the
-        retained row when the page applied, so an analysis saved from the
-        Reader (or by the bulk Analyze run) left its own row unmarked until
-        something re-paged the list. The caller supplies the value from that
-        same projection, re-read for this ONE id after the write
-        (``LibraryScreen._reproject_library_media_analysis_row``); nothing
-        here derives it, and nothing runs on the page path.
-
-        Freshness is deliberately untouched: this is not a page change, it
-        is the same page carrying a fact the projection has already been
-        asked about.
+        Qodo #2475: the Reader/bulk writer re-reads this one SQL projection
+        through _reproject_library_media_analysis_row; otherwise its retained
+        row stays unmarked until re-paging. Do not derive the value here or
+        change freshness: this updates a known fact on the same page.
 
         Args:
             media_id: Canonical ``local:media:<id>`` row id.
@@ -314,12 +286,8 @@ class MediaBrowseState:
     def clear_fault_episode(self) -> None:
         """Forget the repeated-fault history so a new visit is not a Retry.
 
-        task-32039 AC#1: ``begin``/``request_facets`` cannot tell a Library
-        screen-RESUME auto-refresh from a consecutive Retry -- both re-issue
-        the same scope with the same fingerprint. The screen clears the
-        episode on resume, so the first failure of a new visit never wears the
-        reopen recovery step even when its reason matches the last visit's. A
-        genuine same-context Retry within a visit still escalates.
+        TASK-32039: resume can reissue the same fingerprint as a Retry. Clear
+        on resume so only same-context retries within one visit escalate.
         """
         self._page_fault_reason = ""
         self._page_fault_context = ""
