@@ -968,7 +968,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             title = ellipsize_note_title_cells(
                 receipt.title or "Untitled", 18 if self.compact else 42
             )
-            receipt_row = Horizontal(
+            # task-32123: the copy and the two recovery actions are stacked,
+            # not laid side by side. A one-row receipt needed the title's 42
+            # cells PLUS both buttons, so in a narrow list pane Undo -- the
+            # only recovery path there is, with no Trash browser -- was
+            # painted past the pane edge and could not be pressed.
+            receipt_row = Vertical(
                 id="library-notes-delete-receipt", classes="ds-toolbar"
             )
             receipt_row.styles.height = "auto"
@@ -979,20 +984,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-toolbar-count",
                     markup=False,
                 )
-                yield Button(
-                    "Undo",
-                    id="library-notes-delete-undo",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=list_state.operation_running,
+                receipt_actions = Horizontal(
+                    id="library-notes-delete-receipt-actions"
                 )
-                yield Button(
-                    "Dismiss",
-                    id="library-notes-delete-receipt-dismiss",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=list_state.operation_running,
-                )
+                receipt_actions.styles.height = "auto"
+                with receipt_actions:
+                    yield Button(
+                        "Undo",
+                        id="library-notes-delete-undo",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=list_state.operation_running,
+                    )
+                    yield Button(
+                        "Dismiss",
+                        id="library-notes-delete-receipt-dismiss",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=list_state.operation_running,
+                    )
         if self.tree_projection is not None:
             yield from self._compose_tree_rows(list_state)
             return
