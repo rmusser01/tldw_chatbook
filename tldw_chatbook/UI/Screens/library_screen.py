@@ -886,6 +886,17 @@ class LibraryScreen(BaseAppScreen):
     ]
 
     BINDINGS = [
+        # task-32052 AC#3: Tab must stay inside the Library screen. Textual's
+        # ``Screen`` binds tab/shift+tab to the "app."-namespaced actions,
+        # which always dispatch to ``App.action_focus_next`` and walk the
+        # WHOLE focus chain -- the nav bar comes first there, so the first
+        # Tab out of any Library canvas landed on "Home" (where Enter left
+        # Library entirely). ``DOMNode._merge_bindings`` lets a subclass's
+        # entry for a key REPLACE the inherited one, so re-declaring the two
+        # keys un-namespaced routes them to this screen's own actions below.
+        # Same shape as ``ChatScreen``'s region-scoped Tab (TASK-2154.11).
+        Binding("tab", "focus_next", "Focus Next", show=False),
+        Binding("shift+tab", "focus_previous", "Focus Previous", show=False),
         Binding(
             "shift+f6",
             "focus_previous_workbench_pane",
@@ -959,6 +970,20 @@ class LibraryScreen(BaseAppScreen):
         # ``_library_media_confirming_delete`` branch).
         ("escape", "library_media_bulk_delete_cancel", "Cancel delete confirmation"),
         ("escape", "library_emergency_return", "Return to Library rail"),
+        # task-32051: the LAST resort before the focus-rail hop -- Escape in
+        # a Library text box hands focus back to the canvas. Position is the
+        # whole contract: every binding above owns Escape for its own
+        # surface (editor -> list, Ingest -> hub, ...), and Textual runs the
+        # first one whose ``check_action`` passes, so declaring this after
+        # them means it can never steal a surface's own exit. ``check_action``
+        # mirrors that order explicitly (F1's help panel filters BINDINGS
+        # through ``check_action`` alone, with no notion of declaration
+        # order, so an honest gate is what keeps Escape a single row there).
+        # It is declared BEFORE ``library_list_focus_rail`` on purpose: that
+        # one focuses ``#library-search-input``, which is a no-op when the
+        # rail search box is exactly where the caret already is -- the live
+        # defect (Escape inert, then ``i`` typed into the box).
+        ("escape", "library_blur_text_field", "Back to canvas"),
         ("escape", "library_list_focus_rail", "Focus rail"),
         # Task 12/RAG-36: keyboard traversal of Library Search/RAG evidence
         # cards. Both actions gate on the currently FOCUSED widget being one
@@ -4160,13 +4185,62 @@ class LibraryScreen(BaseAppScreen):
         directly overwrote the Notes editor footer). Flip-gated so
         ordinary focus moves cause zero footer churn.
 
+        task-32053 AC#3 / task-32052 AC#4: the gate is now the pair
+        (typing, the focused control's own Enter action) rather than the
+        typing flag alone. On Search/RAG and the New-note canvas the footer
+        has to follow focus WITHIN the canvas -- Enter runs the search in
+        the query box, toggles a source on a scope button, and selects the
+        card it is on -- and a bool-only flip gate never fired for a move
+        between two non-text controls. Still gated, so a focus move that
+        changes neither still costs zero footer churn.
+
         Args:
             focused: The newly focused widget.
         """
         typing = isinstance(focused, (Input, TextArea))
-        if typing != getattr(self, "_library_footer_typing_context", False):
+        context = (typing, self._library_focus_enter_label(focused))
+        if context != getattr(self, "_library_footer_focus_context", None):
+            self._library_footer_focus_context = context
             self._library_footer_typing_context = typing
             self._apply_library_notes_footer_context()
+
+    def _library_focus_enter_label(self, focused: Widget | None = None) -> str:
+        """The Enter action of the focused control, for the footer's hint.
+
+        One owner for both surfaces whose footer follows focus: Search/RAG
+        (task-32053 AC#3 -- the set used to advertise "enter select
+        evidence" on every control, including the query box, where Enter
+        runs the search, and the source toggles, where it empties the
+        results) and the New-note canvas (task-32052 AC#4 -- "enter create
+        note" is only true on a create row, not on its Back button).
+
+        Args:
+            focused: The widget to describe; defaults to the screen's own
+                focused widget.
+
+        Returns:
+            A verb-phrase label for Enter, or ``""`` when the focused
+            control has no Enter action worth advertising.
+        """
+        if focused is None:
+            focused = self.focused
+        widget_id = str(getattr(focused, "id", "") or "")
+        if not widget_id:
+            return ""
+        if widget_id in ("library-rag-query-input", "library-rag-run-query"):
+            return "run search"
+        if widget_id == "library-rag-mode-toggle":
+            return "switch mode"
+        if widget_id.startswith("library-rag-scope-toggle-"):
+            source = widget_id.removeprefix("library-rag-scope-toggle-")
+            return f"toggle {source.replace('-', ' ').capitalize()}"
+        if widget_id.startswith("library-rag-result-card-"):
+            return "select evidence"
+        if widget_id == "library-notes-create-blank" or widget_id.startswith(
+            "library-notes-template-"
+        ):
+            return "create note"
+        return ""
 
     @staticmethod
     def _review_footer_entries(
@@ -4216,6 +4290,18 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[tuple[str, str], ...]:
         """Hide rail-search hints while the compact rail has no search box."""
         shortcuts = self._library_route_shortcuts_for_current_state()
+        # task-32053 AC#3: on Search/RAG the "enter" chip names whatever the
+        # FOCUSED control's Enter genuinely does. The static set said
+        # "select evidence" everywhere -- in the query box (Enter runs the
+        # search) and on a source toggle (Enter empties the results), the
+        # two places the live walk actually pressed it.
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            enter_label = self._library_focus_enter_label()
+            shortcuts = tuple(
+                ("enter", enter_label) if pair[0] == "enter" else pair
+                for pair in shortcuts
+                if pair[0] != "enter" or enter_label
+            )
         # task-31223 (re-critique P1): while a text field holds focus, every
         # single printable key is INSERTED AS TEXT, so advertising "] next
         # in set" or "s select" is the footer lying -- live, a stray "]"
@@ -7409,6 +7495,15 @@ class LibraryScreen(BaseAppScreen):
         if region == "create":
             if self._notes_state.create_running:
                 return ()
+            # task-32052 AC#4: "enter create note" is true on Blank note and
+            # the template rows -- where entry focus now lands -- but not on
+            # the canvas's "‹ Notes" button, where Enter goes back. The
+            # honest-footer rule the sibling tiers already follow.
+            if self._library_focus_enter_label() != "create note":
+                return self._notes_footer_tier(
+                    (("esc", "back to notes"),),
+                    (("esc", "notes"),),
+                )
             return self._notes_footer_tier(
                 (("enter", "create note"), ("esc", "back to notes")),
                 (("enter", "create"), ("esc", "notes")),
@@ -7688,8 +7783,15 @@ class LibraryScreen(BaseAppScreen):
             and self._library_emergency_restore_receipt is not None
         )
         if emergency_tab:
+            # task-32052 AC#3 (fix round 1): through
+            # ``_move_library_screen_focus``, not the bare
+            # ``Screen.focus_next``/``focus_previous``. This branch handles
+            # Tab itself and stops the event, so ``action_focus_next`` never
+            # runs here -- and the bare calls default to selector "*", which
+            # walks the nav bar. The narrow-terminal emergency stage is a
+            # Library canvas like any other.
             if event.key == "tab":
-                focused = self.focus_next()
+                focused = self._move_library_screen_focus(1)
             else:
                 owner = self._library_entry_canvas_owner()
                 route_focus_chain = (
@@ -7711,7 +7813,7 @@ class LibraryScreen(BaseAppScreen):
                     else:
                         focused.focus()
                 else:
-                    focused = self.focus_previous()
+                    focused = self._move_library_screen_focus(-1)
             self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
@@ -7839,6 +7941,43 @@ class LibraryScreen(BaseAppScreen):
             self._library_workbench_focus_targets(),
             direction=1,
         )
+
+    #: task-32052 AC#3: the Tab region. ``#screen-content`` is
+    #: ``BaseAppScreen.compose``'s wrapper around every screen's own content
+    #: -- everything except the nav bar above it and the footer below.
+    _LIBRARY_TAB_REGION = "#screen-content, #screen-content *"
+
+    def action_focus_next(self) -> None:
+        """Tab: move focus to the next control inside the Library content.
+
+        task-32052 AC#3: the inherited ``app.focus_next`` walks the whole
+        screen focus chain, which starts with the fifteen nav-bar buttons --
+        so one Tab from the New-note canvas landed on "Home", where Enter
+        left Library. Tab now cycles within ``#screen-content``; the nav bar
+        keeps its own documented keys (Ctrl+digit / F-keys) and stays
+        traversable once focus is genuinely in it (mirrors ``ChatScreen``).
+        """
+        self._move_library_screen_focus(1)
+
+    def action_focus_previous(self) -> None:
+        """Shift+Tab: the reverse of ``action_focus_next``."""
+        self._move_library_screen_focus(-1)
+
+    def _move_library_screen_focus(self, direction: int) -> Widget | None:
+        """Cycle focus within the Library content, or app-wide from chrome.
+
+        Returns the newly focused widget, which the emergency-stage Tab path
+        in ``on_key`` hands to
+        ``_advance_library_ordinary_emergency_user_interaction``.
+        """
+        focused = self.focused
+        inside = focused is not None and any(
+            node.id == "screen-content" for node in focused.ancestors
+        )
+        selector = self._LIBRARY_TAB_REGION if inside or focused is None else "*"
+        if direction >= 0:
+            return self.focus_next(selector)
+        return self.focus_previous(selector)
 
     def action_focus_previous_workbench_pane(self) -> None:
         """Shift+F6: move focus to the previous Library workbench pane."""
@@ -19994,6 +20133,17 @@ class LibraryScreen(BaseAppScreen):
             # CREATE_PROMPT/CREATE_SKILL entry-focus branches below use.
             self.call_after_refresh(self._focus_library_ingest_path)
             self.call_after_refresh(self._sync_library_ingest_rail_from_shell)
+        if row_id == LIBRARY_ROW_CREATE_NOTE and self.is_mounted:
+            # task-32052 AC#1: the New-note canvas opened with NOTHING
+            # focused, so its advertised "enter create note" was dead and
+            # the first note was mouse-only. The retained-shell route
+            # (``_try_switch_retained_library_notes_route``) already restores
+            # this exact control, but it only handles Notes list -> Create;
+            # arriving from the landing's ``n`` (or any other row) fell
+            # through to this legacy route, which restored nothing.
+            self.call_after_refresh(
+                self._focus_library_note_control, "#library-notes-create-blank"
+            )
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
             self.call_after_refresh(self._arm_library_prompt_editor)
         if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
@@ -22719,6 +22869,32 @@ class LibraryScreen(BaseAppScreen):
                     getattr(self._ingest_state, "last_submission", None) is not None
                 ),
             )
+        if action == "library_blur_text_field":
+            # task-32051: only while a text box genuinely owns the caret, and
+            # only where no EARLIER Escape binding already owns the key --
+            # the same try-in-order resolution Textual applies to the key
+            # itself, restated here because ``check_action`` is also what F1
+            # and the footer read (they have no notion of declaration order,
+            # so a bare "a text field has focus" gate would double the Escape
+            # row in F1 on every canvas that already has one).
+            if not isinstance(self.focused, (Input, TextArea)):
+                return False
+            if any(
+                self.check_action(earlier, ())
+                for earlier in self._library_escape_actions_before(action)
+            ):
+                return False
+            # ...and never take the key from the focus-rail hop declared
+            # AFTER this one when that hop would genuinely MOVE focus. On a
+            # list canvas with the caret in the canvas filter box, the footer
+            # promises "esc focus rail" and must be telling the truth; this
+            # binding exists only for the case where that hop lands on the
+            # widget that already has focus (the rail search box), which is
+            # what made Escape inert and let the next key be typed.
+            if self.check_action("library_list_focus_rail", ()):
+                target = self._library_list_focus_rail_target().lstrip("#")
+                return not target or target == (self.focused.id or "")
+            return True
         if action == "library_list_focus_rail":
             # task-4023 AC#7: Collections joins the list-canvas Escape
             # contract (it was the one browse canvas where Escape was
@@ -22988,6 +23164,14 @@ class LibraryScreen(BaseAppScreen):
             else:
                 continue
             if not action:
+                continue
+            if action in ("focus_next", "focus_previous"):
+                # task-32052: Tab/Shift+Tab are app-wide keyboard chrome
+                # this screen only re-declares to scope (see
+                # ``action_focus_next``), not Library shortcuts. Listing
+                # them would put two universally-true rows at the top of
+                # every surface's panel -- the same contamination LIB-09
+                # cleaned out.
                 continue
             try:
                 gate_state = self.check_action(action, ())
@@ -24281,6 +24465,58 @@ class LibraryScreen(BaseAppScreen):
         )
         return True
 
+    @classmethod
+    def _library_escape_actions_before(cls, action: str) -> tuple[str, ...]:
+        """The ``escape`` actions Textual tries before ``action`` (task-32051).
+
+        Read off ``BINDINGS`` in declaration order rather than restated as a
+        literal: this screen has grown from six Escape bindings to a dozen,
+        and every hard-coded count/list of them in this file has gone stale
+        at least once.
+
+        Args:
+            action: The escape action whose predecessors are wanted.
+
+        Returns:
+            The action names declared for ``escape`` ahead of ``action``.
+        """
+        earlier: list[str] = []
+        for entry in cls.BINDINGS:
+            if isinstance(entry, Binding):
+                key, name = entry.key, entry.action
+            else:
+                key, name = entry[0], entry[1]
+            if key != "escape":
+                continue
+            if name == action:
+                break
+            earlier.append(str(name))
+        return tuple(earlier)
+
+    def action_library_blur_text_field(self) -> None:
+        """Escape in a Library text box: hand focus back to the canvas.
+
+        task-32051 (critique #8 row 2): with the caret in the rail "Search
+        Library…" box or the Search/RAG query box, Escape did nothing and the
+        next printable key was inserted as text (live: ``i`` landed in the
+        search box instead of opening Import). Only Tab/F6 could leave.
+
+        Lands on the first canvas control that is neither the field itself
+        nor another text box -- so the printable canvas keys (``i``, ``n``,
+        ``u``/``o`` on Search/RAG) work on the very next keystroke, which is
+        the whole point. Clearing focus outright is the last resort for a
+        canvas that offers no focusable control at all.
+        """
+        for widget in self.focus_chain:
+            if widget is self.focused or isinstance(widget, (Input, TextArea)):
+                continue
+            if any(node.id == "library-canvas" for node in widget.ancestors):
+                widget.focus()
+                break
+        else:
+            self.set_focus(None)
+        self._refresh_footer_typing_context(self.focused)
+
     def action_library_list_focus_rail(self) -> None:
         """Escape: move focus from a list canvas toward the rail (task-2856 AC2).
 
@@ -24301,16 +24537,35 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._close_open_library_choice_strip():
             return
+        target = self._library_list_focus_rail_target()
+        if not target:
+            return
+        if target == "#library-conversations-filter":
+            self._focus_library_control(target)
+            return
+        self._focus_library_rail_action(target)
+
+    def _library_list_focus_rail_target(self) -> str:
+        """The selector ``action_library_list_focus_rail`` would focus, if any.
+
+        Extracted (task-32051 fix round 1) so the ``library_blur_text_field``
+        gate can ask "would this hop actually MOVE focus?" without restating
+        the destination -- the two answers must never drift, because the
+        footer's "esc focus rail" chip promises this destination and the blur
+        binding is what could silently take the key away from it.
+
+        Returns:
+            The selector, or ``""`` when the hop would focus nothing.
+        """
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             region = self._library_conversation_focus_region()
             layout = self._conversations_state.reader_layout
             if region == "work" and layout.items_open:
-                self._focus_library_control("#library-conversations-filter")
-                return
+                return "#library-conversations-filter"
             if region in {"work", "items"} and layout.library_open:
-                self._focus_library_rail_action("#library-search-input")
-            return
-        self._focus_library_rail_action("#library-search-input")
+                return "#library-search-input"
+            return ""
+        return "#library-search-input"
 
     @on(LibraryEmergencyReturn.ReturnRequested)
     def handle_library_emergency_return(
