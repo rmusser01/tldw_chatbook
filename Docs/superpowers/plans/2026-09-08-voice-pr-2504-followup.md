@@ -41,6 +41,32 @@ do not redesign them or repeat their native/model/playback qualification.
    Preserve the fresh generated PR-description block; observe normal automatic
    PR CI only. Leave the PR OPEN, UNMERGED, with auto-merge disabled.
 
+Startup quality review found one test-validity gap: the four positive timer cases
+called the unconditional starter before asserting initial admission. Tighten the
+existing test to assert the initial interval first, then independently assert
+idempotence. No production change or new harness is required. Run those four
+cases and the selected final integration guards; obtain focused quality re-review.
+
+The 24-commit rebase completed at `1229e53133a3760716290628531d3edf6b589227`.
+Only the incident-document insertion and generated inventory conflicted. Both
+incident sets remain, with one separator added between them. The 27 non-shared
+incoming paths reproduce byte-for-byte; the shared guide and pyproject additions
+match exactly. Reviewed logging changes remove seven calls and add one validated
+compute-device message (net six fewer), removing one old model-path candidate.
+The official inventory rebuild matches: 594 owners, 1384 TASK-492 calls,
+55 TASK-31551 calls, 7679 TASK-494 calls, and 12 sink files. Native, Audio, Chat,
+DB, schema, Packaging and the reviewed ChatScreen bytes survive unchanged.
+
+On the final rebased source, the 18 selected fake TTS/admission/cleanup/inventory
+cases, including all four strengthened initial-admission controls, pass with zero
+skips and three inherited dependency warnings in 3.67 seconds. The separate six
+original startup cases pass with zero skips and three warnings in 55.18 seconds;
+UI-ready remains 972/973 (+0/-1), and both quit and shutdown paths pass without
+instrumentation. Scoped test lint/format and diff checks pass. Neither count is a
+full-suite, local native/model/playback or hardware qualification claim. The
+incoming Torch/MPS test module was not collected. Final source identity, focused
+quality re-review, exact-lease push and automatic CI remain the publication gates.
+
 ## Global Constraints
 
 - Work only in `.worktrees/speculative-duplex-voice-dev`, branch `codex/speculative-duplex-voice-dev`. Preserve main and the original feature worktree, including all unrelated edits.

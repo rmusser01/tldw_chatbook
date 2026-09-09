@@ -1664,7 +1664,7 @@ def test_reconciled_view_keeps_each_live_poll_reason_and_one_timer(
         monkeypatch, live_reason
     )
     screen._start_console_view_after_reconciliation()
-    screen._start_console_transcript_sync_timer()
+    initial_intervals = tuple(intervals)
     assert (
         len(
             [
@@ -1675,6 +1675,8 @@ def test_reconciled_view_keeps_each_live_poll_reason_and_one_timer(
         )
         == 1
     )
+    screen._start_console_transcript_sync_timer()
+    assert tuple(intervals) == initial_intervals
 
 
 @pytest.mark.asyncio
