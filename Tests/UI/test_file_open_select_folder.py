@@ -150,6 +150,35 @@ async def test_select_folder_after_clicking_a_file_falls_back_to_browsed_directo
 
 
 @pytest.mark.asyncio
+async def test_select_folder_with_typed_dotdot_and_no_click_resolves_to_parent(
+    tmp_path,
+):
+    """Round-2 fix's regression (review round 3): ``DirectoryNavigation.
+
+    _settle_highlight`` defaults ``highlighted`` to 0 on every repopulate,
+    including the first load, and ".." is always option 0 in a non-root
+    directory -- so comparing the typed value against "whatever's
+    highlighted" (instead of an explicit click-provenance flag) falsely
+    treated a typed, never-clicked ".." as a click-fill echo and silently
+    swallowed it. Opened on ``sub/``, typed ".." with no click, Select
+    folder must resolve to ``sub``'s parent, not dismiss with ``sub``
+    itself.
+    """
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    dialog = FileOpen(sub, title="Import once", offer_select_folder=True)
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _field(dialog).value = ".."
+        dialog.query_one("#select-current-folder", Button).press()
+        await pilot.pause()
+
+    assert app.result == tmp_path.resolve()
+
+
+@pytest.mark.asyncio
 async def test_enter_still_navigates_not_selects(tmp_path):
     """Keep Enter's existing meaning: it descends, it does not confirm."""
     (tmp_path / "vault").mkdir()

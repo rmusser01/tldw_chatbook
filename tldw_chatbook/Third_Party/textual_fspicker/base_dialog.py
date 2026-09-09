@@ -556,26 +556,24 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         dir_nav = self.query_one(DirectoryNavigation)
         try:
             field = self.query_one(InputBar).query_one(Input)
-            value = field.value.strip()
+            raw_value = field.value
         except Exception:
-            value = ""
-        if value:
+            raw_value = ""
+        value = raw_value.strip()
+        if value and raw_value == getattr(self, "_select_folder_click_fill", None):
             # A single click on a file fills this field with its basename
             # (file_dialog.py's _select_file, so a click-then-Open flow
             # works) -- that is not the user typing a folder path, so
             # Select folder must not mistake it for one and error with
             # "Not a directory: <file>" (review round 2, Important 1).
-            # Fall through to the browsed directory when the field merely
-            # echoes the highlighted entry.
-            highlighted = dir_nav.highlighted
-            option = (
-                dir_nav.get_option_at_index(highlighted)
-                if highlighted is not None
-                else None
-            )
-            location = getattr(option, "location", None)
-            if location is not None and value == location.name:
-                value = ""
+            # ``_select_folder_click_fill`` (set/cleared by _select_file /
+            # _update_field_label) is the click-provenance flag itself --
+            # NOT "does the value match whatever's highlighted": that
+            # earlier approach falsely swallowed a typed, never-clicked
+            # ".." too, since DirectoryNavigation defaults `highlighted`
+            # to 0 on every repopulate and ".." is always option 0 in a
+            # non-root directory (review round 3).
+            value = ""
         return resolve_typed_directory(value, dir_nav.location)
 
     def _confirm_select_folder(self) -> None:

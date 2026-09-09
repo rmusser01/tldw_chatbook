@@ -90,7 +90,7 @@ class SelectDirectory(FileSystemPickerScreen):
     def _hint_text(self) -> str:
         """Directory-mode hint: Enter descends, Select confirms (task-32122)."""
         select_label = self._label(self._select_button, "Select")
-        return f"Enter Open  ·  {select_label} use this folder"
+        return f"Enter Open  ·  {select_label} to use this folder"
 
     @on(DirectoryNavigation.Changed)
     def _update_path_input_on_nav_change(
