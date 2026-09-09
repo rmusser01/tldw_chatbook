@@ -101,8 +101,8 @@ working` before the first count) — and **Keep waiting** and **Choose
 another** appear beside **Cancel**. After 30 seconds the change gives up on
 its own and the folder line itself reads "Folder change timed out · previous
 folder kept. Try again or choose a different folder." That reason stays on
-the folder line until you start another folder change. Either way the
-previously linked folder is untouched — unless the change had already
+the folder line until you start another folder change or open a file.
+Either way the previously linked folder is untouched — unless the change had already
 finished saving when you cancelled, in which case the status says "Folder
 change finished before it could be stopped · now linked to the new folder."
 and the new folder is the one in use.

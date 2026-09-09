@@ -2368,7 +2368,7 @@ async def test_folder_files_emits_only_admitted_work_session_events(
             if candidate.root_key == str(stale_root.resolve()):
                 stale_started.set()
                 assert release_stale_root.wait(5)
-            return original_scan(candidate)
+            return original_scan(candidate, **kwargs)
 
         monkeypatch.setattr(
             workspace_module.FileNotesService,
@@ -3629,7 +3629,7 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
     def delayed_scan(service: FileNotesService, **kwargs):
         scan_started.set()
         assert release_scan.wait(timeout=5)
-        return original_scan(service)
+        return original_scan(service, **kwargs)
 
     monkeypatch.setattr(FileNotesService, "scan", delayed_scan)
     replica = FileNotesReplica(":memory:")
@@ -3873,7 +3873,7 @@ async def test_root_transition_retains_and_freezes_old_document_until_scan_finis
         if service.root == new_root.resolve():
             scan_started.set()
             release_scan.wait(5)
-        return original_scan(service)
+        return original_scan(service, **kwargs)
 
     monkeypatch.setattr(FileNotesService, "scan", delayed_scan)
     async with _WorkspaceHarness(workspace).run_test(size=(110, 36)) as pilot:
@@ -4069,7 +4069,7 @@ async def test_overlapping_root_persistence_only_winner_updates_config_and_owner
         if service.root == slow_root:
             slow_scan_started.set()
             assert release_slow_scan.wait(timeout=5)
-        return real_scan(service)
+        return real_scan(service, **kwargs)
 
     def persist_mutation(
         section_values: dict[str, dict[str, str]],
@@ -4704,7 +4704,7 @@ async def test_stale_candidate_scan_keeps_old_owner_log_and_service(
         if service.root == new_root.resolve():
             candidate_scan_started.set()
             assert release_candidate_scan.wait(timeout=5)
-        return real_scan(service)
+        return real_scan(service, **kwargs)
 
     monkeypatch.setattr(FileNotesService, "scan", delayed_candidate_scan)
     async with _WorkspaceHarness(workspace).run_test() as pilot:

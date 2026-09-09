@@ -64,5 +64,7 @@ Tests: `Tests/UI/test_library_crit8_waits.py` gains a `_LockHoldingScan` fixture
 
 Live (power profile, 235x52): home directory timed out with the copy painted and held, then the vault linked in ~3 s -- the sequence that used to wedge. Captures in SCRATCH/notes-crit/wave/file-notes/caps/04-08.
 
+Known, deferred (review round 1): below 120 columns the folder row cannot fit the status line plus Cancel/Keep waiting/Choose another -- at 120 the status has 46 cells and the three buttons take 48. The buttons clip rather than wrap; no capture or test covers that width yet.
+
 Files: tldw_chatbook/Notes/file_notes_service.py, tldw_chatbook/Widgets/Library/library_file_notes_workspace.py, Tests/UI/test_library_crit8_waits.py, Tests/Notes/test_file_notes_service.py, Docs/User_Guide/library/file-notes.md.
 <!-- SECTION:NOTES:END -->

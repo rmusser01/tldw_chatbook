@@ -21,7 +21,11 @@ from textual.widgets import Button
 
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
-from tldw_chatbook.Notes.file_notes_service import FileNotesService, ScanCancelled
+from tldw_chatbook.Notes.file_notes_service import (
+    SCAN_PROGRESS_INTERVAL,
+    FileNotesService,
+    ScanCancelled,
+)
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     ROOT_CHANGE_LANDED_COPY,
     LibraryFileNotesWorkspace,
@@ -67,7 +71,7 @@ class _BlockedScan:
             if Path(service.root).resolve() == owner.blocked_root:
                 owner.started.set()
                 owner.release.wait(20)
-            return original(service)
+            return original(service, **kwargs)
 
         self.scan = scan
 
@@ -741,10 +745,19 @@ async def test_timeout_reason_owns_the_folder_row_until_the_next_attempt(
         assert _static_text(workspace, "#file-notes-action-status") == timeout_copy
         assert _static_text(workspace, "#file-notes-root-status") == timeout_copy
 
-        # ...and the next attempt clears it, once the abandoned scan has
-        # let go of the service lock. (While it still holds it, the next
-        # change reports its own bounded wait -- also the timeout copy --
-        # rather than sitting silent, which is the AC1 half of this fix.)
+        # Review round 1: it must not outlive the user's next real action
+        # either -- one timeout used to hide the linked folder for the rest
+        # of the session.
+        assert await workspace.open_path("old.md")
+        assert _static_text(workspace, "#file-notes-root-status") == (
+            "Linked · Local folder: linked"
+        )
+
+        # ...and so does the next attempt, once the abandoned scan has let
+        # go of the service lock. (While it still holds it, the next change
+        # reports its own bounded wait -- also the timeout copy -- rather
+        # than sitting silent, which is the AC1 half of this fix.)
+        workspace._report_root_change_reason(timeout_copy)
         blocked.release.set()
         for _ in range(20):
             await pilot.pause(0.02)
@@ -913,3 +926,95 @@ async def test_a_scan_that_ignores_its_cancel_still_bounds_the_next_change(
         blocked.release.set()
         await workspace.shutdown()
         replica.close()
+
+
+@pytest.mark.asyncio
+async def test_abandoning_one_attempt_never_cancels_another_attempts_scan(
+    tmp_path, monkeypatch
+) -> None:
+    """Review round 1: the cancel flag belongs to the attempt, not the widget.
+
+    It used to live on the workspace, so ``_abandon_root_change_task`` set
+    whichever flag was current when it ran. A superseded attempt being
+    abandoned after a later one had installed its flag would then cancel
+    the LATER one's scan, and ``set_root`` returned False with nothing
+    written to the surface.
+    """
+    old_root = tmp_path / "linked"
+    old_root.mkdir()
+    (old_root / "old.md").write_text("old note", encoding="utf-8")
+    next_root = tmp_path / "next"
+    next_root.mkdir()
+    (next_root / "new.md").write_text("new note", encoding="utf-8")
+
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+    scan_returned = threading.Event()
+    original = FileNotesService.scan
+
+    def scan(service: FileNotesService, **kwargs):
+        if Path(service.root).resolve() == next_root.resolve():
+            scan_started.set()
+            assert release_scan.wait(20)
+            result = original(service, **kwargs)
+            scan_returned.set()
+            return result
+        return original(service, **kwargs)
+
+    monkeypatch.setattr(FileNotesService, "scan", scan)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
+    try:
+        async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
+            # The later attempt is in flight with its own flag...
+            later_event = threading.Event()
+            later = asyncio.ensure_future(
+                workspace.set_root(next_root, persist=False, cancel_event=later_event)
+            )
+            await _wait_until(
+                pilot,
+                scan_started.is_set,
+                "the later attempt never reached its scan",
+            )
+
+            # ...when a superseded earlier attempt is abandoned.
+            earlier_event = threading.Event()
+            earlier = asyncio.ensure_future(asyncio.sleep(30))
+            workspace._abandon_root_change_task(earlier, earlier_event)
+
+            assert earlier_event.is_set()
+            assert not later_event.is_set()
+            release_scan.set()
+            await later
+            assert scan_returned.is_set(), (
+                "the later attempt's scan was cancelled by the earlier "
+                "attempt's abandonment"
+            )
+    finally:
+        release_scan.set()
+        await workspace.shutdown()
+        replica.close()
+
+
+@pytest.mark.asyncio
+async def test_the_folder_change_reports_progress_from_the_real_scan(
+    tmp_path,
+) -> None:
+    """Review round 1: pin the workspace-to-service progress join itself."""
+    old_root = tmp_path / "linked"
+    old_root.mkdir()
+    (old_root / "old.md").write_text("old note", encoding="utf-8")
+    big_root = tmp_path / "big"
+    big_root.mkdir()
+    for index in range(SCAN_PROGRESS_INTERVAL + 50):
+        (big_root / f"note{index:04d}.md").write_text("body", encoding="utf-8")
+
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
+    async with _production_workspace_context(workspace, size=(235, 52)) as pilot:
+        assert await workspace.set_root(big_root, persist=False)
+        await pilot.pause()
+
+        assert workspace._root_scan_entries == SCAN_PROGRESS_INTERVAL + 50
+    await workspace.shutdown()
+    replica.close()

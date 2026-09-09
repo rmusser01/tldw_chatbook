@@ -94,6 +94,25 @@ async def test_empty_folder_files_explains_itself_and_offers_the_sync_folder(
         assert use_configured.display
         assert str(use_configured.label) == "Use synced-notes"
 
+        # Review round 1: a folder with no ``name`` (the filesystem root)
+        # used to render the button as a bare "Use ".
+        monkeypatch.setattr(
+            workspace_module,
+            "get_cli_setting",
+            lambda section, key=None, default=None: (
+                "/" if (section, key) == ("notes", "sync_directory") else default
+            ),
+        )
+        workspace._update_root_surface()
+        await pilot.pause()
+        assert str(use_configured.label) == "Use /"
+        monkeypatch.setattr(
+            workspace_module, "get_cli_setting", sync_directory_setting
+        )
+        workspace._update_root_surface()
+        await pilot.pause()
+        assert str(use_configured.label) == "Use synced-notes"
+
         use_configured.press()
         await _wait_until(
             pilot,
