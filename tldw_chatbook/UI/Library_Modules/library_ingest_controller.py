@@ -1204,50 +1204,24 @@ class LibraryIngestController:
                 baseline_skipped,
             )
         if previous_active == 0 and active_count > 0:
-            self._library_ingest_batch_baseline = (
-                done_now,
-                failed_now,
-                matched_now,
-                skipped_now,
-            )
+            # (task-32054) ...unless a settle is still waiting to report.
+            # A folder import dispatches one file at a time, so between two
+            # files the queue genuinely goes idle; re-anchoring there threw
+            # away every outcome the batch had produced so far.
+            if not self._library_ingest_batch_settle_pending:
+                self._library_ingest_batch_baseline = (
+                    done_now,
+                    failed_now,
+                    matched_now,
+                    skipped_now,
+                )
         elif previous_active > 0 and active_count == 0:
-            (
-                baseline_done,
-                baseline_failed,
-                baseline_matched,
-                baseline_skipped,
-            ) = self._library_ingest_batch_baseline
-            matched = max(0, matched_now - baseline_matched)
-            imported = (done_now - baseline_done) - matched
-            failed = failed_now - baseline_failed
-            skipped = max(0, skipped_now - baseline_skipped)
-            if imported > 0 or matched > 0 or failed > 0 or skipped > 0:
-                parts = []
-                if imported > 0:
-                    parts.append(f"{imported} imported")
-                if matched > 0:
-                    # (task-2837) The forecast says "will match"; the
-                    # toast answers in the same word.
-                    parts.append(f"{matched} matched")
-                if skipped > 0:
-                    parts.append(f"{skipped} skipped")
-                if failed > 0:
-                    parts.append(f"{failed} failed")
-                notify = getattr(self.app_instance, "notify", None)
-                if callable(notify):
-                    # (task-2220) Skips are neutral and never warn on
-                    # their own (failed == 0 -> information). Real failures
-                    # with zero successes DO warn even when skips are also
-                    # present -- something the user pointed at genuinely
-                    # broke and nothing landed.
-                    notify(
-                        "Import finished — " + " · ".join(parts),
-                        severity=(
-                            "information"
-                            if imported > 0 or matched > 0 or failed == 0
-                            else "warning"
-                        ),
-                    )
+            # (task-32054) Report one turn of the event loop later: the
+            # whole submission loop is synchronous, so by then the batch
+            # has either finished arriving or gone active again.
+            if not self._library_ingest_batch_settle_pending:
+                self._library_ingest_batch_settle_pending = True
+                self.call_after_refresh(self._report_library_ingest_batch_settle)
         done_count = counts.get("done", 0)
         if done_count != self._library_ingest_last_done_count:
             grew = done_count > self._library_ingest_last_done_count
@@ -1265,6 +1239,75 @@ class LibraryIngestController:
                 and not self._library_screen_suspended
             ):
                 self._sync_library_landing_lifecycle_presentation()
+
+    def _report_library_ingest_batch_settle(self) -> None:
+        """Report ONE completion toast for a batch that has gone idle.
+
+        Scheduled by ``_handle_library_ingest_registry_changed`` when the
+        active-job count crosses to zero (task-32054). A folder import
+        submits, dispatches and -- when the parse pool cannot start --
+        fails each file inside one synchronous loop, so that crossing
+        happens once per file; deferring by a turn of the event loop lets
+        the whole loop land before anything is reported. Re-arms nothing:
+        if the queue went active again in the meantime, the still-running
+        batch keeps its baseline and reports when it truly settles.
+        """
+        self._library_ingest_batch_settle_pending = False
+        registry = self._library_ingest_registry()
+        counts_fn = getattr(registry, "counts", None)
+        counts = counts_fn() if callable(counts_fn) else {}
+        if (
+            counts.get("queued", 0)
+            + counts.get("parsing", 0)
+            + counts.get("writing", 0)
+        ):
+            return
+        matched_counter = getattr(registry, "count_duplicate_done", None)
+        if callable(matched_counter):
+            matched_now = matched_counter()
+        else:
+            jobs_fn = getattr(registry, "jobs", None)
+            matched_now = count_duplicate_done_jobs(
+                jobs_fn() if callable(jobs_fn) else ()
+            )
+        (
+            baseline_done,
+            baseline_failed,
+            baseline_matched,
+            baseline_skipped,
+        ) = self._library_ingest_batch_baseline
+        matched = max(0, matched_now - baseline_matched)
+        imported = (counts.get("done", 0) - baseline_done) - matched
+        failed = counts.get("failed", 0) - baseline_failed
+        skipped = max(0, counts.get("skipped", 0) - baseline_skipped)
+        parts = []
+        if imported > 0:
+            parts.append(f"{imported} imported")
+        if matched > 0:
+            # (task-2837) The forecast says "will match"; the toast
+            # answers in the same word.
+            parts.append(f"{matched} matched")
+        if failed > 0:
+            parts.append(f"{failed} failed")
+        if skipped > 0:
+            parts.append(f"{skipped} skipped")
+        if not parts:
+            return
+        notify = getattr(self.app_instance, "notify", None)
+        if not callable(notify):
+            return
+        # (task-2220) Skips are neutral and never warn on their own
+        # (failed == 0 -> information). Real failures with zero successes DO
+        # warn even when skips are also present -- something the user
+        # pointed at genuinely broke and nothing landed.
+        notify(
+            "Import finished — " + " · ".join(parts),
+            severity=(
+                "information"
+                if imported > 0 or matched > 0 or failed == 0
+                else "warning"
+            ),
+        )
 
     def _handle_library_ingest_progress_changed(
         self,

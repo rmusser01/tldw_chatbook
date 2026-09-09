@@ -9,6 +9,7 @@ booting the TUI, mirroring ``library_notes_sync_state.py``.
 
 from __future__ import annotations
 
+import errno
 import math
 import re
 import time
@@ -490,8 +491,89 @@ def _retry_suffix(job: LibraryIngestJob) -> str:
     module's Textual-free, importable-in-isolation contract (see the module
     docstring) never has to reach into ``Home`` (the dependency runs the
     other way: ``Home`` already imports from ``Library``).
+
+    (task-32054) The word is ``retry``, not ``attempt``: the user guide and
+    Home's own suffix both said "retry 1" while this one said "attempt 2",
+    so the same job read two different ways on two surfaces.
     """
-    return f" · attempt {job.retry_count + 1}" if job.retry_count else ""
+    return f" · retry {job.retry_count}" if job.retry_count else ""
+
+
+#: (task-32054) Pool-start failures arrive as this prefix from
+#: ``app._top_up_ingest_parse_pool``; the raw tail is a spawn-machinery
+#: message, never user copy.
+_POOL_START_FAILURE_MARKER = "Parse pool could not start"
+
+#: Plain-language copy for an OS resource ceiling hit while starting the
+#: parse worker. macOS reports POSIX-semaphore exhaustion as ENOSPC, so the
+#: raw text ("No space left on device") is actively misleading on a disk
+#: with free space -- the live critique #8 finding.
+_RESOURCE_LIMIT_SUMMARY = (
+    "The import worker couldn't start on this machine (system resource limit)"
+)
+_RESOURCE_LIMIT_NEXT_STEP = "Restart the app, then Retry"
+
+
+@dataclass(frozen=True)
+class IngestFailureCopy:
+    """User-facing copy for one ingest failure.
+
+    Attributes:
+        summary: The plain-language reason, safe to render on the row.
+        detail: The underlying text, shown only behind "Show details".
+        next_step: What the user should do next, or empty when the reason
+            already implies it.
+        retryable: Whether offering Retry is honest for this failure.
+    """
+
+    summary: str
+    detail: str
+    next_step: str = ""
+    retryable: bool = True
+
+
+def map_ingest_failure(
+    exc_or_text: BaseException | str,
+    *,
+    context: str = "",
+) -> IngestFailureCopy:
+    """Map a raw ingest failure to row copy plus an on-demand detail.
+
+    Args:
+        exc_or_text: The exception the pipeline raised, or the error text
+            already stored on the job.
+        context: Optional origin hint. ``"pool_start"`` marks a failure
+            raised while creating the parse worker pool, which the stored
+            text otherwise carries as a ``"Parse pool could not start:"``
+            prefix.
+
+    Returns:
+        The row summary, the raw detail, an optional next step, and whether
+        Retry is honest for this failure.
+    """
+    raw = (
+        exc_or_text
+        if isinstance(exc_or_text, str)
+        else str(exc_or_text).strip() or exc_or_text.__class__.__name__
+    )
+    from_pool_start = (
+        context == "pool_start" or _POOL_START_FAILURE_MARKER in raw
+    )
+    errno_value = getattr(exc_or_text, "errno", None)
+    hit_resource_limit = errno_value == errno.ENOSPC or "[Errno 28]" in raw
+    if from_pool_start and hit_resource_limit:
+        return IngestFailureCopy(
+            summary=_RESOURCE_LIMIT_SUMMARY,
+            detail=raw,
+            next_step=_RESOURCE_LIMIT_NEXT_STEP,
+            retryable=True,
+        )
+    return IngestFailureCopy(
+        summary=short_ingest_error(raw),
+        detail=raw,
+        retryable=_SUPPORTED_TYPES_ERROR_MARKER not in raw,
+    )
+
 
 # Human-readable (singular, plural) labels for pre-flight type groups.
 # ``unsupported`` is popped into ``unsupported_files`` before this mapping is
@@ -1343,6 +1425,11 @@ class IngestQueueRow:
     #: toast): whether this row's details are open, and the lines to show.
     details_expanded: bool = False
     detail_lines: tuple[str, ...] = ()
+    #: (task-32054) Whether this row offers "Show details". True for every
+    #: failed row that has ANY underlying text -- the widget layer used to
+    #: gate the action on ``error_detail`` alone, which hid the raw error on
+    #: exactly the failures that carry none (a parse pool that never started).
+    can_show_details: bool = False
 
 
 @dataclass(frozen=True)
@@ -1817,13 +1904,26 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         job.error_detail is not None
         and job.error_detail.get("category") == "unsupported_file_type"
     )
+    # (task-32054) The row states the mapped reason and its next step; the
+    # raw text (an errno the user cannot act on) stays behind Show details.
+    failure_copy = map_ingest_failure(job.error or "")
+    reason = _strip_basename_echo(failure_copy.summary, basename)
+    if failure_copy.next_step:
+        reason = f"{reason} · {failure_copy.next_step}"
     return IngestQueueRow(
         job_id=job.job_id,
         glyph=_GLYPH_FAILED,
-        line=f"{_GLYPH_FAILED} failed · {basename} · {short_error}{_retry_suffix(job)}",
+        line=f"{_GLYPH_FAILED} failed · {basename} · {reason}{_retry_suffix(job)}",
         can_open=False,
-        can_retry=not job.permanent and not is_unsupported,
+        can_retry=(
+            not job.permanent and not is_unsupported and failure_copy.retryable
+        ),
         can_dismiss=True,
+        # (task-32054 AC#2) EVERY failed row offers the underlying error --
+        # the pool-start failure that produced this finding carries no
+        # ``error_detail`` at all, so gating on that hid the one detail the
+        # user needed.
+        can_show_details=bool(job.error_detail) or bool(job.error),
         media_id=job.media_id,
         state=job.state,
         source_path=job.source_path,
@@ -1974,6 +2074,17 @@ def _build_queue_row(
             can_cancel=can_cancel,
             line=f"{row.line}{_SERVER_ROW_SUFFIX}",
             research_owned=bool(job.research_source_operation_id),
+        )
+    if details_expanded and not job.error_detail and row.can_show_details:
+        # (task-32054) A failure with no structured detail still has the
+        # underlying text the row deliberately does not show -- an errno,
+        # a spawn-machinery message. Show details is where it belongs.
+        return replace(
+            row,
+            details_expanded=True,
+            detail_lines=(
+                f"Details: {map_ingest_failure(job.error or '').detail}",
+            ),
         )
     if details_expanded and job.error_detail:
         # (task-2043) Inline expansion replaces the old auto-expiring

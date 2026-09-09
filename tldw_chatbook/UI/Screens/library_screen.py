@@ -377,6 +377,10 @@ from ...Workspaces import (
     build_library_workspace_depth_state,
     library_item_context_handoff,
 )
+from ...Workspaces.eligibility import (
+    LIBRARY_GENERIC_WORKSPACE_BLOCK,
+    linkable_ineligibility_label,
+)
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
@@ -1039,6 +1043,17 @@ class LibraryScreen(BaseAppScreen):
         # they still type in the search/filter boxes.
         Binding("l", "library_media_read_later", "Read later", show=False),
         Binding("c", "library_media_use_in_console", "Use in Console", show=False),
+        # task-32056: the same key on the Conversations reader. Textual walks
+        # every binding registered for a key and runs the first whose
+        # ``check_action`` allows it, and these two gate on different rail
+        # rows -- only one Library canvas is ever open, so they cannot both
+        # be live.
+        Binding(
+            "c",
+            "library_conversation_open_console",
+            "Open in Console",
+            show=False,
+        ),
         Binding("t", "library_media_move_to_trash", "Move to trash", show=False),
         # task-28241: review-set keys, gated in check_action to a plain Reader
         # with a set active. "R" exits (the set stays resumable); "m" toggles
@@ -2302,6 +2317,9 @@ class LibraryScreen(BaseAppScreen):
             ),
             selected_row_id_accessor=lambda: self._library_selected_row_id,
             selected_conversation_id_accessor=lambda: self._selected_conversation_id,
+            library_conversation_workspace_block=(
+                lambda: self._library_conversation_workspace_block()
+            ),
         )
         self._conversations_controller = LibraryConversationsController(
             self,
@@ -3975,6 +3993,10 @@ class LibraryScreen(BaseAppScreen):
             shortcuts: list[tuple[str, str]] = []
             if self._conversations_state.reader_layout.items_open:
                 shortcuts.append(("/", "focus filter"))
+            # task-32056: advertise the hand-off key exactly while it works,
+            # the same honest-footer idiom Media's l/c/t follow.
+            if self.check_action("library_conversation_open_console", ()):
+                shortcuts.append(("c", "open in Console"))
             shortcuts.append(("F6", "next pane"))
             escape_label = self._library_conversation_escape_label()
             if escape_label:
@@ -12122,6 +12144,115 @@ class LibraryScreen(BaseAppScreen):
 
 
 
+    def _library_conversation_workspace_block(self) -> tuple[str, bool, str]:
+        """Return the reader's inline workspace refusal (task-32056).
+
+        The DECISION is the very call the press makes --
+        ``library_item_context_handoff`` -- not a re-derivation from the
+        row model. Fix round 1: the earlier version walked ``source_rows``
+        itself and returned "eligible" whenever the row was absent, while
+        the press fell through to that helper's aggregate gate and refused
+        by toast. Only the short LABEL is looked up per row; a block whose
+        reason code has no short label still blocks, under a generic one.
+
+        Returns:
+            ``(reason, link_resolves_it, detail)`` -- ``("", False, "")``
+            when the conversation is eligible or nothing is loaded.
+            ``reason`` is a short phrase for the blocked control ("not in
+            this workspace"); ``link_resolves_it`` is True only for the
+            reason codes "Link to workspace" actually fixes, so the remedy
+            is never offered where it would not work; ``detail`` is the
+            eligibility rule's own recovery sentence, which the tooltip
+            keeps for the blocks linking cannot resolve (review round 2 --
+            the generic label alone dropped "Select an active workspace").
+        """
+        conversation_id = str(
+            self._conversations_state.reader_state.loaded_id or ""
+        ).strip()
+        if not conversation_id:
+            return "", False, ""
+        state = self._library_workspace_depth_state()
+        eligible, reason_copy = library_item_context_handoff(
+            state, item_type="conversation", item_id=conversation_id
+        )
+        if eligible:
+            return "", False, ""
+        detail = str(reason_copy or "").strip()
+        for row in state.source_rows:
+            if row.item_type == "conversation" and row.item_id == conversation_id:
+                label = linkable_ineligibility_label(row.reason_code)
+                if label:
+                    return label, True, detail
+                break
+        return LIBRARY_GENERIC_WORKSPACE_BLOCK, False, detail
+
+    def _library_conversation_handoff_ready(self) -> bool:
+        """Whether the Conversations Console hand-off may run right now.
+
+        The ONE predicate behind the header action's enabled state, the
+        ``c`` accelerator's ``check_action`` gate, and that key's footer
+        entry (fix round 1: ``c`` consulted only the load fence, so it
+        reached the press -- and its toast -- on a conversation whose own
+        button was disabled and said why).
+        """
+        return (
+            self._conversations_state.reader_state.loaded_actions_eligible
+            and not self._library_conversation_workspace_block()[0]
+        )
+
+    def _link_selected_conversation_to_workspace(self) -> None:
+        """Link the open conversation into the active workspace (task-32056).
+
+        The remedy the refusal used to name without offering. A no-op when
+        the registry, the active workspace, or the loaded conversation is
+        missing -- each of those already blocks the action's own affordance.
+        """
+        # (review round 2) This writes membership for the RETAINED
+        # ``loaded_id``. The same fence that hides the button re-checks here,
+        # so no sync window can persist the conversation the user already
+        # navigated away from.
+        if not self._conversations_state.reader_state.loaded_actions_eligible:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        notify = getattr(self.app_instance, "notify", None)
+        conversation_id = str(
+            self._conversations_state.reader_state.loaded_id or ""
+        ).strip()
+        if registry is None or not conversation_id:
+            if callable(notify):
+                notify(
+                    "Workspaces are unavailable, so this conversation cannot "
+                    "be linked.",
+                    severity="warning",
+                )
+            return
+        try:
+            active = registry.get_active_workspace()
+            if active is None:
+                raise ValueError("no active workspace")
+            registry.link_membership(
+                active.workspace_id,
+                item_type="conversation",
+                item_id=conversation_id,
+                title=str(
+                    self._conversations_state.reader_loaded_metadata.get("title")
+                    or conversation_id
+                ),
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Library conversation could not be linked to the active workspace."
+            )
+            if callable(notify):
+                notify(
+                    "This conversation could not be linked to the active "
+                    "workspace. Try again.",
+                    severity="warning",
+                )
+            return
+        self._invalidate_library_workspace_depth_state()
+        self._sync_library_conversation_reader()
+
     def _selected_media_handoff_payload(self) -> ChatHandoffPayload | None:
         return self._media_controller._selected_media_handoff_payload()
 
@@ -13400,6 +13531,15 @@ class LibraryScreen(BaseAppScreen):
                 reader_metadata["_list_summary"] = (
                     self._conversation_reader_list_summary()
                 )
+            # (task-32056) The workspace refusal renders on the action, not
+            # as a toast after a press. Computed here (and again in
+            # ``_sync_library_conversation_reader``) so it re-reads after a
+            # link or a workspace switch instead of going stale.
+            (
+                reader_metadata["_workspace_block"],
+                reader_metadata["_workspace_block_linkable"],
+                reader_metadata["_workspace_block_detail"],
+            ) = self._library_conversation_workspace_block()
             reader = LibraryConversationReader(
                 self._conversations_state.reader_state,
                 loaded_metadata=reader_metadata,
@@ -22856,6 +22996,14 @@ class LibraryScreen(BaseAppScreen):
             return (
                 self._media_state.confirming_bulk_delete
                 and not self._media_state.bulk_delete_in_flight
+            )
+        if action == "library_conversation_open_console":
+            # task-32056: the Conversations half of the shared "c" key. Same
+            # predicate the header action's own enabled state uses, so the
+            # key can never do what the button refuses.
+            return (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+                and self._library_conversation_handoff_ready()
             )
         if action == "library_emergency_return":
             return self._library_emergency_return_eligibility().enabled
@@ -32350,6 +32498,27 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-conversation-use-source")
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
         return self._conversations_controller.use_selected_conversation_as_source(event)
+
+    @on(Button.Pressed, "#library-conversation-link-workspace")
+    def link_selected_conversation_to_workspace(self, event: Button.Pressed) -> None:
+        """Perform the remedy the blocked hand-off names (task-32056).
+
+        Args:
+            event: The "Link to workspace" press, stopped here so the
+                Library shell's generic canvas-button handlers do not also
+                act on it.
+        """
+        event.stop()
+        self._link_selected_conversation_to_workspace()
+
+    def action_library_conversation_open_console(self) -> None:
+        """Keyboard 'c': hand the open conversation to Console (task-32056).
+
+        Mirrors ``action_library_media_use_in_console``; the two share the
+        key and are separated by ``check_action``'s selected-row gate, since
+        only one Library canvas is open at a time.
+        """
+        self._open_selected_conversation_handoff()
 
     def open_chunking_lab(self, *, use_selected: bool = False) -> None:
         """Open the local tool directly, with only a local media ID as context."""
