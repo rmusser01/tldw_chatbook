@@ -576,10 +576,12 @@ def _frontmatter_keywords(
             continue
         for value in values:
             keyword = value if key == "tags" else f"{_ALIAS_KEYWORD_PREFIX}{value}"
-            if (
-                len(keyword) > MAX_IMPORT_KEYWORD_LENGTH
-                or keyword.casefold() in seen
-            ):
+            if len(keyword) > MAX_IMPORT_KEYWORD_LENGTH:
+                # `_keywords` already bounded `value`, so only our display
+                # prefix pushed it over. Keep the alternate name findable
+                # un-prefixed rather than dropping it (PR #2556 review).
+                keyword = value
+            if keyword.casefold() in seen:
                 continue
             seen.add(keyword.casefold())
             keywords.append(keyword)

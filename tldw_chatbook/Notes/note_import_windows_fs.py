@@ -647,7 +647,7 @@ def _scan_directory(
 def _carries_obsidian_marker(entries: Iterable[_ScannedEntry]) -> bool:
     """Return whether the selected root holds Obsidian's own config directory."""
     return any(
-        entry.name == OBSIDIAN_MARKER_DIRECTORY
+        entry.name.casefold() == OBSIDIAN_MARKER_DIRECTORY
         and entry.metadata is not None
         and not _is_reparse(entry.metadata)
         and stat.S_ISDIR(entry.metadata.st_mode)

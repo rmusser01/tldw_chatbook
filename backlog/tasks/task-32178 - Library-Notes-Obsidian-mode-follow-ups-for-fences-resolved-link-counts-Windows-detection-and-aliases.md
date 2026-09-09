@@ -90,8 +90,11 @@ guide's "Not on Windows" paragraph is gone.
 
 AC#4 — an `aliases:` entry is stored as `alias: <name>`, so Info shows which
 keywords are alternate names and which are the author's tags, while the name
-still matches a keyword search. Over-long values are dropped rather than
-breaking the keyword ceiling.
+still matches a keyword search. An alias the prefix would push past the
+keyword ceiling is stored un-prefixed rather than dropped — the display
+prefix must never be the reason a name is lost (PR #2556 review). Vault
+detection casefolds the `.obsidian` marker on both walkers, matching the skip
+map that already did (same review).
 
 Files: note_import_plan_models.py, note_import_executor.py,
 note_import_parsers.py, note_import_windows_fs.py, note_import_discovery.py,

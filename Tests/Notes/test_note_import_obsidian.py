@@ -249,6 +249,48 @@ def test_frontmatter_supplies_the_title_keywords_and_aliases(vault: Path) -> Non
     assert payload.content.startswith("# Ignored heading")
 
 
+def test_a_long_alias_keeps_its_name_when_the_prefix_would_not_fit(
+    tmp_path: Path,
+) -> None:
+    """The display prefix must never be the reason an alias is lost.
+
+    A 508-character alias is valid input and fits the keyword ceiling, but
+    ``alias: `` pushes it past 512 (PR #2556 review).
+    """
+    root = tmp_path / "vault"
+    long_alias = "a" * 508
+    _write(root, ".obsidian/app.json", "{}")
+    _write(root, "Note.md", f"---\naliases: [{long_alias}]\n---\n# Note\n")
+
+    payload = _payloads(root)["vault/Note.md"]
+
+    assert payload.keywords == (long_alias,)
+
+
+def test_a_capitalized_marker_still_marks_the_vault(tmp_path: Path) -> None:
+    """Vault detection casefolds the marker, exactly like the skip map.
+
+    Windows and macOS preserve a folder's casing while comparing it
+    case-insensitively, so a ``.Obsidian`` marker must not leave the vault's
+    own folders in the import (PR #2556 review).
+    """
+    root = tmp_path / "vault"
+    _write(root, ".Obsidian/app.json", "{}")
+    _write(root, "Templates/Daily.md", "# {{date}}\n")
+    _write(root, "Projects/Real.md", "# Real\n")
+
+    discovery = discover_import_sources([root], _bounds(), obsidian_mode=True)
+
+    assert discovery.vault_detected is True
+    assert {skip.reason_code for skip in discovery.skips} == {
+        "obsidian_config",
+        "obsidian_template",
+    }
+    assert tuple(
+        candidate.source.display_path for candidate in discovery.candidates
+    ) == ("vault/Projects/Real.md",)
+
+
 def test_block_sequence_tags_also_become_keywords(vault: Path) -> None:
     """`tags:` written as a YAML block sequence parses like the inline form."""
     payload = _payloads(vault)["vault/Daily/2026-09-07.md"]

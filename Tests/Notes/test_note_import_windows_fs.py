@@ -1043,6 +1043,38 @@ def test_windows_adapter_detects_a_vault_and_skips_its_own_folders(
     assert discovery.failures == ()
 
 
+def test_windows_adapter_detects_a_vault_whose_marker_keeps_its_casing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows preserves a folder's casing but compares it case-insensitively.
+
+    The skip map already casefolds, so a `.Obsidian` marker that leaves
+    detection false would import the vault's own files (PR #2556 review).
+    """
+    root = tmp_path / "vault"
+    for relative, text in (
+        (".Obsidian/app.json", "{}"),
+        ("Templates/Daily.md", "# {{date}}\n"),
+        ("Projects/Library review.md", "# Library review\n"),
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    _force_windows_adapter(monkeypatch, FakeWindowsFilesystem())
+
+    discovery = discover_import_sources([root], _bounds(), obsidian_mode=True)
+
+    assert discovery.vault_detected is True
+    assert {skip.display_path: skip.reason_code for skip in discovery.skips} == {
+        "vault/.Obsidian": "obsidian_config",
+        "vault/Templates": "obsidian_template",
+    }
+    assert tuple(
+        candidate.source.display_path for candidate in discovery.candidates
+    ) == ("vault/Projects/Library review.md",)
+
+
 def test_windows_adapter_leaves_a_vault_alone_with_the_toggle_off(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
