@@ -2351,3 +2351,39 @@ series ended with one failed sample and no valid timing.
 TLDW_CANVAS_CHROMIUM_EXECUTABLE override explicitly in both compared arms and
 record the binary hash. Keep test-state isolation; do not restore the real home
 or install another browser to work around a missing invocation parameter.
+
+## Observe each native segment when validating speech cancellation
+
+**TASK-32148 / TASK-32150 / TASK-32162, 2026-09-09.** Kokoro cancellation had
+passing outer-worker ownership tests. A real CPU run observing unchanged
+`KModel.forward` calls showed that Stop joined the active segment but the retained
+pipeline started another segment before returning. Separately, the actual
+kokoro-onnx 0.6.1 producer cancelled its executor future while its native thread
+continued running. Async task completion alone established neither native
+completion nor cooperative stopping between segments.
+
+Record entry and exit around the actual delegated model calls, issue Stop while
+one is active, and assert that ownership lasts through its exit and no later
+segment begins. Then send and play a successor through the same service. Keep
+native joining and between-segment cancellation as separate assertions.
+
+The new mounted Lab harness also initially omitted `STTS_Window`'s
+`_seed_axis_defaults`, producing a false voice-default failure. Reproduce the
+owner's normal initialization before diagnosing a child pane; manually setting
+selectors cannot establish that saved defaults work.
+
+## Complete audio and empty model-owner counts do not prove sink shutdown
+
+**TASK-32151 / TASK-32165, 2026-09-09.** Two real Higgs CPU runs generated
+complete speech with exact full-content transcripts. The Console device callback
+rendered the expected PCM, the sink reported a terminal state, and tracked model
+owners reached zero. Nevertheless, `SinkDrained` never arrived and the process
+stalled at exit. Native samples showed the sink notify thread and CoreAudio IO
+thread in the inverse locks described by [PortAudio #1174](https://github.com/PortAudio/portaudio/issues/1174).
+Changing sounddevice from 0.5.5 to 0.5.6 did not fix it; the newer environment
+loaded the same bundled PortAudio binary as the passing Kokoro environment.
+
+Require terminal sink-event delivery, actual stream/notify completion and a
+clean worker exit in addition to generated audio and model-owner counters.
+Resolve the loaded native library path and hash when comparing environments;
+the Python package version alone does not identify the native implementation.

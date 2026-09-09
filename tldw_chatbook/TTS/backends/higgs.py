@@ -328,8 +328,11 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                     "HiggsAudioServeEngine does not support audio_tokenizer_name_or_path parameter, skipping"
                 )
 
-            # Only add dtype if the engine supports it
-            if "dtype" in init_params:
+            # Current V2 uses torch_dtype; retain the older dtype signature.
+            if "torch_dtype" in init_params:
+                engine_kwargs["torch_dtype"] = torch_dtype
+                logger.debug("HiggsAudioServeEngine supports torch_dtype parameter")
+            elif "dtype" in init_params:
                 engine_kwargs["dtype"] = torch_dtype
                 logger.debug("HiggsAudioServeEngine supports dtype parameter")
             else:

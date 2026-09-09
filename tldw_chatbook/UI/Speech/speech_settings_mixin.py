@@ -37,6 +37,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 )
 from tldw_chatbook.TTS import TTSPreferencesSnapshot, get_tts_service
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.legacy_catalogs import LEGACY_DEFAULT_VOICES, LEGACY_VOICE_OPTIONS
 from tldw_chatbook.TTS.voice_blend_paths import (
     kokoro_ui_blend_file,
     write_kokoro_ui_blends,
@@ -598,19 +599,8 @@ class SpeechSettingsMixin:
             )
             voice_select.value = "professional_female"
         elif provider == "alltalk":
-            voice_select.set_options(
-                [
-                    ("Female 01", "female_01.wav"),
-                    ("Female 02", "female_02.wav"),
-                    ("Female 03", "female_03.wav"),
-                    ("Female 04", "female_04.wav"),
-                    ("Male 01", "male_01.wav"),
-                    ("Male 02", "male_02.wav"),
-                    ("Male 03", "male_03.wav"),
-                    ("Male 04", "male_04.wav"),
-                ]
-            )
-            voice_select.value = "female_01.wav"
+            voice_select.set_options(LEGACY_VOICE_OPTIONS["alltalk"])
+            voice_select.value = LEGACY_DEFAULT_VOICES["alltalk"]
 
         available_voice_ids = tuple(
             value

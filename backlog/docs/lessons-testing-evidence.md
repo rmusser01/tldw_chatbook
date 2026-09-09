@@ -13016,3 +13016,26 @@ already-started gateway. Matched unavailable parent/child states still need thei
 authenticated inert-data channel; omitting the control client also blocks recovery.
 Do not solve availability by salvaging unverified catalog metadata or substituting
 an executable runtime.
+
+## Preserve combining marks in multilingual content comparisons
+
+**TASK-32148 / TASK-32149, 2026-09-09.** The new full-audio ASR verifier claimed
+to normalize only punctuation, case and whitespace, but its `\W` regex also
+removed Hindi vowel and nasal marks: `चाँदी` collapsed to `चद`. A failing
+Devanagari regression exposed that meaningful transcription differences could
+disappear. Filter punctuation by Unicode category and whitespace explicitly;
+retain combining marks, raw transcripts and the original audio hashes.
+
+## Separate sanitizer startup failures from target failures
+
+**TASK-32164, 2026-09-09.** Nine macOS HTTP shutdown cases timed out without
+output, but a bounded no-argument control also failed before its expected usage
+exit. An unsandboxed exact-PID sample showed Apple Clang ASan initialization
+re-entering through dyld/malloc and waiting on its own spin mutex before `main`.
+These were not nine observed transport defects. After provisioning compilers in
+a separate pinned Linux ARM image, the unchanged transport passed all nine
+ASan/UBSan cases and released the owned container; macOS startup remained an
+explicit limitation. Preserve startup controls and raw stacks before interpreting
+scenario timeouts, and distinguish a working alternative toolchain from a fix to
+the original runtime. [The receipts](../../Docs/QA/tts-macos-burndown-2026-09-09/native/sanitizer/linux-qualified-02/README.md)
+retain both failures and the passing alternative.
