@@ -169,6 +169,82 @@ The constructor audit also required lazy creation behind the existing gateway re
 
 ## Final root-owned handoff
 
+### Round 6 idle scheduler follow-up
+
+**Superseded before publication:** dev `733f7a628c` merged its independently
+reviewed scheduler-start-after-readiness fix (`a7ef7addb8`) while this candidate
+was being verified. Preserve that upstream lifecycle correction. The redundant
+four-line idle optimization and its tests were removed using their exact local
+diff; the patch, RED/GREEN and approved review remain in current-plan scratch.
+The steps below record the attempted repair, not code intended for this PR.
+
+Automatic Perf Guard at `ab4bd31747` measures 974/973 modules at the exact
+UI-ready flag: the immediate scheduler's first tick can load heartbeat and
+emergency-stop support before that flag. The same tree measured 972 locally;
+the first-use imports are genuinely ordering-sensitive, not a census error.
+
+ADR required: no new ADR
+ADR path: `backlog/decisions/097-boot-budget-ratchets.md`
+Reason: Remove an unnecessary idle-queue disk read within existing scheduling
+safety/liveness contracts (TASK-26004, TASK-26025, TASK-31507); do not defer
+time-sensitive scheduler startup or its first heartbeat.
+
+1. Root is the sole writer for `Scheduling/scheduler/loop.py`, focused scheduler
+   regression tests and these follow-up notes. The independent reviewer is
+   read-only. Existing TASK-23175 PR-check/boot acceptance covers this repair.
+2. Demonstrate RED with an actual empty `PriorityQueue`: a tick must not call
+   the emergency-stop reader when no dispatch exists, but must persist its
+   normal heartbeat. Add empty-to-nonempty controls proving stopped/unreadable
+   state holds the original queue, then clearing it permits normal dispatch.
+3. Add only a synchronous empty-queue return before the existing stop read.
+   Preserve stop-before-pop on every nonempty queue, off-loop file access,
+   immediate scheduler start, heartbeat/cancellation behavior and all ratchets.
+4. Run exact new/adjacent software tests and the existing UI-ready/worker guards,
+   with temporary files/fake handlers only. No snapshot refresh, full sweep,
+   live audio, native execution or manual CI. Obtain focused review before
+   committing/pushing; leave the same PR open and unmerged.
+5. Keep this scheduler-only maintenance outside the voice qualification source
+   and lint inventories: it changes neither voice runtime composition nor its
+   evidence/qualification tooling. Verify both changed Python files explicitly
+   and record their exact PR commit; do not claim the unchanged voice digest
+   alone identifies this boot fix. No packaged authority is regenerated.
+
+### Final integration onto Buddy-enabled dev 733f7a628c
+
+ADR required: no new ADR
+ADR paths: `backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md`,
+`backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md`,
+`backlog/decisions/097-boot-budget-ratchets.md`
+Reason: Preserve both already-approved ownership contracts and chronological
+schema migrations while integrating current dev; no new runtime or authority.
+
+1. Keep backup `codex/voice-pr2504-before-dev733-rebase` of the exact local
+   pre-rebase head. One implementer owns rebase/conflict resolution, voice
+   migration renumbering and regression/inventory updates. Root/reviewer are
+   read-only except separate ignored reports. No stash/reset/checkout cleanup.
+2. Rebase the complete reviewed series from dev c4a onto exact fetched
+   `733f7a628c064005d27bed8bbcf53aae01b5dd45`. Preserve Buddy-owned schema70
+   SQL and source-pin69 bytes unchanged; move voice provenance70 to71 (70→71),
+   including method/map/test/census/source-inventory references. Keep migration
+   guards, rollback, both indexes and every trace/custody invariant. Do not
+   replay pre-Buddy versions of shared Console/runtime/DB code wholesale.
+3. Preserve newer Buddy conversation/defaults/decision/speech ownership, dev's
+   scheduler lifecycle fix and SQL allowlist/index changes alongside lazy voice
+   startup and shutdown custody. Review exact overlapping hunks; no unrelated
+   Buddy redesign or repeat of already-reviewed native repairs.
+4. Demonstrate a real schema70 Buddy predecessor upgrades to71 retaining Buddy
+   and source-pin tables/indexes plus voice provenance; run focused migration,
+   ownership/lazy-voice and incoming scheduler tests only. Keep protected dirty
+   feature/main worktrees and all evidence untouched.
+5. Regenerate shared diagnostics only through its official generator after
+   reviewing changed statement ownership; reconcile exact index/source/lint
+   inventories. No authority regeneration, full sweep, live/native/local build,
+   models/providers, soak, manual workflow, release or merge.
+6. Freeze the integration for independent shared-hunk/schema/boot review, then
+   publish the same PR with observed-head lease and monitor its normal CI. This
+   exact dev is the final publication target; later independent dev commits are
+   reported as drift instead of silently restarting another integration cycle.
+
 After scoped reviews, run one proportionate joined software gate covering changed seams and obtain a final read-only combined review. Refresh dev/PR/comments and account for any changes. Push the same branch with explicit force-with-lease, reply to each inline finding with the fix or grounded explanation, and resolve only addressed threads. Observe normal automatic checks; diagnose failures before more tests or changes. Record exact final head/check status and leave PR 2504 OPEN and UNMERGED. Preserve worktrees and recoverable evidence.
 
 ## Local verification checkpoint — 2026-09-08
