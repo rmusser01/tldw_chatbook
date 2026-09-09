@@ -1643,3 +1643,34 @@ that accepted increment after the active run completes, then qualify its actual
 affected files and any overlap. Fresh final-head Qodo review and normal merge
 checks remain mandatory. No cap increase, repository-wide sweep, unrelated
 environment change, or further user approval is pending.
+
+### Wave-ten terminal results and fixture reconciliation (2026-09-09 UTC)
+
+The frozen native run completed **849 passed, 2 failed, 10 warnings in
+1375.09 seconds**, with final `exit_code: 1` and `sqlite_paths: []`. Both
+failures were the two terminal sizes of
+`test_library_conversation_disabled_reason_stale_actions_and_notice`, at its
+unchanged `open_console.disabled is False` assertion. The fixture had no active
+workspace/membership, now required by accepted TASK-32056. An independent
+two-case run reproduced both failures in 5.26 seconds. Step 71 supplies a real
+active workspace and membership for the retained `chat-001`, keeping all
+stale-list, enabled-state, tooltip, Retry and focus assertions. The repaired
+pair plus the complete handoff file passed **11 tests, 3 warnings in 7.95
+seconds** (`/private/tmp/pr2427-wave10-conversation-green.log`); scoped Ruff
+and diff-check passed. No production gate changed.
+
+The 1427-case incoming run exited **143 (SIGTERM)** before a pytest summary,
+with its log ending after the 60% marker. Its termination source is not
+established; no pass count is inferred from progress dots. The subsequent
+process census confirmed only the native runner was still active. This cohort
+remains inconclusive and will be rerun as complete-file groups after integration.
+
+Fresh fetch confirms next base `c4a7b1911f14181faa471eb1ea209cfdeed98226` (37
+changed files since dev80f29). In addition to structural waits, it contains
+Collections row/count behavior and documentation. The fixed-ref independent
+review identifies ten safe existing-owner forwarders to offset ten incoming
+Screen methods, plus documentation-only line paydown; shared receiver,
+dynamic dispatch, identity and wiring contracts are excluded. Preserve those
+boundaries and all caps during step 72. The native result above establishes
+clean process exit resources, not an all-green test suite or final-source
+qualification after the upcoming rebase.
