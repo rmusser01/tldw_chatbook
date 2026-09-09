@@ -95,8 +95,9 @@ file-descriptor protection with a small session-owned spawn worker.
    patch carries AEC3's existing per-instance categorical delay quality, freshness,
    and clock-drift evidence through the metrics seam; its bytes and hash are tracked by
    the deterministic vendoring manifest. A second pinned patch adds the direct
-   `<stddef.h>` include required by the clock-drift header's global `size_t`;
-   it preserves the same upstream revision and 315-file pristine closure.
+   `<stddef.h>` include required by the clock-drift header's global `size_t`.
+   A third pinned patch adds `<memory>` for the reverb-model header's `std::unique_ptr`.
+   These preserve the same upstream revision and 315-file pristine closure.
    No synthetic probabilistic confidence is
    treated as native evidence.
 

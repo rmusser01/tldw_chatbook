@@ -22,6 +22,8 @@ PATCHES_PATH = VENDOR_ROOT / "PATCHES.md"
 PATCH_NAME = "0001-expose-delay-health-evidence.patch"
 CLOCKDRIFT_PATCH_NAME = "0002-include-stddef-for-clockdrift-detector.patch"
 CLOCKDRIFT_HEADER = "modules/audio_processing/aec3/clockdrift_detector.h"
+REVERB_PATCH_NAME = "0003-include-memory-for-reverb-model-estimator.patch"
+REVERB_HEADER = "modules/audio_processing/aec3/reverb_model_estimator.h"
 COMPILER_DEFINES_PATH = VENDOR_ROOT / "COMPILER_DEFINES.cmake"
 NOTICES_PATH = PACKAGE_ROOT / "THIRD_PARTY_NOTICES.md"
 TOOL_PATH = PACKAGE_ROOT / "tools" / "vendor_webrtc_aec.py"
@@ -607,7 +609,7 @@ def test_every_quoted_include_resolves_inside_vendor_tree() -> None:
     assert not missing, sorted(missing)
 
 
-def test_patch_series_declares_two_hash_verified_patches() -> None:
+def test_patch_series_declares_three_hash_verified_patches() -> None:
     tool = _load_tool()
     assert tool.PATCHES == (
         (
@@ -617,6 +619,10 @@ def test_patch_series_declares_two_hash_verified_patches() -> None:
         (
             CLOCKDRIFT_PATCH_NAME,
             "f3bbfe1b2f7d54030fba05fefefbcc181706975c09aa43c9aeb83ca96379ca6e",
+        ),
+        (
+            REVERB_PATCH_NAME,
+            "dfdad20c0732cf30364d6a4c5161e9e2612dc8c0123c511ea2537e2439c9e9f5",
         ),
     )
     expected = "# WebRTC AEC3 patch series\n\n"
@@ -628,7 +634,9 @@ def test_patch_series_declares_two_hash_verified_patches() -> None:
     assert tool.PATCH_SERIES == expected
 
 
-@pytest.mark.parametrize("patch_name", [PATCH_NAME, CLOCKDRIFT_PATCH_NAME])
+@pytest.mark.parametrize(
+    "patch_name", [PATCH_NAME, CLOCKDRIFT_PATCH_NAME, REVERB_PATCH_NAME]
+)
 def test_declared_patch_has_no_git_whitespace_errors(
     tmp_path: Path, patch_name: str
 ) -> None:
@@ -672,7 +680,9 @@ def test_vendor_recipe_reapplies_declared_patch_to_exact_unpatched_tree(
         ).read_bytes()
 
 
-@pytest.mark.parametrize("patch_name", [PATCH_NAME, CLOCKDRIFT_PATCH_NAME])
+@pytest.mark.parametrize(
+    "patch_name", [PATCH_NAME, CLOCKDRIFT_PATCH_NAME, REVERB_PATCH_NAME]
+)
 def test_vendor_verifier_rejects_rehashed_tree_without_declared_patch(
     tmp_path: Path,
     patch_name: str,
@@ -698,7 +708,14 @@ def test_clockdrift_header_directly_includes_global_size_t_definition() -> None:
     _load_tool().verify_vendor_tree(VENDOR_ROOT)
 
 
-@pytest.mark.parametrize("patch_name", [PATCH_NAME, CLOCKDRIFT_PATCH_NAME])
+def test_reverb_header_directly_includes_unique_ptr_definition() -> None:
+    assert b"#include <memory>\n" in (VENDOR_ROOT / REVERB_HEADER).read_bytes()
+    _load_tool().verify_vendor_tree(VENDOR_ROOT)
+
+
+@pytest.mark.parametrize(
+    "patch_name", [PATCH_NAME, CLOCKDRIFT_PATCH_NAME, REVERB_PATCH_NAME]
+)
 def test_vendor_verifier_rejects_changed_patch_bytes(
     tmp_path: Path, patch_name: str
 ) -> None:

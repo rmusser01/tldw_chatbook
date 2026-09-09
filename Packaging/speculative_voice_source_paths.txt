@@ -156,6 +156,7 @@ native/voice_aec/PYBIND11_LICENSE.txt
 native/voice_aec/THIRD_PARTY_NOTICES.md
 native/voice_aec/patches/0001-expose-delay-health-evidence.patch
 native/voice_aec/patches/0002-include-stddef-for-clockdrift-detector.patch
+native/voice_aec/patches/0003-include-memory-for-reverb-model-estimator.patch
 native/voice_aec/pyproject.toml
 native/voice_aec/src/bindings.cpp
 native/voice_aec/src/duplex_bindings.cpp

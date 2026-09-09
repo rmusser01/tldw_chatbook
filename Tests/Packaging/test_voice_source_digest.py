@@ -22,6 +22,7 @@ _REQUIRED_CURRENT_SCOPE = {
     "tldw_chatbook/DB/migrations/chachanotes_v68_to_v69_console_trace_source_pin.sql",
     "Tests/Chat/test_console_runtime_lazy_voice.py",
     "native/voice_aec/patches/0002-include-stddef-for-clockdrift-detector.patch",
+    "native/voice_aec/patches/0003-include-memory-for-reverb-model-estimator.patch",
     "Docs/superpowers/specs/2026-09-05-speculative-voice-provider-readiness-design.md",
     "Docs/superpowers/plans/2026-09-05-speculative-voice-provider-readiness.md",
     "Tests/Chat/test_console_voice_preflight.py",

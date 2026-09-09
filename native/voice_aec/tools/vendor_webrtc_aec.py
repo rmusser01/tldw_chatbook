@@ -129,6 +129,10 @@ PATCHES = (
         "0002-include-stddef-for-clockdrift-detector.patch",
         "f3bbfe1b2f7d54030fba05fefefbcc181706975c09aa43c9aeb83ca96379ca6e",
     ),
+    (
+        "0003-include-memory-for-reverb-model-estimator.patch",
+        "dfdad20c0732cf30364d6a4c5161e9e2612dc8c0123c511ea2537e2439c9e9f5",
+    ),
 )
 PATCH_SERIES = "# WebRTC AEC3 patch series\n\n" + "".join(
     f"{number}. `{name}` - SHA-256 `{digest}`\n"

@@ -233,7 +233,8 @@ package provenance. The imported source initially has no patches. Integration te
 requires a narrowly declared first patch that carries AEC3's existing per-instance delay
 estimate availability, coarse/refined quality, freshness, and clock-drift evidence
 through the public metrics seam. A second patch adds `<stddef.h>` directly to the
-clock-drift header for its global `size_t`. Both patches and their SHA-256 hashes are
+clock-drift header for its global `size_t`. A third adds `<memory>` directly to the
+reverb-model header for its `std::unique_ptr`. All three patches and their SHA-256 hashes are
 checked in, applied by the deterministic vendoring recipe, and covered by the source
 manifest; the 315-file pristine closure and pinned
 upstream commit and tree remain the provenance root.
