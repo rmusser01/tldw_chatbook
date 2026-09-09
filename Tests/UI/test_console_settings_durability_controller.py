@@ -8,6 +8,17 @@ import pytest
 
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
+from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultMutationIntent,
+    ConsoleDefaultMutationOutcome,
+    ConsoleDefaultRecoveryAction,
+    ConsoleDefaultRecoveryRequest,
+    ConsoleDefaultSavePhase,
+    RuntimeConfigPublicationResult,
+)
+from tldw_chatbook.UI.Console_Modules import settings_durability
 from tldw_chatbook.UI.Console_Modules.settings_durability import (
     ConsoleSettingsDurabilityController,
 )
@@ -216,3 +227,227 @@ async def test_empty_durability_teardown_does_not_create_shared_store():
     await owner._teardown_console_roleplay_persistence()
     assert owner._console_roleplay_tearing_down is True
     assert owner._console_roleplay_persistence_task is None
+
+
+def _default_recovery_case(monkeypatch, phase):
+    """Keep real admission/state owners while controlling persistence boundaries."""
+    intent = ConsoleDefaultMutationIntent(
+        7,
+        ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        "openai",
+        "model",
+        frozenset(),
+        {},
+        None,
+    )
+    state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=7,
+        recovery_intent=intent,
+        failure_phase=phase,
+    )
+    app = SimpleNamespace(console_default_durability_state=state)
+    owner = _owner(app, object())
+    calls = []
+    sync_keys = []
+    owner._sync_console_settings_recovery_surfaces = lambda: sync_keys.append(
+        set(app.console_default_recovery_inflight)
+    )
+
+    def apply(current):
+        calls.append("save")
+        return ConsoleDefaultMutationOutcome(current.generation, True, True, {}, None)
+
+    def refresh():
+        calls.append("refresh")
+        return RuntimeConfigPublicationResult(True, {}, None)
+
+    async def publish(current, outcome):
+        calls.append("publish")
+        return owner._accept_console_default_runtime_publication(
+            current.generation,
+            current.action,
+            outcome.settings_view,
+        )
+
+    monkeypatch.setattr(settings_durability, "apply_console_default_intent", apply)
+    monkeypatch.setattr(
+        settings_durability, "refresh_console_runtime_after_saved_default", refresh
+    )
+    owner._publish_console_default_outcome_off_event_loop = publish
+    action = (
+        ConsoleDefaultRecoveryAction.RETRY_SAVE
+        if phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+        else ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP
+    )
+    return owner, ConsoleDefaultRecoveryRequest(action, 7), calls, sync_keys
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", tuple(ConsoleDefaultSavePhase))
+async def test_default_recovery_excludes_duplicates_through_publication(
+    monkeypatch: pytest.MonkeyPatch, phase: ConsoleDefaultSavePhase
+) -> None:
+    """Keep duplicate recovery out until its exact publication finishes.
+
+    Args:
+        monkeypatch: Replace persistence boundaries with controlled outcomes.
+        phase: Failed owner whose recovery action is exercised.
+    """
+    owner, request, calls, sync_keys = _default_recovery_case(monkeypatch, phase)
+    entered, release = asyncio.Event(), asyncio.Event()
+    publish = owner._publish_console_default_outcome_off_event_loop
+
+    async def held_publish(intent, outcome):
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        return await publish(intent, outcome)
+
+    owner._publish_console_default_outcome_off_event_loop = held_publish
+    first = asyncio.create_task(owner._handle_console_default_recovery(request))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        duplicate = await asyncio.wait_for(
+            owner._handle_console_default_recovery(request), 2
+        )
+        assert duplicate.recovery_intent is not None
+        assert calls == [
+            "save" if phase is ConsoleDefaultSavePhase.BEFORE_REPLACE else "refresh"
+        ]
+        assert owner.app_instance.console_default_recovery_inflight == {
+            (7, phase.value)
+        }
+    finally:
+        release.set()
+        await first
+        await owner._console_settings_durability_owner().close_and_drain()
+    assert calls[-1] == "publish" and calls.count("publish") == 1
+    assert sync_keys == [{(7, phase.value)}]
+    assert owner.app_instance.console_default_recovery_inflight == set()
+    assert owner._console_default_durability_state().recovery_intent is None
+    assert owner.app_instance.console_new_chat_default_generation == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ("worker", "publication", "cancel"))
+async def test_default_recovery_releases_flight_after_failure_and_allows_retry(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    """Every interrupted recovery releases admission for a later valid retry.
+
+    Args:
+        monkeypatch: Inject failure at the selected persistence boundary.
+        fault: Worker error, publication error, or publication cancellation.
+    """
+    phase = ConsoleDefaultSavePhase.BEFORE_REPLACE
+    owner, request, calls, _ = _default_recovery_case(monkeypatch, phase)
+    apply = settings_durability.apply_console_default_intent
+    publish = owner._publish_console_default_outcome_off_event_loop
+
+    def failed_apply(intent):
+        raise RuntimeError("controlled save failure")
+
+    async def failed_publish(intent, outcome):
+        if fault == "cancel":
+            raise asyncio.CancelledError
+        raise RuntimeError("controlled publication failure")
+
+    if fault == "worker":
+        monkeypatch.setattr(
+            settings_durability, "apply_console_default_intent", failed_apply
+        )
+    else:
+        owner._publish_console_default_outcome_off_event_loop = failed_publish
+    if fault == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await owner._handle_console_default_recovery(request)
+    else:
+        await owner._handle_console_default_recovery(request)
+    assert owner.app_instance.console_default_recovery_inflight == set()
+    state = owner._console_default_durability_state()
+    assert state.recovery_intent is not None
+    expected_phase = (
+        ConsoleDefaultSavePhase.CACHE_PUBLICATION if fault == "publication" else phase
+    )
+    assert state.failure_phase is expected_phase
+    monkeypatch.setattr(settings_durability, "apply_console_default_intent", apply)
+    owner._publish_console_default_outcome_off_event_loop = publish
+    action = (
+        ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP
+        if fault == "publication"
+        else request.action
+    )
+    await owner._handle_console_default_recovery(
+        ConsoleDefaultRecoveryRequest(action, 7)
+    )
+    assert owner._console_default_durability_state().recovery_intent is None
+    assert owner.app_instance.console_default_recovery_inflight == set()
+    assert calls[-1] == "publish"
+    await owner._console_settings_durability_owner().close_and_drain()
+
+
+@pytest.mark.asyncio
+async def test_default_recovery_waiter_cancellation_keeps_admitted_flight_until_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shutdown drains accepted publication after its caller stops waiting.
+
+    Args:
+        monkeypatch: Hold publication behind a deterministic release event.
+    """
+    phase = ConsoleDefaultSavePhase.CACHE_PUBLICATION
+    owner, request, calls, _ = _default_recovery_case(monkeypatch, phase)
+    entered, release = asyncio.Event(), asyncio.Event()
+    publish = owner._publish_console_default_outcome_off_event_loop
+
+    async def held_publish(intent, outcome):
+        entered.set()
+        await release.wait()
+        return await publish(intent, outcome)
+
+    owner._publish_console_default_outcome_off_event_loop = held_publish
+    waiter = asyncio.create_task(owner._handle_console_default_recovery(request))
+    await asyncio.wait_for(entered.wait(), 2)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    lifetime = owner._console_settings_durability_owner()
+    closing = asyncio.create_task(lifetime.close_and_drain())
+    try:
+        await asyncio.sleep(0)
+        assert not lifetime.accepting and not closing.done()
+        assert owner.app_instance.console_default_recovery_inflight == {
+            (7, phase.value)
+        }
+        await owner._handle_console_default_recovery(request)
+        assert calls == ["refresh"]
+    finally:
+        release.set()
+        await closing
+    assert not lifetime.tasks
+    assert owner.app_instance.console_default_recovery_inflight == set()
+    assert owner._console_default_durability_state().recovery_intent is None
+
+
+@pytest.mark.asyncio
+async def test_default_recovery_old_publication_failure_preserves_newer_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An obsolete recovery cannot replace a newer default intent's state.
+
+    Args:
+        monkeypatch: Advance the app's generation during publication.
+    """
+    owner, request, _, _ = _default_recovery_case(
+        monkeypatch, ConsoleDefaultSavePhase.BEFORE_REPLACE
+    )
+    newer = ConsoleDefaultDurabilityState(newest_intent_generation=8)
+
+    async def superseded_publish(intent, outcome):
+        owner.app_instance.console_default_durability_state = newer
+        return False
+
+    owner._publish_console_default_outcome_off_event_loop = superseded_publish
+    assert await owner._handle_console_default_recovery(request) is newer
+    assert owner.app_instance.console_default_recovery_inflight == set()
+    await owner._console_settings_durability_owner().close_and_drain()

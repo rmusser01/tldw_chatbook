@@ -1,5 +1,5 @@
 ---
-id: TASK-32136
+id: TASK-32183
 title: Preserve Loguru capture sinks across app mount
 status: Done
 assignee:
@@ -67,3 +67,13 @@ required this unmerged review record to move to TASK-32136. The fresh census
 across 1,027 local/remote refs and all registered worktrees found maximum
 TASK-32135. Only the review identity and active references move; landed IDs,
 original dates, implementation notes and historical evidence stay unchanged.
+
+On 2026-09-09, the Library Notes Folder-files task landed on dev 88b07c4f6f
+with TASK-32136. That claimant was created at 2026-09-08 21:39 and added by
+f054f35ae before this review adopted ID 32136 at 2026-09-09 00:31 in
+5f840d365. Following the user's review-only renumbering policy, this unmerged
+record moves to TASK-32183 while the landed Library identity stays unchanged.
+The fresh all-ref history and registered-worktree census found maximum 32182
+and no candidate 32183 path or content reference. Only this filename,
+frontmatter and active inbound pointers change; earlier IDs, original dates,
+completed implementation notes and literal evidence paths remain provenance.
