@@ -33216,7 +33216,7 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
             message="User focus intent did not advance its generation.",
         )
 
-        screen._restore_library_notes_settled_focus(stale_identity, guard)
+        screen._notes_controller._restore_library_notes_settled_focus(stale_identity, guard)
         await pilot.pause()
         await pilot.pause()
 

@@ -1724,7 +1724,7 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
         assert request.content_signature == screen._library_media_content_signature()
         assert request.layout_signature == screen._library_media_layout_signature()
-        assert not screen._settle_library_media_return_from_geometry(
+        assert not screen._media_controller._settle_library_media_return_from_geometry(
             old_request,
             old_owner,
             old_geometry.geometry,
@@ -1887,11 +1887,11 @@ async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
 
         monkeypatch.setattr(screen, "set_focus", observe_focus)
         outer_generation = screen._library_list_entry_focus_generation
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
@@ -1938,11 +1938,11 @@ async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
 
         monkeypatch.setattr(app, "notify", capture_notice)
         outer_generation = screen._library_list_entry_focus_generation
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
@@ -1999,7 +1999,7 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
                 request,
                 request_id=request.request_id + 1,
             )
-            screen._settle_library_media_return_from_geometry(
+            screen._media_controller._settle_library_media_return_from_geometry(
                 request,
                 owner,
                 geometry.geometry,
@@ -2379,7 +2379,7 @@ async def test_another_viewer_back_request_invalidates_prior_authority(
         new_request = screen._media_state.return_settlement
         assert new_request is not None
 
-        assert not screen._settle_library_media_return_from_geometry(
+        assert not screen._media_controller._settle_library_media_return_from_geometry(
             old_request,
             old_owner,
             old_geometry.geometry,

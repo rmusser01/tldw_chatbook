@@ -1674,3 +1674,63 @@ dynamic dispatch, identity and wiring contracts are excluded. Preserve those
 boundaries and all caps during step 72. The native result above establishes
 clean process exit resources, not an all-green test suite or final-source
 qualification after the upcoming rebase.
+
+### Wave-eleven rebase and bounded owner reconciliation (2026-09-09 UTC)
+
+Rebased all 215 commits onto `c4a7b1911f14181faa471eb1ea209cfdeed98226`,
+finishing at `947e6ec680e4add142b1d9ee888cd934820d6f37`. Backup
+`codex/pr2427-before-wave11-rebase-20260908` preserves `0753440483`.
+Conflict reconciliation retains upstream structural waits and Collections
+count reads, uses canonical `receipt.focus_identity` with the single settled
+focus queue inside the Notes receipt helper, and supplies the live composed
+Skills import status accessor through existing controller wiring. The new
+Collections diagnostic uses the existing bounded `_retry_failure_reason`.
+
+Step 73 removes ten exact two-line Media/Notes Screen delegates and retargets
+only verified real-Screen callers and affected tests to their existing owners.
+Shared polymorphic `canvas_sync` receivers and dynamic/identity contracts stay
+unchanged. Extended owner tests pin both controller callability and Screen
+absence. Fifteen historical Screen docstrings and the Export success docstring
+were shortened without changing executable bodies. SkillImport uses normal
+Ruff formatting, shorter redundant documentation, and removal of an optional
+tuple trailing comma; its public cancellation method retains Google-style
+Returns documentation. No new ADR is required: this is routine reconciliation
+within existing ownership boundaries, not a new interface or state design.
+
+Measured final sizes are Screen **31842 lines / 1229 methods**, Export **1291
+lines**, and SkillImport **760 lines**, within unchanged caps of 31868/1229,
+1307, and 760. No ratchet was raised.
+
+Fresh evidence on the frozen runtime source:
+
+- Initial cap/assembly guards: **3 failed, 71 passed**; newly extended delegate
+  absence controls: **2 failed, 25 passed**. Final seven-file owner/size/assembly
+  cohort: **101 passed, 2 warnings, 2.00 seconds**
+  (`/private/tmp/pr2427-wave11-guards-green.log`).
+- All derived-artifact preflight checks passed
+  (`/private/tmp/pr2427-wave11-preflight.log`). Complete final diagnostic and
+  boot/import/CSS gates: **78 passed, 11 warnings, 191.13 seconds**, exit zero
+  (`/private/tmp/pr2427-wave11-final-gates.log`).
+- `/private/tmp/pr2427-wave11-ast-proof.log` confirms executable AST identity
+  for Export/SkillImport and exactly the enumerated delegate removal/direct
+  owner retargets for Screen and the two UI test files.
+- Diff-check and scoped F821 pass. Fresh Ruff comparison has no new findings:
+  Screen retains its existing 47; every other edited Python file has zero
+  (`/private/tmp/pr2427-wave11-lint-baseline.log`).
+- Independent bounded review found no actionable findings, conditional on
+  the remaining final-source test/native and external merge gates.
+
+The six incoming structural-wait/Collections/Export files initially passed
+**46 tests, 3 warnings, 176.40 seconds** before step 73; those are not final
+cleanup-source evidence. They are included in the active complete-file retries.
+The previously interrupted incoming inventory is now split into sequential
+cohorts A/B/C/D with separate logs/JUnit outputs at
+`/private/tmp/pr2427-wave11-cohort-{a,b,c,d}.{log,xml}`. Later cohorts start only
+after earlier success. Native Library qualification is also active at
+`/private/tmp/pr2427-wave11-shell-native.blE2Qd/{pytest.log,native.jsonl}`.
+Neither run is yet a final-pass claim; require the native terminal exit zero
+and empty SQLite paths. Runtime source remains frozen during these runs.
+
+At this checkpoint the published PR head is still `83f48123fcabcb0b00ae8291f36602dc47aee94d`;
+publication, fresh final-head Qodo completion, latest-base reconciliation and
+normal required checks remain open. No further approval is pending.

@@ -1131,37 +1131,11 @@ class LibraryExportController:
     def _build_library_export_success_message(
         path: Any, dependency_info: Any, creator_message: Any = ""
     ) -> str:
-        """Build the success notification text.
-
-        Three pieces, in order:
-
-        1. The destination path (always present), ``escape_markup``'d:
-           Textual notifications render Rich console markup, so a
-           user-chosen path containing ``[...]`` (legal in filenames on
-           any platform) would otherwise mis-render or raise in the
-           markup parser.
-        2. The creator's own ``outcome["message"]`` detail (task-158):
-           ``ChatbookCreator.create_chatbook`` returns a message carrying
-           its own counts (e.g. missing-dependency warnings) that was
-           previously discarded entirely by the caller. Its redundant
-           ``"Chatbook created successfully at <path>"`` prefix -- the
-           path is already the primary notify line above -- is stripped
-           so only the actual detail remains; an unrecognized message
-           shape (e.g. a different service implementation) is kept
-           verbatim rather than guessed at.
-        3. The ``dependency_info.get("auto_included")`` count suffix (the
-           character ids ``ChatbookCreator`` pulled in automatically as
-           conversation dependencies) -- BUT only when the creator detail
-           above does not already state it. ``create_chatbook`` already
-           puts an ``"Auto-included N character dependencies"`` clause
-           into its own message (that clause and ``auto_included`` derive
-           from the same ``self.auto_included_characters`` state), so
-           emitting the suffix on top of a detail that carries that clause
-           would restate the identical fact twice. The suffix therefore
-           only fires when the auto-included count would otherwise go
-           unstated (e.g. an empty creator message, or a creator message
-           whose only detail is a missing-dependency warning).
-        """
+        """Build notification text without losing creator details or repeating counts.
+        Put the markup-escaped destination first. Strip only the recognized redundant
+        success prefix from the creator's own message; retain unknown shapes verbatim.
+        Append auto-included character counts only if that detail does not already
+        state them, so dependency warnings and inclusion counts both remain visible."""
         message = f"Exported bundle to {escape_markup(str(path))}"
 
         detail = str(creator_message or "").strip()
