@@ -32,6 +32,22 @@ three separate places in code
 (`_NON_IMPORTABLE_CLASSIFICATIONS`, `_NON_IMPORTABLE`,
 `_CLASSIFICATION_LABELS`), which is one extra place to forget when the set
 changes.
+
+Added 2026-09-09 (integration of PR #2549, reproduced twice): choosing
+**Update existing** on an *Unchanged repeat* row aborts the whole import.
+The row reads "Content: replace existing content · Folder placement:
+unchanged"; `_execute_item` then raises
+`ImportReceiptTransitionError("Membership receipt authority does not match
+the approved plan.")` (`note_import_executor.py`, the
+`len(membership_effects) != len(item.memberships)` guard), no receipt is
+produced, and the user gets "Import needs attention." — the live `1 failed`
+seen during the task-32135 pilot. **Pre-existing, not caused by this wave**:
+a probe that imports a folder, re-imports it unchanged, presses **Update
+existing** and imports fails identically on the merged wave tree and on the
+wave base `f054f35ae1` (the guard and its message are byte-identical on
+both). Changing the file first — a *Changed repeat* — updates cleanly
+(`updated=1, failed=0`) on both trees, so the defect is specific to the
+unchanged-repeat-plus-update combination the review lets a user pick.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -42,4 +58,6 @@ changes.
   this page"
 - [ ] #3 The non-importable classification set has one source of truth,
   used everywhere it is currently duplicated
+- [ ] #4 **Update existing** on an unchanged repeat either imports or is
+  refused in the review, never aborts the run with no receipt
 <!-- AC:END -->

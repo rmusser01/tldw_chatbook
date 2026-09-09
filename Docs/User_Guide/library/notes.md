@@ -552,6 +552,12 @@ it settles. **Last import** reopens the same-session receipt afterward.
 
 If the folder you chose holds an `.obsidian/` directory, the review shows an
 **Obsidian vault** toggle, on by default, and one line saying what it does.
+
+**Not on Windows.** Vault detection runs in the POSIX discovery pass only, so
+on Windows a vault imports as an ordinary folder: no toggle appears, the vault's
+own folders are walked, frontmatter stays in the body and wikilinks stay as
+text. Tracked as task-32178.
+
 With it on:
 
 - `.obsidian/`, `.trash/` and `Templates/` are listed under **Skipped** as one
@@ -908,3 +914,9 @@ open — pressing it used to silently displace the prompt into Edit; and a
 keyword typed only through Info's Properties field on a fresh blank note
 now clears the "Draft — not saved yet" status once it autosaves, matching
 the main keywords field.)*
+
+*Verified against fix/library-notes-docs — 2026-09-09 (PR #2549 review, at
+the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
+note as code, so a `[[link]]` after it is neither recorded nor rewritten;
+Obsidian vault detection is stated as POSIX-only, since the Windows
+discovery adapter never reports a vault (task-32178).)*
