@@ -328,7 +328,8 @@ def _tree(path):
     return ast.parse(path.read_text())
 
 
-def test_private_delegate_inventory_keeps_exact_approved_count_and_command_owners():
+def test_private_delegate_inventory_keeps_exact_approved_count_and_command_owners() -> None:
+    """Keep the approved delegate census and command-owner assignments exact."""
     assert len(DELEGATES) == 64
     expected_command_owners = {
         "_console_command_generate_image": "image",
@@ -342,7 +343,12 @@ def test_private_delegate_inventory_keeps_exact_approved_count_and_command_owner
 
 
 @pytest.mark.parametrize("name", DELEGATES)
-def test_private_delegate_is_retired_and_its_owner_remains(name):
+def test_private_delegate_is_retired_and_its_owner_remains(name: str) -> None:
+    """Retire each screen delegate while retaining its existing owner method.
+
+    Args:
+        name: Approved private screen delegate to check.
+    """
     module, owner_name, target_name = DELEGATES[name]
     screen = next(
         node
@@ -378,7 +384,8 @@ def test_private_delegate_is_retired_and_its_owner_remains(name):
 
 
 @pytest.mark.parametrize("name", RETIRED_SUBMISSION_METHODS)
-def test_runtime_custody_replaces_obsolete_submission_paths(name):
+def test_runtime_custody_replaces_obsolete_submission_paths(name: str) -> None:
+    """Keep superseded view-owned turn and stash APIs retired."""
     submission = ROOT / "tldw_chatbook/UI/Console_Modules/submission.py"
     for path in (SCREEN, WIRING, submission):
         references = [
@@ -392,7 +399,8 @@ def test_runtime_custody_replaces_obsolete_submission_paths(name):
         assert references == [], (path, name, references)
 
 
-def test_documented_external_screen_seams_remain_real_methods():
+def test_documented_external_screen_seams_remain_real_methods() -> None:
+    """Keep documented external screen seams as concrete screen methods."""
     screen = next(
         node
         for node in _tree(SCREEN).body

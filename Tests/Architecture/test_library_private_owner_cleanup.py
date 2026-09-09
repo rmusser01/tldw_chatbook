@@ -8,8 +8,14 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 
 @pytest.mark.parametrize("surface", ("history", "memberships"))
-def test_prompt_projection_ports_resolve_replaced_owner_at_publish_time(surface):
-    """A producer retained from construction must publish to the current owner."""
+def test_prompt_projection_ports_resolve_replaced_owner_at_publish_time(
+    surface: str,
+) -> None:
+    """A producer retained from construction must publish to the current owner.
+
+    Args:
+        surface: Prompt history or memberships projection to publish.
+    """
     screen = LibraryScreen(SimpleNamespace(app_config={}))
     if surface == "history":
         producer = screen._library_prompt_history_controller
@@ -39,7 +45,7 @@ def test_prompt_projection_ports_resolve_replaced_owner_at_publish_time(surface)
     ) is port
 
 
-def test_prompt_back_gate_reads_replaced_owner_and_keeps_selection_veto():
+def test_prompt_back_gate_reads_replaced_owner_and_keeps_selection_veto() -> None:
     """The live owner decides editor eligibility; selection still vetoes Back."""
     screen = LibraryScreen(SimpleNamespace(app_config={}))
     screen._prompts_controller = SimpleNamespace(

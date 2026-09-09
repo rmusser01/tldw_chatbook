@@ -343,6 +343,7 @@ def test_persona_projection_strips_linked_local_portrait_id() -> None:
 
 
 def test_persona_projection_preserves_policy_rules() -> None:
+    """Preserve persona policy rules in the canonical actor projection."""
     policy_rules = [
         {
             "rule_kind": "mcp_tool",
@@ -376,6 +377,11 @@ def test_persona_projection_preserves_policy_rules() -> None:
 def test_persona_policy_rules_reject_values_outside_local_contract(
     policy_rules: object,
 ) -> None:
+    """Reject persona policy rules outside the local actor contract.
+
+    Args:
+        policy_rules: Malformed policy-rule payload to reject.
+    """
     with pytest.raises(ActorPackValidationError) as caught:
         actor_pack_contracts.canonicalize_actor_payload(
             "persona",

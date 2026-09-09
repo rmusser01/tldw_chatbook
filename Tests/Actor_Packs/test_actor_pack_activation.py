@@ -237,8 +237,21 @@ def test_create_new_persona_preserves_incoming_uuid(activation_components) -> No
 
 
 def test_create_new_persona_round_trips_policy_rules(
-    activation_components, tmp_path: Path
+    activation_components: tuple[
+        ActorPackActivationService,
+        ActorPackImportService,
+        ActorPackRepository,
+        LocalCharacterPersonaService,
+        CharactersRAGDB,
+    ],
+    tmp_path: Path,
 ) -> None:
+    """Preserve persona policy rules through activation and export.
+
+    Args:
+        activation_components: Real activation services, repository, and database.
+        tmp_path: Temporary directory for the persona archive.
+    """
     activation, importer, repository, local_service, db = activation_components
     policy_rules = [
         {

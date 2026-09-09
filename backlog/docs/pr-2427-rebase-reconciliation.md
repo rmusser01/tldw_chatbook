@@ -2353,3 +2353,39 @@ Live remote dev still equals `a36fc6133c`; the published PR lease remains
 not included in these completed results. This checkpoint may be published for
 final-head review, but normal merge still requires its terminal cleanup result
 and current remote review/check status.
+
+Published the rebased checkpoint as
+`69108f4d1dd5d498c65c1f79951a478b3fc36e45` with the exact lease against
+`3fe94c842e`. Qodo documentation comment 3965835933 was replied to at
+3966255799 and resolved; final-head review was requested by issue comment
+5598798465. GitHub now schedules the normal PR checks (including PR Fast Lane);
+the merge state is blocked while those checks run, not a rebase conflict.
+
+The active native Library run has reported one failure around 67 percent.
+Its traceback and final descriptor snapshot are still pending. The observer
+records retained handles after
+`test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`, but
+that attribution alone does not establish the failure cause or final cleanup
+state. Do not merge or claim native qualification until the complete result is
+investigated and any required repair is verified. Production and this Library
+test remain byte-identical to the run's captured `cc6661100a` source.
+
+Wave-fifteen native terminal result: **855 passed, 1 failed, 10 warnings in
+1838.76s**, exit 1, final **`sqlite_paths: []`**. Session 65815 has completed;
+the source freeze is lifted. The only failure is the final GC row-count assertion
+at `test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`:
+intermediate autosave succeeded, but the emptied session-created note survived
+Back. Temporary per-test handle retention did not survive terminal cleanup.
+Task step 90 starts controlled save-reply/GC-order investigation without relaxing
+the original assertion or ADR-055's version-checked silent-GC guards. Main also
+read ADR-027's serialized persistence/destructive-admission contract in full.
+
+Qodo on `69108f4d1d` posted six test-contract documentation/type findings,
+comments 3966299125/3966299137/3966299147/3966299157/3966299166/3966299174.
+Task step 89 adds their missing contracts without changing executable test
+bodies. The six complete files pass **185 tests, 5 warnings in 20.63s**
+(`/private/tmp/pr2427-step89-docs-tests.log`); scoped Ruff and whitespace checks
+pass. AST comparison after stripping annotations/docstrings confirms executable
+behavior is unchanged. The worker-matrix docstring additionally explains callback
+forms, literal exclusivity/group requirements and nested direct-await rejection.
+Publication/replies remain pending this next checkpoint.
