@@ -51,6 +51,19 @@ appearing or disappearing, and the media viewer (2). ``_MAX_SWITCH_MOUNTS``
 below is 25: more than three times that seven-widget structural delta, and
 still a 7x reduction on today's 177. It is deliberately generous, because the
 pin that carries the design is ``_MAX_WHOLE_SCREEN_RECOMPOSES``.
+
+**That ceiling was derived from a floor measured WITHOUT the reader-shell id
+split resolved** (the spec's Task 2 step 1). If the implementation finds 25
+tight, re-derive it from a fresh measurement and say so in the same commit --
+do not quietly raise it.
+
+## Every count here is an upper bound, so the liveness assertions are load-bearing
+
+``_assert_switch_did_something`` is not decoration. Review of the first version
+of this file patched the switch handler to an async no-op and every ceiling
+passed: a dead UI scores 0 recomposes and 0 mounts. The destination-canvas and
+selection-moved checks are what make a green result mean "the switch got
+cheaper" rather than "the switch stopped happening".
 """
 from __future__ import annotations
 
@@ -70,6 +83,10 @@ from Tests.UI.test_library_shell import (
     _two_conversations,
     _two_media_items,
     _wait_for_library_shell,
+)
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_NOTES,
 )
 
 #: A rail-mode switch may not rebuild the whole screen. This is the pin the
@@ -142,22 +159,78 @@ async def _settle(pilot, passes: int = 60, delay: float = 0.01) -> None:
         await pilot.pause(delay)
 
 
-async def _switch(screen, pilot, counters: _SwitchCounters, row_id: str) -> dict:
-    """Click one rail row with the counters armed; return its tallies."""
+async def _switch(
+    screen, pilot, counters: _SwitchCounters, row_id: str, canvas_selector: str
+) -> dict:
+    """Click one rail row with the counters armed; return its tallies.
+
+    Also records the two LIVENESS facts the ceilings cannot express: whether
+    the destination canvas is on screen afterwards, and whether the screen's
+    selection actually moved. See ``_assert_switch_did_something`` for why.
+    """
     counters.reset()
     counters.armed = True
     screen.query_one(f"#library-row-{row_id}", Button).press()
     await _settle(pilot)
     counters.armed = False
+    canvases = screen.query(canvas_selector)
+    canvas = canvases.first() if canvases else None
     return {
         "mounts": sum(counters.mounts.values()),
         "unmounts": sum(counters.unmounts.values()),
         "screen_recomposes": [
             name for name in counters.recomposed if name == "LibraryScreen"
         ],
+        "canvas_selector": canvas_selector,
+        "canvas_present": canvas is not None,
+        "canvas_displayed": bool(canvas is not None and canvas.display),
+        "expected_row_id": row_id,
+        "selected_row_id": screen._library_selected_row_id,
     }
 
 
+# The switch actually has to switch. Without these, every assertion in this
+# file is an UPPER BOUND, and a no-op satisfies all of them: review of this
+# test patched ``_select_library_rail_row_after_source_admission`` to an async
+# no-op -- the single most likely phase-C regression shape, a ``replaced``
+# flag reported True without mounting the destination
+# (``library_screen.py`` around the ``if not replaced:`` arm) -- and the pin
+# ran GREEN while the notes canvas never appeared and the selection never
+# moved. 0 recomposes and 0 mounts is exactly what a dead UI scores.
+#
+# These also close a quieter hole: a load-starved run whose settle window
+# expires before the switch does any work would otherwise read zero and pass.
+def _assert_switch_did_something(label: str, tallies: dict, failures: list) -> None:
+    """Append a failure unless the switch reached its destination."""
+    if not tallies["canvas_present"]:
+        failures.append(
+            f"{label}: destination canvas {tallies['canvas_selector']} is not "
+            "mounted -- the switch did not reach its destination"
+        )
+    elif not tallies["canvas_displayed"]:
+        failures.append(
+            f"{label}: destination canvas {tallies['canvas_selector']} is "
+            "mounted but not displayed -- residency must show the destination, "
+            "not merely keep it resident"
+        )
+    if tallies["selected_row_id"] != tallies["expected_row_id"]:
+        failures.append(
+            f"{label}: screen selection is "
+            f"{tallies['selected_row_id']!r}, expected "
+            f"{tallies['expected_row_id']!r} -- the rail selection did not move"
+        )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Phase C not implemented: the rail switch still awaits "
+        "Widget.recompose(). strict=True so the red->green flip is caught "
+        "automatically when Task 2 lands -- an XPASS fails the suite and is "
+        "the signal to delete this marker "
+        "(Docs/superpowers/plans/2026-09-08-library-phase-c-media-graduation.md)."
+    ),
+)
 @pytest.mark.asyncio
 async def test_library_rail_mode_switch_does_not_rebuild_the_screen(
     monkeypatch: pytest.MonkeyPatch,
@@ -166,6 +239,7 @@ async def test_library_rail_mode_switch_does_not_rebuild_the_screen(
 
     RED until phase C lands -- see the module docstring for the measured
     numbers this replaces and why the pins are structural rather than timed.
+    Run with ``--runxfail`` to see the real failure text.
     """
     app = _build_test_app()
     _seed_conversations(
@@ -182,19 +256,35 @@ async def test_library_rail_mode_switch_does_not_rebuild_the_screen(
             screen.query_one("#library-rail-explore-all", Button).press()
             await _settle(pilot, passes=30)
 
-        # Warm-up entry into media; not part of the assertion (a first visit
-        # legitimately mounts the media route for the first time).
-        await _switch(screen, pilot, counters, "browse-media")
+        # Warm-up entry into media; its COUNTS are not asserted (a first visit
+        # legitimately mounts the media route for the first time), but its
+        # liveness is -- if this never arrives, the two measured switches are
+        # not starting where they claim to.
+        warm_up = await _switch(
+            screen, pilot, counters, LIBRARY_ROW_BROWSE_MEDIA, "#library-media-canvas"
+        )
 
         measured = {
-            "notes (switch)": await _switch(screen, pilot, counters, "browse-notes"),
+            "notes (switch)": await _switch(
+                screen,
+                pilot,
+                counters,
+                LIBRARY_ROW_BROWSE_NOTES,
+                "#library-notes-canvas",
+            ),
             "media (switch-back)": await _switch(
-                screen, pilot, counters, "browse-media"
+                screen,
+                pilot,
+                counters,
+                LIBRARY_ROW_BROWSE_MEDIA,
+                "#library-media-canvas",
             ),
         }
 
     failures = []
+    _assert_switch_did_something("media (warm-up)", warm_up, failures)
     for label, tallies in measured.items():
+        _assert_switch_did_something(label, tallies, failures)
         if len(tallies["screen_recomposes"]) > _MAX_WHOLE_SCREEN_RECOMPOSES:
             failures.append(
                 f"{label}: {len(tallies['screen_recomposes'])} whole-screen "
