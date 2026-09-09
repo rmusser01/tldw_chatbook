@@ -52,6 +52,13 @@ field`` was re-aimed at the controller's own permanent shim loop rather than
 deleted, ``test_the_screen_no_longer_carries_a_media_state_shim`` was added
 asserting ABSENCE, and ``_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED`` was filled
 with the 22 zero-reference delegator names it deleted.
+
+**Phase C, task 3 (region ownership)** removed a further 16 delegators for a
+different reason -- not deadness but OWNERSHIP: their messages originate
+inside ``LibraryMediaCanvas``, so the region widget catches them directly
+now. They live in their own set,
+``_MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS``, because merging them into
+the zero-reference set would make that set's stated criterion false.
 """
 from __future__ import annotations
 
@@ -467,6 +474,58 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     }
 )
 
+#: Phase C, task 3 (region ownership, 2026-09-09): the 16 names that left
+#: ``LibraryScreen`` for a DIFFERENT reason than the 22 above, kept in their
+#: own set so the two censuses stay separable. These are not zero-reference
+#: dead delegators -- each is a live ``@on`` row, and 2 of them still have
+#: external test callers (retargeted to the controller in the same commit).
+#: They left because their message is posted INSIDE ``LibraryMediaCanvas``'s
+#: own subtree, so the region widget can catch it directly and the screen's
+#: routing hop is pure overhead. The behaviour did not move: each canvas row
+#: forwards to the same-named controller method.
+#:
+#: The origin rule, and what it costs: 36 of the screen's 79 media ``@on``
+#: rows are canvas-origin, but only these 16 have a controller home today.
+#: The other 20 are canvas-origin with SCREEN-NATIVE bodies (outside
+#: ``_MEDIA_CLUSTER_METHOD_NAMES`` entirely), and 43 are not canvas-origin at
+#: all -- posted by the Reader, the Trash canvas, the Reader's content pane,
+#: or the adaptive shell, which is the canvas's ancestor. The full three-way
+#: partition is pinned in
+#: ``Tests/UI/test_library_phase_c_region_ownership.py``.
+#:
+#: Effect on the counts above: the recipe §4 whitelist's unconditional keeps
+#: drop from 53 to 37 (48 -> 32 ``@on``, 5 ``action_*`` unchanged -- no
+#: binding moved, because Textual resolves bindings along the FOCUS chain
+#: rather than by bubbling, so moving one would narrow where its key works).
+#: Combined prune fraction 38/140 = 27.14%.
+_MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS: frozenset[str] = frozenset(
+    {
+        "_handle_library_media_row_geometry_changed",
+        "handle_library_media_export",
+        "handle_library_media_filter_changed",
+        "handle_library_media_filter_clear",
+        "handle_library_media_filter_submitted",
+        "handle_library_media_next",
+        "handle_library_media_open_viewer",
+        "handle_library_media_previous",
+        "handle_library_media_retry",
+        "handle_library_media_review_selected",
+        "handle_library_media_review_sets",
+        "handle_library_media_review_these",
+        "handle_library_media_select_all",
+        "handle_library_media_select_clear",
+        "handle_library_media_sort",
+        "handle_library_media_sort_choice",
+    }
+)
+
+#: The union the delegator sweep skips: gone from the screen, for either
+#: reason.
+_MEDIA_CLUSTER_SCREEN_DELEGATOR_ABSENT: frozenset[str] = (
+    _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED
+    | _MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS
+)
+
 #: Every name a moved body references that is NOT this controller's own
 #: ``LibraryMediaState`` field and NOT another mover -- i.e. the complete
 #: constructor-binding surface, derived mechanically from an ``ast`` walk of
@@ -635,20 +694,23 @@ def test_screen_delegates_media_handlers() -> None:
 
     A same-name forwarding check, not a loose "the controller is referenced
     somewhere" substring check. Skips the names in
-    ``_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED`` (task 3's census) and instead
-    asserts each such name is genuinely ABSENT from ``LibraryScreen``, so a
-    future accidental re-add fails loudly here rather than silently
-    reintroducing dead code.
+    ``_MEDIA_CLUSTER_SCREEN_DELEGATOR_ABSENT`` -- task 3's zero-reference
+    census plus phase C's 16 canvas-owned rows -- and instead asserts each
+    such name is genuinely ABSENT from ``LibraryScreen``, so a future
+    accidental re-add fails loudly here rather than silently reintroducing
+    dead code (or, for the phase-C 16, a second receiver for a message the
+    canvas already handles).
     """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     not_delegators = []
     for name in _MEDIA_CLUSTER_METHOD_NAMES:
-        if name in _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+        if name in _MEDIA_CLUSTER_SCREEN_DELEGATOR_ABSENT:
             assert getattr(LibraryScreen, name, None) is None, (
                 f"{name!r} was pruned from the screen but is back -- either "
                 "wire it as a delegator again or drop it from "
-                "_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED"
+                "_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED / "
+                "_MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS"
             )
             continue
         method = getattr(LibraryScreen, name, None)
@@ -662,6 +724,35 @@ def test_screen_delegates_media_handlers() -> None:
         ):
             not_delegators.append(name)
     assert not not_delegators, f"not delegators yet: {not_delegators!r}"
+
+
+@pytest.mark.unit
+def test_the_canvas_owned_rows_are_movers_that_landed_on_the_canvas() -> None:
+    """The phase-C set must stay a strict, disjoint subset of the movers.
+
+    Two ways this could rot silently: a name could be added that was never a
+    mover (so the delegator sweep would skip a row it never checked), or a
+    name could sit in BOTH absence sets with two different stated reasons.
+    Neither is caught by the sweep itself, because both make it skip more.
+    """
+    from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
+
+    assert len(_MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS) == 16
+    assert _MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS <= set(
+        _MEDIA_CLUSTER_METHOD_NAMES
+    ), "a canvas-owned row is not one of the 140 moved names"
+    assert not (
+        _MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS
+        & _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED
+    ), "a name claims both absence reasons"
+    missing = sorted(
+        name
+        for name in _MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS
+        if getattr(LibraryMediaCanvas, name, None) is None
+    )
+    assert not missing, (
+        f"left the screen but never arrived on LibraryMediaCanvas: {missing!r}"
+    )
 
 
 @pytest.mark.unit

@@ -1,0 +1,50 @@
+{
+  "scope": "fake frontends and fake model calls only; no real model/ASR/playback",
+  "source_hashes": {
+    "tldw_chatbook/TTS/kokoro_languages.py": "9ad7320ffeb1fd072fa2cf2749f3058320d911e815ca803c44c45f741cde469a",
+    "tldw_chatbook/TTS/kokoro_pytorch.py": "552351f21b962b0c7739d8a839a5072382cf1b28d24bb29214f670dda36bac17",
+    "tldw_chatbook/TTS/backends/kokoro.py": "005551e99e56ef4dff82d66a4509f6e57b8af8e196cf3d19281313fab9a5c32d"
+  },
+  "findings": [
+    {
+      "id": "constructor_import_error",
+      "observed_code": "generation_failed",
+      "observed_retryable": true,
+      "message": "Kokoro ONNX generation failed.",
+      "expected_code": "dependency_missing",
+      "expected_retryable": false,
+      "engine_still_onnx": true,
+      "workers_joined": true
+    },
+    {
+      "id": "pytorch_g2p_stop_pcm",
+      "calls": [
+        "preflight_g2p",
+        "pipeline_g2p_enter",
+        "STOP",
+        "pipeline_g2p_exit",
+        "MODEL_FORWARD"
+      ],
+      "forward_after_stop": true,
+      "retained_during_g2p": true,
+      "caller_cancelled": true,
+      "emitted_outputs": 0,
+      "workers_joined": true
+    },
+    {
+      "id": "pytorch_g2p_stop_timestamps",
+      "calls": [
+        "preflight_g2p",
+        "pipeline_g2p_enter",
+        "STOP",
+        "pipeline_g2p_exit",
+        "MODEL_FORWARD"
+      ],
+      "forward_after_stop": true,
+      "retained_during_g2p": true,
+      "caller_cancelled": true,
+      "emitted_outputs": 0,
+      "workers_joined": true
+    }
+  ]
+}

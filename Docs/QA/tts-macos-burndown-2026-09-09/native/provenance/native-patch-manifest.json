@@ -1,0 +1,13 @@
+{
+  "base": "238ab6a9e321c17de8e120559f57efeedaeb1345",
+  "patch": "/private/tmp/tts-macos-burndown/native/native-shutdown.patch",
+  "patch_sha256": "faa692effa31ef5b7836e2b727fda0a9452a19008a8c679686dceda1c1831dac",
+  "files": {
+    "CMakeLists.txt": "4c58ed77605a173d25bcb01098129c1a679a6568da1f14ecffdd1eb879f1747d",
+    "app/server/http.cpp": "95cfd5ec82a8d98cfc09349e2e2d4787fec27d447df0be9c6a8c928aed810fe0",
+    "tests/unittests/test_http_shutdown.cpp": "1de4d5ca34c57a4199824482026770fc504fe900dec2520cb4aa365451a54393"
+  },
+  "reverse_apply_check": "passed",
+  "approved_chatbook_runtime_baseline_changed": false,
+  "forward_apply_check": "passed against exact base CMakeLists.txt/http.cpp fixture with new test absent"
+}

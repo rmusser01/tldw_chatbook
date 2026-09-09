@@ -35,6 +35,9 @@ KOKORO_LANGUAGE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Chinese", "zh"),
     ("Spanish", "es"),
     ("French", "fr"),
+    ("Hindi", "hi"),
+    ("Italian", "it"),
+    ("Brazilian Portuguese", "pt-br"),
 )
 
 #: Post-processing that applies whatever the provider, so it is appended to

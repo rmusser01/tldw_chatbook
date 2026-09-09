@@ -1,0 +1,13 @@
+{
+  "snapshot": "/private/tmp/tts-macos-burndown/native/validator-versions/v1",
+  "manifest": {
+    "saved_utc": "2026-09-09T06:38:34.535276+00:00",
+    "scope": "Exact validator files used for CPU-01 and Metal-01, preserved before extending the Metal observation window",
+    "files": {
+      "native_shutdown_support.py": "f97b26da0480d0893382bc58868c573640571b41b3f5e0806ffb014a4222f3a1",
+      "native_shutdown_worker.py": "94c5a01d448bb84b7f9aaad1e993e8bab3aef774d41ee40f003a81cd454d4fef",
+      "validate_native_shutdown.py": "ad0801a3e335849fc0ec7ba167cca71aefa429bd4e4db6b64fa57e03e5bcc174",
+      "test_native_shutdown_support.py": "b2cd89c294c08057af33053852cb8267470c68ab7f2b7ac95013004a307d04ce"
+    }
+  }
+}

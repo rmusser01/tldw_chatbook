@@ -36,11 +36,23 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import (
     library_media_canvas as library_media_canvas_module,
 )
-from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
-    LibraryMediaReaderShell,
+from tldw_chatbook.Widgets.Library.library_browse_reader_shell import (
+    LibraryBrowseReaderShell,
     MediaShellResized,
 )
 
+
+def _media_canvas(screen) -> Widget:
+    """The mounted Media canvas -- receiver of the row-geometry message.
+
+    Phase C task 3 moved ``_handle_library_media_row_geometry_changed`` onto
+    ``LibraryMediaCanvas``, because ``LibraryMediaRowGeometryChanged`` is
+    posted by the canvas's own ``LibraryMediaRowScroll``. Tests that
+    hand-post that message must address the canvas: a post to the screen
+    would now be handled by nobody, which turns every negative assertion in
+    this file into a vacuous pass.
+    """
+    return screen.query_one("#library-media-canvas", Widget)
 
 
 #: A scroll offset deep in the wide row list and reachable at BOTH sizes these
@@ -76,7 +88,7 @@ async def _open_compact_media(host, pilot) -> LibraryScreen:
     await _wait_for_library_shell(screen, pilot)
     screen._notes_state.compact = True
     screen.query_one("#library-row-browse-media").press()
-    await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+    await _wait_for_selector(screen, pilot, ".library-media-route")
     return screen
 
 
@@ -141,7 +153,7 @@ async def test_media_shell_lifecycle_reconciles_current_stage_once(
     async with host.run_test(size=(170, 48)) as pilot:
         screen = await _open_compact_media(host, pilot)
         stage = screen.query_one("#library-shell-grid", Horizontal)
-        shell = screen.query_one("#library-media-reader-shell", LibraryMediaReaderShell)
+        shell = screen.query_one(".library-media-route", LibraryBrowseReaderShell)
         stage.set_class(True, "library-notes-compact")
         stage.set_class(False, "library-adaptive-compact")
 
@@ -805,9 +817,14 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
         request = screen._media_state.return_settlement
         assert receipt is not None
         assert request is not None
-        screen._handle_library_media_row_geometry_changed(geometry)
+        # Phase C task 3: the geometry `@on` row moved to
+        # `LibraryMediaCanvas` (its message is posted by the canvas's own
+        # `LibraryMediaRowScroll`), so the screen no longer carries this
+        # method. Every direct call in this file is retargeted to the
+        # controller it always forwarded to; the assertions are unchanged.
+        screen._media_controller._handle_library_media_row_geometry_changed(geometry)
         duplicate = geometry_message_type(owner, owner.latest_geometry)
-        screen._handle_library_media_row_geometry_changed(duplicate)
+        screen._media_controller._handle_library_media_row_geometry_changed(duplicate)
 
         assert desired_scroll_commits == 1
         assert target_focus_attempts == 1
@@ -847,8 +864,8 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
         newer = newer_messages[-1]
         assert newer.geometry.revision == geometry.geometry.revision + 1
 
-        screen._handle_library_media_row_geometry_changed(newer)
-        screen._handle_library_media_row_geometry_changed(
+        screen._media_controller._handle_library_media_row_geometry_changed(newer)
+        screen._media_controller._handle_library_media_row_geometry_changed(
             geometry_message_type(owner, owner.latest_geometry)
         )
         await pilot.pause()
@@ -1059,10 +1076,18 @@ async def test_route_change_rejects_later_geometry_settlement(
             lambda: screen._library_selected_row_id != "library-row-browse-media",
             message="Route did not leave Media.",
         )
+        # Phase C (resident browse canvas): leaving Media no longer DETACHES
+        # its owner -- the media canvas stays mounted and is hidden, which is
+        # the whole point of the residency change. The precondition this line
+        # is standing in for is "the departed route no longer shows its Media
+        # presentation", and the assertions below are unchanged: a geometry
+        # settlement arriving after the route change must still be rejected,
+        # and focus must still not land on a media row.
         await _wait_for_condition(
             pilot,
-            lambda: not owner.is_attached,
-            message="Departed route did not detach its Media owner.",
+            lambda: not owner.is_attached
+            or not screen.query_one("#library-media-canvas").display,
+            message="Departed route still shows its Media owner.",
         )
         monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
         owner.on_resize(
@@ -1372,7 +1397,7 @@ async def test_screen_unmount_revokes_complete_pending_return_authority(
         assert screen._library_pending_list_entry_media_return is None
         assert screen._media_state.return_settlement is None
         assert screen._library_list_entry_focus_timer is None
-        screen._handle_library_media_row_geometry_changed(queued)
+        screen._media_controller._handle_library_media_row_geometry_changed(queued)
         assert screen._media_state.last_exact_settlement is None
 
 
@@ -1447,7 +1472,13 @@ async def test_old_owner_and_below_floor_geometry_cannot_settle(
         assert owner is not old_owner
         assert getattr(screen.focused, "media_id", None) != media_id
 
-        assert screen.post_message(geometry_message_type(old_owner, old_geometry))
+        # Phase C task 3: the geometry row is owned by the media canvas
+        # now, so a hand-posted message goes to the canvas -- posting it to
+        # the screen would be a test that always passes for the wrong
+        # reason (nothing there handles it any more).
+        assert _media_canvas(screen).post_message(
+            geometry_message_type(old_owner, old_geometry)
+        )
         await pilot.pause()
         assert screen._media_state.last_exact_settlement is None
         assert getattr(screen.focused, "media_id", None) != media_id
@@ -1795,7 +1826,7 @@ async def test_existing_request_rejects_live_signature_drift(
             return real_scroll_to(*args, **kwargs)
 
         monkeypatch.setattr(owner, "scroll_to", observe_scroll)
-        screen._handle_library_media_row_geometry_changed(geometry)
+        screen._media_controller._handle_library_media_row_geometry_changed(geometry)
         await pilot.pause()
 
         assert screen._media_state.return_settlement is None
@@ -1987,7 +2018,9 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
                     screen._media_state.reader_layout,
                     items_open=False,
                 )
-            screen._handle_library_media_row_geometry_changed(geometry)
+            screen._media_controller._handle_library_media_row_geometry_changed(
+                geometry
+            )
         await pilot.pause()
 
         assert screen._media_state.last_settlement_outcome is None
@@ -2017,7 +2050,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
         old_request = screen._media_state.return_settlement
         assert old_request is not None
         old_shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         old_items = screen.query_one("#library-canvas", Vertical)
         active_child = old_items.children[0]
@@ -2032,12 +2065,12 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
         await old_items.remove()
         await retained_rail.remove()
         await old_shell.remove()
-        replacement_shell = LibraryMediaReaderShell(
+        replacement_shell = LibraryBrowseReaderShell(
             retained_rail,
             old_items,
             screen._build_library_media_reader(),
             screen._media_state.reader_layout,
-            id="library-media-reader-shell",
+            id="library-browse-reader-shell",
         )
         held_shell_resizes: list[MediaShellResized] = []
         real_shell_post_message = replacement_shell.post_message
@@ -2075,7 +2108,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
             "#library-media-row-scroll", row_scroll_type
         )
         assert screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         ) is replacement_shell
         assert screen.query_one("#library-canvas", Vertical) is old_items
         assert replacement_shell is not old_shell
@@ -2093,7 +2126,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
             real_on_resize,
         )
         monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
-        assert screen.post_message(current_geometry)
+        assert _media_canvas(screen).post_message(current_geometry)
         await pilot.pause()
 
         assert screen._media_state.return_settlement is None
@@ -2145,7 +2178,7 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
         old_request = screen._media_state.return_settlement
         assert old_request is not None
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         old_items = screen.query_one("#library-canvas", Vertical)
         active_child = old_items.children[0]
@@ -2191,7 +2224,7 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
             message="Retained shell did not queue its real resize lifecycle.",
         )
         replacement_shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         replacement_owner = screen.query_one(
             "#library-media-row-scroll", row_scroll_type
@@ -2213,7 +2246,7 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
             real_on_resize,
         )
         monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
-        assert screen.post_message(current_geometry)
+        assert _media_canvas(screen).post_message(current_geometry)
         await pilot.pause()
 
         assert screen._media_state.return_settlement is None

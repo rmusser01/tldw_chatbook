@@ -1,0 +1,331 @@
+{
+  "created_utc": "2026-09-09T08:42:33.004067+00:00",
+  "source_root": "/private/tmp/tts-macos-burndown",
+  "scope": "Complete records for the named checks; binary/media/profile data excluded. JSON maps are factored without changing other values; all other receipts are byte-preserving copies.",
+  "shared_source_manifest": {
+    "path": "../kokoro-english/provenance/source-hashes.json",
+    "sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75"
+  },
+  "artifacts": [
+    {
+      "path": "tests/final-targeted-regressions.log",
+      "original_path": "/private/tmp/tts-macos-burndown/final-targeted-regressions.log",
+      "original_sha256": "252b2e6a8637fc5cf508b7613b8538f9083ad0b95361bbb7eb38ef5278f967d9",
+      "packaged_sha256": "252b2e6a8637fc5cf508b7613b8538f9083ad0b95361bbb7eb38ef5278f967d9",
+      "bytes": 10784,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "tests/final-corrections-targeted.log",
+      "original_path": "/private/tmp/tts-macos-burndown/final-corrections-targeted.log",
+      "original_sha256": "60eba7b41d9fa448f9bd3864e8eaf4d06739c18e91999314ab23873e5f70d952",
+      "packaged_sha256": "60eba7b41d9fa448f9bd3864e8eaf4d06739c18e91999314ab23873e5f70d952",
+      "bytes": 957,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "tests/final-alltalk-ui-correction.log",
+      "original_path": "/private/tmp/tts-macos-burndown/final-alltalk-ui-correction.log",
+      "original_sha256": "627cfa01f2a9fdb1f42c2820e58f6eeab341ef9ba1dca5d6a52b882192e12ecc",
+      "packaged_sha256": "627cfa01f2a9fdb1f42c2820e58f6eeab341ef9ba1dca5d6a52b882192e12ecc",
+      "bytes": 208,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "tests/post-rebase-targeted.log",
+      "original_path": "/private/tmp/tts-macos-burndown/post-rebase-targeted.log",
+      "original_sha256": "3c1df1b8ebacd5a7685263155ae6b5033116b272fa51bf8fb1dc4d1ddf2a0c76",
+      "packaged_sha256": "3c1df1b8ebacd5a7685263155ae6b5033116b272fa51bf8fb1dc4d1ddf2a0c76",
+      "bytes": 1124,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "ruff/README.md",
+      "original_path": "/private/tmp/tts-macos-burndown/coverage/ruff-origin-dev-audit-01/README.md",
+      "original_sha256": "2d0c99f772a91741390c4529a613f7d5f67a2aa568a1a322322e8e1ca35d21ae",
+      "packaged_sha256": "2d0c99f772a91741390c4529a613f7d5f67a2aa568a1a322322e8e1ca35d21ae",
+      "bytes": 2938,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "ruff/receipt.json",
+      "original_path": "/private/tmp/tts-macos-burndown/coverage/ruff-origin-dev-audit-01/receipt.json",
+      "original_sha256": "0540829d917e4d5a1a54366f7a484493c043353bcfb061158868cc848144ecdc",
+      "packaged_sha256": "0540829d917e4d5a1a54366f7a484493c043353bcfb061158868cc848144ecdc",
+      "bytes": 6150,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "ruff/audit.json",
+      "original_path": "/private/tmp/tts-macos-burndown/coverage/ruff-origin-dev-audit-01/audit.json",
+      "original_sha256": "8dc2b1cdd9d0d0cb2a2a3c0b08c9821b45dce6d4bc843f573b5bbe736da305c7",
+      "packaged_sha256": "8dc2b1cdd9d0d0cb2a2a3c0b08c9821b45dce6d4bc843f573b5bbe736da305c7",
+      "bytes": 402026,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "ruff/resolved-settings.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/coverage/ruff-origin-dev-audit-01/resolved-settings.txt",
+      "original_sha256": "c3839af2d51aec7f91b56b0d32f4187de997e3216ca2646a550593114864208c",
+      "packaged_sha256": "c3839af2d51aec7f91b56b0d32f4187de997e3216ca2646a550593114864208c",
+      "bytes": 37250,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "ruff/concurrent-root-edits.patch",
+      "original_path": "/private/tmp/tts-macos-burndown/coverage/ruff-origin-dev-audit-01/concurrent-root-edits.patch",
+      "original_sha256": "3a14f4ad1b7fee7cb2058b0e4fa788d66165ac53defd2ee85b37835263a76875",
+      "packaged_sha256": "3a14f4ad1b7fee7cb2058b0e4fa788d66165ac53defd2ee85b37835263a76875",
+      "bytes": 2002,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "reviews/provider-code-review.md",
+      "original_path": "/private/tmp/tts-macos-burndown/provider-code-review.md",
+      "original_sha256": "e9ff2cd53eb25ed94fa9812afca421e8b7ee74fa241034e5e877ea20121cbdb4",
+      "packaged_sha256": "e9ff2cd53eb25ed94fa9812afca421e8b7ee74fa241034e5e877ea20121cbdb4",
+      "bytes": 3593,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "reviews/provider-code-review-provenance.json",
+      "original_path": "/private/tmp/tts-macos-burndown/provider-code-review-provenance.json",
+      "original_sha256": "9a3a4ff3a136a5023b613dbdb2db0d37df188c82a02ed2eda8cc18009dbc82df",
+      "packaged_sha256": "9a3a4ff3a136a5023b613dbdb2db0d37df188c82a02ed2eda8cc18009dbc82df",
+      "bytes": 2562,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "reviews/provider-review-targeted-tests.log",
+      "original_path": "/private/tmp/tts-macos-burndown/provider-review-targeted-tests.log",
+      "original_sha256": "05a5229f09c171823b56d326ebd06defa17b25f55ccaca9f1e9cc3a957856fc2",
+      "packaged_sha256": "05a5229f09c171823b56d326ebd06defa17b25f55ccaca9f1e9cc3a957856fc2",
+      "bytes": 840,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "sqlite/post-rebase-sqlite-harness-audit.md",
+      "original_path": "/private/tmp/tts-macos-burndown/post-rebase-sqlite-harness-audit.md",
+      "original_sha256": "ac15f976d739924fcbe88012b43fc8d2964f0003429c216d697e786d440468e9",
+      "packaged_sha256": "ac15f976d739924fcbe88012b43fc8d2964f0003429c216d697e786d440468e9",
+      "bytes": 5736,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "sqlite/post-rebase-sqlite-capability.json",
+      "original_path": "/private/tmp/tts-macos-burndown/post-rebase-sqlite-capability.json",
+      "original_sha256": "165e1250608c2020922e2c7fdbd4acd6476c88ed316806434bf32693718c63ba",
+      "packaged_sha256": "165e1250608c2020922e2c7fdbd4acd6476c88ed316806434bf32693718c63ba",
+      "bytes": 128,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/final-wheel-verify.json",
+      "original_path": "/private/tmp/tts-macos-burndown/final-wheel-verify.json",
+      "original_sha256": "111f864f62dcc6724ed455f607ec778c76e7ae7ac4bb0d74bafd90a6c216d45c",
+      "packaged_sha256": "a386363c615c48730c412fe23454ed328cddf9e8a27f429c25325e7d844216b5",
+      "bytes": 7673,
+      "method": "semantically lossless source-map factoring"
+    },
+    {
+      "path": "tests/test-command-receipts.json",
+      "original_path": "/private/tmp/tts-macos-burndown/test-command-receipts.json",
+      "original_sha256": "6dcbab3b21523c23f2aaa6bdf02b27740879c597082bbd8db8827a930a6cbe5c",
+      "packaged_sha256": "6dcbab3b21523c23f2aaa6bdf02b27740879c597082bbd8db8827a930a6cbe5c",
+      "bytes": 1979,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/ownership-release.json",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel-process-release.json",
+      "original_sha256": "b5e7df85226043b276376c63add770679bcdbf3b5803171a61e635ef96643f11",
+      "packaged_sha256": "b5e7df85226043b276376c63add770679bcdbf3b5803171a61e635ef96643f11",
+      "bytes": 438,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/user-config-after.json",
+      "original_path": "/private/tmp/tts-macos-burndown/user-config-after.json",
+      "original_sha256": "8dd2013175b77972151a721ce9e4ea5965c60ff093b7f02a38dd8f1bbff49e47",
+      "packaged_sha256": "8dd2013175b77972151a721ce9e4ea5965c60ff093b7f02a38dd8f1bbff49e47",
+      "bytes": 288,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "closeout/task-closeout-receipt.json",
+      "original_path": "/private/tmp/tts-macos-burndown/task-closeout-receipt.json",
+      "original_sha256": "a5ddf982700a59417b90b11d0a6dc29ac651f03702901847b082121f75b898ea",
+      "packaged_sha256": "a5ddf982700a59417b90b11d0a6dc29ac651f03702901847b082121f75b898ea",
+      "bytes": 707,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/recipes/run_installed_wheel.py.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/run_installed_wheel.py",
+      "original_sha256": "5a369402396c5b97d2017272c845c33aa45f59d1a52529c16634f0cfe4741020",
+      "packaged_sha256": "5a369402396c5b97d2017272c845c33aa45f59d1a52529c16634f0cfe4741020",
+      "bytes": 3559,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/installed-wheel-matrix.json",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel-matrix.json",
+      "original_sha256": "aafa0db023860bc8de150473712ff2a59367ee4e312131f23bcb7e8464a27b68",
+      "packaged_sha256": "aafa0db023860bc8de150473712ff2a59367ee4e312131f23bcb7e8464a27b68",
+      "bytes": 5745,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/installed-wheel-matrix.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel-matrix.log",
+      "original_sha256": "e5b97ebd3a5e4f6a88044b686d615d80d73396b8b102cf94d0379f6b2524a998",
+      "packaged_sha256": "e5b97ebd3a5e4f6a88044b686d615d80d73396b8b102cf94d0379f6b2524a998",
+      "bytes": 4887,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-cpu-wav/evidence.json",
+      "original_sha256": "05cc1e761be852c2bc89e917a45031e6615540c3720a489e6da1b6290fccde94",
+      "packaged_sha256": "39b5aafbf157e93f9570e5e25dc36c4d853d446e6099b00a1fcc6f3172dd76c2",
+      "bytes": 25959,
+      "method": "semantically lossless source-map factoring"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav/parent.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-cpu-wav-parent.log",
+      "original_sha256": "89e605455c8589f3b2b1efdb7e9c293ea4de6cb7f65b9c70be7b8840c6bcad2f",
+      "packaged_sha256": "89e605455c8589f3b2b1efdb7e9c293ea4de6cb7f65b9c70be7b8840c6bcad2f",
+      "bytes": 187,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-cpu-wav/content.json",
+      "original_sha256": "746c4dc84b93bdc50f2f3b7a2fde72d96e025dea19e509c5b5b1f9853ead0622",
+      "packaged_sha256": "746c4dc84b93bdc50f2f3b7a2fde72d96e025dea19e509c5b5b1f9853ead0622",
+      "bytes": 4349,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav/content.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-cpu-wav/content.log",
+      "original_sha256": "647bd7bde01300c2f679ccaefe0d143a2f512c0002c3f1088470f131df1ce4c4",
+      "packaged_sha256": "647bd7bde01300c2f679ccaefe0d143a2f512c0002c3f1088470f131df1ce4c4",
+      "bytes": 2513,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav/worker.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-cpu-wav/worker.log",
+      "original_sha256": "a9e74bfbaff3d7e465d04f8276e321d5abc1a219e80b7b5ce882ae049c139401",
+      "packaged_sha256": "a9e74bfbaff3d7e465d04f8276e321d5abc1a219e80b7b5ce882ae049c139401",
+      "bytes": 7438,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav/application.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-cpu-wav/application.log",
+      "original_sha256": "e4b8934f7ddc2cb45781bfadac069ee9872a4809851666b3ec6e1b493f3c5499",
+      "packaged_sha256": "e4b8934f7ddc2cb45781bfadac069ee9872a4809851666b3ec6e1b493f3c5499",
+      "bytes": 4068,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav/evidence.json",
+      "original_sha256": "eb3308af66d1fc440da2e5f5947addddbcadfaa7e0e2e85362ccda6a4773cfca",
+      "packaged_sha256": "e8c51d31c02c006b4db4e7ca143aaf1e7ac8a56178c7bcb16bafe433470087bb",
+      "bytes": 26023,
+      "method": "semantically lossless source-map factoring"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav/parent.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav-parent.log",
+      "original_sha256": "78e472568bc82cc63c5916edbea210f71d8ef688d38e4a0c2e3de141b0708906",
+      "packaged_sha256": "78e472568bc82cc63c5916edbea210f71d8ef688d38e4a0c2e3de141b0708906",
+      "bytes": 187,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav/content.json",
+      "original_sha256": "e437e9a670fcd5a62d5d9e0eccbaf72e38674bb60a3a24013fd181f948481b71",
+      "packaged_sha256": "e437e9a670fcd5a62d5d9e0eccbaf72e38674bb60a3a24013fd181f948481b71",
+      "bytes": 4349,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav/content.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav/content.log",
+      "original_sha256": "8c5b4576ee941c5efff86ab7f5b641aae1a7a8117449a459eb11c65e1fc623be",
+      "packaged_sha256": "8c5b4576ee941c5efff86ab7f5b641aae1a7a8117449a459eb11c65e1fc623be",
+      "bytes": 2513,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav/worker.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav/worker.log",
+      "original_sha256": "61f85158a87fe840c5575ae3098bb101ab4567b10ea6a05980b034242289ffbe",
+      "packaged_sha256": "61f85158a87fe840c5575ae3098bb101ab4567b10ea6a05980b034242289ffbe",
+      "bytes": 7438,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav/application.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav/application.log",
+      "original_sha256": "1b81449c02e196b3062ec5c01e05ac3d68840e654563eedbdf30d615676f1d21",
+      "packaged_sha256": "1b81449c02e196b3062ec5c01e05ac3d68840e654563eedbdf30d615676f1d21",
+      "bytes": 4068,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/onnx-cpu-mp3/evidence.json",
+      "original_sha256": "7bb49995199ce8348f092b375b90b843acbb787d90ac1af85f490a0fb17f8ffa",
+      "packaged_sha256": "f42c980e73de143502f7f385f1cf82be50722dbd68313fd9293eeaf8533f2366",
+      "bytes": 25969,
+      "method": "semantically lossless source-map factoring"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3/parent.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/onnx-cpu-mp3-parent.log",
+      "original_sha256": "d9dc7574460d0ad8cb83d3e604b1b45d634c78fe133541d20a4d00ca45af6b1b",
+      "packaged_sha256": "d9dc7574460d0ad8cb83d3e604b1b45d634c78fe133541d20a4d00ca45af6b1b",
+      "bytes": 181,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/onnx-cpu-mp3/content.json",
+      "original_sha256": "5dfce3129ef37706a86a9b31880485d90cc4a1a699ebb3a3221d4467b6f5a3fc",
+      "packaged_sha256": "5dfce3129ef37706a86a9b31880485d90cc4a1a699ebb3a3221d4467b6f5a3fc",
+      "bytes": 4355,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3/content.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/onnx-cpu-mp3/content.log",
+      "original_sha256": "588cdd6cb7b785f4de2cd2497703fc631841de30e7b37e12be4393c2c1a53de9",
+      "packaged_sha256": "588cdd6cb7b785f4de2cd2497703fc631841de30e7b37e12be4393c2c1a53de9",
+      "bytes": 2522,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3/worker.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/onnx-cpu-mp3/worker.log",
+      "original_sha256": "ac28ca172b0ed0dd256479fbd088a81bf5c6eb04dc968dca7a4a4895d60744cb",
+      "packaged_sha256": "ac28ca172b0ed0dd256479fbd088a81bf5c6eb04dc968dca7a4a4895d60744cb",
+      "bytes": 351,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3/application.log",
+      "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/onnx-cpu-mp3/application.log",
+      "original_sha256": "56a026ce66d0b51b378521c94892eb7442cd25434ece2fe95e2912c42b912106",
+      "packaged_sha256": "56a026ce66d0b51b378521c94892eb7442cd25434ece2fe95e2912c42b912106",
+      "bytes": 21378,
+      "method": "byte-preserving copy"
+    }
+  ]
+}

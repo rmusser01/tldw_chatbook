@@ -1,0 +1,7 @@
+Using Python 3.12.11 environment at: /private/tmp/tts-macos-burndown/final-wheel-venv
+Resolved 1 package in 9ms
+Prepared 1 package in 170ms
+Uninstalled 1 package in 113ms
+Installed 1 package in 35ms
+ - tldw-chatbook==0.2.0 (from file:///private/tmp/tts-macos-burndown/qodo-final-wheel-02/tldw_chatbook-0.2.0-py3-none-any.whl)
+ + tldw-chatbook==0.2.0 (from file:///private/tmp/tts-macos-burndown/qodo-final-wheel-03/tldw_chatbook-0.2.0-py3-none-any.whl)

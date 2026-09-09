@@ -13,7 +13,6 @@ from tldw_chatbook.Library.library_media_reader_state import (
     LIBRARY_MIN_WIDTH,
     LIBRARY_TARGET_WIDTH,
     MEDIA_READER_LAYOUT_PROFILE,
-    PANE_GRIP_WIDTH,
     READER_COMFORT_WIDTH,
     SELECTION_SETTLE_SECONDS,
     LibraryMediaReaderSessionState,
@@ -52,7 +51,7 @@ def test_default_preferences_are_both_open_and_fixed() -> None:
 
 
 def test_default_library_preference_uses_the_shared_reference_width() -> None:
-    assert LIBRARY_TARGET_WIDTH == LIBRARY_REFERENCE_WIDTH == 31
+    assert LIBRARY_TARGET_WIDTH == LIBRARY_REFERENCE_WIDTH == 36
 
 
 @pytest.mark.parametrize(
@@ -121,7 +120,7 @@ def test_responsive_collapse_does_not_mutate_preferences() -> None:
 
 @pytest.mark.parametrize(
     ("width", "library_open", "items_open"),
-    [(160, True, True), (120, True, True), (80, False, False)],
+    [(160, True, True), (127, True, True), (126, False, True), (80, False, False)],
 )
 def test_normal_resolution_collapses_library_then_items(
     width: int, library_open: bool, items_open: bool
@@ -153,7 +152,7 @@ def test_explicit_open_collapses_other_pane_first_and_uses_requested_minimum(
     preferences = normalize_media_reader_preferences({f"{priority}_open": False})
 
     layout = resolve_media_reader_layout(
-        80,
+        70,
         preferences,
         priority=priority,  # type: ignore[arg-type]
     )
@@ -237,17 +236,25 @@ def test_hysteresis_prevents_one_column_resize_thrashing() -> None:
         preferences,
         previous=collapsed,
     )
-    reopened = resolve_media_reader_layout(
+    # Projection grows from 29 to 30 at 131, extending this transition by
+    # one cell beyond the four-cell hysteresis for a fixed rail.
+    still_collapsed = resolve_media_reader_layout(
         nominal_width + LAYOUT_HYSTERESIS_WIDTH,
+        preferences,
+        previous=boundary,
+    )
+    reopened = resolve_media_reader_layout(
+        nominal_width + LAYOUT_HYSTERESIS_WIDTH + 1,
         preferences,
         previous=boundary,
     )
 
     assert collapsed.library_open is False
     assert boundary.library_open is False
+    assert still_collapsed.library_open is False
     assert reopened.library_open is True
     assert reopened.library_width == project_default_library_width(
-        nominal_width + LAYOUT_HYSTERESIS_WIDTH
+        nominal_width + LAYOUT_HYSTERESIS_WIDTH + 1
     )
 
 

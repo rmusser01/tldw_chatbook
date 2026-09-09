@@ -1,0 +1,219 @@
+{
+  "created_utc": "2026-09-09T08:13:56.749229+00:00",
+  "scope": "Supplemental candidate evidence only; original provider package receipts retained.",
+  "curation_policy": "Runtime JSON values round-trip exactly after shared source-map factoring. Other artifacts are byte-preserving copies. Narrative summaries and candidate-summary.json are derived.",
+  "shared_source_manifest": {
+    "path": "../kokoro-english/provenance/source-hashes.json",
+    "sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75"
+  },
+  "artifacts": [
+    {
+      "path": "higgs/runs/live-wav-portaudio-01/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-01/evidence.json",
+      "original_sha256": "68431b86267d77f9e7043e98c94c9b58d668f1f2ce6d7dfcf143b9dd520a34e8",
+      "packaged_sha256": "543acdbd27f8887f7393c9ccc4b6725920efb25359b999ea8df956c4f1f40b0f",
+      "bytes": 5009,
+      "method": "semantically lossless source-map factoring"
+    },
+    {
+      "path": "higgs/runs/live-wav-portaudio-01/ownership-release.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-01/ownership-release.json",
+      "original_sha256": "ebfc3f4843631bc818cab6444a36e05ce1eeaa9fde3a6851081f3801862d9787",
+      "packaged_sha256": "ebfc3f4843631bc818cab6444a36e05ce1eeaa9fde3a6851081f3801862d9787",
+      "bytes": 595,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/runs/live-wav-portaudio-02/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-02/evidence.json",
+      "original_sha256": "2918321ccc1575dbe24fde66b2552c3feceaf0a09ac1e46dcf191bcef98f3a1d",
+      "packaged_sha256": "22d1362760fe1c8c97d50c221737327d8014c3b0b6079677530b883e1edc353c",
+      "bytes": 18003,
+      "method": "semantically lossless source-map factoring"
+    },
+    {
+      "path": "higgs/runs/live-wav-portaudio-02/ownership-release.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-02/ownership-release.json",
+      "original_sha256": "c503617d7cd4e3bd4470c46d65a8c56c2a585419e0cc0f51313542eeae8eafec",
+      "packaged_sha256": "c503617d7cd4e3bd4470c46d65a8c56c2a585419e0cc0f51313542eeae8eafec",
+      "bytes": 673,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/runs/live-wav-portaudio-02/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-02/content.json",
+      "original_sha256": "fdd3662934b6d0e0cf1462e21e2e023696521d4e0c852f1a1ba0ed55d78261e9",
+      "packaged_sha256": "fdd3662934b6d0e0cf1462e21e2e023696521d4e0c852f1a1ba0ed55d78261e9",
+      "bytes": 3378,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "alltalk/runs/live-wav-p226-01/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/live-wav-p226-01/evidence.json",
+      "original_sha256": "030c459f87d8cee312940a5f02cfc659c2de5ffbd54fdff8de667c07f0321f50",
+      "packaged_sha256": "3ff2bf40061ded0d4a206ec95fc2f6f7f4beb1862bdb2298f987229508ce1515",
+      "bytes": 17374,
+      "method": "semantically lossless source-map factoring"
+    },
+    {
+      "path": "alltalk/runs/live-wav-p226-01/ownership-release.json",
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/live-wav-p226-01/ownership-release.json",
+      "original_sha256": "61b66260b31c9db2cfa602baa36becd036c202367fe1f2a5f36f03fe78cdb451",
+      "packaged_sha256": "61b66260b31c9db2cfa602baa36becd036c202367fe1f2a5f36f03fe78cdb451",
+      "bytes": 711,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "alltalk/runs/live-wav-p226-01/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/live-wav-p226-01/content.json",
+      "original_sha256": "e76bb3b2a4ffd3855ee98a5ae859cd8f9612f56a2da5608744443eac74e89ac5",
+      "packaged_sha256": "e76bb3b2a4ffd3855ee98a5ae859cd8f9612f56a2da5608744443eac74e89ac5",
+      "bytes": 3305,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "alltalk/runs/live-wav-p226-01/content-base-en.json",
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/live-wav-p226-01/content-base-en.json",
+      "original_sha256": "c339f8a3b99f75e3753dc7b861481889b0453faf693aac066dc4bdd364f91fc6",
+      "packaged_sha256": "c339f8a3b99f75e3753dc7b861481889b0453faf693aac066dc4bdd364f91fc6",
+      "bytes": 3342,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "alltalk/runs/live-wav-p226-01/server-events.jsonl",
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/live-wav-p226-01/server-events.jsonl",
+      "original_sha256": "1a6601f1da110eedb19b4d9f55413e7e679d923638fc2ffaa09dba2b7603b983",
+      "packaged_sha256": "1a6601f1da110eedb19b4d9f55413e7e679d923638fc2ffaa09dba2b7603b983",
+      "bytes": 1326,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/provenance/candidate-content-controller.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/candidate-content-controller.json",
+      "original_sha256": "4a612a0db8d5376423270251dfc1d103d7aa2fb0f5dbe33abdef5fcf11eb0f6c",
+      "packaged_sha256": "4a612a0db8d5376423270251dfc1d103d7aa2fb0f5dbe33abdef5fcf11eb0f6c",
+      "bytes": 3871,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/provenance/candidate-provider-process-release.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/candidate-provider-process-release.json",
+      "original_sha256": "bfb6f1faf2c17fb73f0e95665611d125abda074cf7c9ab3a4ccaafba398f98e5",
+      "packaged_sha256": "bfb6f1faf2c17fb73f0e95665611d125abda074cf7c9ab3a4ccaafba398f98e5",
+      "bytes": 2376,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/provenance/device-enumeration-default-sandbox.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/device-enumeration-default-sandbox.json",
+      "original_sha256": "10860c8f91125529bc300b15464ea45b9db94864bebbdbc8e978468fce5a6422",
+      "packaged_sha256": "10860c8f91125529bc300b15464ea45b9db94864bebbdbc8e978468fce5a6422",
+      "bytes": 356,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/provenance/device-enumeration-escalated.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/device-enumeration-escalated.json",
+      "original_sha256": "98b2819e911667e51d16c0f78b5b4eeecc992ef6fb95d94553639e4fb4fd943a",
+      "packaged_sha256": "98b2819e911667e51d16c0f78b5b4eeecc992ef6fb95d94553639e4fb4fd943a",
+      "bytes": 1146,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/provenance/portaudio-candidate-preflight.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/portaudio-candidate-preflight.json",
+      "original_sha256": "ba73e76e4694adac962789ea09ad3d1b2e673244fb679e209fe0c977e3957fc8",
+      "packaged_sha256": "ba73e76e4694adac962789ea09ad3d1b2e673244fb679e209fe0c977e3957fc8",
+      "bytes": 632,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/provenance/portaudio-candidate-negative-preflight.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/portaudio-candidate-negative-preflight.json",
+      "original_sha256": "87b107b2a177594f6da56f337185eefebeca0ebc6b67bfbef265055775ae064f",
+      "packaged_sha256": "87b107b2a177594f6da56f337185eefebeca0ebc6b67bfbef265055775ae064f",
+      "bytes": 783,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/provenance/stopping-criteria-contract.json",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/stopping-criteria-contract.json",
+      "original_sha256": "17cd31e1e8e29a5b720ab4ac42a3664cd01c011258229bfb008e3e1e8b015866",
+      "packaged_sha256": "17cd31e1e8e29a5b720ab4ac42a3664cd01c011258229bfb008e3e1e8b015866",
+      "bytes": 4362,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "higgs/STOPPING-CRITERIA-CONTRACT.md",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/STOPPING-CRITERIA-CONTRACT.md",
+      "original_sha256": "145353a54ec29ed50c383ab3d9b79004b3e8449c1411c01e73f54f606d9fed97",
+      "packaged_sha256": "145353a54ec29ed50c383ab3d9b79004b3e8449c1411c01e73f54f606d9fed97",
+      "bytes": 3040,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "recipes/qualify_providers.py.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/qualify_providers.py",
+      "original_sha256": "b0f1083a45084b220bee913a94dc96cd78b006c799176237a1312e33a401a922",
+      "packaged_sha256": "b0f1083a45084b220bee913a94dc96cd78b006c799176237a1312e33a401a922",
+      "bytes": 51517,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "recipes/provider_runtime.py.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/provider_runtime.py",
+      "original_sha256": "92f4e4d03a464c57686c716acd4697bee325249af2ed6f24616044b69ca12121",
+      "packaged_sha256": "92f4e4d03a464c57686c716acd4697bee325249af2ed6f24616044b69ca12121",
+      "bytes": 6164,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "recipes/portaudio_gate.py.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/portaudio_gate.py",
+      "original_sha256": "1198087e96dc870d8c534dab60366d9a817a04b352af56a22b7ecfb57bb7a78d",
+      "packaged_sha256": "1198087e96dc870d8c534dab60366d9a817a04b352af56a22b7ecfb57bb7a78d",
+      "bytes": 1726,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "recipes/run-higgs-portaudio-candidate.sh.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/run-wav-portaudio-candidate.sh",
+      "original_sha256": "95b254c98e039ceaba73ad7870460ad44265963897b823fd7198875b67bc9d15",
+      "packaged_sha256": "95b254c98e039ceaba73ad7870460ad44265963897b823fd7198875b67bc9d15",
+      "bytes": 1188,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "recipes/run_candidate_content_checks.py.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/higgs/run_candidate_content_checks.py",
+      "original_sha256": "b6b1065f312ded9e90c92239e67cfc985ed70667145e9518d3f7e2d4ed350658",
+      "packaged_sha256": "b6b1065f312ded9e90c92239e67cfc985ed70667145e9518d3f7e2d4ed350658",
+      "bytes": 5558,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "recipes/run-alltalk-p226.sh.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/p226/run-wav.sh",
+      "original_sha256": "1279ee4f114d838e67316ff5cad2de1d2bb224104b9b153e88ca5434db1b0f9b",
+      "packaged_sha256": "1279ee4f114d838e67316ff5cad2de1d2bb224104b9b153e88ca5434db1b0f9b",
+      "bytes": 1293,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "recipes/p226-observed-server.py.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/p226/observed_server.py",
+      "original_sha256": "f545c76b9b1f08672685c6583875e984dc333092ded874674309a64460ce8cad",
+      "packaged_sha256": "f545c76b9b1f08672685c6583875e984dc333092ded874674309a64460ce8cad",
+      "bytes": 4871,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "alltalk/provenance/p226-engine-selection.json",
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/p226/engine-selection.json",
+      "original_sha256": "69ef13d2a6d922968ca24ee28d48e63539907b28371bbd2cd5d6ac192b46a1c7",
+      "packaged_sha256": "69ef13d2a6d922968ca24ee28d48e63539907b28371bbd2cd5d6ac192b46a1c7",
+      "bytes": 744,
+      "method": "byte-preserving copy"
+    }
+  ]
+}
