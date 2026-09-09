@@ -6153,6 +6153,10 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_NOTES_READER_PROFILE,
             previous=previous,
             priority=priority,
+            # task-32127: while the work pane holds only "Select a note to
+            # edit it here.", its width belongs to the list. Opening a note
+            # hands it straight back.
+            reader_has_item=self._notes_state.view != "list",
         )
         shell.sync_layout(layout, manual_reopen=manual_reopen)
         self._notes_state.reader_layout = layout

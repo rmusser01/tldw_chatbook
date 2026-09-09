@@ -482,6 +482,13 @@ def _pane_widths(
     )
 
 
+#: task-32127: Notes joined Media on `list_grows`. At 235 columns its list
+#: stayed pinned at the 40-cell target beside a Reader holding 151 columns
+#: of "Select a note to edit it here.", which is what clipped the titles,
+#: the ages and the delete receipt's Undo.
+LIST_GROWTH_PROFILE_NAMES = {"LIBRARY_NOTES_READER_PROFILE"}
+
+
 def test_only_the_media_profile_opts_into_list_growth() -> None:
     assert MEDIA_READER_LAYOUT_PROFILE.list_grows is True
     # task-31633 AC#2: the one-cell grip is opt-in the same way. task-31951
@@ -496,7 +503,8 @@ def test_only_the_media_profile_opts_into_list_growth() -> None:
     assert set(SIBLING_PROFILES.values()) <= set(DECLARED_PROFILES.values())
     assert len(DECLARED_PROFILES) >= 6, sorted(DECLARED_PROFILES)
     for name, profile in DECLARED_PROFILES.items():
-        assert profile.list_grows is False, name
+        assert profile.list_grows is (name in LIST_GROWTH_PROFILE_NAMES), name
+    assert LIST_GROWTH_PROFILE_NAMES <= set(DECLARED_PROFILES)
     assert AdaptiveReaderLayoutProfile().list_grows is False
 
 

@@ -3,6 +3,8 @@ create mode (Blank note + template rows)."""
 
 from __future__ import annotations
 
+from collections import Counter
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
@@ -811,110 +813,134 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
         else:
-            browse_actions = Horizontal(
-                id="library-notes-browse-actions", classes="ds-toolbar"
-            )
-            browse_actions.styles.height = "auto"
-            browse_actions.display = not list_state.sort_choices_visible
-            with browse_actions:
-                # task-4023 AC#1 (RC-07): every disabled toolbar action
-                # carries the non-colour "○" marker plus an F-018 reason.
-                running = list_state.operation_running
-                running_tooltip = "Wait for the running notes operation to finish."
-                yield Button(
-                    library_disabled_action_label("New", running),
-                    id="library-notes-new",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=running,
-                    tooltip=running_tooltip if running else None,
+            # task-4023 AC#1 (RC-07): every disabled toolbar action carries
+            # the non-colour "○" marker plus an F-018 reason.
+            running = list_state.operation_running
+            running_tooltip = "Wait for the running notes operation to finish."
+            # task-32128: the folder tree's row order is a repository
+            # contract -- `page_note_placements` is ORDER BY title COLLATE
+            # NOCASE and every page offset (including the deep-link
+            # locator's) is computed against it -- so a Sort control there
+            # could only reorder the loaded window and lie about the rest.
+            # It stays on the flat list, which sorts its own records.
+            sort_available = self.tree_projection is None
+            sort_choices_visible = sort_available and list_state.sort_choices_visible
+            # task-32127: the browse and transfer actions share ONE row, so
+            # the toolbar is two rows rather than three. Not in the compact
+            # single stage, where the pane is ~40 columns and one row cannot
+            # hold both groups without clipping the last action.
+            action_rows: Horizontal | None = None
+            if not self.compact:
+                action_rows = Horizontal(id="library-notes-action-rows")
+                action_rows.styles.height = "auto"
+            with action_rows or nullcontext():
+                browse_actions = Horizontal(
+                    id="library-notes-browse-actions", classes="ds-toolbar"
                 )
-                sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
-                yield Button(
-                    library_disabled_action_label(sort_base, running),
-                    id="library-notes-sort",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=running,
-                    tooltip=running_tooltip if running else None,
-                )
-                select_disabled = rendered_count == 0 or running
-                yield Button(
-                    library_disabled_action_label("Select", select_disabled),
-                    id="library-notes-select-toggle",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=select_disabled,
-                    tooltip=(
-                        (
-                            running_tooltip
-                            if running
-                            else LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+                browse_actions.styles.height = "auto"
+                if action_rows is not None:
+                    browse_actions.styles.width = "auto"
+                browse_actions.display = not sort_choices_visible
+                with browse_actions:
+                    yield Button(
+                        library_disabled_action_label("New", running),
+                        id="library-notes-new",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=running,
+                        tooltip=running_tooltip if running else None,
+                    )
+                    if sort_available:
+                        sort_base = (
+                            f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
                         )
-                        if select_disabled
-                        else None
-                    ),
-                )
-            if list_state.sort_choices_visible:
-                # task-14902: composed through the ONE shared strip builder
-                # (this control is the pattern's precedent; the media type /
-                # prompts sort / skills sort / export quality strips share
-                # the same mechanism).
-                yield from compose_library_choice_strip(
-                    strip_id="library-notes-sort-choices",
-                    choice_class="library-notes-sort-choice",
-                    options=tuple(
-                        (f"library-notes-sort-{mode}", mode, label)
-                        for mode, label in _SORT_LABELS.items()
-                    ),
-                    active_value=self.sort_mode,
-                )
-            import_phase = (
-                self.import_snapshot.phase if self.import_snapshot is not None else ""
-            )
-            transfer_actions = Horizontal(
-                id="library-notes-transfer-actions", classes="ds-toolbar"
-            )
-            transfer_actions.styles.height = "auto"
-            with transfer_actions:
-                for label, button_id in (
-                    ("Add from files…", "library-notes-add-from-files"),
-                    ("Export", "library-notes-export"),
-                ):
-                    view_import = (
-                        button_id == "library-notes-add-from-files"
-                        and import_phase == "importing"
-                    )
-                    disabled = list_state.operation_running and not view_import
+                        yield Button(
+                            library_disabled_action_label(sort_base, running),
+                            id="library-notes-sort",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=running,
+                            tooltip=running_tooltip if running else None,
+                        )
+                    select_disabled = rendered_count == 0 or running
                     yield Button(
-                        library_disabled_action_label(
-                            "View import" if view_import else label, disabled
+                        library_disabled_action_label("Select", select_disabled),
+                        id="library-notes-select-toggle",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=select_disabled,
+                        tooltip=(
+                            (
+                                running_tooltip
+                                if running
+                                else LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+                            )
+                            if select_disabled
+                            else None
                         ),
-                        id=button_id,
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=disabled,
-                        tooltip=running_tooltip if disabled else None,
                     )
-                if self.lasting_sync_snapshot is not None and (
-                    self.lasting_sync_snapshot.roots
-                    or self.lasting_sync_snapshot.root_page_count > 1
-                ):
-                    yield Button(
-                        "Manage sync folders",
-                        id="library-notes-manage-sync-folders",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=list_state.operation_running,
+                if sort_choices_visible:
+                    # task-14902: composed through the ONE shared strip builder
+                    # (this control is the pattern's precedent; the media type /
+                    # prompts sort / skills sort / export quality strips share
+                    # the same mechanism).
+                    yield from compose_library_choice_strip(
+                        strip_id="library-notes-sort-choices",
+                        choice_class="library-notes-sort-choice",
+                        options=tuple(
+                            (f"library-notes-sort-{mode}", mode, label)
+                            for mode, label in _SORT_LABELS.items()
+                        ),
+                        active_value=self.sort_mode,
                     )
-                if self.import_receipt_available:
-                    yield Button(
-                        "Last import",
-                        id="library-notes-import-receipt",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=list_state.operation_running,
-                    )
+                import_phase = (
+                    self.import_snapshot.phase
+                    if self.import_snapshot is not None
+                    else ""
+                )
+                transfer_actions = Horizontal(
+                    id="library-notes-transfer-actions", classes="ds-toolbar"
+                )
+                transfer_actions.styles.height = "auto"
+                with transfer_actions:
+                    for label, button_id in (
+                        ("Add from files…", "library-notes-add-from-files"),
+                        ("Export", "library-notes-export"),
+                    ):
+                        view_import = (
+                            button_id == "library-notes-add-from-files"
+                            and import_phase == "importing"
+                        )
+                        disabled = list_state.operation_running and not view_import
+                        yield Button(
+                            library_disabled_action_label(
+                                "View import" if view_import else label, disabled
+                            ),
+                            id=button_id,
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=disabled,
+                            tooltip=running_tooltip if disabled else None,
+                        )
+                    if self.lasting_sync_snapshot is not None and (
+                        self.lasting_sync_snapshot.roots
+                        or self.lasting_sync_snapshot.root_page_count > 1
+                    ):
+                        yield Button(
+                            "Manage sync folders",
+                            id="library-notes-manage-sync-folders",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=list_state.operation_running,
+                        )
+                    if self.import_receipt_available:
+                        yield Button(
+                            "Last import",
+                            id="library-notes-import-receipt",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=list_state.operation_running,
+                        )
             if self.tree_projection is not None:
                 yield from self._compose_tree_actions(
                     operation_running=list_state.operation_running
