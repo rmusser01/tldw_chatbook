@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -32,11 +33,13 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_REASON_LENGTH,
     MAX_IMPORT_TEMPLATE_NAME_LENGTH,
     MAX_IMPORT_TITLE_LENGTH,
+    WIKILINK_SCAN,
     ImportBounds,
     ImportClassification,
     ImportSourceKind,
     ParsedNotePayload,
     ProposedFolderMembership,
+    wikilink_target,
 )
 
 SUPPORTED_NOTE_EXTENSIONS = frozenset(
@@ -49,6 +52,13 @@ _KEYWORD_ALIASES = ("keywords", "tags")
 _CSV_RESERVED_HEADERS = frozenset(
     (*_TITLE_ALIASES, *_CONTENT_ALIASES, *_KEYWORD_ALIASES, "template")
 )
+_MARKDOWN_EXTENSIONS = frozenset({".md", ".markdown"})
+_FRONTMATTER_KEYS = ("tags", "aliases")
+_MAX_FRONTMATTER_LINES = 200
+_MAX_WIKILINKS_PER_NOTE = 200
+_TEMPLATE_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
+"""A `{{date}}`-style template placeholder, which never becomes a note title."""
+
 
 # ``csv.field_size_limit`` is process-global. Every CSV parse in this module holds
 # this lock while raising and restoring the limit so overlapping imports cannot
@@ -261,6 +271,7 @@ def parse_import_sources(
     bounds: ImportBounds,
     *,
     destination_folder_segments: Iterable[str] | None = None,
+    obsidian_mode: bool = False,
 ) -> ParsedImportBatch:
     """Parse a discovered selection without writes or durable side effects.
 
@@ -268,6 +279,10 @@ def parse_import_sources(
         discovery: Previously admitted sources and safe discovery failures.
         bounds: Resource and diagnostic limits for parsing.
         destination_folder_segments: Optional manual destination for selected files.
+        obsidian_mode: Whether a detected vault's Markdown is read as Obsidian
+            notes: leading YAML frontmatter supplies the title and keywords and
+            leaves the body, and `[[wikilinks]]` are recorded for the executor.
+            It has no effect unless discovery detected a vault.
 
     Returns:
         Parsed note payloads, safe issues, and proposed folder paths.
@@ -281,6 +296,9 @@ def parse_import_sources(
         raise TypeError("discovery must be an ImportDiscovery.")
     if not isinstance(bounds, ImportBounds):
         raise TypeError("bounds must be an ImportBounds.")
+    if type(obsidian_mode) is not bool:
+        raise TypeError("obsidian_mode must be a boolean.")
+    obsidian = obsidian_mode and discovery.vault_detected
 
     destination = _validate_destination(
         discovery,
@@ -298,13 +316,17 @@ def parse_import_sources(
     parsed: list[ParsedImportSource] = []
     issues = [
         ImportParseIssue(
-            display_path=failure.display_path,
-            source_path=failure.source_path,
-            classification=ImportClassification.FAILED,
-            reason_code=failure.reason_code,
-            user_message=failure.user_message[: bounds.max_reason_length],
+            display_path=entry.display_path,
+            source_path=entry.source_path,
+            classification=classification,
+            reason_code=entry.reason_code,
+            user_message=entry.user_message[: bounds.max_reason_length],
         )
-        for failure in discovery.failures
+        for entries, classification in (
+            (discovery.failures, ImportClassification.FAILED),
+            (discovery.skips, ImportClassification.SKIPPED),
+        )
+        for entry in entries
     ]
     bytes_read = 0
     for candidate in discovery.candidates:
@@ -325,7 +347,13 @@ def parse_import_sources(
             if bytes_read > bounds.max_total_bytes:
                 raise _ParseFailure("max_total_bytes_exceeded")
             text = raw_content.decode("utf-8-sig")
-            payloads = _parse_text(candidate, extension, text, bounds)
+            payloads = _parse_text(
+                candidate,
+                extension,
+                text,
+                bounds,
+                obsidian_mode=obsidian,
+            )
             folder_segments = _folder_segments(candidate, destination)
             memberships = tuple(
                 ProposedFolderMembership(
@@ -418,20 +446,35 @@ def _parse_text(
     extension: str,
     text: str,
     bounds: ImportBounds,
+    *,
+    obsidian_mode: bool = False,
 ) -> tuple[ParsedNotePayload, ...]:
     # task-32130: an empty source is empty whatever its extension.
     if not text.strip():
         raise _ParseFailure("empty_source")
     if extension in {".txt", ".text", ".rst", ".md", ".markdown"}:
-        title = PurePosixPath(candidate.source.display_path).stem
-        if extension in {".md", ".markdown"}:
-            for line in text.splitlines()[:10]:
-                if line.startswith("# ") and line[2:].strip():
-                    title = line[2:].strip()
-                    break
+        markdown = extension in _MARKDOWN_EXTENSIONS
+        metadata: Mapping[Any, Any] | None = None
+        if obsidian_mode and markdown:
+            metadata, body = _split_frontmatter(text)
+            # A note that is only frontmatter (an Obsidian Properties-only file,
+            # a templated daily note) still has to import: keep the original
+            # text as the body rather than turning a note this mode understands
+            # BETTER into a failure it did not have before.
+            if body.strip():
+                text = body
+        stem = PurePosixPath(candidate.source.display_path).stem
+        title = _frontmatter_title(metadata) or _text_title(text, stem, markdown)
         if len(title) > MAX_IMPORT_TITLE_LENGTH:
             raise _ParseFailure("invalid_content")
-        return (ParsedNotePayload(title=title, content=text),)
+        return (
+            ParsedNotePayload(
+                title=title,
+                content=text,
+                keywords=_frontmatter_keywords(metadata, bounds),
+                wikilinks=_wikilinks(text) if obsidian_mode and markdown else (),
+            ),
+        )
     if extension == ".json":
         value = json.loads(text, object_pairs_hook=_unique_json_object)
         return _structured_payloads(value, bounds)
@@ -444,6 +487,107 @@ def _parse_text(
     if extension == ".csv":
         return _csv_payloads(text, bounds)
     raise _ParseFailure("invalid_content")
+
+
+def _text_title(text: str, stem: str, markdown: bool) -> str:
+    """Return the first usable `# ` heading, else the file stem.
+
+    A heading that is only a template placeholder (`# {{date:YYYY-MM-DD}}`) is
+    never a note title, so the stem is used instead.
+    """
+    if not markdown:
+        return stem
+    for line in text.splitlines()[:10]:
+        if line.startswith("# ") and line[2:].strip():
+            heading = line[2:].strip()
+            return stem if _TEMPLATE_PLACEHOLDER.search(heading) else heading
+    return stem
+
+
+def _split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
+    """Split one leading `---` YAML block from the note body.
+
+    Anything that is not a complete, safely loadable mapping is left in the body
+    exactly as written, so an odd block degrades to today's behaviour.
+    """
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None, text
+    for index, line in enumerate(lines[1 : _MAX_FRONTMATTER_LINES + 1], start=1):
+        if line.strip() not in {"---", "..."}:
+            continue
+        block = "\n".join(lines[1:index])
+        try:
+            for token in yaml.scan(block):
+                if isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken)):
+                    return None, text
+            metadata = yaml.load(block, Loader=_UniqueKeySafeLoader)
+        except (yaml.YAMLError, _ParseFailure, RecursionError, ValueError, TypeError):
+            return None, text
+        if not isinstance(metadata, Mapping):
+            return None, text
+        return metadata, "\n".join(lines[index + 1 :]).lstrip("\n")
+    return None, text
+
+
+def _frontmatter_title(metadata: Mapping[Any, Any] | None) -> str | None:
+    """Return the frontmatter title, unless it is blank or a placeholder."""
+    if metadata is None:
+        return None
+    value = metadata.get("title")
+    if not isinstance(value, str):
+        return None
+    title = value.strip()
+    if not title or _TEMPLATE_PLACEHOLDER.search(title):
+        return None
+    return title
+
+
+def _frontmatter_keywords(
+    metadata: Mapping[Any, Any] | None,
+    bounds: ImportBounds,
+) -> tuple[str, ...]:
+    """Return `tags` then `aliases` as deduplicated keywords.
+
+    Aliases are alternate titles in Obsidian and there is no separate note
+    metadata store here, so they are kept as keywords: the note stays findable by
+    them and they are visible in Info. Unusable metadata yields no keywords
+    rather than failing the whole note.
+    """
+    if metadata is None:
+        return ()
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for key in _FRONTMATTER_KEYS:
+        try:
+            values = _keywords(metadata.get(key), bounds)
+        except _ParseFailure:
+            continue
+        for keyword in values:
+            if keyword.casefold() in seen:
+                continue
+            seen.add(keyword.casefold())
+            keywords.append(keyword)
+    return tuple(keywords[: bounds.max_keywords_per_note])
+
+
+def _wikilinks(text: str) -> tuple[str, ...]:
+    """Return the note's non-embedded `[[targets]]` in first-use order.
+
+    Anything inside a code span is sample text, not a link, and is skipped here
+    exactly as the executor skips it when rewriting.
+    """
+    targets: list[str] = []
+    seen: set[str] = set()
+    for match in WIKILINK_SCAN.finditer(text):
+        target = wikilink_target(match)
+        if not target or target in seen or len(target) > MAX_IMPORT_TITLE_LENGTH:
+            continue
+        seen.add(target)
+        targets.append(target)
+        if len(targets) >= _MAX_WIKILINKS_PER_NOTE:
+            break
+    return tuple(targets)
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

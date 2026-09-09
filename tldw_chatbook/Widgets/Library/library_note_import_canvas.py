@@ -123,7 +123,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     /* task-32135: one review row is one line -- path, effect and destination
        beside the controls that change them. */
     /* An empty container defaults to 1fr and would push every group to the
-       bottom of the body until the toggle lands in it. */
+       bottom of the body when no vault is detected and the toggle is absent. */
     LibraryNoteImportCanvas #notes-import-review-options {
         height: auto;
     }
@@ -189,6 +189,13 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     class CheckRequested(Message):
         """Request read-only discovery and planning."""
+
+    class ObsidianModeToggled(Message):
+        """Report the requested Obsidian-vault reading mode."""
+
+        def __init__(self, enabled: bool) -> None:
+            super().__init__()
+            self.enabled = enabled
 
     class CollisionChoiceRequested(Message):
         """Report one explicit imported-root collision choice."""
@@ -553,8 +560,23 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 markup=False,
             )
 
-        # Named slot the Obsidian-import toggle mounts into (task-32129).
-        yield Vertical(id="notes-import-review-options")
+        # One options slot above the groups (task-32135). It stays an empty,
+        # zero-height Vertical unless a vault was detected, in which case the
+        # Obsidian toggle and its reason line live here (task-32129).
+        with Vertical(id="notes-import-review-options"):
+            if state.obsidian_available:
+                yield Button(
+                    _choice_label(selected=state.obsidian_mode, text="Obsidian vault"),
+                    id="note-import-obsidian-mode",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Static(
+                    state.obsidian_reason,
+                    id="note-import-obsidian-reason",
+                    classes="note-import-quiet",
+                    markup=False,
+                )
 
         order = tuple(_CLASSIFICATION_LABELS)
         sorted_items = sorted(
@@ -841,6 +863,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     def _check(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(self.CheckRequested())
+
+    @on(Button.Pressed, "#note-import-obsidian-mode")
+    def _toggle_obsidian_mode(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.ObsidianModeToggled(not self.snapshot.obsidian_mode))
 
     @on(Button.Pressed, ".note-import-collision-choice")
     def _choose_collision(self, event: Button.Pressed) -> None:

@@ -5334,4 +5334,7 @@ def test_two_row_csv_plans_two_new_notes(tmp_path: Path) -> None:
 
     plan = _classification_plan(_parse_selection([source], destination=("Imported",)))
 
-    assert _effect_summary(plan.items[0]) == "Content: create 2 new notes."
+    # task-32129 folded the resulting titles and keywords into the same effect
+    # segment; the count this test exists for (2, not 1) still leads it.
+    assert _effect_summary(plan.items[0]).startswith("Content: create 2 new notes")
+    assert "CSV note one, CSV note two" in _effect_summary(plan.items[0])

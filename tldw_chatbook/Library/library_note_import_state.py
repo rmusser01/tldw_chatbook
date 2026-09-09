@@ -91,6 +91,8 @@ class NoteImportWorkflowSnapshot:
     decision_item_ids: frozenset[str] = frozenset()
     collision_rename_input: str = field(default="", repr=False)
     collision_rename_error: str = ""
+    obsidian_mode: bool = True
+    vault_detected: bool = False
     revision: int = 0
 
     @property
@@ -238,6 +240,9 @@ class LibraryNoteImportSnapshot:
     retry_available: bool = False
     retry_label: str = ""
     can_cancel: bool = False
+    obsidian_available: bool = False
+    obsidian_mode: bool = True
+    obsidian_reason: str = ""
     skipped_count: int = 0
     skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
 
@@ -872,6 +877,9 @@ def project_library_note_import_snapshot(
         ),
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
+        obsidian_available=state.vault_detected,
+        obsidian_mode=state.obsidian_mode,
+        obsidian_reason=_obsidian_reason(state),
         retry_label=(
             f"Retry {receipt.retryable} "
             f"{'failure' if receipt.retryable == 1 else 'failures'}"
@@ -923,12 +931,51 @@ def _effect_summary(item: ImportPreviewItem) -> str:
         return "Content: no change."
     if item.selected_action is ImportAction.CREATE_NEW:
         count = len(item.payloads)
-        return f"Content: create {count} new {'note' if count == 1 else 'notes'}."
+        titles = ", ".join(_bounded_title(payload.title) for payload in item.payloads[:2])
+        if count > 2:
+            titles = f"{titles}, and {count - 2} more"
+        keywords = tuple(
+            dict.fromkeys(
+                keyword for payload in item.payloads for keyword in payload.keywords
+            )
+        )
+        links = sum(len(payload.wikilinks) for payload in item.payloads)
+        parts = [
+            f"Content: create {count} new {'note' if count == 1 else 'notes'}: {titles}"
+        ]
+        if keywords:
+            shown = ", ".join(keywords[:4])
+            if len(keywords) > 4:
+                shown = f"{shown}, and {len(keywords) - 4} more"
+            parts.append(f"keywords {shown}")
+        if links:
+            parts.append(f"{links} link{'' if links == 1 else 's'}")
+        return f"{' · '.join(parts)}."
     return (
         "Content: replace existing content."
         if item.replace_content
         else "Content: keep existing content."
     )
+
+
+def _obsidian_reason(state: NoteImportWorkflowSnapshot) -> str:
+    """Say what reading this selection as an Obsidian vault does, either way."""
+    if not state.vault_detected:
+        return ""
+    if state.obsidian_mode:
+        return (
+            "Obsidian vault: skips .obsidian, .trash and Templates, takes titles "
+            "and tags from frontmatter, and links [[notes]] imported together."
+        )
+    return (
+        "Obsidian vault off: imports every folder, keeps frontmatter in the note "
+        "body and leaves [[links]] as text."
+    )
+
+
+def _bounded_title(title: str) -> str:
+    """Keep one resulting note title readable in a compact review row."""
+    return title if len(title) <= 80 else f"{title[:79]}…"
 
 
 def _receipt_status(receipt: ImportExecutionReceipt | None) -> str:

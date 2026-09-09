@@ -381,9 +381,10 @@ def _issue_item(
         payloads=(),
         memberships=(),
         classification=issue.classification,
-        # task-32130: the parser already wrote one honest reason for this
-        # exact reason code; replacing every one of them with a single
-        # "could not be imported safely" was the reported dishonesty.
+        # task-32130 / task-32129: the parser (or, for an Obsidian skip, the
+        # discovery walk) already wrote one honest reason for this exact reason
+        # code; replacing every one of them with a single "could not be
+        # imported safely" was the reported dishonesty.
         reason=_bounded_reason(issue.user_message or _FAILED_REASON, bounds),
         default_action=ImportAction.SKIP,
         selected_action=ImportAction.SKIP,
