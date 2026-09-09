@@ -1,7 +1,9 @@
 """No-mount contracts for Console retrieval ownership."""
 
 import asyncio
+import sqlite3
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -91,6 +93,51 @@ async def test_picker_without_conversation_releases_only_its_screen_guard(
     ]
     assert state.dictionary_dialog_active is (kind != "dictionary")
     assert state.worldbook_dialog_active is (kind != "worldbook")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["attach", "detach"])
+async def test_worldbook_mutation_failure_keeps_backend_details_out_of_notification(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """A failed mutation releases its dialog without disclosing backend text.
+
+    Args:
+        monkeypatch: Replaces only the manager boundary with a failing operation.
+        operation: World-book mutation whose error presentation is exercised.
+    """
+    from tldw_chatbook.Character_Chat import world_book_manager
+
+    controller, state = _controller()
+    controller._current_conversation_id = lambda: "conversation-a"
+    controller.app_instance.chachanotes_db = object()
+    controller.app_instance.notify = Mock()
+    controller.app_instance.push_screen_wait = AsyncMock(return_value=7)
+    controller.refresh_active_world_books_summary = AsyncMock()
+    mutation = Mock(
+        side_effect=sqlite3.OperationalError(
+            "private-schema-canary /Users/example/private.sqlite"
+        )
+    )
+    manager = SimpleNamespace(
+        list_world_books=lambda **_kwargs: [{"id": 7, "name": "World book"}],
+        get_world_books_for_conversation=lambda *_args, **_kwargs: (
+            [] if operation == "attach" else [{"id": 7, "name": "World book"}]
+        ),
+        associate_world_book_with_conversation=mutation,
+        disassociate_world_book_from_conversation=mutation,
+    )
+    monkeypatch.setattr(world_book_manager, "WorldBookManager", lambda _db: manager)
+
+    await getattr(controller, f"_console_worldbook_{operation}_worker")()
+
+    mutation.assert_called_once_with("conversation-a", 7)
+    controller.app_instance.notify.assert_called_once_with(
+        f"Could not {operation} the world book. Try again.", severity="error"
+    )
+    controller.refresh_active_world_books_summary.assert_not_awaited()
+    assert state.worldbook_dialog_active is False
+    assert state.dictionary_dialog_active is True
 
 
 def _controller() -> tuple[ConsoleRetrievalController, SimpleNamespace]:

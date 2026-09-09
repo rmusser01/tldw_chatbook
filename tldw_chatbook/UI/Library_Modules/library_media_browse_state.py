@@ -126,17 +126,49 @@ class MediaBrowseState:
 
     @property
     def applied_scope(self) -> MediaBrowseScope | None:
+        """Read the scope whose result is retained.
+
+        Returns:
+            The applied result's scope, or None before a result applies.
+        """
         return self.applied_result.scope if self.applied_result is not None else None
 
     @property
     def mutation_refresh_scope(self) -> MediaBrowseScope:
+        """Return the applied scope, falling back to the requested scope.
+
+        Mutations refresh the page whose items remain visible, even when a
+        different requested page has not successfully replaced it.
+
+        Returns:
+            The retained result's scope, or the requested scope without a result.
+        """
         return self.applied_scope or self.requested_scope
 
     def scope_for_page(self, page: int) -> MediaBrowseScope:
+        """Preserve the mutation-refresh filters while choosing another page.
+
+        Args:
+            page: Requested page number, validated by MediaBrowseScope.
+
+        Returns:
+            The mutation-refresh scope with its page replaced.
+
+        Raises:
+            ValueError: The page is invalid or its offset exceeds SQLite's range.
+        """
         return self.mutation_refresh_scope.with_page(page)
 
     @property
     def pager(self) -> LibraryPagerDisplay:
+        """Build the pager from retained results and current request state.
+
+        Returns:
+            Display state using the in-flight page while loading, the requested
+            page after an error or before any result, and the applied page
+            otherwise. Retained rows supply the count; totals are trusted only
+            for fresh results, with a page-size fallback before any result.
+        """
         applied = self.applied_result
         return build_library_pager_display(
             applied_page=applied.scope.page if applied is not None else None,

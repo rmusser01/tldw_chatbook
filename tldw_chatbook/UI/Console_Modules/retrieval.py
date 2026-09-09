@@ -902,9 +902,11 @@ class ConsoleRetrievalController:
                     str(conversation_id),
                     int(picked),
                 )
-            except Exception as exc:
+            except Exception:
                 logger.opt(exception=True).warning("Could not attach the world book.")
-                self.app_instance.notify(f"Attach failed: {exc}", severity="error")
+                self.app_instance.notify(
+                    "Could not attach the world book. Try again.", severity="error"
+                )
                 return
             await self.refresh_active_world_books_summary()
         finally:
@@ -969,9 +971,11 @@ class ConsoleRetrievalController:
                     str(conversation_id),
                     int(picked),
                 )
-            except Exception as exc:
+            except Exception:
                 logger.opt(exception=True).warning("Could not detach the world book.")
-                self.app_instance.notify(f"Detach failed: {exc}", severity="error")
+                self.app_instance.notify(
+                    "Could not detach the world book. Try again.", severity="error"
+                )
                 return
             await self.refresh_active_world_books_summary()
         finally:

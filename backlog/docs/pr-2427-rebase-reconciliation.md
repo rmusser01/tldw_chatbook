@@ -2700,3 +2700,79 @@ All seven derived checks pass, including 3,684 collision-free task files,
 remain green after the test-owner correction. Publication and the new exact
 head's review/checks precede normal protected merge. No repository-wide sweep
 or all-descriptor-zero claim is made.
+
+### September 9 — Qodo follow-up on f26827b949 (steps 104–107)
+
+All applicable CI checks pass on `f26827b949a6c5009feab4e1f5ec44fab6dd1c7b`,
+including Fast Lane, Perf Guard and derived artifacts. Qodo's next review adds
+seven findings. Three do not require implementation after independent tracing
+and fresh verification:
+
+- **Actor policy Pydantic replacement (3967619551):** the archive validator is
+  intentionally strict and byte-preserving under ADR-074/079 and TASK-31764.
+  The pure-contract guard forbids both Pydantic and API-layer imports. The API
+  model's default coercion and activation's normalization are not substitutes
+  for archive admission. Complete architecture, contracts and activation files
+  pass **95 tests, 2 warnings in 10.66s**, including malformed policy rejection
+  and activation/export preservation. No architecture guard is weakened.
+- **Stale display-name lease (3967619593):** the published coordinator already
+  registers exact-plan abandonment in the task's done callback. The existing
+  real-SQLite stale-identity control verifies empty lease maps and restored fork
+  eligibility; complete lifetime file passes **10 tests, 2 warnings in 5.40s**,
+  including writer/cancellation ownership. No extra early release is added.
+- **Recovery modal CSS (3967619617):** immutable `875936d66f` already defines
+  Recovery as a separate ModalScreen while its CSS alias contains only
+  Navigation-rooted selectors. The removed alias was genuinely inert. Fresh
+  complete original-versus-current geometry, compositor paint and button-state
+  parity passes **13 tests, 3 warnings in 11.68s** at compact/wide sizes. No new
+  layout is introduced under the premise of restoring lost effective styles.
+
+These threads received evidence replies 3967712932, 3967713114 and 3967713286
+and were resolved. Logs:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-actor-boundary-review.ddCXE0/pytest.log`,
+`/private/tmp/pr2427-display-name-evidence.log`, and
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-recovery-modal-review.NAZf8N/pytest.log`.
+
+Step 105 confirms the world-book notification leak with **2 RED failures**.
+Attach/detach now show only operation-specific safe retry copy; existing
+diagnostics, mutation calls and exact dialog release remain unchanged. New
+no-mount fault controls allocate no full app or database and assert no refresh
+after failure. The complete retrieval/world-book files, including the existing
+real-DB attach/detach round trip, pass **26 tests, 3 warnings in 18.99s**.
+Independent review is clear; diagnostic statement comparison shows no changed
+logging statements. Logs: `/private/tmp/pr2427-worldbook-privacy-{red,green}.log`.
+
+Step 106 documents the workspace helper's four actual inputs and disabled/tooltip
+result, and the media state's retained/requested/in-flight paging rules.
+Executable ASTs are identical after stripping docstrings. Three complete
+workspace/media files pass **100 tests, 2 warnings in 5.32s**; scoped Ruff,
+formatting and whitespace checks pass. `/private/tmp/pr2427-qodo106-docs.log`.
+
+Step 107 adds only the persisted aliases of already-active path nodes to the
+publication guard's native identity set. Session, conversation, nonempty and
+all-revisions checks remain unchanged. The new genuine restored-store control
+first fails only for the persisted origin; its preceding native-origin check
+passes. Both forms then pass, and both are rejected after branch/session changes;
+mixed sibling revisions and conversation mismatch remain rejected. The original
+ephemeral-session control is retained unchanged. This is representation hardening,
+not a claim that all saved tool publications were previously broken.
+
+Final focused controls pass **2 tests**; settlement correctness passes **6 tests**.
+Complete native controller qualification passes **26 tests, 3 warnings in
+20.63s**, with zero retained SQLite/instance-lock handles and only the established
+pytest-asyncio selector footprint. A subsequent test docstring/return annotation
+change is nonbehavioral; both focused controls pass again on the final bytes.
+Runtime/test hashes are frozen and independent review is clear. Evidence:
+`/private/tmp/pr2427-qodo107-{red,final-current,settlement}.log` and
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-qodo107-native-final.y5U6jU/fd_identity.jsonl`.
+
+Five complete architecture/provenance files pass **131 tests, 5 warnings in
+15.90s**, all seven derived checks pass, and final scoped Ruff/format/whitespace
+checks are green. No diagnostic statements changed, so no inventory rewrite was
+needed. Logs: `/private/tmp/pr2427-qodo107-{caps,preflight,diagnostics}.log`.
+Live dev remains `a36fc6133c`, already an ancestor. Publication and exact-head
+review/checks still precede normal protected merge.
+
+The final complete Canvas controller file additionally passes **47 tests,
+2 warnings in 3.79s**, not just the earlier six settlement-focused controls.
+`/private/tmp/pr2427-qodo107-canvas-complete.log`.
