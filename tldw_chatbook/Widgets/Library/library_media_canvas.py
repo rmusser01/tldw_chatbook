@@ -1112,7 +1112,11 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # when the list itself failed to load with nothing to select
                 # (``_gate_failed_action``'s predicate) -- that state already
                 # explains itself via the recovery callout, and "select
-                # items" would be the wrong reason.
+                # items" would be the wrong reason. task-32085 AC#1 (Qodo #7):
+                # also gated on ``rendered_count > 0`` -- select mode surviving
+                # a refresh to a SUCCESSFUL empty list has nothing to select,
+                # so the line paints nothing there too (still mounted, so the
+                # in-place toggle below can only ever fire with rows present).
                 #
                 # Always yielded (visibility toggled, not conditionally
                 # composed, and NOT ``display`` either): a single row-press
@@ -1141,7 +1145,11 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
                 bulk_reason_line.styles.visibility = (
                     "visible"
-                    if self.canvas.selected_count == 0 and not bulk_list_failed
+                    if (
+                        self.canvas.selected_count == 0
+                        and rendered_count > 0
+                        and not bulk_list_failed
+                    )
                     else "hidden"
                 )
                 yield bulk_reason_line

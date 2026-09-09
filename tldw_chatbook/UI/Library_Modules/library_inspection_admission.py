@@ -29,8 +29,14 @@ _SCREEN_FIELDS = (
     "_selected_conversation_id",
     "_library_workspace_depth_state_cache",
     "_prepared_library_inspection_entry",
-    "_library_notes_work_session_phase",
-    "_library_notes_work_session_activation_pending",
+)
+# (wave-8 task 3) The two work-session names above moved to
+# ``LibraryNotesState``; they are captured/restored on ``screen._notes_state``
+# as their own group, exactly like the conversations group below, rather than
+# left as flat screen names a deleted shim no longer resolves.
+_NOTES_FIELDS = (
+    "work_session_phase",
+    "work_session_activation_pending",
 )
 _CONVERSATION_FIELDS = (
     "projection",
@@ -55,9 +61,11 @@ _NAVIGATION_FIELDS = ("character_candidate", "character_route")
 @dataclasses.dataclass
 class _InspectionProjection:
     screen: LibraryScreen
+    notes: Any
     conversations: Any
     navigation: Any
     screen_values: tuple[Any, ...]
+    notes_values: tuple[Any, ...]
     conversation_values: tuple[Any, ...]
     navigation_values: tuple[Any, ...]
 
@@ -65,9 +73,11 @@ class _InspectionProjection:
     def capture(cls, screen: LibraryScreen) -> _InspectionProjection:
         return cls(
             screen,
+            screen._notes_state,
             screen._conversations_state,
             screen._navigation_controller,
             tuple(getattr(screen, name, _ABSENT) for name in _SCREEN_FIELDS),
+            tuple(getattr(screen._notes_state, name) for name in _NOTES_FIELDS),
             tuple(
                 getattr(screen._conversations_state, name)
                 for name in _CONVERSATION_FIELDS
@@ -81,13 +91,15 @@ class _InspectionProjection:
     def _groups(self):
         return (
             (self.screen, _SCREEN_FIELDS, self.screen_values),
+            (self.notes, _NOTES_FIELDS, self.notes_values),
             (self.conversations, _CONVERSATION_FIELDS, self.conversation_values),
             (self.navigation, _NAVIGATION_FIELDS, self.navigation_values),
         )
 
     def matches(self) -> bool:
         if (
-            self.screen._conversations_state is not self.conversations
+            self.screen._notes_state is not self.notes
+            or self.screen._conversations_state is not self.conversations
             or self.screen._navigation_controller is not self.navigation
         ):
             return False

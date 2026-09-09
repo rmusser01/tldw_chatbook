@@ -104,7 +104,6 @@ async def test_library_reuse_and_suspend_timer_quiescence(
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
         assert library._library_screen_suspended is True
         for attr in (
-            "_library_notes_autosave_timer",
             "_library_source_snapshot_timeout_timer",
             "_library_list_entry_focus_timer",
         ):
@@ -113,6 +112,16 @@ async def test_library_reuse_and_suspend_timer_quiescence(
                 "does not auto-cancel a suspended installed screen's "
                 "timers, so suspend must"
             )
+        # (wave-8 task 3) The notes autosave timer is a `LibraryNotesState`
+        # field, not a flat screen attribute -- the screen's generated shim
+        # block was deleted in the notes cleanup PR, so a `getattr` on the old
+        # flat name passes VACUOUSLY. It leaves the string loop above for the
+        # same explicit block the ingest, prompts and media timers already use.
+        assert library._notes_state.autosave_timer is None, (
+            "the notes autosave timer is still armed on the suspended "
+            "screen -- Textual does not auto-cancel a suspended installed "
+            "screen's timers, so suspend must"
+        )
         # (wave-7 task 3) The two media debounce timers are
         # `LibraryMediaState` fields, not flat screen attributes -- the
         # screen's generated shim block was deleted in the media cleanup PR,
@@ -228,11 +237,22 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     from tldw_chatbook.UI.Screens.library_screen import (
         LibraryIngestState,
         LibraryMediaState,
+        LibraryNotesState,
         LibraryPromptsState,
         LibraryScreen,
     )
 
     screen = LibraryScreen.__new__(LibraryScreen)
+    # (wave-8 task 1, retargeted by task 3) The notes autosave timer is a
+    # `LibraryNotesState` field, not a flat screen attribute -- the screen's
+    # generated shim block was deleted in the notes cleanup PR, so
+    # `setattr`/`getattr` on the old flat name would arm and assert a field
+    # the hook never reads. An `object.__new__`/`__new__` screen also skips
+    # `__init__`'s state construction, hence the explicit seed, exactly like
+    # the `_media_state`/`_prompts_state`/`_ingest_state` ones here.
+    screen._notes_state = LibraryNotesState()
+    notes_timer = _RecordingTimer()
+    screen._notes_state.autosave_timer = notes_timer
     # (wave-7 task 1, retargeted by task 3) Every media name this test seeds
     # -- the two debounce timers, and three of the five settlement fields the
     # focus-disarm helper resets -- lives on `_media_state`. An
@@ -251,7 +271,6 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     screen._prompts_state.debounce_timer = prompts_timer
     timer_attrs = (
         "_library_list_entry_focus_timer",
-        "_library_notes_autosave_timer",
         "_library_source_snapshot_timeout_timer",
     )
     timers = {}
@@ -305,4 +324,8 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     assert prompts_timer.stopped, "the prompts search-debounce timer was not stopped"
     assert screen._prompts_state.debounce_timer is None, (
         "the prompts search-debounce timer was not cleared"
+    )
+    assert notes_timer.stopped, "the notes autosave timer was not stopped"
+    assert screen._notes_state.autosave_timer is None, (
+        "the notes autosave timer was not cleared"
     )

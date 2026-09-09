@@ -130,6 +130,7 @@ def _validate_clone_transcript_input(value: str) -> str:
         raise ValueError("reference_text")
     return validate_reference_text(value)
 
+
 if TYPE_CHECKING:
     pass
 
@@ -560,6 +561,21 @@ class SpeechPlaygroundPane(
             and navigation_provider_id != saved_provider_id
         )
         global_applies = provider_id == global_preferences.provider_id
+        if (
+            key in {"default_model", "default_voice"}
+            and self._selected_provider_id is not None
+            and self._selected_provider_id != provider_id
+        ):
+            # These exact IDs belong to the saved selection's provider.
+            # Returning to the global provider can still inherit its IDs;
+            # another provider must choose its own catalog defaults.
+            if self._selected_provider_id == global_preferences.provider_id:
+                return (
+                    global_preferences.model_id
+                    if key == "default_model"
+                    else global_preferences.voice_id
+                )
+            return default
         if key == "default_model":
             if navigation_changes_provider:
                 return None
@@ -2467,9 +2483,7 @@ class SpeechPlaygroundPane(
             selected_model = self._current_select_value("#tts-model-select")
         except NoMatches:
             selected_model = None
-        selected_model_id = (
-            selected_model if isinstance(selected_model, str) else None
-        )
+        selected_model_id = selected_model if isinstance(selected_model, str) else None
         self.run_worker(
             partial(
                 self._observe_audio_cpp_runtime,

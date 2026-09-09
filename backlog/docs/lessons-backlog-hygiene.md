@@ -97,6 +97,43 @@ carried a bad number.
   re-run the sweep right before pushing — the id was free at filing and taken
   at PR time.
 
+- **2026-09-08, Library decomposition wave-8 close (TASK-32047, formerly 32041).**
+  The clean demonstration that a correct sweep is a *snapshot*, not a reservation.
+  The close swept 647 refs, found max **32033**, ran the CLI probe (which offered
+  **32014** — a false low, already held on an unmerged branch, exactly as this
+  section predicts), leapfrogged to 32040/32041, and was right at that instant.
+  Twenty-seven minutes EARLIER by `created_date`, dev's `553960448` had minted its
+  own `task-32041` in a batch claiming **32041-32046**; `973b4c039` then closed it.
+  Two different filenames for the same id, so `git merge` takes both without a
+  conflict and nothing goes red until `preflight.sh`'s duplicate-id check runs
+  **after** the merge. The eight-wave branch was long-lived, which is the whole
+  mechanism: the longer the branch, the more certain the sweep is stale.
+  Older-keeps-id resolved it cleanly (dev 14:36 vs ours 15:04 → ours moved to
+  32047), and the review caught it before the merge rather than the guard catching
+  it after.
+
+  **The sweep command that would have been robust, and now is the one to use:**
+
+  ```bash
+  git fetch origin
+  git rev-list --objects --all | grep -oE 'task-[0-9]+' | grep -oE '[0-9]+' | sort -rn | head -1
+  ```
+
+  One command, no per-ref loop. It walks every blob path reachable from **all**
+  refs, so it sees ids in files that were later renamed or deleted, and ids added
+  by merge-only commits — the exact blind spot that made the 2026-09-04
+  `git log --all --diff-filter=A` sweep report "0 files named task-31420" an hour
+  before that id bit. Against this repo it returned **32046** where the per-ref
+  `ls-tree`-of-tips loop above returns the same number only when every claimant is
+  still a tip. Costs a few seconds; verify the chosen id is free as a **content**
+  reference too (`git grep task-NNNNN` across refs), since a task can be cited
+  before its file lands.
+
+  **And the backstop that actually fires: run `./scripts/preflight.sh` AFTER the
+  reconciliation merge, not only before it.** The duplicate-id check can only see a
+  collision once both sides are in one tree. A green preflight on the branch before
+  merging says nothing at all about this failure mode.
+
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.
 When a collision is found after both tasks have started, use add-commit provenance:
@@ -898,3 +935,13 @@ update-branches in 70 minutes — dev moved every 20-40 minutes that evening, ag
   `python tldw_chatbook/css/check_bundle_sync.py` before Derived gets there.
 - When one session holds a code PR and a docs PR, merge the **code PR first** — landing
   the docs PR moves dev and puts the code PR straight back on the treadmill.
+
+- **2026-09-08, same wave, SECOND strike.** The replacement id 32047 (chosen from a
+  655-ref all-refs sweep hours earlier) was itself taken by dev within the next 30
+  commits, along with 32040 — both of the wave's filings collided in one endgame.
+  Two refinements now standing: (a) **landed-keeps-id trumps older-keeps-id** — a
+  task already on origin/dev never renumbers; the unmerged side moves regardless of
+  timestamps, because renumbering landed ids breaks external references; (b) at
+  dev's current minting rate, an id chosen before a multi-hour reconciliation is
+  STALE BY CONSTRUCTION — re-sweep and renumber, if needed, as the LAST commit
+  before push, not during the fix wave.

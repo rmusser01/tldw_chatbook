@@ -2192,8 +2192,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 31,
-      "diagnostic_digest": "9fe57d979b3f9ac82ffd",
+      "call_count": 32,
+      "diagnostic_digest": "ff0b29f6200d8c292620",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/audio_player.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2227,8 +2227,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 62,
-      "diagnostic_digest": "7cb62ef6e2c77f418f78",
+      "call_count": 58,
+      "diagnostic_digest": "63af54825bc82c36865a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/chatterbox.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2255,8 +2255,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 97,
-      "diagnostic_digest": "add1172bc1bb0571dce6",
+      "call_count": 92,
+      "diagnostic_digest": "15a2bc7a4e501acc7bfd",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/higgs.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2703,6 +2703,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 8,
+      "diagnostic_digest": "2bbd93d24e9de8c08392",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Library_Modules/library_notes_controller.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "738ee5f3783f1528d3c2",
       "owner": "TASK-494",
@@ -2920,8 +2927,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 89,
-      "diagnostic_digest": "f01c3e7bd7879b807426",
+      "call_count": 81,
+      "diagnostic_digest": "d230ed5a3af24ed0f9e4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9058,21 +9065,21 @@
     {
       "candidates": [
         {
+          "call_digest": "bf464b04876b618b",
+          "method": "warning",
+          "path_expressions": [
+            "reference_audio_path"
+          ],
+          "scope": "ChatterboxTTSBackend._generate_speech_stream",
+          "status": "legacy_unreviewed"
+        },
+        {
           "call_digest": "bda1b91ff41bd04e",
           "method": "error",
           "path_expressions": [
             "wrapper_path"
           ],
           "scope": "ChatterboxTTSBackend._initialize_isolated_process",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "bf464b04876b618b",
-          "method": "warning",
-          "path_expressions": [
-            "reference_audio_path"
-          ],
-          "scope": "ChatterboxTTSBackend.generate_speech_stream",
           "status": "legacy_unreviewed"
         },
         {
@@ -9167,6 +9174,24 @@
           "status": "legacy_unreviewed"
         },
         {
+          "call_digest": "0c2aa89993f5be7b",
+          "method": "info",
+          "path_expressions": [
+            "engine_kwargs.get('model_name_or_path')"
+          ],
+          "scope": "HiggsAudioTTSBackend._load_model",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "9eb058bae2f26bd1",
+          "method": "info",
+          "path_expressions": [
+            "engine_kwargs.get('audio_tokenizer_name_or_path', 'default')"
+          ],
+          "scope": "HiggsAudioTTSBackend._load_model",
+          "status": "legacy_unreviewed"
+        },
+        {
           "call_digest": "df4b0ebd5ff63648",
           "method": "info",
           "path_expressions": [
@@ -9209,24 +9234,6 @@
             "self.model_path"
           ],
           "scope": "HiggsAudioTTSBackend.initialize",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "0c2aa89993f5be7b",
-          "method": "info",
-          "path_expressions": [
-            "engine_kwargs.get('model_name_or_path')"
-          ],
-          "scope": "HiggsAudioTTSBackend.load_model",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "9eb058bae2f26bd1",
-          "method": "info",
-          "path_expressions": [
-            "engine_kwargs.get('audio_tokenizer_name_or_path', 'default')"
-          ],
-          "scope": "HiggsAudioTTSBackend.load_model",
           "status": "legacy_unreviewed"
         }
       ],
@@ -11486,11 +11493,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 591,
+    "owner_files": 592,
     "path_privacy_candidate_calls": 711,
     "persistent_sink_files": 12,
     "task_31551_calls": 55,
     "task_492_calls": 1348,
-    "task_494_calls": 7680
+    "task_494_calls": 7672
   }
 }

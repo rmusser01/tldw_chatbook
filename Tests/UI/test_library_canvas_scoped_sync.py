@@ -137,7 +137,7 @@ async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None
             await _wait_for_widget_text(
                 screen, pilot, "#library-notes-selected-count", "2 selected"
             )
-            assert screen._library_notes_row_selection.count == 2
+            assert screen._notes_state.row_selection.count == 2
             screen.query_one("#library-notes-select-toggle").press()
             await _wait_for_selector(screen, pilot, "#library-notes-sort")
             screen.query_one("#library-notes-sort").press()
@@ -159,7 +159,7 @@ async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None
             screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
             is canvas_before
         )
-        assert screen._library_notes_sort == "oldest"
+        assert screen._notes_state.sort == "oldest"
 
 
 @pytest.mark.asyncio

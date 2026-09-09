@@ -263,6 +263,9 @@ class OpenAITTSBackend(APITTSBackend):
                             metrics={"chunks": chunk_count},
                         )
 
+                if not total_bytes:
+                    raise ValueError("TTS service returned no audio.")
+
                 # Report completion
                 await self._report_progress(
                     progress=1.0,

@@ -42,6 +42,12 @@ reservation or explicitly send that one call with Capture Off. A failure after
 provider dispatch cannot discard the provider result; the Inspector reports an
 incomplete or interrupted trace boundary.
 
+If an interrupted tool run leaves a pending response after reopening the
+conversation, **Discard** retains the user message and earlier trace history.
+The next question can use Capture On again when that discarded response has an
+unambiguous saved owner, including after earlier failed follow-ups have also
+been discarded. Discard does not replay or undo tools from the old run.
+
 ## Safe and Full are views of one trace
 
 **Safe** and **Full** no longer choose how much history is stored. They are local

@@ -426,10 +426,10 @@ async def test_read_analysis_read_round_trip_restores_the_rendered_scroll_offset
         service.release(backing_id)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+            lambda: screen._media_state.reader_session.loaded_id == canonical_id,
             message="Row never settled its detail.",
         )
-        assert screen._library_media_content_mode == "rendered", (
+        assert screen._media_state.content_mode == "rendered", (
             "Fixture must default to Rendered for the round-trip to mean anything."
         )
 
@@ -443,13 +443,13 @@ async def test_read_analysis_read_round_trip_restores_the_rendered_scroll_offset
         screen.query_one("#library-media-reader-select-analysis", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.mode == "analysis",
+            lambda: screen._media_state.reader_session.mode == "analysis",
             message="Never switched to Analysis.",
         )
         screen.query_one("#library-media-reader-select-read", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.mode == "read",
+            lambda: screen._media_state.reader_session.mode == "read",
             message="Never switched back to Read.",
         )
 
@@ -507,7 +507,7 @@ async def test_mode_change_restore_lands_synchronously_on_the_laid_out_body():
         service.release(backing_id)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+            lambda: screen._media_state.reader_session.loaded_id == canonical_id,
             message="Row never settled its detail.",
         )
         body = await _open_rendered_body_ready(screen, pilot)
@@ -518,7 +518,7 @@ async def test_mode_change_restore_lands_synchronously_on_the_laid_out_body():
             "Fixture must overflow the reading surface for the offset to land."
         )
 
-        screen._library_media_read_scroll_by_id[canonical_id] = (0, 14)
+        screen._media_state.read_scroll_by_id[canonical_id] = (0, 14)
         screen._restore_library_media_loaded_progress(canonical_id)
         # No pause: the fix applies against the laid-out scroller immediately;
         # the deferred-only restore would still read 0 here.

@@ -980,7 +980,7 @@ async def test_messages_synced_revalidates_find_focus_before_deferred_reveal(
         screen._conversations_state.reader_state = state
         screen._conversations_state.find_focus_intent = (
             state.generation,
-            screen._library_notes_focus_intent_generation,
+            screen._notes_state.focus_intent_generation,
             state.find_query,
         )
 
@@ -1018,15 +1018,15 @@ async def test_messages_synced_revalidates_find_focus_before_deferred_reveal(
             if steal_focus:
                 screen._library_notes_programmatic_focus_target = None
                 screen._library_notes_restoring_focus = False
-                screen._library_notes_resize_settling = False
-                prior_focus_generation = screen._library_notes_focus_intent_generation
+                screen._notes_state.resize_settling = False
+                prior_focus_generation = screen._notes_state.focus_intent_generation
                 assert replacement_focus.focusable
                 screen.set_focus(None)
                 screen.set_focus(replacement_focus)
                 screen.on_descendant_focus(DescendantFocus(replacement_focus))
                 assert screen.focused is replacement_focus
                 assert (
-                    screen._library_notes_focus_intent_generation
+                    screen._notes_state.focus_intent_generation
                     > prior_focus_generation
                 )
         finally:

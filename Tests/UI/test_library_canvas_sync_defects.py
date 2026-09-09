@@ -311,7 +311,7 @@ async def test_converted_notes_site_keeps_focus_on_a_real_key_press(
         await pilot.pause()
 
         assert recompose_calls == []  # see the sibling test: discriminating
-        assert screen._library_notes_select_mode is True
+        assert screen._notes_state.select_mode is True
         focused = screen.focused
         assert focused is not None
         canvas = screen.query_one("#library-notes-canvas")
@@ -342,7 +342,7 @@ async def test_compact_notes_list_keeps_its_scroll_offset_across_a_sync(
 
     async with host.run_test(size=LIBRARY_COMPACT_TEST_SIZE) as pilot:
         screen = await _open_notes_canvas(host, pilot)
-        assert screen._library_notes_compact is True
+        assert screen._notes_state.compact is True
 
         notes_list = screen.query_one("#library-notes-list")
         notes_list.scroll_to(y=12, animate=False, force=True, immediate=True)
@@ -393,7 +393,7 @@ async def test_notes_footer_tier_follows_a_canvas_scoped_sync(
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_notes_select_mode is True
+        assert screen._notes_state.select_mode is True
         assert screen._library_notes_focus_region() == "navigator"
         assert screen._footer_shortcut_registration == (
             "library",

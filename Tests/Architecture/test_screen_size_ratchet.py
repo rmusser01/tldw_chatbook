@@ -731,7 +731,118 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # auto-merge dropped dev's new flat line in among our retargeted ones
     # without a conflict. That is the case for running the census over the
     # merged tree rather than over the conflict hunks.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35777, 1290),
+    #
+    # (Wave-7's round-3 `origin/dev` merge, `035045364`, then raised the row
+    # 35743 -> 35777 as a merge resolution without extending the narrative
+    # above, so the paragraph and the row disagreed by 34 lines until this
+    # entry. Recorded rather than silently corrected -- recipe §6's "a re-pin
+    # has THREE places the number lives inside the guard file" hazard, from
+    # the merge side this time.)
+    #
+    # 2026-09-08, wave-8 task 1 (notes state PR, notes series 1/N): 100 of the
+    # 105 "note"-named `LibraryScreen` attributes moved verbatim into
+    # `LibraryNotesState` (`UI/Library_Modules/library_notes_state.py`), which
+    # the screen constructs as `self._notes_state` and shims back under every
+    # original flat name. Fresh `_measure()`: 35777/1290 -> 35621/1290. The
+    # METHOD count is unchanged, as every pure field move's must be: zero
+    # `FunctionDef`s were touched. Line delta -156 reconciles EXACTLY, each
+    # term measured off the diff rather than estimated: -192 removed lines
+    # (109 lines of field statements spanning 91 of the 100 moved fields, all
+    # folded into dataclass defaults -- the other 9 KEEP their original
+    # assignment lines, because those run after the forced-early construction
+    # point -- plus the 83 comment lines that moved with them, every one
+    # verified byte-for-byte identical to its relocated copy in the state
+    # module, in BOTH directions);
+    # +4 for the `library_notes_state` import; +11 for the construction site
+    # (`self._notes_state = LibraryNotesState()`, no constructor arguments,
+    # under a 10-line why-this-is-early comment); +21 for the sentinel-wrapped
+    # generated shim block at module end and its preceding blank line (the
+    # same shape the collections/search+RAG/skills/ingest/prompts/media state
+    # PRs each installed and their own cleanup PRs each deleted).
+    # -192 + 4 + 11 + 21 = -156.
+    #
+    # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N): 185
+    # of the 285 "note"-named `LibraryScreen` methods moved verbatim into
+    # `LibraryNotesController`
+    # (`UI/Library_Modules/library_notes_controller.py`), which the screen
+    # constructs as `self._notes_controller` and delegates to under every
+    # original name. Fresh `_measure()`: 35621/1290 -> 32325/1284. Line delta
+    # -3296 reconciles EXACTLY, each term measured off the tree rather than
+    # estimated: -4034 removed (the 191 `FunctionDef` segments of the 185
+    # movers, decorators included); -6 for the blank line after each of the 6
+    # SECOND copies of a byte-identical duplicate block dev shipped twice
+    # (`7cf89de6c` + `fd505637f`, `library_screen.py:6557-6662` and
+    # `:6663-6768` at the parent) -- a move cannot preserve it, since two
+    # delegators cannot share one name, so both copies go and one delegator
+    # lands; +452 for the 185 one-line delegators (a delegator is 2-6 lines
+    # once its `@on` decorator and wrapped signature are counted); +3 for the
+    # function-local `library_notes_controller` import inside `__init__`;
+    # +289 for the construction site (`self._notes_controller =
+    # LibraryNotesController(...)`, 92 named dependencies under a 3-line
+    # comment). -4034 - 6 + 452 + 3 + 289 = -3296.
+    #
+    # The METHOD count drops by exactly 6 (1290 -> 1284), which is the
+    # duplicate block and nothing else: 191 definitions out, 185 delegators
+    # in.
+    #
+    # (Erratum, same task, review round: the two narrative figures three
+    # paragraphs above shipped as "32286/1284" and "-3335" -- the values from
+    # this task's GREEN commit, before its fix round reverted one mover and
+    # moved the row to 32325/-3296. The per-term arithmetic and the row
+    # itself were corrected in that fix round; these two lines were not, and
+    # sat contradicting the row underneath them until review caught it. This
+    # is recipe SS6's own three-places-inside-the-guard hazard, hit for the
+    # second time in this program, and it is recorded rather than silently
+    # repaired: correcting the terms and assuming the narrative followed is
+    # exactly the failure mode SS6 describes.)
+    #
+    # 2026-09-08, wave-8 task 3 (notes cleanup, notes series 3/3) -- THE LAST
+    # cleanup PR of the eight-wave program. Fresh `_measure()`: 32325/1284 ->
+    # 32230/1258. Line delta -95, each term measured off the tree:
+    #   -10  the ten dead imports that went unused across this wave, deleted
+    #        one whole line each (`ConflictAction`, `ConflictOutcomeKind`,
+    #        `DestructiveAdmissionOutcomeKind`, `NoteSaveOutcomeKind`,
+    #        `build_library_note_editor_state`, `notes_autosave_status_text`,
+    #        `notes_state_shim_attr`, `reduce_notes_work_session`,
+    #        `resolve_database_note_status_channels`, `RowSelection`). An
+    #        eleventh, `FileSave`, was removed in place from a shared import
+    #        line, so it costs no line. A twelfth,
+    #        `LIBRARY_NOTE_CONTENT_MAX_CHARS`, is AST-unused but PINNED by
+    #        `test_library_support_layer_surface.py`'s `_SURFACE` re-export
+    #        contract and was KEPT (the exact-name check, not a lowercase
+    #        `note` grep -- recipe SS22).
+    #   -80  the 26 pruned delegators (25 x 3 lines + `_note_word_count`'s 5,
+    #        one blank separator absorbed each).
+    #    +4  `on_screen_suspend`: its 4-line flat-name tuple collapses to a
+    #        1-line single-entry tuple (-3) and the notes autosave timer gains
+    #        the explicit `self._notes_state.autosave_timer` stop block the
+    #        ingest/prompts/media timers already have (+7).
+    #    -9  the 20-line sentinel-wrapped generated shim block replaced by its
+    #        11-line "deleted, and why" successor comment.
+    # -10 - 80 + 4 - 9 = -95.
+    #
+    # The 571 `self.<flat>` -> `self._notes_state.<field>` retargets, the 43
+    # `getattr(self, "<flat>", <default>)` receiver fixes and the 4 dotted
+    # dispatch-dict string values are line-neutral by construction (632
+    # insertions / 632 deletions before any deletion landed). The METHOD delta
+    # is exactly the 26 pruned delegators; no body was edited.
+    #
+    # RECONCILIATION MERGE with `dev`, +33 lines: 32230 -> 32263, methods
+    # UNCHANGED at 1258. Both hunks are dev's and both land in
+    # SCREEN-RESIDENT methods, so neither needed porting into a controller:
+    #   +23  `on_key` -- task-32046's per-canvas "/" filter focus.
+    #   +10  `on_screen_resume` -- task-32039's fault-episode clear and
+    #        analyze-reason cache drop.
+    # Verified rather than assumed: the enclosing methods (`on_key`,
+    # `on_screen_resume`) are not among the 26 names this wave removed from
+    # `LibraryScreen`, and both methods are byte-identical to `origin/dev`'s
+    # version after the merge. dev's own pin for this file was still the
+    # wave-8 START number (35777/1290), so the 33 lines were free there and
+    # only become visible against the lowered pin -- the ordinary give-back
+    # this ratchet exists to make visible, not a regression. Re-pinned to the
+    # measured post-merge value per `test_budget_is_not_left_slack_after_a_
+    # wave`'s own instruction ("set it to {lines} so the gain is locked in").
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32263, 1258),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

@@ -186,13 +186,136 @@ def _apply_replacements(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(parts)
 
 
-def _redact_assignments(text: str) -> str:
+def _is_sensitive_diagnostic_key(key: object) -> bool:
+    """Recognize credential/PII labels without hiding every key or token."""
+    normalized = str(key).casefold().replace("-", "_")
+    if normalized.endswith(("_env_var", "_configured", "_present", "_source", "_name")):
+        return normalized in {"full_name", "first_name", "last_name", "user_name"}
+    return (
+        normalized
+        in {
+            "password",
+            "passwd",
+            "pwd",
+            "passphrase",
+            "secret",
+            "token",
+            "api_key",
+            "apikey",
+            "authorization",
+            "proxy_authorization",
+            "cookie",
+            "set_cookie",
+            "credential",
+            "credentials",
+            "private_key",
+            "access_token",
+            "refresh_token",
+            "auth_token",
+            "api_token",
+            "session_token",
+            "client_secret",
+            "email",
+            "email_address",
+            "phone",
+            "phone_number",
+            "ssn",
+            "user",
+            "username",
+            "postal_address",
+            "street_address",
+            "passport_number",
+            "credit_card",
+            "card_number",
+            "ocp_apim_subscription_key",
+            "aws_secret_access_key",
+            "secret_access_key",
+            "secret_key",
+            "bearer_token",
+        }
+        or normalized.endswith(
+            (
+                "_api_key",
+                "_api_key_fallback",
+                "_apikey",
+                "_password",
+                "_passphrase",
+                "_secret",
+                "_auth_token",
+                "_api_token",
+                "_access_token",
+                "_refresh_token",
+                "_session_token",
+            )
+        )
+        or normalized.startswith("x_")
+        and normalized.endswith(("_token", "_key"))
+    )
+
+
+def _protocol_value_end(text: str, start: int, end: int) -> int:
+    """Stop at a separate log field, never inside a header parameter or quote."""
+    index = start + 7 if text[start : start + 7].casefold() == "digest " else start
+    parameter_start = index
+    while index < end:
+        character = text[index]
+        if character in "\"'":
+            quoted_end, closed = _find_quoted_end(text, index + 1, character)
+            if not closed:
+                return end
+            index = quoted_end + 1
+            continue
+        if character in ",;":
+            parameter_start = index + 1
+        if character in " \t":
+            boundary = index
+            while index < end and text[index] in " \t":
+                index += 1
+            if text[index : index + 1] == "|":
+                index += 1
+                while index < end and text[index] in " \t":
+                    index += 1
+            # Cookie parameters follow semicolons; Digest parameters follow
+            # commas. A new assignment separated only by whitespace (or a log
+            # pipe) after a complete parameter belongs to the surrounding log.
+            if (
+                index < end
+                and not text[index].isdigit()
+                # An Expires timestamp such as 10:18:14 is header content.
+                and _ASSIGNMENT_PREFIX.match(text, index, end)
+                and text[parameter_start:boundary].strip()
+            ):
+                return boundary
+            continue
+        index += 1
+    return end
+
+
+def _redact_assignments(text: str, *, diagnostic: bool = False) -> str:
     """Classify label prefixes first, collect replacement spans, and always advance."""
     spans: list[tuple[int, int]] = []
     cursor = 0
+    cached_line_end = -1
+    authorities = iter(_DIAGNOSTIC_URL_USERINFO.finditer(text) if diagnostic else ())
+    authority = next(authorities, None)
     while match := _ASSIGNMENT_PREFIX.search(text, cursor):
+        while authority is not None and authority.end() <= match.start():
+            authority = next(authorities, None)
         key = match.group("quoted_key") or match.group("plain_key")
-        if not _is_sensitive_log_key(key):
+        sensitive = (
+            _is_sensitive_diagnostic_key(key)
+            if diagnostic
+            else _is_sensitive_log_key(key)
+        )
+        # A colon inside URI userinfo is not a User: label, even in a username
+        # such as alice+user. Quoted keys and key=value fields remain labels,
+        # so an adjacent JSON/password field cannot be consumed as userinfo.
+        if not sensitive or (
+            authority is not None
+            and authority.start() < match.start() < authority.end()
+            and match.group("plain_key") is not None
+            and match.group().rstrip().endswith(":")
+        ):
             cursor = match.end()
             continue
 
@@ -212,16 +335,42 @@ def _redact_assignments(text: str) -> str:
             cursor = value_end + 1 if closed else _after_line_break(text, value_end)
             continue
 
-        line_end = _line_end(text, value_start)
-        spans.append((value_start, line_end))
-        cursor = _after_line_break(text, line_end)
+        if not diagnostic or value_start > cached_line_end:
+            cached_line_end = _line_end(text, value_start)
+        line_end = cached_line_end
+        value_end = line_end
+        normalized = key.casefold().replace("-", "_")
+        protocol_value = diagnostic and (
+            normalized in {"cookie", "set_cookie"}
+            or normalized in {"authorization", "proxy_authorization"}
+            and text[value_start : value_start + 7].casefold() == "digest "
+        )
+        if protocol_value:
+            value_end = _protocol_value_end(text, value_start, line_end)
+        elif diagnostic:
+            for following in _ASSIGNMENT_PREFIX.finditer(text, value_start, line_end):
+                if (
+                    following.start() > value_start
+                    and text[following.start() - 1] in " \t,;&"
+                ):
+                    value_end = following.start()
+                    while value_end > value_start and text[value_end - 1] in " \t,;&":
+                        value_end -= 1
+                    break
+        spans.append((value_start, value_end))
+        cursor = (
+            value_end if value_end < line_end else _after_line_break(text, line_end)
+        )
 
     return _apply_replacements(text, spans)
 
 
-def sanitize_string(text: str) -> str:
-    """
-    Sanitize a string by removing sensitive data patterns.
+def sanitize_trace_credentials_v1(text: str) -> str:
+    """Preserve the original string projection used by credentials-v1 traces.
+
+    Stored artifacts are compared with this projection when extending a trace.
+    Changing it would make unchanged history appear modified. Application logs
+    use ``sanitize_string`` instead.
 
     Args:
         text: The string to sanitize
@@ -238,6 +387,73 @@ def sanitize_string(text: str) -> str:
     for pattern in _STANDALONE_CREDENTIALS:
         result = pattern.sub(REDACTION_MARKER, result)
     return result
+
+
+_DIAGNOSTIC_PII_PATTERNS = (
+    re.compile(r"(?i)(?<![\w.%+-])[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+"),
+    re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
+    re.compile(
+        r"(?<!\w)(?:\+\d{1,3}[ -]?)?(?:\(\d{3}\)|\d{3})[ .-]\d{3}[ .-]\d{4}(?!\w)"
+    ),
+)
+_DIAGNOSTIC_URL_USERINFO = re.compile(
+    r"((?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://)[^/?#\s]*@", re.IGNORECASE
+)
+_DIAGNOSTIC_URL = re.compile(
+    r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^\s\"'<>]+", re.IGNORECASE
+)
+_URL_QUERY_KEY = re.compile(r"([?&]key=)[^&#\s]*", re.IGNORECASE)
+_CONNECTION_LABEL = re.compile(
+    r"\b(?:connection[-_]string|dsn)[\"']?\s*[:=]", re.IGNORECASE
+)
+_CONNECTION_PRIVATE_FIELD = re.compile(
+    r"(?<![\w.-])((?:uid|user[ _]id|user|username|pwd|password)\s*=\s*)"
+    r"""(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\{(?:\}\}|[^}])*\}|[^;\s]+)""",
+    re.IGNORECASE,
+)
+_PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?"
+    r"(?:-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----|$)"
+)
+
+
+def _sanitize_diagnostic_text(text: str) -> str:
+    """Mask private spans while retaining surrounding application diagnostics.
+
+    The ``sanitize_trace_credentials_v1`` projection stays unchanged: stored trace
+    artifacts use its versioned credential policy during equality checks.
+    """
+    result = _PRIVATE_KEY_BLOCK.sub(REDACTION_MARKER, text)
+    result = "".join(
+        _CONNECTION_PRIVATE_FIELD.sub(r"\1" + REDACTION_MARKER, line)
+        if _CONNECTION_LABEL.search(line)
+        else line
+        for line in result.splitlines(keepends=True)
+    )
+    result = _redact_assignments(result, diagnostic=True)
+    result = _DIAGNOSTIC_URL.sub(
+        lambda match: _URL_QUERY_KEY.sub(r"\1" + REDACTION_MARKER, match.group()),
+        result,
+    )
+    result = _DIAGNOSTIC_URL_USERINFO.sub(r"\1" + REDACTION_MARKER + "@", result)
+    result = _BEARER.sub(r"\1" + REDACTION_MARKER, result)
+    for pattern in (*_STANDALONE_CREDENTIALS, *_DIAGNOSTIC_PII_PATTERNS):
+        result = pattern.sub(REDACTION_MARKER, result)
+    return result
+
+
+def sanitize_string(text: str) -> str:
+    """Mask recognized credentials and PII while retaining diagnostic text.
+
+    Args:
+        text: Log text; other values retain the historical string fallback.
+
+    Returns:
+        Text with private values masked and other fields preserved.
+    """
+    if not isinstance(text, str):
+        return str(text)
+    return redact_user_paths(_sanitize_diagnostic_text(text))
 
 
 #: POSIX home roots whose next path segment is an operating-system account
@@ -370,28 +586,13 @@ def redact_user_paths(text: str) -> str:
 def content_fingerprint(
     value: object, *, chars: int = CONTENT_FINGERPRINT_CHARS
 ) -> str:
-    """Return a stable, plaintext-free handle for a value too sensitive to log.
+    """Return a stable correlation handle when a caller needs content identity.
 
-    A search query, a prompt, or a model response is user content, so a
-    diagnostic must not carry its words. But the thing a maintainer actually
-    reads such a diagnostic *for* is identity -- "is this the same query that
-    failed a minute ago?", "did every result come back with the same malformed
-    body?" -- and identity survives hashing. Truncating the value instead (the
-    ``value[:50]`` idiom this function replaces, TASK-21700) keeps the words
-    and loses the identity: two different long queries that share a prefix
-    print identically, so the one property the line was read for is the one
-    truncation destroys.
-
-    Scope of the guarantee, stated plainly so it is not over-read: this
-    removes plaintext from the line. It is **not** a secrecy mechanism against
-    an adversary who already holds the log -- an unsalted digest of a short,
-    guessable string can be recovered by trying candidates. It is not salted
-    per process on purpose: a per-run salt would break exactly the
-    across-restart correlation the fingerprint exists to provide, and the
-    values it covers here never reach a persistent sink in the first place
-    (``PersistentDiagnosticFilter`` admits only schema-validated metadata
-    records). The honest claim is "a maintainer reading this log cannot read
-    the user's words", not "this value is protected".
+    A fingerprint distinguishes different values that share a text prefix and
+    remains stable across process restarts. It does not replace diagnostic
+    text or credential/PII redaction. An unsalted digest of a short, guessable
+    value can be recovered by trying candidates, so this is not a secrecy
+    mechanism.
 
     Args:
         value: Any value; non-strings are rendered with ``str`` first.
@@ -412,27 +613,14 @@ def content_fingerprint(
 
 
 def redact_log_line(text: str, max_length: int = MAX_REDACTED_LINE_CHARS) -> str:
-    """Redact credentials and user identity from one formatted log line.
+    """Mask recognized credentials and PII in one formatted diagnostic line.
 
-    This is the sink-side redaction applied to every record entering the
-    in-app log collector (TASK-19555). It is deliberately narrower than
-    ADR-029's metadata-only admission filter, which is an all-or-nothing DROP
-    and would empty the Logs screen of the very content it exists to show.
-    The bar here is *what is never wanted*: secrets and the operating-system
-    account name have no debugging value, so removing them costs a maintainer
-    nothing.
-
-    Two honest limits, both disclosed to users in the Logs screen copy:
-
-    * It removes credentials in RECOGNISED formats -- labelled ``key=``-style
-      assignments, ``Bearer`` prefixes, URL userinfo, and the standalone
-      shapes in ``_STANDALONE_CREDENTIALS``. A bare opaque token in a format
-      none of those match survives. This is a denylist and denylists are never
-      complete; the claim is "recognised formats", not "all credentials".
-    * It does NOT remove free-form user content -- a note title, a search
-      query, a prompt, a tool argument -- because nothing at a sink can tell
-      which substring of a message was interpolated from user data. That
-      exposure is handled by bounding what the bulk share action exports.
+    Credential labels, Bearer tokens, URL credentials and private key blocks
+    are masked, as are recognizable email addresses, phone numbers, SSNs,
+    labelled personal fields and account names in home paths. Ordinary fields
+    such as model names, versions, phases and non-secret keys stay readable.
+    This recognizes explicit formats; it cannot identify every opaque secret
+    or infer personal information from arbitrary prose.
 
     Oversized lines are cut on a TOKEN boundary, and redaction then runs over
     everything that survives the cut (TASK-19555 Qodo round). The first
@@ -483,7 +671,7 @@ def redact_log_line(text: str, max_length: int = MAX_REDACTED_LINE_CHARS) -> str
         suffix = f"… [truncated, {original_length} chars]"
     # The suffix is generated text, so it is appended after redaction rather
     # than being fed through it.
-    return redact_user_paths(sanitize_string(text)) + suffix
+    return redact_user_paths(_sanitize_diagnostic_text(text)) + suffix
 
 
 def sanitize_dict(data: Dict[str, Any], deep: bool = True) -> Dict[str, Any]:
@@ -503,14 +691,16 @@ def sanitize_dict(data: Dict[str, Any], deep: bool = True) -> Dict[str, Any]:
     result = {}
     for key, value in data.items():
         # Check if key is sensitive
-        if _is_sensitive_log_key(key):
+        if _is_sensitive_diagnostic_key(key):
             result[key] = REDACTION_MARKER
         elif deep and isinstance(value, dict):
             result[key] = sanitize_dict(value, deep=True)
         elif deep and isinstance(value, list):
             result[key] = sanitize_list(value, deep=True)
         elif isinstance(value, str):
-            # Still sanitize string values for embedded secrets
+            # Preserve dictionary context for values containing ODBC fields.
+            if str(key).casefold().replace("-", "_") in {"dsn", "connection_string"}:
+                value = _CONNECTION_PRIVATE_FIELD.sub(r"\1" + REDACTION_MARKER, value)
             result[key] = sanitize_string(value)
         else:
             result[key] = value
