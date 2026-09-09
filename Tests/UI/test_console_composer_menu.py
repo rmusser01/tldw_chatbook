@@ -44,6 +44,7 @@ def test_menu_lists_the_requested_actions_in_order():
         ACTION_GENERATE_IMAGE,
         ACTION_GENERATE_CAPTION,
         ACTION_IMPERSONATE,
+        "buddy",
     ]
 
 

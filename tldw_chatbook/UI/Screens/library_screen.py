@@ -33076,6 +33076,7 @@ class LibraryScreen(BaseAppScreen):
         self.app.push_screen(
             WorkspaceCreateModal(
                 registry_service=registry_service,
+                persona_service=getattr(self.app_instance, "local_character_persona_service", None),
                 description="Local workspace created from Library.",
             ),
             _done,

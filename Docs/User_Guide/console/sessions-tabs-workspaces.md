@@ -168,6 +168,17 @@ History remain usable.
 
 ### Workspaces
 
+**Default Persona.** The shared New Workspace dialog lets you create a workspace
+Agent, choose a saved Persona, or select **None**. The Console's **Details →
+Default Persona…** control and **Settings → Workspaces** edit the default for
+future new conversations. Read and write memory requires explicit confirmation.
+Choosing None stays cleared after restart; automatic setup does not recreate it.
+
+New chats, temporary chats and the first chat opened in a workspace use its
+available default once. An explicit Persona or None choice wins. Existing,
+copied and moved conversations keep their assignment when the default changes.
+If a saved default is unavailable, Chatbook reports it and starts with None.
+
 | Control | What it does |
 |---|---|
 | "Switch" / Alt+W | Opens "Change Workspace" — "Switching changes Console context only; Library and Notes stay globally visible." Click a workspace to activate it; the active one is marked "(current)" and the built-in one is listed as "Default (everyday chats)" |

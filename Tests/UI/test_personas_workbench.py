@@ -103,7 +103,6 @@ from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
-    PersonaBuddyActionRequested,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
     PersonasInspectorPane,
@@ -15172,7 +15171,7 @@ async def test_floating_buddy_close_refreshes_active_personas_inspector(
         close = screen.query_one("#personas-buddy-close", Button)
         assert show.disabled is False
         assert close.disabled is True
-        assert close.tooltip == "Buddy is already closed."
+        assert close.tooltip == "Controls the current independent Buddy."
 
 
 async def test_stale_personas_screen_reconcile_skips_screen_local_buddy_hook(
@@ -15197,282 +15196,14 @@ async def test_stale_personas_screen_reconcile_skips_screen_local_buddy_hook(
         hook.assert_not_called()
 
 
-@pytest.mark.parametrize("compact", (False, True), ids=("normal", "compact"))
-async def test_real_80x24_workbench_scrolls_each_buddy_action_into_view_and_runs_it(
-    mock_app_instance,
-    stub_characters,
-    compact: bool,
-) -> None:
-    records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
-    controller = _configure_persona_buddy(
-        mock_app_instance,
-        records,
-        preferences=PersonaBuddyPreferences(
-            enabled=True,
-            open=True,
-            selection=PersonaBuddySelection("local", "p-1"),
-        ),
-    )
-    app = PersonasTestApp(mock_app_instance)
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        screen = await _mounted(pilot)
-        await screen._apply_mode("personas")
-        await screen._select_profile("p-1", "Archivist")
-        workbench = screen.query_one("#personas-workbench")
-        workbench.set_class(compact, "personas-workbench-compact")
-        for pane_id in (
-            "#personas-library-pane",
-            "#personas-work-area",
-            "#personas-inspector-pane",
-        ):
-            screen.query_one(pane_id).set_class(
-                compact, "personas-workbench-compact-pane"
-            )
-        await pilot.pause()
-
-        inspector = screen.query_one("#personas-inspector-pane")
-        expectations = (
-            ("#personas-buddy-close", "Close Buddy", True, False),
-            ("#personas-buddy-show", "Show Buddy", True, True),
-            ("#personas-buddy-disable", "Disable Buddy", False, True),
-            ("#personas-buddy-use", "Use for Buddy", True, True),
-        )
-        for button_id, label, enabled, opened in expectations:
-            button = screen.query_one(button_id, Button)
-            assert str(button.label) == label
-            assert button.disabled is False
-            button.focus(scroll_visible=True)
-            await pilot.pause(0.5)
-
-            assert pilot.app.focused is button
-            assert button.region.y >= max(0, inspector.content_region.y)
-            assert button.region.bottom <= min(24, inspector.content_region.bottom)
-
-            await pilot.press("enter")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            preferences = controller.current_preferences()
-            assert preferences.enabled is enabled
-            assert preferences.open is opened
 
 
-async def test_explicit_replacement_is_required(
-    mock_app_instance,
-    stub_characters,
-) -> None:
-    records = {
-        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False},
-        "p-2": {
-            **PROFILE,
-            "id": "p-2",
-            "name": "Navigator",
-            "version": 5,
-            "is_active": True,
-            "deleted": False,
-        },
-    }
-    controller = _configure_persona_buddy(
-        mock_app_instance,
-        records,
-        preferences=PersonaBuddyPreferences(
-            enabled=True,
-            selection=PersonaBuddySelection("local", "p-1"),
-        ),
-    )
-    app = PersonasTestApp(mock_app_instance)
-
-    async with app.run_test() as pilot:
-        screen = await _mounted(pilot)
-        await screen._apply_mode("personas")
-        await screen._select_profile("p-2", "Navigator")
-        await pilot.pause()
-        assert not screen.query_one("#personas-buddy-use", Button).disabled
-        for button_id in (
-            "#personas-buddy-show",
-            "#personas-buddy-close",
-            "#personas-buddy-disable",
-        ):
-            button = screen.query_one(button_id, Button)
-            assert button.disabled is True
-            assert button.tooltip == "Select the Persona currently used by Buddy"
-
-        await screen._select_profile("p-1", "Archivist")
-        assert screen.query_one("#personas-buddy-use", Button).disabled is False
-        assert screen.query_one("#personas-buddy-close", Button).disabled is False
-        assert screen.query_one("#personas-buddy-disable", Button).disabled is False
-        show = screen.query_one("#personas-buddy-show", Button)
-        assert show.disabled is True
-        assert show.tooltip == "Buddy is already open."
-
-        await screen._select_profile("p-2", "Navigator")
-
-        screen.post_message(
-            PersonaBuddyActionRequested(
-                action="show", source="local", persona_id="p-2", revision=5
-            )
-        )
-        await pilot.pause()
-        assert controller.snapshot().selection == PersonaBuddySelection("local", "p-1")
-        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
-
-        screen.post_message(
-            PersonaBuddyActionRequested(
-                action="use", source="local", persona_id="p-2", revision=5
-            )
-        )
-        await pilot.pause()
-
-        snapshot = controller.snapshot()
-        assert snapshot.selection == PersonaBuddySelection("local", "p-2")
-        assert snapshot.enabled is True
-        assert snapshot.open is True
-        mock_app_instance.reconcile_persona_buddy_view.assert_awaited_once()
 
 
-@pytest.mark.parametrize(
-    ("action", "expected_enabled", "expected_open"),
-    (
-        ("show", True, True),
-        ("close", True, False),
-        ("disable", False, True),
-    ),
-)
-async def test_buddy_visibility_actions_preserve_explicit_selection(
-    mock_app_instance,
-    stub_characters,
-    action: str,
-    expected_enabled: bool,
-    expected_open: bool,
-) -> None:
-    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
-    controller = _configure_persona_buddy(
-        mock_app_instance,
-        {"p-1": record},
-        preferences=PersonaBuddyPreferences(
-            enabled=action != "show",
-            open=action != "show",
-            selection=PersonaBuddySelection("local", "p-1"),
-        ),
-    )
-    app = PersonasTestApp(mock_app_instance)
-
-    async with app.run_test() as pilot:
-        screen = await _mounted(pilot)
-        await screen._apply_mode("personas")
-        await screen._select_profile("p-1", "Archivist")
-        screen.post_message(
-            PersonaBuddyActionRequested(
-                action=action, source="local", persona_id="p-1", revision=2
-            )
-        )
-        await pilot.pause()
-
-        preferences = controller.current_preferences()
-        assert preferences.selection == PersonaBuddySelection("local", "p-1")
-        assert preferences.enabled is expected_enabled
-        assert preferences.open is expected_open
 
 
-@pytest.mark.parametrize("failure", ("false", "raise", "cancel"))
-async def test_buddy_action_writer_failure_leaves_memory_and_durable_state_unchanged(
-    mock_app_instance,
-    stub_characters,
-    failure: str,
-) -> None:
-    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
-    initial = PersonaBuddyPreferences(
-        enabled=True,
-        open=True,
-        selection=PersonaBuddySelection("local", "p-1"),
-    )
-    controller = _configure_persona_buddy(
-        mock_app_instance,
-        {"p-1": record},
-        preferences=initial,
-    )
-    durable = initial
-
-    def writer(preferences: PersonaBuddyPreferences) -> bool:
-        nonlocal durable
-        if failure == "false":
-            return False
-        if failure == "raise":
-            raise RuntimeError("writer failed")
-        raise asyncio.CancelledError
-
-    controller._preference_writer = writer
-    app = PersonasTestApp(mock_app_instance)
-
-    async with app.run_test() as pilot:
-        screen = await _mounted(pilot)
-        await screen._apply_mode("personas")
-        await screen._select_profile("p-1", "Archivist")
-        screen.post_message(
-            PersonaBuddyActionRequested(
-                action="close", source="local", persona_id="p-1", revision=2
-            )
-        )
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert durable == initial
-        assert controller.current_preferences() == initial
-        assert screen.state.has_unsaved_changes is False
-        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
 
 
-async def test_buddy_action_persists_before_applying_memory_or_reconciling(
-    mock_app_instance,
-    stub_characters,
-) -> None:
-    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
-    initial = PersonaBuddyPreferences(
-        enabled=True,
-        open=True,
-        selection=PersonaBuddySelection("local", "p-1"),
-    )
-    controller = _configure_persona_buddy(
-        mock_app_instance,
-        {"p-1": record},
-        preferences=initial,
-    )
-    entered = threading.Event()
-    release = threading.Event()
-    durable = initial
-
-    def writer(preferences: PersonaBuddyPreferences) -> bool:
-        nonlocal durable
-        entered.set()
-        release.wait(timeout=5)
-        durable = preferences
-        return True
-
-    controller._preference_writer = writer
-    app = PersonasTestApp(mock_app_instance)
-
-    async with app.run_test() as pilot:
-        screen = await _mounted(pilot)
-        await screen._apply_mode("personas")
-        await screen._select_profile("p-1", "Archivist")
-        screen.post_message(
-            PersonaBuddyActionRequested(
-                action="close", source="local", persona_id="p-1", revision=2
-            )
-        )
-        assert await asyncio.to_thread(entered.wait, 2)
-
-        assert durable == initial
-        assert controller.current_preferences() == initial
-        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
-
-        release.set()
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert durable.open is False
-        assert controller.current_preferences() == durable
-        mock_app_instance.reconcile_persona_buddy_view.assert_awaited_once()
 
 
 async def test_disabled_deleted_missing_persona_hides_but_preserves_enabled_selection(
@@ -15573,85 +15304,8 @@ async def test_restore_reresolves_same_selection(
         ]
 
 
-async def test_buddy_action_fetch_aba_cannot_apply_or_reconcile(
-    mock_app_instance,
-    stub_characters,
-) -> None:
-    records = {
-        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False},
-        "p-2": {
-            **PROFILE,
-            "id": "p-2",
-            "name": "Navigator",
-            "version": 5,
-            "is_active": True,
-            "deleted": False,
-        },
-    }
-    controller = _configure_persona_buddy(
-        mock_app_instance,
-        records,
-        preferences=PersonaBuddyPreferences(
-            enabled=True,
-            selection=PersonaBuddySelection("local", "p-1"),
-        ),
-    )
-    app = PersonasTestApp(mock_app_instance)
-
-    async with app.run_test() as pilot:
-        screen = await _mounted(pilot)
-        await screen._apply_mode("personas")
-        await screen._select_profile("p-1", "Archivist")
-        started = asyncio.Event()
-        release = asyncio.Event()
-        calls = 0
-
-        async def fetch(persona_id: str, *, mode: str):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                started.set()
-                await release.wait()
-            return dict(records[persona_id])
-
-        mock_app_instance.character_persona_scope_service.get_persona_profile = fetch
-        screen.post_message(
-            PersonaBuddyActionRequested(
-                action="close", source="local", persona_id="p-1", revision=2
-            )
-        )
-        await wait_for_signal(started, what="Buddy action fetch start")
-        await screen._select_profile("p-2", "Navigator")
-        await screen._select_profile("p-1", "Archivist")
-        release.set()
-        await pilot.pause()
-
-        assert controller.current_preferences().open is True
-        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
 
 
-async def test_incomplete_profile_fetch_disables_cached_buddy_actions(
-    mock_app_instance,
-    stub_characters,
-) -> None:
-    records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
-    _configure_persona_buddy(mock_app_instance, records)
-    app = PersonasTestApp(mock_app_instance)
-
-    async with app.run_test() as pilot:
-        screen = await _mounted(pilot)
-        await screen._apply_mode("personas")
-        mock_app_instance.character_persona_scope_service.get_persona_profile = (
-            AsyncMock(side_effect=RuntimeError("service unavailable"))
-        )
-        await screen._select_profile("p-1", "Archivist")
-
-        for button in screen.query(".persona-buddy-action").results(Button):
-            assert button.disabled is True
-            assert (
-                button.tooltip
-                == "Persona details are unavailable. Refresh and try again."
-            )
 
 
 async def test_local_save_and_delete_refresh_only_the_same_buddy_selection(
@@ -15715,111 +15369,8 @@ async def test_server_profile_durable_changes_never_refresh_local_buddy(
         refresh.assert_not_awaited()
 
 
-async def test_stale_buddy_action_does_not_refresh_replaced_workbench_selection(
-    mock_app_instance,
-    stub_characters,
-) -> None:
-    records = {
-        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False},
-        "p-2": {
-            **PROFILE,
-            "id": "p-2",
-            "name": "Navigator",
-            "version": 5,
-            "is_active": True,
-            "deleted": False,
-        },
-    }
-    started = threading.Event()
-    release = threading.Event()
-
-    def blocked_writer(_preferences):
-        started.set()
-        release.wait(timeout=5)
-        return True
-
-    controller = _configure_persona_buddy(
-        mock_app_instance,
-        records,
-        preferences=PersonaBuddyPreferences(
-            enabled=True,
-            selection=PersonaBuddySelection("local", "p-1"),
-        ),
-    )
-    controller._preference_writer = blocked_writer
-    app = PersonasTestApp(mock_app_instance)
-
-    async with app.run_test() as pilot:
-        screen = await _mounted(pilot)
-        await screen._apply_mode("personas")
-        await screen._select_profile("p-1", "Archivist")
-        screen.post_message(
-            PersonaBuddyActionRequested(
-                action="close", source="local", persona_id="p-1", revision=2
-            )
-        )
-        while not started.is_set():
-            await asyncio.sleep(0)
-        assert controller.current_preferences().open is True
-        await screen._select_profile("p-2", "Navigator")
-        await screen._select_profile("p-1", "Archivist")
-        release.set()
-        await pilot.pause()
-
-        assert controller.current_preferences().open is True
-        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
 
 
-async def test_newer_buddy_action_wins_serialized_persistence_and_reconcile(
-    mock_app_instance,
-    stub_characters,
-) -> None:
-    records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
-    started = threading.Event()
-    release = threading.Event()
-    writes = []
-
-    def blocked_first_writer(preferences):
-        writes.append(preferences)
-        if len(writes) == 1:
-            started.set()
-            release.wait(timeout=5)
-        return True
-
-    controller = _configure_persona_buddy(
-        mock_app_instance,
-        records,
-        preferences=PersonaBuddyPreferences(
-            enabled=True,
-            selection=PersonaBuddySelection("local", "p-1"),
-        ),
-    )
-    controller._preference_writer = blocked_first_writer
-    app = PersonasTestApp(mock_app_instance)
-
-    async with app.run_test() as pilot:
-        screen = await _mounted(pilot)
-        await screen._apply_mode("personas")
-        await screen._select_profile("p-1", "Archivist")
-        screen.post_message(
-            PersonaBuddyActionRequested(
-                action="close", source="local", persona_id="p-1", revision=2
-            )
-        )
-        while not started.is_set():
-            await asyncio.sleep(0)
-        screen.post_message(
-            PersonaBuddyActionRequested(
-                action="show", source="local", persona_id="p-1", revision=2
-            )
-        )
-        await pilot.pause()
-        release.set()
-        await pilot.pause()
-
-        assert [preferences.open for preferences in writes] == [False, True]
-        assert controller.current_preferences().open is True
-        mock_app_instance.reconcile_persona_buddy_view.assert_awaited_once()
 
 
 async def test_persona_json_export_excludes_buddy_preferences(
@@ -15854,3 +15405,51 @@ async def test_persona_json_export_excludes_buddy_preferences(
     exported = json.loads(target.read_text(encoding="utf-8"))
     assert exported == record
     assert "persona_buddy" not in exported
+
+
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_independent_buddy_actions_use_shared_coordinator_without_persona_selection(
+    mock_app_instance, stub_characters, size
+):
+    from tldw_chatbook.Persona_Buddy.preferences import BuddySelection
+    from tldw_chatbook.UI.Navigation.buddy_management import BuddyManagementCoordinator
+
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        {},
+        preferences=PersonaBuddyPreferences(
+            enabled=True, open=True, selection=BuddySelection("independent")
+        ),
+    )
+    mock_app_instance.app_config = {}
+    mock_app_instance.console_runtime = None
+    app = PersonasTestApp(mock_app_instance)
+    app._buddy_management = BuddyManagementCoordinator(app, controller=controller)
+    async with app.run_test(size=size) as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        inspector = screen.query_one("#personas-inspector-pane")
+        screen._sync_inspector_buddy_status()
+        for selector, enabled, opened in (
+            ("#personas-buddy-close", True, False),
+            ("#personas-buddy-show", True, True),
+            ("#personas-buddy-disable", False, True),
+        ):
+            button = screen.query_one(selector, Button)
+            assert not button.disabled
+            button.focus(scroll_visible=True)
+            await pilot.pause(0.2)
+            await pilot.wait_for_scheduled_animations()
+            assert button.has_focus
+            assert button.region.bottom <= min(size[1], inspector.content_region.bottom)
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            screen._sync_inspector_buddy_status()
+            assert controller.current_preferences().selection == BuddySelection(
+                "independent"
+            )
+            assert controller.current_preferences().enabled is enabled
+            assert controller.current_preferences().open is opened
+        assert (
+            str(screen.query_one("#personas-buddy-use", Button).label) == "Manage Buddy"
+        )

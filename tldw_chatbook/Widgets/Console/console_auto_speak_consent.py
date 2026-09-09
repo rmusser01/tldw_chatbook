@@ -101,6 +101,8 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
         provider_label: str,
         sanitized_destination: str,
         charges_may_apply: bool,
+        *,
+        scope_label: str | None = None,
     ) -> None:
         super().__init__()
         self.provider_label = _safe_label(provider_label, fallback="TTS provider")
@@ -108,6 +110,7 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
             sanitized_destination
         )
         self.charges_may_apply = charges_may_apply is True
+        self.scope_label = _safe_label(scope_label, fallback="the selected Buddy scope") if scope_label is not None else None
 
     def __repr__(self) -> str:
         return (
@@ -137,7 +140,7 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
                     markup=False,
                 )
             yield Static(
-                "Only new replies in this conversation will be spoken.",
+                (f"Buddy will speak queued updates for {self.scope_label}." if self.scope_label is not None else "Only new replies in this conversation will be spoken."),
                 markup=False,
             )
             with Horizontal(id="console-auto-speak-consent-actions"):

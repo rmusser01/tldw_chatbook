@@ -7,6 +7,48 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
 
+def test_v8_explicit_none_migration_rolls_back_when_version_write_fails(tmp_path):
+    """A failed migration must leave the previous workspace schema and rows intact."""
+    path = tmp_path / "v7.sqlite"
+    db = WorkspaceDB(path)
+    registry = LocalWorkspaceRegistryService(db)
+    registry.create_workspace(workspace_id="prior", name="Prior")
+    with db.transaction() as connection:
+        connection.execute(
+            "ALTER TABLE workspace_records DROP COLUMN assistant_defaults_explicit_none"
+        )
+        connection.execute("DELETE FROM schema_version WHERE version = 8")
+        connection.execute("""CREATE TRIGGER refuse_v8 BEFORE INSERT ON schema_version
+            WHEN NEW.version = 8 BEGIN SELECT RAISE(ABORT, 'version failure'); END""")
+    db.close()
+    with pytest.raises(sqlite3.IntegrityError, match="version failure"):
+        WorkspaceDB(path)
+    with sqlite3.connect(path) as connection:
+        assert (
+            connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            == 7
+        )
+        assert "assistant_defaults_explicit_none" not in {
+            row[1] for row in connection.execute("PRAGMA table_info(workspace_records)")
+        }
+        assert (
+            connection.execute(
+                "SELECT name FROM workspace_records WHERE workspace_id='prior'"
+            ).fetchone()[0]
+            == "Prior"
+        )
+        connection.execute("DROP TRIGGER refuse_v8")
+    upgraded = WorkspaceDB(path)
+    assert upgraded.get_schema_version() == 8
+    assert (
+        LocalWorkspaceRegistryService(upgraded)
+        .get_workspace("prior")
+        .assistant_defaults_explicit_none
+        is False
+    )
+    upgraded.close()
+
+
 _WORKSPACE_V2_SCHEMA = """
 PRAGMA foreign_keys = ON;
 
@@ -346,7 +388,7 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
         versions = connection.execute(
             "SELECT version FROM schema_version ORDER BY version"
         ).fetchall()
-        assert [row[0] for row in versions] == [1, 2, 3, 4, 5, 6]
+        assert [row[0] for row in versions] == list(range(1, WorkspaceDB._CURRENT_SCHEMA_VERSION + 1))
         kept = connection.execute(
             "SELECT name, description FROM workspace_records WHERE workspace_id = ?",
             ("local-kept",),
@@ -425,7 +467,7 @@ def test_genuine_v3_upgrade_adds_payload_free_receipts_and_drops_unverifiable_le
 
     db = WorkspaceDB(path)
 
-    assert db.get_schema_version() == 6
+    assert db.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     with db.connection() as connection:
         columns = {
             row[1]
@@ -495,7 +537,7 @@ def test_early_branch_v4_upgrade_quarantines_only_unsafe_receipts(
 
     db = WorkspaceDB(path)
 
-    assert db.get_schema_version() == 6
+    assert db.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     migration_path = (
         Path(__file__).parents[2]
         / "tldw_chatbook/DB/migrations/workspaces_v4_to_v5_quick_note_receipts.sql"

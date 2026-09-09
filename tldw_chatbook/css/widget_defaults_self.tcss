@@ -3472,11 +3472,11 @@
         text-wrap: wrap;
     }
 
-    PersonasInspectorPane #personas-inspector-actions {
+    PersonasInspectorPane #personas-inspector-actions, PersonasInspectorPane #personas-independent-buddy-actions {
         height: auto;
     }
 
-    PersonasInspectorPane #personas-inspector-actions Button {
+    PersonasInspectorPane #personas-inspector-actions Button, PersonasInspectorPane #personas-independent-buddy-actions Button {
         width: 100%;
         min-width: 0;
         height: 1;

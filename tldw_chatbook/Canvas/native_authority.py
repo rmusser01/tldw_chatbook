@@ -174,6 +174,7 @@ class NativeConsoleCanvasAuthority:
         *,
         scope_resolver: Callable[[str], CanvasScope],
         canvas_controller: Any,
+        run_scope_resolver: Callable[[str], CanvasScope] | None = None,
         bridge_sink: Callable[[CanvasBridgeTarget, str], None] | None = None,
         bridge_prepare: Callable[[CanvasBridgeTarget], Callable[[str], None]] | None = None,
         auto_open: Callable[[str, CanvasRevisionInfo], None] | None = None,
@@ -181,6 +182,7 @@ class NativeConsoleCanvasAuthority:
         enabled_reader: Callable[[], bool] | None = None,
     ) -> None:
         self._scope_resolver = scope_resolver
+        self._run_scope_resolver = run_scope_resolver
         self._canvas_controller = canvas_controller
         self._compilation = canvas_controller.compilation
         self._bridge_sink = bridge_sink
@@ -225,7 +227,8 @@ class NativeConsoleCanvasAuthority:
         with self._lock:
             if self._disposed or self._enabled_reader() is not True:
                 raise RuntimeError("canvas_scope_unavailable")
-            current = self._scope_resolver(scope.session_id)
+            resolver = self._run_scope_resolver or self._scope_resolver
+            current = resolver(scope.session_id)
             if (
                 current.session_id != scope.session_id
                 or current.conversation_id != scope.conversation_id

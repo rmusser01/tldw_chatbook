@@ -51,6 +51,7 @@ from .change_review_consent import (
 
 
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
+_OMITTED_ASSISTANT_DEFAULTS = object()
 _QUICK_NOTE_LEASE_SECONDS = 30
 _QUICK_NOTE_ABANDON_SECONDS = 7 * 24 * 60 * 60
 _QUICK_NOTE_MAX_FAILURES = 3
@@ -491,11 +492,19 @@ class LocalWorkspaceRegistryService:
         description: str = "",
         authority: WorkspaceAuthority | str = WorkspaceAuthority.LOCAL_ONLY,
         sync_status: WorkspaceSyncStatus | str = WorkspaceSyncStatus.NOT_CONFIGURED,
-        assistant_defaults: WorkspaceAssistantDefaults | None = None,
+        assistant_defaults: WorkspaceAssistantDefaults | None | object = _OMITTED_ASSISTANT_DEFAULTS,
         confirm_read_write: bool = False,
         tool_profile_confirmation_token: str | None = None,
     ) -> WorkspaceRecord:
-        """Create a local workspace record."""
+        """Create a workspace; omitted defaults allow provisioning, explicit None opts out."""
+
+        explicit_none = assistant_defaults is None
+        if assistant_defaults is _OMITTED_ASSISTANT_DEFAULTS:
+            assistant_defaults = None
+        if assistant_defaults is not None and not isinstance(
+            assistant_defaults, WorkspaceAssistantDefaults
+        ):
+            raise WorkspaceRegistryServiceError("Invalid assistant defaults.")
 
         if (
             assistant_defaults is not None
@@ -514,6 +523,7 @@ class LocalWorkspaceRegistryService:
             authority=authority,
             sync_status=sync_status,
             assistant_defaults=assistant_defaults,
+            assistant_defaults_explicit_none=explicit_none,
             created_at=now,
             updated_at=now,
         )
@@ -538,10 +548,11 @@ class LocalWorkspaceRegistryService:
                             active,
                             archived,
                             assistant_defaults,
+                            assistant_defaults_explicit_none,
                             created_at,
                             updated_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             record.workspace_id,
@@ -552,6 +563,7 @@ class LocalWorkspaceRegistryService:
                             int(record.active),
                             int(record.archived),
                             _assistant_defaults_to_json(record.assistant_defaults),
+                            int(record.assistant_defaults_explicit_none),
                             record.created_at,
                             record.updated_at,
                         ),
@@ -582,7 +594,11 @@ class LocalWorkspaceRegistryService:
         ``assistant_defaults`` NULL with a warning (task-8).
         """
         hook = self._agent_provisioner
-        if hook is None or created.assistant_defaults is not None:
+        if (
+            hook is None
+            or created.assistant_defaults is not None
+            or created.assistant_defaults_explicit_none
+        ):
             return created
         if created.workspace_id == DEFAULT_WORKSPACE_ID:
             # The built-in Default workspace never carries an agent (the
@@ -802,6 +818,7 @@ class LocalWorkspaceRegistryService:
         *,
         confirm_read_write: bool = False,
         tool_profile_confirmation_token: str | None = None,
+        expected_record: WorkspaceRecord | None = None,
     ) -> WorkspaceRecord:
         """Persist a workspace's reference-backed default assistant.
 
@@ -814,6 +831,8 @@ class LocalWorkspaceRegistryService:
             defaults: The default-assistant record to store.
             confirm_read_write: Explicit confirmation required when
                 ``defaults.persona_memory_mode`` is ``read_write``.
+            expected_record: Optional captured identity/defaults checked inside
+                the write transaction; stale choices never replace newer defaults.
 
         Returns:
             The updated workspace record.
@@ -843,11 +862,15 @@ class LocalWorkspaceRegistryService:
                 intended_defaults=defaults,
                 confirmation_token=tool_profile_confirmation_token,
             ):
-                with self.db.transaction() as conn:
+                with self.db.transaction(immediate=True) as conn:
+                    self._check_assistant_defaults_record(
+                        conn, safe_workspace_id, expected_record
+                    )
                     conn.execute(
                         """
                         UPDATE workspace_records
-                        SET assistant_defaults = ?, updated_at = ?
+                        SET assistant_defaults = ?, assistant_defaults_explicit_none = 0,
+                            updated_at = ?
                         WHERE workspace_id = ?
                         """,
                         (payload, now, safe_workspace_id),
@@ -859,11 +882,15 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError("Assistant defaults update failed.")
         return updated
 
-    def clear_assistant_defaults(self, workspace_id: str) -> WorkspaceRecord:
+    def clear_assistant_defaults(
+        self, workspace_id: str, *, expected_record: WorkspaceRecord | None = None
+    ) -> WorkspaceRecord:
         """Remove a workspace's default assistant (falls back to none).
 
         Args:
             workspace_id: Workspace to update.
+            expected_record: Optional captured identity/defaults checked inside
+                the write transaction.
 
         Returns:
             The updated workspace record.
@@ -885,11 +912,15 @@ class LocalWorkspaceRegistryService:
                 intended_defaults=None,
                 confirmation_token=None,
             ):
-                with self.db.transaction() as conn:
+                with self.db.transaction(immediate=True) as conn:
+                    self._check_assistant_defaults_record(
+                        conn, safe_workspace_id, expected_record
+                    )
                     conn.execute(
                         """
                         UPDATE workspace_records
-                        SET assistant_defaults = NULL, updated_at = ?
+                        SET assistant_defaults = NULL, assistant_defaults_explicit_none = 1,
+                            updated_at = ?
                         WHERE workspace_id = ?
                         """,
                         (now, safe_workspace_id),
@@ -900,6 +931,33 @@ class LocalWorkspaceRegistryService:
         if updated is None:
             raise WorkspaceRegistryServiceError("Assistant defaults clear failed.")
         return updated
+
+    @staticmethod
+    def _check_assistant_defaults_record(
+        conn: sqlite3.Connection,
+        workspace_id: str,
+        expected: WorkspaceRecord | None,
+    ) -> None:
+        if expected is None:
+            return
+        row = conn.execute(
+            "SELECT * FROM workspace_records WHERE workspace_id = ?", (workspace_id,)
+        ).fetchone()
+        current = _workspace_from_row(row) if row is not None else None
+        fields = (
+            "workspace_id",
+            "created_at",
+            "authority",
+            "archived",
+            "assistant_defaults",
+            "assistant_defaults_explicit_none",
+        )
+        if current is None or any(
+            getattr(current, field) != getattr(expected, field) for field in fields
+        ):
+            raise WorkspaceRegistryServiceError(
+                "Workspace default changed. Reopen to review it."
+            )
 
     def _reject_duplicate_name(
         self, name: str, *, exclude_workspace_id: str | None = None
@@ -2991,6 +3049,7 @@ def _workspace_from_row(row: sqlite3.Row) -> WorkspaceRecord:
         active=bool(row["active"]),
         archived=bool(row["archived"]),
         assistant_defaults=_assistant_defaults_from_json(row["assistant_defaults"]),
+        assistant_defaults_explicit_none=bool(row["assistant_defaults_explicit_none"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

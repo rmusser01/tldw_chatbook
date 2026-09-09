@@ -638,6 +638,7 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_IMAGE,
     ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
+    ACTION_BUDDY,
     ACTION_IMPROVE_CURRENT_DRAFT,
     ACTION_PROMPTS,
     ACTION_SAVE_CHATBOOK,
@@ -5316,6 +5317,11 @@ class ChatScreen(BaseAppScreen):
             ),
             callback=self._apply_console_model_popover_result,
         )
+
+    def on_console_workspace_details_tray_default_persona_requested(self, event) -> None:
+        """Route the workspace details action to its explicit workspace owner."""
+        event.stop()
+        self._workspace._open_workspace_persona_default(event.workspace_id)
 
     def _apply_console_model_popover_result(
         self,
@@ -10583,6 +10589,11 @@ class ChatScreen(BaseAppScreen):
     def _handle_console_composer_menu_choice(self, action_id: str | None) -> None:
         """Route the chosen menu action (task-1680)."""
         if not action_id:
+            return
+        if action_id == ACTION_BUDDY:
+            from ..Navigation.buddy_management import open_buddy_management
+
+            open_buddy_management(self.app)
             return
         if action_id == ACTION_SAVE_CHAT:
             self._session._dispatch_promote_console_temporary_session()
@@ -22614,6 +22625,9 @@ class ChatScreen(BaseAppScreen):
           install is idempotent), and the previews cache -- all correct to
           leave running/installed across a suspend.
         """
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.on_console_view_visibility_changed(False)
         self._release_claimed_conversation_settings_return()
         # The debounced sidebar write is async and its read-modify-write of
         # ui_state.toml is unlocked, so consecutive suspends must SERIALIZE
@@ -22653,6 +22667,9 @@ class ChatScreen(BaseAppScreen):
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.on_console_view_visibility_changed(True)
         if self._pending_character_return_focus_id is not None:
             self.call_after_refresh(self._workspace.restore_character_navigation_focus)
         logger.debug("Chat screen resuming")

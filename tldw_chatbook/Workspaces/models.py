@@ -136,6 +136,7 @@ class WorkspaceRecord:
     active: bool = False
     archived: bool = False
     assistant_defaults: WorkspaceAssistantDefaults | None = None
+    assistant_defaults_explicit_none: bool = False
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 

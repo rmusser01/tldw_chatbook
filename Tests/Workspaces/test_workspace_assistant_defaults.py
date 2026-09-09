@@ -46,7 +46,7 @@ def test_v2_database_migrates_preserving_rows(tmp_path):
     conn.commit()
     conn.close()
     db = WorkspaceDB(legacy, client_id="client-1")
-    assert db.get_schema_version() == 7
+    assert db.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     with db.connection() as read_conn:
         cols = {
             row[1] for row in read_conn.execute("PRAGMA table_info(workspace_records)")

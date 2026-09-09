@@ -53,6 +53,18 @@ class PersonaBuddySelection:
 
 
 @dataclass(frozen=True, slots=True)
+class BuddySelection:
+    """One exact independent profile-local Buddy owner."""
+
+    buddy_id: str
+    source: Literal["buddy"] = field(default="buddy", init=False)
+
+    def __post_init__(self) -> None:
+        if not _valid_persona_id(self.buddy_id):
+            raise PersonaBuddyPreferenceError()
+
+
+@dataclass(frozen=True, slots=True)
 class PersonaBuddyGeometry:
     """Persisted floating-window geometry before viewport clamping.
 
@@ -78,7 +90,7 @@ class PersonaBuddyPreferences:
     """One immutable snapshot of Buddy UI and selection preferences."""
 
     enabled: bool = False
-    selection: PersonaBuddySelection | None = None
+    selection: PersonaBuddySelection | BuddySelection | None = None
     open: bool = True
     collapsed: bool = False
     geometry: PersonaBuddyGeometry = field(default_factory=PersonaBuddyGeometry)
@@ -86,9 +98,9 @@ class PersonaBuddyPreferences:
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
             raise PersonaBuddyPreferenceError()
-        if (
-            self.selection is not None
-            and type(self.selection) is not PersonaBuddySelection
+        if self.selection is not None and type(self.selection) not in (
+            PersonaBuddySelection,
+            BuddySelection,
         ):
             raise PersonaBuddyPreferenceError()
         if type(self.open) is not bool or type(self.collapsed) is not bool:
@@ -142,6 +154,8 @@ def parse_persona_buddy_preferences(
     selection = None
     if type(source) is str and source == "local" and _valid_persona_id(persona_id):
         selection = PersonaBuddySelection("local", persona_id)
+    elif source == "buddy" and _valid_persona_id(section.get("buddy_id")):
+        selection = BuddySelection(section["buddy_id"])
 
     default_geometry = defaults.geometry
     geometry = PersonaBuddyGeometry(
@@ -171,7 +185,14 @@ def serialize_persona_buddy_preferences(
         "enabled": preferences.enabled,
         "source": selection.source if selection is not None else "",
         "local_persona_id": (
-            selection.local_persona_id if selection is not None else ""
+            selection.local_persona_id
+            if type(selection) is PersonaBuddySelection
+            else ""
+        ),
+        **(
+            {"buddy_id": selection.buddy_id}
+            if type(selection) is BuddySelection
+            else {}
         ),
         "open": preferences.open,
         "collapsed": preferences.collapsed,

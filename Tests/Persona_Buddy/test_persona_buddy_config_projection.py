@@ -18,7 +18,6 @@ from tldw_chatbook.Persona_Buddy import (
     parse_persona_buddy_preferences,
 )
 
-
 _BUDDY_TOML = """\
 [persona_buddy]
 enabled = true
@@ -158,3 +157,19 @@ def test_projection_adds_only_the_buddy_top_level_table(
         "width": 31,
         "height": 14,
     }
+
+
+def test_real_toml_independent_selection_survives_restart(tmp_path, monkeypatch):
+    from tldw_chatbook.Persona_Buddy.preferences import BuddySelection
+
+    independent = _BUDDY_TOML.replace('source = "local"', 'source = "buddy"').replace(
+        'local_persona_id = "persona-uat"', 'buddy_id = "independent-one"'
+    )
+    with _scratch_config(tmp_path, monkeypatch, independent):
+        controller = PersonaBuddyController(preferences=_load_preferences())
+        assert controller.current_preferences().selection == BuddySelection(
+            "independent-one"
+        )
+        assert controller.current_preferences().geometry == PersonaBuddyGeometry(
+            7, 5, 31, 14
+        )

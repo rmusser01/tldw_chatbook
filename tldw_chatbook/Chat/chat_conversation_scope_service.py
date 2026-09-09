@@ -308,11 +308,28 @@ class ChatConversationScopeService:
                 service_kwargs["root_offset"] = service_kwargs.pop("offset")
             if "max_depth" in service_kwargs and "depth_cap" not in service_kwargs:
                 service_kwargs["depth_cap"] = service_kwargs.pop("max_depth")
-        return await self._maybe_await(
-            self._service_for_mode(normalized_mode).get_conversation_tree(
-                conversation_id, **service_kwargs
-            )
-        )
+        service = self._service_for_mode(normalized_mode)
+        reader = service.get_conversation_tree
+        if (
+            normalized_mode == "local"
+            and not inspect.iscoroutinefunction(reader)
+            and not self._is_memory_backed(service)
+        ):
+
+            def read_local_tree():
+                try:
+                    return reader(conversation_id, **service_kwargs)
+                finally:
+                    close = getattr(
+                        getattr(service, "db", None), "close_connection", None
+                    )
+                    if callable(close):
+                        close()
+
+            result = await asyncio.to_thread(read_local_tree)
+            self._enforce_policy(self._action_id("detail", normalized_mode))
+            return await self._maybe_await(result)
+        return await self._maybe_await(reader(conversation_id, **service_kwargs))
 
     async def get_messages_with_context(
         self,
