@@ -1,10 +1,11 @@
 """Opening a stored Library note must finish (critique #8, task-32050).
 
-Both tests drive the production wiring -- a real ``CharactersRAGDB``, a real
-``NotesInteropService``/``NotesScopeService`` and therefore the real
+The first two tests drive the production wiring -- a real ``CharactersRAGDB``,
+a real ``NotesInteropService``/``NotesScopeService`` and therefore the real
 ``_LibraryDatabaseNoteSessionPort`` -- because the defect lived in the
 screen's supersession guards, not in any service: a fake scope service
-returns detail just as fast and hides it.
+returns detail just as fast and hides it. The last two isolate the load
+deadline itself against a stubbed session (see the comment above them).
 """
 
 from __future__ import annotations
@@ -24,10 +25,20 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_NOTES,
+)
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.UI.Library_Modules.screen_constants import (
+    LIBRARY_NOTE_LOAD_TIMEOUT_COPY,
+)
+from tldw_chatbook.UI.Library_Modules.screen_support_types import (
+    LibraryEntryReconcileResult,
+)
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 
 NOTE_TITLE = "Reading list"
 NOTE_BODY = "- Attention Is All You Need\n"
@@ -51,6 +62,16 @@ def _real_notes_app(tmp_path, *, title: str = NOTE_TITLE, body: str = NOTE_BODY)
         folder_repository=repository,
     )
     return app, note_id
+
+
+@pytest.fixture
+def real_notes_app(tmp_path):
+    """Own the real database handle so every run closes it deterministically."""
+    app, note_id = _real_notes_app(tmp_path)
+    try:
+        yield app, note_id
+    finally:
+        app.chachanotes_db.close_connection()
 
 
 def _note_rows(screen) -> dict[str, object]:
@@ -92,8 +113,8 @@ async def _click_note_row(pilot, screen, note_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_existing_note_opens_from_the_list_through_the_real_port(tmp_path):
-    app, note_id = _real_notes_app(tmp_path)
+async def test_existing_note_opens_from_the_list_through_the_real_port(real_notes_app):
+    app, note_id = real_notes_app
     host = LibraryHarness(app)
 
     async with host.run_test(size=(170, 48)) as pilot:
@@ -116,9 +137,9 @@ async def test_existing_note_opens_from_the_list_through_the_real_port(tmp_path)
 
 @pytest.mark.asyncio
 async def test_a_stuck_note_load_fails_with_retry_and_the_next_note_still_opens(
-    tmp_path, monkeypatch
+    real_notes_app, monkeypatch
 ):
-    app, _note_id = _real_notes_app(tmp_path)
+    app, _note_id = real_notes_app
     second_body = "- Second note body\n"
     second_id = app.chachanotes_db.add_note("Second note", second_body)
     assert second_id is not None
@@ -165,3 +186,89 @@ async def test_a_stuck_note_load_fails_with_retry_and_the_next_note_still_opens(
                 break
         else:
             pytest.fail("a later note did not open after a timed-out load")
+
+
+# --- Focused cover for the deadline branch itself (Qodo review, PR #2519) ----
+#
+# The two tests above drive the real port and real database end to end, which
+# is what pinned the supersession defect. These two isolate the deadline
+# branch: the session is stubbed and the deadline shortened, so the failed
+# state, its retryable copy, and the ownership guard are each provable
+# without the database or the note list in the way.
+
+
+async def _open_seeded_note_editor(host, pilot):
+    """Open ``n-1`` from the seeded (non-database) Notes fixtures."""
+    screen = await _open_notes_list(host, pilot)
+    await _click_note_row(pilot, screen, "n-1")
+    for _ in range(200):
+        await pilot.pause(0.02)
+        if (
+            screen._notes_state.selected_note_id == "n-1"
+            and screen._notes_state.view == "editor"
+            and screen._notes_state.load_state == "loaded"
+        ):
+            return screen
+    raise AssertionError(
+        "the seeded note never opened; load state is "
+        f"{screen._notes_state.load_state!r}"
+    )
+
+
+def _stall_note_session(monkeypatch, screen, *, deadline: float = 0.05) -> None:
+    """Hang the next session open, with a deadline short enough to test."""
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_NOTE_LOAD_DEADLINE_SECONDS", deadline
+    )
+
+    async def never_opens(note_id: str):
+        await asyncio.sleep(3600)
+        raise AssertionError("the stalled session should never open")
+
+    monkeypatch.setattr(screen._library_note_session, "open_session", never_opens)
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_load_fails_the_note_the_user_is_still_on(monkeypatch):
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open_seeded_note_editor(host, pilot)
+        _stall_note_session(monkeypatch, screen)
+
+        await screen._refresh_library_note_detail("n-1")
+
+        assert screen._notes_state.load_state == "failed"
+        assert screen._notes_state.load_message == LIBRARY_NOTE_LOAD_TIMEOUT_COPY
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_load_leaves_the_destination_the_user_moved_to(monkeypatch):
+    """A deadline that expires after the user routed away owns nothing.
+
+    The identity guard alone does not catch this: moving the Library rail to
+    Media leaves the note id, the editor view and the database source intact,
+    so only the captured entry route key separates "still mine" from "the
+    user is somewhere else now".
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open_seeded_note_editor(host, pilot)
+        settled_state = screen._notes_state.load_state
+        _stall_note_session(monkeypatch, screen)
+
+        load = asyncio.create_task(
+            screen._refresh_library_note_detail("n-1", entry_origin=True)
+        )
+        await pilot.pause()
+        # The user routes away while the load is still stuck on its deadline.
+        screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+
+        assert await load is LibraryEntryReconcileResult.SUPERSEDED
+        assert screen._notes_state.load_state == settled_state
+        assert screen._notes_state.load_message != LIBRARY_NOTE_LOAD_TIMEOUT_COPY

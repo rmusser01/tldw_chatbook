@@ -16904,11 +16904,19 @@ class LibraryScreen(BaseAppScreen):
         """
         entry_route_key = self._library_entry_route_key() if entry_origin else None
 
-        if (
-            note_id != self._notes_state.selected_note_id
-            or self._notes_state.view != "editor"
-            or self._notes_state.source != LIBRARY_NOTES_SOURCE_DATABASE
-        ):
+        def load_no_longer_owns_the_view() -> bool:
+            """Whether this load still owns the note the user is looking at."""
+            return (
+                note_id != self._notes_state.selected_note_id
+                or self._notes_state.view != "editor"
+                or self._notes_state.source != LIBRARY_NOTES_SOURCE_DATABASE
+                or (
+                    entry_route_key is not None
+                    and entry_route_key != self._library_entry_route_key()
+                )
+            )
+
+        if load_no_longer_owns_the_view():
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         try:
             outcome = await asyncio.wait_for(
@@ -16921,6 +16929,15 @@ class LibraryScreen(BaseAppScreen):
             # existing failed state so Retry is reachable. ``wait_for``
             # cancels the coordinator call, and ``open_session`` only catches
             # ``Exception``, so no cancelled load can still start a session.
+            # The deadline expires three seconds after the click, so the same
+            # ownership check the success path makes has to run here too
+            # (PR #2519 review): otherwise a load abandoned by a user who
+            # routed elsewhere projects a Notes canvas over their new
+            # destination.
+            if load_no_longer_owns_the_view():
+                return (
+                    LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
+                )
             self._notes_state.load_state = "failed"
             self._notes_state.load_message = LIBRARY_NOTE_LOAD_TIMEOUT_COPY
             return await self._project_library_note_entry_result(
@@ -16928,15 +16945,7 @@ class LibraryScreen(BaseAppScreen):
             )
         if outcome.kind is NoteLoadOutcomeKind.STALE:
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
-        if (
-            note_id != self._notes_state.selected_note_id
-            or self._notes_state.view != "editor"
-            or self._notes_state.source != LIBRARY_NOTES_SOURCE_DATABASE
-            or (
-                entry_route_key is not None
-                and entry_route_key != self._library_entry_route_key()
-            )
-        ):
+        if load_no_longer_owns_the_view():
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         if outcome.kind is NoteLoadOutcomeKind.MISSING:
             logger.info("Library note is no longer available; returning to list.")
