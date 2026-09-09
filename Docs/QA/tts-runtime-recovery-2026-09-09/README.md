@@ -110,32 +110,32 @@ afterward. Formatting passes and the two existing files add no Ruff findings.
 The regression deliberately observes Textual's private lifecycle boundary;
 production uses its public `batch_update()` API.
 
-The latest rebase targets dev
-`c4a7b1911f14181faa471eb1ea209cfdeed98226`. All measured TTS source hashes still
-match the final playback wheel below; that wheel predates the unrelated Library
-changes from dev and the MCP teardown fix. [CI follow-up](ci-followup.json)
+The pre-Buddy integration targeted dev
+`c4a7b1911f14181faa471eb1ea209cfdeed98226`. At that revision, all measured TTS
+source hashes matched the review playback wheel below; that wheel predates the
+Library changes from dev and the MCP teardown fix. [CI follow-up](ci-followup.json)
 records the failing job, deterministic reproduction and targeted repair checks.
 The combined diagnostic inventory reproduces exactly, retaining dev's one new
 redacted Library count diagnostic and all reviewed Kokoro changes.
 
-The final review regression run passed 340 tests with one optional ONNX skip.
+The pre-Buddy review regression run passed 340 tests with one optional ONNX skip.
 The diagnostic guard reproduced its inventory exactly. New/replaced-file Ruff
 and all five review-modified Python files' formatting pass; the three existing
 files retain their baseline Ruff findings with none added.
 
-The final wheel was installed into the same isolated Python 3.12/3.13
+The review wheel was installed into the same isolated Python 3.12/3.13
 environments and replayed after all review fixes. All nine complete clips passed
 independent content checks: MPS WAV (`af_heart`), CPU MP3 (`bf_emma`, speed 1.25),
 and Python 3.13 ONNX WAV, each through Speech Lab plus two Speak replies. The
 installed Python 3.13 dependency-guidance checks also passed. Every measured
-production hash matches the reviewed source, cleanup joined, and the user's
-configuration hash is unchanged. These are additional to the 15 initial clips.
+production hash matched the source qualified by that run, cleanup joined, and the
+user's configuration hash was unchanged. These are additional to the 15 initial clips.
 The same transcription qualifications above apply, including the British
 `The second reply` and `completes` variants.
 
-Final wheel SHA-256:
+Pre-Buddy review wheel SHA-256:
 `d0edef43e3b9690fe036fa2a9f9291c36e7f7a8f7b705e62084ff14e8fc3e430`.
-[Review validation](review-validation.json) preserves the final source hashes,
+[Review validation](review-validation.json) preserves that revision's source hashes,
 runtime/device observations, audio hashes and complete raw transcripts.
 
 The targeted Kokoro, registry/bridge, admission, diagnostics and architecture

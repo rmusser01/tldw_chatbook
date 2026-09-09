@@ -109,5 +109,6 @@
     "Backlog task IDs are unique",
     "ChaChaNotes table allowlist covers every migrated table",
     "Every database index has a query-plan decision on record"
-  ]
+  ],
+  "scope": "Historical MCP and Library rebase qualification through dev c4a7b1911f14181faa471eb1ea209cfdeed98226, before Buddy dev 733f7a628c064005d27bed8bbcf53aae01b5dd45. Source-match statements below refer only to that earlier integration."
 }

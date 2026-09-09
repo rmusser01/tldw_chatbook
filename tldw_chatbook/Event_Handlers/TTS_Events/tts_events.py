@@ -1663,6 +1663,9 @@ class TTSEventHandler:
         owner.cancel_as_success = superseded
         if not task.cancel():
             return False
+        # The replacing admission may be cancelled while joining cleanup, so
+        # acknowledge this exact owner when its task finishes regardless.
+        task.add_done_callback(lambda _done: owner.lifecycle.report_terminal("stopped"))
         await asyncio.gather(task, return_exceptions=True)
         if self._console_generation_owner is owner:
             self._console_generation_owner = None

@@ -38,7 +38,6 @@
       }
     }
   },
-  "source_hashes_match_worktree": true,
   "user_config_unchanged": true,
   "runs": [
     {
@@ -575,5 +574,8 @@
       ]
     ],
     "cleanup_joined": true
-  }
+  },
+  "source_hashes_match_qualified_revision": true,
+  "qualified_source_revision": "637ba7c2da4a2176efcb7d2c3ff99d2f8690485d",
+  "scope": "Historical pre-Buddy playback qualification. Measured TTS sources match the stated qualified revision; later Buddy integration changes the shared handler and requires separate qualification."
 }

@@ -9,6 +9,23 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Cancellation waiters cannot own terminal acknowledgements
+
+**TASK-32115, Buddy/TTS integration, 2026-09-09.** Replacing a Buddy utterance
+before its first audio cancelled synthesis successfully but never settled its
+playback lifecycle, blocking the serial queue. Reporting the terminal state after
+the join fixed ordinary replacement; review then reproduced the same hang by
+cancelling the replacement while it awaited old provider cleanup. An exact-task
+done callback, registered only after cancellation was accepted, settled the old
+owner even when the join caller was cancelled. The real-handler queue regression
+covers both current and stale validators and holds cleanup to reject an early
+acknowledgement.
+
+**What to do.** Tie terminal acknowledgement to the retained operation's completion
+when its waiter can be cancelled. Check waiter cancellation during cleanup as well
+as ordinary supersession, preserve caller cancellation, and prove late old-owner
+cleanup leaves the replacement active.
+
 ## Retained screen identity does not prove queued work survives navigation
 
 **TASK-32078, 2026-09-08.** TASK-31520 reuse checks passed, but an actual
