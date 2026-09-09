@@ -3347,6 +3347,13 @@ class LibraryScreen(BaseAppScreen):
             push_library_note_import_picker=(
                 lambda *a, **k: self._push_library_note_import_picker(*a, **k)
             ),
+            reconcile_library_notes_tree_mutation=(
+                # task-32124: an unbound call, like every other
+                # `LibraryScreen.<x>(self, ...)` target in this cluster.
+                lambda *a, **k: LibraryScreen._reconcile_library_notes_tree_mutation(
+                    self, *a, **k
+                )
+            ),
             refresh_library_note_detail=(
                 lambda *a, **k: self._refresh_library_note_detail(*a, **k)
             ),
