@@ -35,6 +35,10 @@ MEDIA_READER_LAYOUT_PROFILE = AdaptiveReaderLayoutProfile(
     # task-31633: Media is the one destination whose Items column shares the
     # Reader's surplus width instead of pinning at the 40-cell target.
     list_grows=True,
+    # task-32065: with no item open, a width too narrow for both panes keeps
+    # the LIST rather than an empty Reader (60x24 showed neither a list nor a
+    # way back to the rail).
+    list_first_when_empty=True,
     # task-31633 AC#2: one cell per grip, not five. Ten dead columns flanked
     # the Items pane, so the widest terminal painted the narrowest list.
     grip_width=1,
