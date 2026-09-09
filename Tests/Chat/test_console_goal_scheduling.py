@@ -209,8 +209,9 @@ async def test_adapter_proof_survives_native_route_and_retry_is_bounded(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("controller_failure", [False, True])
 async def test_runtime_disposal_stops_retry_before_draining_controller(
-    stores, monkeypatch
+    stores, monkeypatch, controller_failure
 ):
     from types import SimpleNamespace
 
@@ -228,7 +229,22 @@ async def test_runtime_disposal_stops_retry_before_draining_controller(
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime._chat_controller = controller
     runtime._provider_gateway = gateway
+    if controller_failure:
+
+        async def fail_shutdown():
+            raise RuntimeError("injected controller teardown failure")
+
+        monkeypatch.setattr(controller, "shutdown", fail_shutdown)
+    gateway_close = gateway.aclose
+    close_order = []
+
+    async def close_after_goal():
+        close_order.append(task.done())
+        await gateway_close()
+
+    monkeypatch.setattr(gateway, "aclose", close_after_goal)
     await runtime.dispose()
+    assert close_order == [True], "goal drain must precede gateway close even on error"
     assert task.done(), "runtime disposal must drain the goal scheduler"
     assert co.service.get(goal.id).status == "stopped"
     assert not calls

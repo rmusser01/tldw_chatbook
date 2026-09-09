@@ -1038,12 +1038,17 @@ class ConsoleRuntime:
                 goals.close_admission()
             try:
                 await controller.shutdown()
-                if goals is not None:
-                    await goals.shutdown()
             except Exception:  # noqa: BLE001 - quit must not die on teardown
                 logger.opt(exception=True).warning(
                     "Console runtime: controller shutdown failed at dispose."
                 )
+            if goals is not None:
+                try:
+                    await goals.shutdown()
+                except Exception:  # noqa: BLE001 - independently drain each owner
+                    logger.opt(exception=True).warning(
+                        "Console runtime: goal shutdown failed at dispose."
+                    )
         close = getattr(gateway, "aclose", None)
         if callable(close):
             try:
