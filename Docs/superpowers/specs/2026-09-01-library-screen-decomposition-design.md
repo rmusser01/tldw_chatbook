@@ -563,3 +563,161 @@ Wall-clock stays in this record as context, not as a gate: **block 124 → 30 ms
 change will sit above that floor because a real switch also re-applies the rail
 selection, header, footer context and focus; the floor is what the mechanism
 costs, not a prediction of the landed number.
+
+---
+
+## Implementation addendum — phase C task 2, as landed (2026-09-08)
+
+**Status:** landed. Commits `7b4a7e289` (the mechanism) and `51533602c`
+(the TASK-32089 hazards) on `feat/library-phase-c-resident-canvas`.
+Acceptance pin `Tests/UI/test_library_phase_c_switch_residency.py` is green
+and its strict-xfail marker is gone. This section records what the decision
+above could not: **how the reader-shell id split was resolved**, what the
+landed switch actually costs, and the two places the record's own predictions
+turned out wrong.
+
+### 1. The id strategy — a route-neutral id plus marker classes
+
+The decision above named the shell split as "the largest single piece of Task
+2's work". Its resolution:
+
+* **One `LibraryBrowseReaderShell`**, `Widgets/Library/library_browse_reader_
+  shell.py`, evolved from `library_media_reader_shell.py` (which is gone; the
+  Media shell was a subclass of the shared one, and the shared one is now what
+  both browse routes mount). Its id is **`#library-browse-reader-shell`** —
+  route-neutral, because it is the same widget on both routes and naming it
+  after either would be a lie a future reader pays for.
+* **Route meaning moves to a marker class.** The shell wears
+  `.library-media-route` or `.library-notes-route`, and `apply_route` is their
+  only writer, called from BOTH the compose path and the resident switch path.
+  This is what preserved the ~35 production sites the decision above worried
+  about: a site that read "is `#library-media-reader-shell` mounted?" as "is
+  the media route active?" becomes `.library-media-route` and keeps its exact
+  meaning. Shell PRESENCE is now permanently true; the marker is not.
+  * *Why a class and not 35 `_library_selected_row_id` checks.* A marker
+    projected from state at one seam IS the state check, written once. The
+    hazard the record names is a proxy that goes permanently true, not a proxy
+    as such; a marker with a single writer cannot. It also kept the census
+    mechanical (`#` -> `.`) across ~99 test references, which is the
+    difference between a reviewable diff and an unreviewable one.
+  * The two **ancestor-walk equality sites** the record warned would score
+    zero on a selector grep (`widget.id == "library-media-canvas"`,
+    `library_screen.py`) needed no change at all: the *canvas* id is
+    unchanged. It is the SHELL id that moved. The record's census warning was
+    right about the shape and wrong about which name it applied to.
+* **Grips are shared, so their ids are neutral too**:
+  `#library-browse-library-grip` / `#library-browse-items-grip` (was
+  `#library-media-*` / `#library-notes-*`). The per-route parts of a grip
+  travel with `apply_route`: the `library-media-pane-grip` visual class, and
+  the items pane's user-visible label ("Notes" on one route, "Items" on the
+  other — it is the grip's tooltip and accessible name).
+* **CSS implications: none.** Neither retired id appeared in any stylesheet —
+  every one of the 35 sites was a Python query selector, and
+  `test_library_adaptive_reader_shell.py` already asserted the one CSS rule
+  that used to exist had been removed. Widths and pane geometry are set
+  imperatively by `sync_layout`, not by id selectors.
+* **Who owns the rail: the shell, unchanged.** The rail stays a CHILD of the
+  shell (`#library-shell-grid > LibraryBrowseReaderShell > LibraryRail`) —
+  hoisting it to be a sibling was considered and rejected, because the shell's
+  three-pane resolver treats the rail as its `library` pane and four other
+  routes share that widget. Residency of the SHELL is what makes the rail's 52
+  mounts disappear, which is exactly the leverage the record identified.
+
+### 2. What is resident, and what is not
+
+* **Resident (mechanism C, mount-once-then-toggle):** the Media and Notes list
+  canvases, both children of `#library-canvas`, toggled by `display`.
+  Residency is **stateless** — "resident" means "already a child of the canvas
+  host", read off the DOM at each switch. That was not tidiness: the
+  ordinary-route projection (`_project_library_canvas_child`) removes every
+  child of that host, and a stored widget reference would have been a stale
+  pointer plus a `DuplicateIds` mount. Read from the DOM, that same code
+  evicts residency correctly for free and the next switch pays one lazy
+  re-mount (17 mounts, the record's measured first-visit cost).
+* **Not resident: the work pane.** It is 2–3 widgets, every route entry
+  already rebuilt it, and swapping it keeps the shell's child list identical
+  in shape to the pre-phase-C DOM. Residency is spent where it was measured to
+  pay: the 29-widget Media canvas subtree.
+* **The one structural delta is the Notes source strip**, and
+  `compose_content` and the swap now build it through one shared builder, so
+  the strip a targeted switch mounts is the strip a recompose would have
+  composed.
+
+### 3. Measured, landed — and the two predictions that were wrong
+
+Acceptance pin, before -> after (same test, same fixture):
+
+| switch | recomposes | mounts | unmounts |
+|---|---|---|---|
+| notes (switch) | 1 -> **0** | 114 -> **26** | 120 -> **2** |
+| media (switch-back) | 1 -> **0** | 179 -> **81** | 175 -> **86** |
+
+**Prediction 1, wrong: "the acceptance pin does not depend on the sync
+storm".** It does, and the ceiling had to be re-derived from 25 to 90/95 under
+the ceiling-provenance clause above. A real switch cannot reach the spike's
+zero-mount floor, because the canvas it switches TO has been off-route since
+the last visit — and, under the route-ownership guard this task added,
+deliberately un-synced while it was there — so switching back MUST repaint it.
+That repaint is `sync_state` -> `refresh(recompose=True)`, a rebuild of the
+canvas's own 28 children, and it happens twice per media switch: once in the
+synchronous group (the swap's sync, the browse request's immediate sync, the
+facets request's immediate sync — one frame, so they coalesce) and once when
+the browse worker's result lands a frame later. The second is not redundant:
+it paints results the first did not have. Six interleaved round trips in one
+process gave identical counts every iteration.
+
+**Prediction 2, half wrong: the wall clock.** The record said the landed
+number would sit above the mechanism's 30 ms floor. It sits *at the old
+number*. Paired probe (`Helper_Scripts/library_switch_teardown_probe.py`),
+ONE scratch worktree at a fixed path with one venv, arms selected by
+`git switch --detach` between runs so both are measured from the same
+checkout location; order-swapped (base-first, mine-first, base-first), n = 3
+runs per arm, medians:
+
+| interaction | block before | block after | cpu before | cpu after | mounts | recompose |
+|---|---|---|---|---|---|---|
+| media (switch-back) | 98 ms | **98 ms** | 216 ms | **150 ms** | 175–179 -> **77–81** | 1 -> **0** |
+| notes (switch) | 142 ms | **147 ms** | 165 ms | **133 ms** | 114 -> **26** | 1 -> **0** |
+
+CPU falls 19–31% and mounts fall 55–77%; the longest main-thread BLOCK does
+not move (the 142 -> 147 ms on notes is inside this instrument's run-to-run
+spread, which was 128–149 ms on the base arm alone). The reason is
+in the bucket table and is not ambiguous: after residency, CSS restyle is
+**88 ms of the media switch's 154 ms (58%), across 423 `Stylesheet.apply`
+calls** — and every one of those calls is triggered by mounting one of the 81
+widgets the two canvas repaints produce. The freeze is now made of exactly one
+thing.
+
+**So the honest summary of this task is: the structural cause is gone (no
+whole-screen recompose, no rail/nav/footer/chrome rebuild, mounts more than
+halved), and the freeze is not yet fixed.** What remains is the sync storm,
+which this task did not touch, and which now has a measurement pointing
+straight at it. That is the next motivated change, and the acceptance pin's
+mount ceilings are a ratchet: lower them when it lands.
+
+### 4. Hazard rulings, as landed
+
+* **Route-ownership guard: landed as specified**, scoped to the two resident
+  kinds so every other canvas kind keeps its pre-phase-C behaviour exactly. It
+  reads `_library_selected_row_id` through whichever receiver the dispatcher
+  was given, per this record's seven-controller derivation.
+* **Event gating: landed at the canvas.** Textual's `Button.press()` consults
+  the button's own `disabled`/`display` and nothing above it, so the gate has
+  to be a handler, not a style. It sits on the canvas that owns the residency
+  state rather than on each of the screen's row handlers, and it covers every
+  button in the subtree rather than only rows.
+* **Narrowing the blanket `except`: NOT landed, deliberately.** It was
+  implemented and reverted. `test_library_canvas_sync_defects.py::
+  test_strict_failure_retry_retains_original_semantic_focus` forces a
+  `RuntimeError` out of `canvas.sync_state` and REQUIRES that swallow: the
+  dispatcher must recompose and let the reconcile RETRY the sync (`assert
+  attempts == 2`) with the original focus capture intact. Task 1 cleared a
+  different neighbour of this conflict (`test_tier1_toggle_falls_back_to_
+  recompose_on_query_one_failure`, which pins `_apply_library_row_toggle`'s
+  except). Narrowing needs its own task that decides what that retry path
+  should do with a non-DOM failure; the residency mechanism does not require
+  it. What DID land from that round is the traceback — the handler used to
+  discard the exception entirely.
+* **TASK-31521 composition: confirmed by test**, not only by the spike.
+  Suspend and resume leave the resident set and which member of it is showing
+  untouched.

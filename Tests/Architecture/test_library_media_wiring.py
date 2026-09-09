@@ -338,7 +338,7 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_request_library_media_page",
     "_request_library_media_sort",
     "_request_library_media_trash_page",
-    "_resize_library_browse_reader_shell",
+    "_resize_library_media_reader_shell",
     "_resolve_library_media_trash_focus_target",
     "_restore_library_media_focus",
     "_restore_library_media_scope",

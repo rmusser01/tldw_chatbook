@@ -795,10 +795,6 @@ from ..Library_Modules.canvas_sync import (
     _apply_library_row_toggle,
     _sync_library_canvas,
 )
-from ..Library_Modules.library_browse_route_swap import (
-    build_library_notes_source_strip,
-    swap_library_browse_route,
-)
 from ..Library_Modules.screen_helpers import (
     _library_screen_is_current,
     library_note_persisted_title,
@@ -12809,6 +12805,10 @@ class LibraryScreen(BaseAppScreen):
             # the strip a targeted switch MOUNTS is the strip a recompose
             # would have composed -- it is the one structural delta between
             # the Media and Notes routes.
+            from ..Library_Modules.library_browse_route_swap import (  # noqa: PLC0415 -- lazy: keeps this module out of the pre-import payload the boot ratchet counts (Tests/Performance/test_screen_preimport_payload_budget.py); it is only needed once a Library route is actually rendered
+                build_library_notes_source_strip,
+            )
+
             yield build_library_notes_source_strip(self, shell.canvas_kind)
         shell_grid = Horizontal(
             id="library-shell-grid", classes="ds-panel destination-workbench"
@@ -19375,6 +19375,10 @@ class LibraryScreen(BaseAppScreen):
             True when the targeted update completed; False when the caller
             should use the whole-screen fallback.
         """
+        from ..Library_Modules.library_browse_route_swap import (  # noqa: PLC0415 -- lazy, same reason as the source-strip import in `compose_content`
+            swap_library_browse_route,
+        )
+
         try:
             return await swap_library_browse_route(self, shell)
         except Exception:
