@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from textual.app import ComposeResult
@@ -15,6 +16,9 @@ from tldw_chatbook.Library.library_conversation_reader_state import (
     ConversationReaderState,
 )
 from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 
 def _open_console_disabled_tooltip(state: ConversationReaderState) -> str | None:
@@ -64,9 +68,78 @@ class LibraryConversationReader(Vertical):
         self.selected_metadata = dict(selected_metadata or {})
         self._message_sync_generation = 0
 
+    def _workspace_block(self) -> str:
+        """Return the short workspace refusal reason, or empty when eligible.
+
+        Injected by the controller alongside the other computed metadata
+        keys (``_list_status``/``_list_summary``): the reason is derived
+        from the workspace registry, which this pure widget never reads.
+        """
+        return str(self.loaded_metadata.get("_workspace_block") or "").strip()
+
+    def _workspace_block_detail(self) -> str:
+        """Return the eligibility rule's own sentence for this block, if any."""
+        return str(self.loaded_metadata.get("_workspace_block_detail") or "").strip()
+
+    def _workspace_link_offered(self) -> bool:
+        """Whether "Link to workspace" would actually resolve the block.
+
+        (review round 2) Fenced by ``loaded_actions_eligible`` like every
+        other action here: the remedy writes membership for the RETAINED
+        ``loaded_id``, so while a newly selected conversation is still
+        loading the visible-but-stale transcript would otherwise be the one
+        linked.
+        """
+        return (
+            self.state.loaded_actions_eligible
+            and bool(self._workspace_block())
+            and bool(self.loaded_metadata.get("_workspace_block_linkable"))
+        )
+
+    def _actions_enabled(self) -> bool:
+        """Whether the Console hand-off may run right now."""
+        return self.state.loaded_actions_eligible and not self._workspace_block()
+
+    def _blocked_reason_line(self) -> str:
+        """Return the wrapping reason line shown under a blocked action.
+
+        (fix round 1) The reason used to live in the ``Button`` label,
+        which Textual renders on a single truncating line -- at 100x30 the
+        Conversations reader pane is ~43 cells and it clipped to "...not in
+        this worksp". A ``Static`` wraps, so the copy survives every width.
+        """
+        blocked = self._workspace_block()
+        if not blocked:
+            return ""
+        return (
+            f"{library_disabled_action_label('Open in Console', True)} · {blocked}"
+        )
+
+    def _open_console_tooltip(self) -> str | None:
+        """Return the current reason the hand-off cannot run.
+
+        (review round 2) The load fence answers first -- while it holds, the
+        workspace block is not the reason the press is unavailable -- and the
+        remedy is only NAMED when it is actually on screen. A block linking
+        cannot resolve keeps the eligibility rule's own recovery sentence
+        ("Select an active workspace...") instead of pointing at a hidden
+        button.
+        """
+        load_block = _open_console_disabled_tooltip(self.state)
+        if load_block:
+            return load_block
+        blocked = self._workspace_block()
+        if not blocked:
+            return None
+        if self._workspace_link_offered():
+            return (
+                f"This conversation is {blocked}. Press 'Link to workspace' "
+                "to add it to the active workspace."
+            )
+        return self._workspace_block_detail() or f"This conversation is {blocked}."
+
     def compose(self) -> ComposeResult:
         """Compose stable controls and the initially available transcript."""
-        eligible = self.state.loaded_actions_eligible
         yield Static("Conversation reader", classes="destination-section", markup=False)
         with Horizontal(classes="ds-toolbar library-conversation-reader-modes"):
             read = Button(
@@ -85,6 +158,46 @@ class LibraryConversationReader(Vertical):
             )
             info.set_class(self.state.mode == "info", "-selected")
             yield info
+        # (task-32056) The hand-off is header chrome, beside Read/Info,
+        # where Media puts "Use in Console" -- it used to sit at the very
+        # bottom of the pane, below a 30-message transcript. Stacked, not
+        # a row: the blocked label carries its reason, and at 100 and 60
+        # columns a row clipped both it and the remedy beside it (live
+        # verification) -- the exact failure this task exists to close.
+        with Vertical(classes="ds-toolbar library-conversation-reader-actions"):
+            open_console = Button(
+                "Open in Console",
+                id="library-conversation-open-console",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            open_console.disabled = not self._actions_enabled()
+            open_console.tooltip = self._open_console_tooltip()
+            yield open_console
+            blocked_reason = Static(
+                self._blocked_reason_line(),
+                id="library-conversation-open-console-blocked",
+                classes="library-conversation-reader-block-reason",
+                markup=False,
+            )
+            blocked_reason.display = bool(self._workspace_block())
+            yield blocked_reason
+            link = Button(
+                "Link to workspace",
+                id="library-conversation-link-workspace",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            link.display = self._workspace_link_offered()
+            yield link
+            retry = Button(
+                "Try again",
+                id="library-conversation-reader-retry",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            retry.display = bool(self.state.error or self.state.unavailable)
+            yield retry
         yield Static(
             self._status_text(),
             id="library-conversation-reader-status",
@@ -109,24 +222,6 @@ class LibraryConversationReader(Vertical):
         )
         info_body.display = self.state.mode == "info"
         yield info_body
-        with Horizontal(classes="ds-toolbar library-conversation-reader-actions"):
-            open_console = Button(
-                library_disabled_action_label("Open in Console", not eligible),
-                id="library-conversation-open-console",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            open_console.disabled = not eligible
-            open_console.tooltip = _open_console_disabled_tooltip(self.state)
-            yield open_console
-            retry = Button(
-                "Try again",
-                id="library-conversation-reader-retry",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            retry.display = bool(self.state.error or self.state.unavailable)
-            yield retry
 
     def on_mount(self) -> None:
         """Project initial labels and visibility without replacing this widget."""
@@ -138,9 +233,14 @@ class LibraryConversationReader(Vertical):
 
     @staticmethod
     def _message_copy(message: ConversationMessageView) -> str:
-        heading = " · ".join(
-            value for value in (message.sender, message.timestamp) if value
+        # task-32067: the same compact age the Conversations list shows
+        # ("27m", "2d"), not the stored ISO stamp the transcript used to
+        # repeat above every message. Unparseable stamps format to "", and
+        # the join below then drops the slot entirely.
+        age = format_console_relative_age(
+            message.timestamp, now=datetime.now(timezone.utc)
         )
+        heading = " · ".join(value for value in (message.sender, age) if value)
         return f"{heading}\n{message.text}" if heading else message.text
 
     @classmethod
@@ -260,8 +360,15 @@ class LibraryConversationReader(Vertical):
             return with_list_summary(f"Loading {selected_title} ({selected})…")
         if state.loaded_id:
             suffix = "complete" if state.complete else "loading more"
+            # task-32067: by TITLE. This line is the reader's only identity
+            # cue and it read "Loaded bf20fab2-0474-…" -- a raw UUID, which
+            # names nothing the user has ever seen. Untitled conversations
+            # get the neutral phrase, never the id.
+            name = str(self.loaded_metadata.get("title") or "").strip() or (
+                "this conversation"
+            )
             return with_list_summary(
-                f"Loaded {state.loaded_id} · {len(state.messages)} of "
+                f"Loaded {name} · {len(state.messages)} of "
                 f"{state.message_total} messages · {suffix}."
             )
         return with_list_summary("Select a conversation to read it here.")
@@ -293,6 +400,10 @@ class LibraryConversationReader(Vertical):
             )
             info_body = self.query_one("#library-conversation-reader-info-body", Static)
             open_console = self.query_one("#library-conversation-open-console", Button)
+            blocked_reason = self.query_one(
+                "#library-conversation-open-console-blocked", Static
+            )
+            link = self.query_one("#library-conversation-link-workspace", Button)
             retry = self.query_one("#library-conversation-reader-retry", Button)
         except (NoMatches, QueryError):
             # A retained-reader recompose can briefly leave the mounted
@@ -310,12 +421,11 @@ class LibraryConversationReader(Vertical):
         info_body.update(self._metadata_text())
         info_body.display = state.mode == "info"
 
-        eligible = state.loaded_actions_eligible
-        open_console.disabled = not eligible
-        open_console.label = library_disabled_action_label(
-            "Open in Console", not eligible
-        )
-        open_console.tooltip = _open_console_disabled_tooltip(state)
+        open_console.disabled = not self._actions_enabled()
+        open_console.tooltip = self._open_console_tooltip()
+        blocked_reason.update(self._blocked_reason_line())
+        blocked_reason.display = bool(self._workspace_block())
+        link.display = self._workspace_link_offered()
         retry.display = bool(state.error or state.unavailable)
 
         self._message_sync_generation += 1

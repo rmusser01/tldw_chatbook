@@ -40,9 +40,9 @@ from .repository import (
     PersonaVisualPackRecord,
     PersonaVisualRepository,
     PersonaVisualVersionRecord,
+    _visual_owner_id,
 )
 from .validation import revalidate_persona_visual_manifest
-
 
 STATE_FALLBACK_REASON = "persona_visual_state_fallback"
 IDLE_UNAVAILABLE_REASON = "persona_visual_idle_unavailable"
@@ -160,17 +160,22 @@ class PersonaVisualResolution:
 
 def resolve_active_persona_visual(
     repository: PersonaVisualRepository,
-    persona_id: str,
+    persona_id: str | None,
     profile_root: PathLike[str] | str,
     requested_state: str,
     *,
     portrait: PersonaVisualPortrait | None = None,
     reduced_motion: bool = False,
+    buddy_id: str | None = None,
 ) -> PersonaVisualResolution:
     """Resolve one persisted active graph through its private storage bridge."""
 
     try:
-        graph = repository.get_active_persona_pack(persona_id)
+        graph = (
+            repository.get_active_buddy_pack(buddy_id)
+            if buddy_id is not None
+            else repository.get_active_persona_pack(persona_id)
+        )
     except Exception:
         public_state, _ = _public_state(requested_state)
         return _fallback_result(
@@ -200,6 +205,25 @@ def resolve_active_persona_visual(
         requested_state,
         asset_loader=load,
         portrait=portrait,
+        reduced_motion=reduced_motion,
+    )
+
+
+def resolve_active_buddy_visual(
+    repository: PersonaVisualRepository,
+    buddy_id: str,
+    profile_root: PathLike[str] | str,
+    requested_state: str,
+    *,
+    reduced_motion: bool = False,
+) -> PersonaVisualResolution:
+    """Resolve a real Buddy binding through the shared validated sprite runtime."""
+    return resolve_active_persona_visual(
+        repository,
+        None,
+        profile_root,
+        requested_state,
+        buddy_id=buddy_id,
         reduced_motion=reduced_motion,
     )
 
@@ -342,6 +366,8 @@ def _validated_graph(
         or binding.revision != identity.binding_version
         or binding.persona_id != identity.persona_id
         or binding.persona_revision != identity.persona_revision
+        or binding.buddy_id != identity.buddy_id
+        or binding.buddy_revision != identity.buddy_revision
         or binding.pack_id != identity.pack_id
         or binding.active_version_id != identity.pack_version_id
     ):
@@ -384,7 +410,13 @@ def _validated_identity(value: object) -> PersonaVisualIdentity:
         "binding_id binding_version pack_id pack_revision pack_version_id version_number",
         "persona_revision",
     )
-    _runtime_text(value.persona_id, 200)
+    _visual_owner_id(value.persona_id, value.buddy_id)
+    if value.buddy_id is not None:
+        _runtime_int(value.buddy_revision)
+        if value.persona_revision != 0:
+            raise ValueError
+    elif value.buddy_revision is not None:
+        raise ValueError
     _runtime_digest(value.manifest_sha256)
     return replace(value)
 
@@ -430,7 +462,13 @@ def _validated_binding(value: object) -> PersonaVisualBindingRecord:
         "persona_revision",
         "created_at updated_at",
     )
-    _runtime_text(value.persona_id, 200)
+    _visual_owner_id(value.persona_id, value.buddy_id)
+    if value.buddy_id is not None:
+        _runtime_int(value.buddy_revision)
+        if value.persona_revision != 0:
+            raise ValueError
+    elif value.buddy_revision is not None:
+        raise ValueError
     if _runtime_text(value.status, 64) != "active":
         raise ValueError
     return value

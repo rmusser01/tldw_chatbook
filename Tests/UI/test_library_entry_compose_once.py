@@ -425,9 +425,12 @@ async def test_library_landing_syncs_unknown_to_starter_without_duplicate_action
         assert app.query_one("#library-hub-action-new-note", Button) is note_action
         assert len(app.query("#library-hub-action-import")) == 1
         assert len(app.query("#library-hub-action-new-note")) == 1
-        assert "1 Add · 2 Find · 3 Use" in str(
-            app.query_one("#library-hub-orientation", Static).renderable
-        )
+        # task-32072: the orientation line became three controls; the
+        # retained-widget promise this test exists for still holds.
+        assert [
+            str(app.query_one(f"#library-hub-step-{name}", Button).label)
+            for name in ("import", "find", "use")
+        ] == ["Import a file", "Find it", "Use it in Console"]
 
 
 @pytest.mark.asyncio
@@ -553,10 +556,30 @@ async def test_library_landing_late_sync_cannot_replace_a_new_route_owner(
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_survives_reconcile_and_same_route_replace():
+async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_route_replace():
+    """task-32063: the graduation notice is a toast, and only a toast.
+
+    It used to also paint a durable `#library-lifecycle-status` line, and this
+    test pinned that the line survived a reconcile and a same-route replace.
+    The line is gone (two surfaces for one event); what has to hold now is
+    that neither recompose repeats the toast or resurrects a canvas line, and
+    that focus still survives both.
+    """
     app = _build_test_app()
     _seed_conversations(app, [], notes=_two_notes())
+    announcements: list = []
+    app.notify = lambda message, **kwargs: announcements.append(message)
     host = LibraryHarness(app)
+
+    def graduation_toasts() -> list:
+        return [
+            message
+            for message in announcements
+            if "Library tools are now available." in str(message)
+        ]
+
+    def canvas_line() -> str:
+        return str(screen.query_one("#library-lifecycle-status", Static).renderable)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -564,7 +587,12 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
+        # task-32063: the announcement is raised only by a real
+        # STARTER -> GRADUATED transition now, so drive that transition
+        # rather than assigning the end state.
+        screen._set_library_lifecycle(LibraryLifecycle.STARTER)
         screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
         focus = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
@@ -573,9 +601,8 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
-        assert "Library tools are now available." in str(
-            screen.query_one("#library-lifecycle-status", Static).renderable
-        )
+        assert len(graduation_toasts()) == 1
+        assert "Library tools are now available." not in canvas_line()
 
         generation = screen._library_snapshot_state_generation
         route_key = screen._library_entry_route_key()
@@ -587,9 +614,8 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         await pilot.pause()
 
         assert reconciled is LibraryEntryReconcileResult.APPLIED
-        assert "Library tools are now available." in str(
-            screen.query_one("#library-lifecycle-status", Static).renderable
-        )
+        assert len(graduation_toasts()) == 1
+        assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
@@ -603,9 +629,8 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         await pilot.pause()
 
         assert child_replaced is LibraryEntryReconcileResult.APPLIED
-        assert "Library tools are now available." in str(
-            screen.query_one("#library-lifecycle-status", Static).renderable
-        )
+        assert len(graduation_toasts()) == 1
+        assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
@@ -617,9 +642,8 @@ async def test_library_graduation_announcement_survives_reconcile_and_same_route
         await pilot.pause()
 
         assert replaced is True
-        assert "Library tools are now available." in str(
-            screen.query_one("#library-lifecycle-status", Static).renderable
-        )
+        assert len(graduation_toasts()) == 1
+        assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
@@ -639,7 +663,12 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
+        # task-32063: the announcement is raised only by a real
+        # STARTER -> GRADUATED transition now, so drive that transition
+        # rather than assigning the end state.
+        screen._set_library_lifecycle(LibraryLifecycle.STARTER)
         screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
         row = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
@@ -689,7 +718,7 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
             await pilot.pause()
 
             assert newer_target.has_focus
-            assert "Library tools are now available." in str(
+            assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
         finally:
@@ -998,8 +1027,9 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             painted_copy = "Select a skill to inspect it here."
         elif case.name == "pending-conversations" and size == (60, 20):
             # The narrow dedicated reader paints semantic load status in the
-            # viewport; the conversation title remains outside that pane.
-            painted_copy = "Loaded chat-2"
+            # viewport. task-32067: that status names the conversation by
+            # TITLE -- it used to print the raw id ("Loaded chat-2").
+            painted_copy = "Loaded Design review notes"
         await _wait_for_condition(
             pilot,
             lambda: _entry_worker_terminal(case, active_screen),

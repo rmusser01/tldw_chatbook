@@ -700,6 +700,7 @@ class LibraryNotesController:
         library_notes_workflow_active,
         library_rail_preferences,
         library_rail_search_placeholder,
+        library_rail_search_value,
         library_workspace_depth_state,
         locate_library_notes_tree_target,
         open_library_export_canvas,
@@ -818,6 +819,7 @@ class LibraryNotesController:
         self._library_notes_workflow_active_fn = library_notes_workflow_active
         self._library_rail_preferences_fn = library_rail_preferences
         self._library_rail_search_placeholder_fn = library_rail_search_placeholder
+        self._library_rail_search_value_fn = library_rail_search_value
         self._library_workspace_depth_state_fn = library_workspace_depth_state
         self._locate_library_notes_tree_target_fn = locate_library_notes_tree_target
         self._open_library_export_canvas_fn = open_library_export_canvas
@@ -1208,6 +1210,10 @@ class LibraryNotesController:
     @property
     def _library_rail_search_placeholder(self) -> Any:
         return self._library_rail_search_placeholder_fn
+
+    @property
+    def _library_rail_search_value(self) -> Any:
+        return self._library_rail_search_value_fn
 
     @property
     def _library_workspace_depth_state(self) -> Any:
@@ -2014,6 +2020,13 @@ class LibraryNotesController:
         Returns:
             None.
         """
+        # task-32052 AC#1: never replay an identity captured on a DIFFERENT
+        # surface. ``_sync_library_canvas``'s own skip only watches the WORK
+        # pane's mode, so a list -> create switch slipped through and the
+        # navigator identity was replayed over the create canvas (Ctrl+N
+        # landed on a notes-tree row, not Blank note).
+        if identity.region and identity.region != self._library_notes_focus_region():
+            return
         # Focus FIRST and synchronously: the callback runs from the canvas's
         # own ``recompose``, so focus is restored before any frame in which
         # it could be seen sitting outside the canvas.
@@ -3160,8 +3173,6 @@ class LibraryNotesController:
     ) -> None:
         """Reset presentation, invalidate old work, and start one editor load."""
         navigation_generation = self._supersede_library_notes_navigation()
-        topology_epoch = self._library_notes_tree_topology_epoch
-        lifecycle_generation = self._library_notes_tree_lifecycle_generation
         self._library_note_session.close_session()
         self._selected_note_id = note_id
         self._library_notes_view = "editor"
@@ -3180,9 +3191,6 @@ class LibraryNotesController:
             self._refresh_library_note_detail(
                 note_id,
                 entry_origin=entry_origin,
-                navigation_generation=navigation_generation,
-                topology_epoch=topology_epoch,
-                lifecycle_generation=lifecycle_generation,
             ),
             exclusive=True,
             group="library_note_detail",
@@ -4027,7 +4035,7 @@ class LibraryNotesController:
                     library_pane=LibraryRail(
                         shell_state,
                         self._library_rail_preferences(),
-                        query=self._rag_search_state.query,
+                        query=self._library_rail_search_value(),
                         search_placeholder=self._library_rail_search_placeholder(),
                         workspaces_body_factory=self._compose_workspaces_rail_body,
                         top_action_factory=self._compose_library_rail_top_action,

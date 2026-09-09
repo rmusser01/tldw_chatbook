@@ -638,6 +638,7 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_IMAGE,
     ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
+    ACTION_BUDDY,
     ACTION_IMPROVE_CURRENT_DRAFT,
     ACTION_PROMPTS,
     ACTION_SAVE_CHATBOOK,
@@ -5316,6 +5317,11 @@ class ChatScreen(BaseAppScreen):
             ),
             callback=self._apply_console_model_popover_result,
         )
+
+    def on_console_workspace_details_tray_default_persona_requested(self, event) -> None:
+        """Route the workspace details action to its explicit workspace owner."""
+        event.stop()
+        self._workspace._open_workspace_persona_default(event.workspace_id)
 
     def _apply_console_model_popover_result(
         self,
@@ -10583,6 +10589,11 @@ class ChatScreen(BaseAppScreen):
     def _handle_console_composer_menu_choice(self, action_id: str | None) -> None:
         """Route the chosen menu action (task-1680)."""
         if not action_id:
+            return
+        if action_id == ACTION_BUDDY:
+            from ..Navigation.buddy_management import open_buddy_management
+
+            open_buddy_management(self.app)
             return
         if action_id == ACTION_SAVE_CHAT:
             self._session._dispatch_promote_console_temporary_session()
@@ -20432,7 +20443,7 @@ class ChatScreen(BaseAppScreen):
                 source_message_id=message.id,
                 origin_message_id=message.persisted_message_id or message.id,
                 source_turn_id=canvas_block_origin_turn_id(
-                    message, reference.block_index
+                    message, reference.block_index, language=reference.language
                 ),
                 block_index=reference.block_index,
                 block_identity=reference.identity,
@@ -20482,11 +20493,8 @@ class ChatScreen(BaseAppScreen):
         authority = self._console_canvas_authority()
         served_client = getattr(self.app_instance, "served_canvas_control", None)
         served_handler = getattr(self.app_instance, "served_canvas_handler", None)
-        browser_id = (
-            served_client.child_id
-            if served_client is not None and served_handler is not None
-            else f"browser-{session_id}"
-        )
+        served_available = served_client is not None and served_handler is not None
+        browser_id = served_client.child_id if served_available else f"browser-{session_id}"
         scope = authority.gateway_scope(
             session_id=session_id,
             browser_session_id=browser_id,
@@ -20494,8 +20502,9 @@ class ChatScreen(BaseAppScreen):
             revision_id=revision_id,
             follow_latest=follow_latest,
         )
-        if served_client is not None and served_handler is not None:
-            served_handler.bind(authority, scope)
+        if served_available or getattr(self.app_instance, "_served_canvas_mode", False):
+            if served_available:
+                served_handler.bind(authority, scope)
             self._canvas_last_open_request = (
                 session_id,
                 canvas_id,
@@ -20507,8 +20516,8 @@ class ChatScreen(BaseAppScreen):
             return CanvasGatewayLaunch(
                 clean_url="/canvas/",
                 browser_url="/canvas/",
-                opened=True,
-                error_code=None,
+                opened=served_available,
+                error_code=None if served_available else "served_canvas_unavailable",
             )
         gateway = self._console_runtime().ensure_canvas_gateway(authority=authority)
         if gateway is None:
@@ -22614,6 +22623,9 @@ class ChatScreen(BaseAppScreen):
           install is idempotent), and the previews cache -- all correct to
           leave running/installed across a suspend.
         """
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.on_console_view_visibility_changed(False)
         self._release_claimed_conversation_settings_return()
         # The debounced sidebar write is async and its read-modify-write of
         # ui_state.toml is unlocked, so consecutive suspends must SERIALIZE
@@ -22653,6 +22665,9 @@ class ChatScreen(BaseAppScreen):
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.on_console_view_visibility_changed(True)
         if self._pending_character_return_focus_id is not None:
             self.call_after_refresh(self._workspace.restore_character_navigation_focus)
         logger.debug("Chat screen resuming")

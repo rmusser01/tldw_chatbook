@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime, timezone
-from pathlib import Path
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Iterator, Union
 
 from .base_db import BaseDB
@@ -23,7 +23,7 @@ class WorkspaceDB(BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 7
+    _CURRENT_SCHEMA_VERSION = 8
     _MIGRATE_V2_TO_V3_SQL = """BEGIN IMMEDIATE;
 
 CREATE TABLE research_source_operations (
@@ -602,6 +602,11 @@ COMMIT;
                 is not None
             )
             needs_v7 = version < 7 or not v7_backfill_exists
+            with self.transaction() as read_conn:
+                needs_v8 = version < 8 or "assistant_defaults_explicit_none" not in {
+                    row[1]
+                    for row in read_conn.execute("PRAGMA table_info(workspace_records)")
+                }
             rows: list[tuple[str, str]] = []
             if needs_v2:
                 # Reads only here; all v2 writes happen below inside self.transaction().
@@ -625,6 +630,8 @@ COMMIT;
                 self._migrate_v5_to_v6()
             if needs_v7:
                 self._migrate_v6_to_v7()
+            if needs_v8:
+                self._migrate_v7_to_v8()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -684,6 +691,8 @@ COMMIT;
             self._migrate_v5_to_v6()
         if needs_v7:
             self._migrate_v6_to_v7()
+        if needs_v8:
+            self._migrate_v7_to_v8()
 
     def _migrate_v2_to_v3(self) -> None:
         """Add durable Research source-operation intent and stage receipts."""
@@ -753,6 +762,20 @@ COMMIT;
             write_conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (7)"
             )
+
+    def _migrate_v7_to_v8(self) -> None:
+        """Retain deliberate None defaults across provisioning and restart (ADR-139)."""
+        with self.transaction() as conn:
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(workspace_records)")
+            }
+            if "assistant_defaults_explicit_none" not in columns:
+                conn.execute(
+                    "ALTER TABLE workspace_records ADD COLUMN "
+                    "assistant_defaults_explicit_none INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK (assistant_defaults_explicit_none IN (0, 1))"
+                )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (8)")
 
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""

@@ -74,8 +74,9 @@ editor's own Back control returns to its list.
 - **Source strip** — a "Library notes | Folder files" toggle above the canvas.
   This page covers the Library notes side; see below for Folder files.
 - **Notes list** — the default view: a "Notes (N)" header, the
-  "Filter notes… (Enter)" field, a toolbar (sort / Add from files… /
-  Export… / Select), and one row per note showing its title and age. Its own
+  "Filter notes… (Enter)" field, a toolbar (**New** / sort / Add from
+  files… / Export… / Select), a **New folder** action beneath it, the
+  folder tree, and one row per note showing its title and age. Its own
   grip collapses or restores the list without changing the Folder Files tree
   choice. Renaming a note updates its list row as soon as the note saves —
   returning to the list shows the new title with no filter re-query needed.
@@ -292,6 +293,11 @@ both stay closed until you choose to reopen one.
 | Control | What it does |
 |---|---|
 | "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |
+| "New" | Creates a note directly from the list — the same destination as the rail's **New note** row, without the template picker. Disabled while another notes operation is running. |
+| "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
+| Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
+| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
+| "Restore folder" | Appears after a folder removal, to put it back. |
 | "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
@@ -317,11 +323,29 @@ here."
 | **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
 | **Delete** (Info → Danger) | Asks inline first: "Delete this note? Undo will be available in the Notes list." Confirm with "Delete" or back out with "Cancel". A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
+Opening a note shows "Loading note…" only while the note is being read. If a
+read takes longer than about three seconds the editor stops waiting and shows
+"Unable to load note — timed out after 3 s. Press Retry." with a **Retry**
+button; **‹ Notes** takes you back to the list, and opening another note still
+works.
+
+*Verified against fix/library-crit8-notes-loader — 2026-09-08 (task-32050:
+opening a stored note no longer stays on "Loading note…" for ever, and a
+stuck load now reaches a failed state with Retry).*
+
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If the same note was changed
 somewhere else while you were editing, a banner appears: "This note
 changed elsewhere — Overwrite saves your text; Reload discards it." —
 pick **Overwrite** or **Reload**.
+
+While any editor field — the title, the body, or either keyword box — has
+keyboard focus, nothing repaints the editor underneath you: a refresh that
+arrives mid-sentence — a save landing, the
+first note reaching the list, the Library graduating to its full rail — leaves
+the editor alone, so keystrokes never land in the wrong box and focus never
+jumps away as you type or after you move to another field. The next refresh
+that arrives once your hands are off the field paints normally.
 
 Notes does not use **Ctrl+S**, and there is no replacement Notes save
 shortcut. Use the visible **Save** button when you want an immediate Database
@@ -352,14 +376,23 @@ the receipt is the in-Library recovery action.
 "Blank note" drops you straight into the editor with an empty title (shown
 as an "Untitled" placeholder — just start typing) and an empty body. If you
 leave again via "‹ Back to list" without typing anything, the blank note is
-quietly discarded rather than left behind as a stray "Untitled" row; typing
-anything, or pressing "Save", keeps it. That includes naming it "Untitled"
+quietly discarded rather than left behind as a stray "Untitled" row.
+Pressing "Save" keeps it, and so does typing anything **that is not only
+whitespace** — a title of nothing but spaces, with an empty body and no
+keywords, still counts as blank and is discarded on the way out. That includes naming it "Untitled"
 yourself: once you have touched the title field the note is yours, and it
 is kept even with an empty body. The "From a template" list
 pre-fills title, body, and keywords instead; each row shows the template
 name with the title the note will get. Available templates: Brainstorming
 session, Bug report, Code review, Daily journal entry, Meeting notes,
 Project planning, Research notes, Todo list.
+
+Opening this view parks keyboard focus on **Blank note**, so Enter creates
+a note straight away without tabbing to find it; ↑/↓ move between Blank
+note and the template rows, and the focused row carries the same left-edge
+bar the Notes list rows use. The footer's "enter create note" appears only
+while one of those rows genuinely has focus — move to "‹ Notes" and it
+drops, because Enter there goes back rather than creating anything.
 
 ### Add from files and lasting sync
 
@@ -504,10 +537,16 @@ automatic-sync setting.
 
 | Key | Action |
 |---|---|
+| **Ctrl+N** | New note |
+| **/** | Focus the note filter ("find note") |
+| **Escape** | Focus the rail |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
+| ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
+| Enter (New note view) | Create from the focused row |
 
-That is the only screen-specific key. In particular, Notes does not register
-**Ctrl+S** and does not replace it with another save shortcut. Use the visible
+The footer advertises these as `ctrl+n new note | / find note | esc focus
+rail`. Notes does not register **Ctrl+S** and does not replace it with
+another save shortcut. Use the visible
 Database **Save** button for an immediate save; Folder Files saves
 automatically. Global navigation keys live in the [guide index](../index.md).
 
@@ -619,3 +658,38 @@ foreground approval, subagent draft boundary, credential refusal, and
 untrusted-retrieval contract added for TASK-24309 — 2026-08-30. See
 [ADR-105](../../../backlog/decisions/105-portable-notes-organization-and-agent-lessons.md)
 and [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md).*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32063: the
+work pane no longer restates the list pane's "Library notes · Library
+database …" authority sentence, a "Next:" clause only appears when it names a
+control on screen, and the Add-from-files header is one sentence ("Add files to
+Library notes.") instead of a run-on stacked under three more. task-32061:
+Escape from the editor leaves the Notes list at the visibility it had.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32062: a
+Notes refresh that arrives while the title or body has focus leaves the editor
+alone, and a snapshot that is a keystroke behind no longer rewrites the
+focused field — measured live, a title and body typed within ~0.4 s used to be
+stored as one scrambled title with an empty body. task-32061 re-checked on a
+fresh profile: the list pane survives the first note's Escape.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (review of
+PR #2531: the keyword boxes get the same protection as the title and body — a
+refresh landing while you type keywords no longer rebuilds the editor or
+rewrites the box from an older snapshot.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8; live at 235x52 on a seeded profile):
+the **New** and **New folder** toolbar actions, the folder-selected
+**Rename / Move / Remove** set, the note-selected **Add to folder / Move
+note / Remove placement** set, and the footer's **ctrl+n new note** and
+**/ find note** keys all ship and were undocumented here. The
+whitespace-title rule was corrected: the abandon-discard check tests
+`title.strip()`, so a spaces-only title with an empty body does NOT keep
+the note, contrary to the "typing anything keeps it" claim.)*
+
+*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32052: the
+New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
+rows with a visible cursor, the footer's "enter create note" follows the
+focused control, and Tab no longer leaves the Library screen for the
+navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*

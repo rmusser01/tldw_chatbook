@@ -114,126 +114,100 @@ install_stylesheet_fastpath()
 from functools import partial
 from pathlib import Path, PurePath
 
-from tldw_chatbook.css import build_css, widget_css
-from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
-from tldw_chatbook.css.Themes.themes import ALL_THEMES
-
-# from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
-from tldw_chatbook.Metrics.metrics import (
-    log_histogram,
-    log_counter,
-    log_resource_usage,
-    init_metrics_server,
-)
-from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
-
-#
-# --- Local API library Imports ---
-from .config import (
-    get_cli_setting,
-    first_profile_created_this_session,
-    get_library_collections_db_path,
-    get_library_ingest_jobs_db_path,
-    get_media_db_path,
-    get_prompts_db_path,
-    get_notifications_db_path,
-    get_notes_sync_state_db_path,
-    get_notes_sync_recovery_capacity_bytes,
-    get_notes_sync_watcher_intervals,
-    get_research_db_path,
-    get_scheduled_tasks_db_path,
-    get_subscriptions_db_path,
-    get_tts_profiles_db_path,
-    get_user_data_dir,
-    get_workspaces_db_path,
-    get_writing_db_path,
-)
-from .Logging_Config import configure_application_logging
-from tldw_chatbook.Utils.instance_lock import (
-    InstanceLockStatus,
-    acquire_profile_instance_lock,
-)
-from tldw_chatbook.Constants import (
-    DEFAULT_SPLASH_DURATION_SECONDS,
-    MODEL_CATALOG_REFRESH_WORKER_GROUP,
-    ALL_TABS,
-    TAB_CCP,
-    TAB_CHAT,
-    TAB_HOME,
-    TAB_LOGS,
-    TAB_STATS,
-    TAB_TOOLS_SETTINGS,
-    TAB_INGEST,
-    TAB_LLM,
-    TAB_MEDIA,
-    TAB_SEARCH,
-    TAB_EVALS,
-    TAB_LIBRARY,
-    TAB_ARTIFACTS,
-    TAB_PERSONAS,
-    TAB_WATCHLISTS_COLLECTIONS,
-    TAB_SCHEDULES,
-    TAB_WORKFLOWS,
-    TAB_MCP,
-    TAB_ACP,
-    TAB_SKILLS,
-    TAB_SETTINGS,
-    TAB_MEETINGS,
-    TAB_STTS,
-    TAB_STUDY,
-    TAB_WRITING,
-    TAB_RESEARCH,
-    TAB_RESEARCH_WORKSPACE,
-    TAB_CHATBOOKS,
-    LIBRARY_NAV_CONTEXT_MODE,
-    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
-    LIBRARY_NAV_CONTEXT_INGEST,
-    WATCHLISTS_NAV_CONTEXT_BACKEND,
-    WATCHLISTS_NAV_CONTEXT_RUN_ID,
-    WATCHLISTS_NAV_CONTEXT_SECTION,
-    WATCHLISTS_SECTION_RUNS,
-    get_tab_display_label,
-)
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_artifact_ownership import (
     CitationArtifactOwnershipCoordinator,
 )
 from tldw_chatbook.Chat.citation_service_factory import (
     build_local_citation_conversation_service,
 )
-from tldw_chatbook.Chat.conversation_local_marks_service import (
-    ConversationLocalMarksService,
+from tldw_chatbook.Chat.console_image_edit_operations import (
+    ImageEditOperationRegistry,
 )
-from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     resolve_console_live_work_primary_action,
 )
-from tldw_chatbook.Chat.console_image_edit_operations import (
-    ImageEditOperationRegistry,
-)
-from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
 from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
+from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilityState
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
 )
-from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilityState
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
-
+from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
+from tldw_chatbook.config import CLI_APP_CLIENT_ID
+from tldw_chatbook.Constants import (
+    ALL_TABS,
+    DEFAULT_SPLASH_DURATION_SECONDS,
+    LIBRARY_NAV_CONTEXT_INGEST,
+    LIBRARY_NAV_CONTEXT_MODE,
+    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
+    MODEL_CATALOG_REFRESH_WORKER_GROUP,
+    TAB_ACP,
+    TAB_ARTIFACTS,
+    TAB_CCP,
+    TAB_CHAT,
+    TAB_CHATBOOKS,
+    TAB_EVALS,
+    TAB_HOME,
+    TAB_INGEST,
+    TAB_LIBRARY,
+    TAB_LLM,
+    TAB_LOGS,
+    TAB_MCP,
+    TAB_MEDIA,
+    TAB_MEETINGS,
+    TAB_PERSONAS,
+    TAB_RESEARCH,
+    TAB_RESEARCH_WORKSPACE,
+    TAB_SCHEDULES,
+    TAB_SEARCH,
+    TAB_SETTINGS,
+    TAB_SKILLS,
+    TAB_STATS,
+    TAB_STTS,
+    TAB_STUDY,
+    TAB_TOOLS_SETTINGS,
+    TAB_WATCHLISTS_COLLECTIONS,
+    TAB_WORKFLOWS,
+    TAB_WRITING,
+    WATCHLISTS_NAV_CONTEXT_BACKEND,
+    WATCHLISTS_NAV_CONTEXT_RUN_ID,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+    WATCHLISTS_SECTION_RUNS,
+    get_tab_display_label,
+)
+from tldw_chatbook.css import build_css, widget_css
+from tldw_chatbook.css.Themes.themes import ALL_THEMES
+from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError as MediaDatabaseError,
+)
+from tldw_chatbook.DB.Client_Media_DB_v2 import (
     InputError as MediaInputError,
+)
+from tldw_chatbook.DB.Client_Media_DB_v2 import (
     MediaDatabase,
 )
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-from tldw_chatbook.config import CLI_APP_CLIENT_ID
-from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
+from tldw_chatbook.Home.active_work_adapter import (
+    HomeControlAction,
+    HomeControlResult,
+    HomeControlResultStatus,
+    LocalNotificationHomeActiveWorkAdapter,
+    UnavailableHomeActiveWorkAdapter,
+)
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
 from tldw_chatbook.Library.ingest_capabilities import (
@@ -242,6 +216,21 @@ from tldw_chatbook.Library.ingest_capabilities import (
     get_type_group,
 )
 from tldw_chatbook.Library.ingest_preflight import collect_directory_files
+from tldw_chatbook.Library.library_ingest_jobs import (
+    DEFAULT_CHUNK_SIZE,
+    INGEST_DUPLICATE_PROGRESS_PREFIX,
+    ActiveIngestConsentScope,
+    ActiveIngestJobRef,
+    ActiveIngestSubmissionRefused,
+    IngestJobState,
+    LibraryIngestJob,
+    LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
+    normalize_active_ingest_source,
+)
+from tldw_chatbook.Library.library_local_rag_search_service import (
+    LibraryLocalRagSearchService,
+)
 from tldw_chatbook.Library.server_ingest_reconcile import (
     pending_remote_batches,
     reconcile_remote_ingest_jobs,
@@ -256,27 +245,7 @@ from tldw_chatbook.Library.web_clip_request import (
     clip_failure_reason,
     is_web_clip_source,
 )
-from tldw_chatbook.Library.library_ingest_jobs import (
-    ActiveIngestConsentScope,
-    ActiveIngestJobRef,
-    ActiveIngestSubmissionRefused,
-    DEFAULT_CHUNK_SIZE,
-    INGEST_DUPLICATE_PROGRESS_PREFIX,
-    IngestJobState,
-    LibraryIngestJob,
-    LibraryIngestJobRegistry,
-    build_active_ingest_consent_scope,
-    normalize_active_ingest_source,
-)
-from tldw_chatbook.Library.library_local_rag_search_service import (
-    LibraryLocalRagSearchService,
-)
 from tldw_chatbook.Local_Ingestion import FileIngestionError
-from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
-    classify_parse_failure,
-    initialize_ingest_parse_worker,
-    run_parse_job,
-)
 from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
     INGEST_PARSE_PROGRESS_FLUSH_SECONDS,
     INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE,
@@ -284,14 +253,37 @@ from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
     ParseProgressEvent,
     make_parse_progress_event,
 )
+from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
+    classify_parse_failure,
+    initialize_ingest_parse_worker,
+    run_parse_job,
+)
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     classify_ingest_source,
     persist_parsed_media,
 )
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
-    BatchSTTRoutingError,
     PARAKEET_V2_MODEL,
+    BatchSTTRoutingError,
     resolve_batch_stt_route,
+)
+from tldw_chatbook.Logging_Config import RichLogHandler
+
+# from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
+from tldw_chatbook.Metrics.metrics import (
+    init_metrics_server,
+    log_counter,
+    log_histogram,
+    log_resource_usage,
+)
+from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
+from tldw_chatbook.Prompt_Management import (
+    LocalPromptService,
+    PromptChatbookScopeService,
+    ServerPromptService,
+)
+from tldw_chatbook.Prompt_Management import (
+    Prompts_Interop as prompts_interop,
 )
 from tldw_chatbook.STT.contracts import (
     TRANSCRIPTION_FAILURE_CONTRACT,
@@ -299,6 +291,7 @@ from tldw_chatbook.STT.contracts import (
     FileAudioSource,
     TranscriptionFailureCode,
 )
+from tldw_chatbook.STT.dispatch_coordinator import LocalSTTDispatchCoordinator
 from tldw_chatbook.STT.executor import (
     ExecutorBusyError,
     ExecutorEvent,
@@ -310,27 +303,22 @@ from tldw_chatbook.STT.executor import (
     WorkerPhase,
     snapshot_local_source,
 )
-from tldw_chatbook.STT.dispatch_coordinator import LocalSTTDispatchCoordinator
-from tldw_chatbook.Home.active_work_adapter import (
-    HomeControlAction,
-    HomeControlResult,
-    HomeControlResultStatus,
-    LocalNotificationHomeActiveWorkAdapter,
-    UnavailableHomeActiveWorkAdapter,
+from tldw_chatbook.TTS import TTSProfileService
+from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactLeaseCoordinator,
+    AudioCppArtifactRemovalEvidence,
+    AudioCppManagedConsumerIdentity,
+    AudioCppModelLibraryObservationSnapshot,
+    project_audio_cpp_artifact_removal_evidence,
 )
-from tldw_chatbook.Logging_Config import RichLogHandler
-from tldw_chatbook.Prompt_Management import (
-    LocalPromptService,
-    PromptChatbookScopeService,
-    Prompts_Interop as prompts_interop,
-    ServerPromptService,
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppSettingsConfig,
+    project_audio_cpp_settings_config,
 )
-from tldw_chatbook.Utils.Emoji_Handling import (
-    get_char,
-    EMOJI_TITLE_BRAIN,
-    FALLBACK_TITLE_BRAIN,
-    supports_emoji,
-)
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
 from tldw_chatbook.Utils.app_shutdown import (
     arm_exit_watchdog,
     install_termination_handlers,
@@ -343,27 +331,44 @@ from tldw_chatbook.Utils.boot_worker_policy import (
     STAGGERED_BOOT_WORKER_KEYS,
     StaggeredBootWorkerGate,
 )
-from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
+from tldw_chatbook.Utils.Emoji_Handling import (
+    EMOJI_TITLE_BRAIN,
+    FALLBACK_TITLE_BRAIN,
+    get_char,
+    supports_emoji,
+)
+from tldw_chatbook.Utils.instance_lock import (
+    InstanceLockStatus,
+    acquire_profile_instance_lock,
+)
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Utils.text_selection_crash_guard import TextSelectionCrashGuard
-from tldw_chatbook.TTS import TTSProfileService
-from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
-    AudioCppArtifactLeaseCoordinator,
-    AudioCppArtifactRemovalEvidence,
-    AudioCppModelLibraryObservationSnapshot,
-    AudioCppManagedConsumerIdentity,
-    project_audio_cpp_artifact_removal_evidence,
+from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
+
+#
+# --- Local API library Imports ---
+from .config import (
+    first_profile_created_this_session,
+    get_cli_setting,
+    get_library_collections_db_path,
+    get_library_ingest_jobs_db_path,
+    get_media_db_path,
+    get_notes_sync_recovery_capacity_bytes,
+    get_notes_sync_state_db_path,
+    get_notes_sync_watcher_intervals,
+    get_notifications_db_path,
+    get_prompts_db_path,
+    get_research_db_path,
+    get_scheduled_tasks_db_path,
+    get_subscriptions_db_path,
+    get_tts_profiles_db_path,
+    get_user_data_dir,
+    get_workspaces_db_path,
+    get_writing_db_path,
+    save_setting_to_cli_config,
 )
-from tldw_chatbook.TTS.audio_cpp_guided_config import (
-    AudioCppSettingsConfig,
-    project_audio_cpp_settings_config,
-)
-from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
-from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
-from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
-from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from .Logging_Config import configure_application_logging
 
 # TASK-21108: `TTS/voice_bundle_service` (1,857 lines) is imported
 # function-locally in `_ensure_tts_voice_bundle_service` -- the only place
@@ -373,6 +378,7 @@ from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 # annotations on attribute targets ARE evaluated at runtime).
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
+    from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
     from tldw_chatbook.TTS.voice_bundle_service import (
         TTSVoiceBundlePortabilityService,
     )
@@ -5442,6 +5448,22 @@ class LibraryIngestQueueMixin:
                     f"(job_id={job_id}, source={source_path})."
                 )
                 self._ingest_parse_pool = None
+                # (task-32054) An unsupported file was never going to be
+                # parsed: the worker would have recorded it SKIPPED. Losing
+                # the pool must not convert the pre-flight's own "will
+                # skip" forecast into a retryable failure carrying an
+                # unrelated pool error.
+                unsupported = self._unsupported_ingest_source_error(source_path)
+                if unsupported is not None:
+                    self.library_ingest_jobs.mark_skipped(
+                        job_id,
+                        reason=unsupported,
+                        error_detail={
+                            "category": "unsupported_file_type",
+                            "message": unsupported,
+                        },
+                    )
+                    return
                 self.library_ingest_jobs.mark_failed(
                     job_id,
                     error=_sanitize_library_ingest_error_text(
@@ -5476,6 +5498,32 @@ class LibraryIngestQueueMixin:
                 # and can't be trusted to ever complete either.
                 self._handle_broken_ingest_parse_pool(generation, job_id, exc)
                 return
+
+    @staticmethod
+    def _unsupported_ingest_source_error(source_path: str) -> Optional[str]:
+        """Return the unsupported-type reason for ``source_path``, if any.
+
+        The parse worker is what normally classifies a source, so a pool
+        that never starts leaves that verdict unmade. This asks the same
+        classifier the worker would (task-32054) so a file the pre-flight
+        forecast as "will skip" still records as a skip.
+
+        Args:
+            source_path: The queued source.
+
+        Returns:
+            The classifier's own message when the type is unsupported, or
+            ``None`` for anything the pipeline would have attempted.
+        """
+        try:
+            classify_ingest_source(source_path)
+        except FileIngestionError as exc:
+            message = str(exc).strip()
+            if message.startswith("Unsupported file type"):
+                return _sanitize_library_ingest_error_text(message) or message
+        except Exception:
+            return None
+        return None
 
     def _retire_idle_ingest_parse_pool(self) -> None:
         """Release an empty pool generation, then resume queued work.
@@ -7405,6 +7453,50 @@ class TldwCli(
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[1]),
     ]
 
+    def _stamp_new_profile_library_lifecycle(self) -> None:
+        """Persist the Library lifecycle at profile CREATION (task-32059).
+
+        ``coerce_library_lifecycle`` reads an absent
+        ``[library.rail_state] lifecycle`` as ``expanded`` for any profile the
+        current run did not create -- so a user who completed first-run setup,
+        quit, and relaunched before ever opening Library never saw the
+        documented compact "Get started" rail. Writing ``unknown`` here (the
+        same value the screen would have derived on a first visit in THIS run)
+        makes the second launch read the fact instead of inferring it from a
+        missing key. A profile that already carries a lifecycle is untouched.
+        """
+        library_config = self.app_config.get("library")
+        if not isinstance(library_config, dict):
+            library_config = {}
+            self.app_config["library"] = library_config
+        rail_state = library_config.get("rail_state")
+        if not isinstance(rail_state, dict):
+            rail_state = {}
+            library_config["rail_state"] = rail_state
+        if "lifecycle" in rail_state:
+            return
+        # One name for the value both the in-memory state and the file get:
+        # "unknown" is LibraryLifecycle.UNKNOWN.value, spelled out rather than
+        # imported: pulling the Library package in here would put its modules
+        # on every boot for one string (see the module-census ratchet).
+        lifecycle = "unknown"
+        rail_state["lifecycle"] = lifecycle
+        try:
+            # `save_setting_to_cli_config` REPORTS a write failure rather than
+            # raising it, and an unstamped profile reads back as `expanded` on
+            # the next launch -- so the return value is the failure signal.
+            saved = save_setting_to_cli_config(
+                "library.rail_state", "lifecycle", lifecycle
+            )
+        except Exception:
+            saved = False
+        if not saved:
+            # A profile whose config cannot be written still gets the correct
+            # in-memory lifecycle for this run; boot must not fail over it.
+            logger.warning(
+                "Could not stamp the Library lifecycle for a new profile."
+            )
+
     def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
         """Add the consolidated widget-defaults stylesheet as one CSS source.
 
@@ -7600,8 +7692,8 @@ class TldwCli(
         super().__init__()
 
         # A textual-serve child receives a one-use, per-AppService control
-        # capability through its spawn environment. Native terminal launches
-        # have no such variables and need not import the served transport.
+        # capability through its spawn environment. A non-secret launch marker
+        # persists without a broker; native launches need no served transport.
         canvas_control_keys = (
             "CHATBOOK_CANVAS_CONTROL_HOST",
             "CHATBOOK_CANVAS_CONTROL_PORT",
@@ -7611,17 +7703,28 @@ class TldwCli(
         )
         self.served_canvas_handler = None
         self.served_canvas_control = None
-        if any(key in os.environ for key in canvas_control_keys):
+        self._served_canvas_mode = "CHATBOOK_SERVED_CHILD" in os.environ or any(
+            key in os.environ for key in canvas_control_keys
+        )
+        if self._served_canvas_mode:
             from .Canvas.control_protocol import (
                 CanvasControlClient,
                 ControlProtocolError,
             )
             from .Canvas.gateway import ServedCanvasControlHandler
+            from .Canvas.profiles import (
+                load_application_profile_snapshot,
+                runtime_snapshot_id,
+            )
 
+            self._canvas_profile_snapshot = load_application_profile_snapshot()
             self.served_canvas_handler = ServedCanvasControlHandler()
             try:
                 self.served_canvas_control = CanvasControlClient.from_environment(
                     os.environ,
+                    runtime_snapshot_id=runtime_snapshot_id(
+                        self._canvas_profile_snapshot
+                    ),
                     handler=self.served_canvas_handler.handle,
                 )
             except ControlProtocolError:
@@ -7663,6 +7766,8 @@ class TldwCli(
         )
         self.console_default_recovery_inflight: set[tuple[int, str]] = set()
         self.library_new_profile_admission = first_profile_created_this_session()
+        if self.library_new_profile_admission:
+            self._stamp_new_profile_library_lifecycle()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
         # Persona Buddy controller is built lazily on first access
@@ -7723,7 +7828,9 @@ class TldwCli(
             self._instance_lock_status = InstanceLockStatus(acquired=True)
         self.tts_service = build_default_tts_service(self.app_config)
         self._tts_binding_active = False
-        self._tts_profile_repository = TTSProfileRepository(get_tts_profiles_db_path())
+        self._tts_profile_repository_path = get_tts_profiles_db_path()
+        self._tts_profile_repository: TTSProfileRepository | None = None
+        self._tts_profile_repository_close_requested = False
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
         self._tts_profile_service: TTSProfileService | None = None
@@ -8415,16 +8522,12 @@ class TldwCli(
         with self._persona_buddy_controller_lock:
             if self._persona_buddy_controller is not None:
                 return self._persona_buddy_controller
-            # Only the persona service gates construction: the old eager
-            # wiring ran right after _wire_character_persona_services() and
-            # passed self.chachanotes_db through as-is (it is legitimately
-            # None on test-factory apps; the controller tolerates that).
-            local_persona_service = getattr(
-                self, "local_character_persona_service", None
-            )
-            if local_persona_service is None:
-                return None
+            # Independent Buddy artwork needs only the profile DB. The local
+            # Persona service remains optional compatibility for legacy choices.
+            local_persona_service = getattr(self, "local_character_persona_service", None)
             profile_db = getattr(self, "chachanotes_db", None)
+            if local_persona_service is None and profile_db is None:
+                return None
             from .Persona_Buddy.controller import (  # noqa: PLC0415 - imports Persona_Visual + PIL; first feature use only (TASK-21103)
                 PersonaBuddyController,
                 load_local_persona_portrait,
@@ -8444,8 +8547,11 @@ class TldwCli(
                 ),
                 profile_db=profile_db,
                 profile_root=get_user_data_dir(),
-                reduced_motion=bool(
-                    get_cli_setting("appearance", "reduce_motion", False)
+                reduced_motion=lambda: bool(
+                    self.app_config.get("appearance", {}).get("reduce_motion", False)
+                    or not self.app_config.get("buddy_interaction", {}).get(
+                        "animated", True
+                    )
                 ),
                 scheduler=self.call_after_refresh,
                 on_change=self._notify_persona_buddy_changed,
@@ -9313,20 +9419,87 @@ class TldwCli(
 
         if self.actor_pack_recovery_error is None:
             service = getattr(self, "local_character_persona_service", None)
-            if service is not None:
-                try:
-                    from .Persona_Visual.builtin_pixel_migu import (
-                        ensure_builtin_pixel_migu_buddy,
+            try:
+                from .Persona_Buddy.library import BuddyLibrary
+                from .Persona_Buddy.preferences import (
+                    parse_persona_buddy_preferences,
+                    persist_persona_buddy_preferences,
+                    serialize_persona_buddy_preferences,
+                )
+
+                library = BuddyLibrary(
+                    self.chachanotes_db,
+                    get_user_data_dir(),
+                    persona_reader=getattr(service, "get_persona_profile", None),
+                )
+                legacy_retired = False
+                if service is not None:
+                    try:
+                        legacy_builtin = service._find_persona_profile(
+                            "local-persona-builtin-pixel-migu", include_deleted=True
+                        )
+                    except ValueError:
+                        legacy_builtin = None
+                    legacy_retired = bool(
+                        legacy_builtin
+                        and (
+                            legacy_builtin.get("deleted")
+                            or legacy_builtin.get("is_active", True) is not True
+                            or library.repository.get_active_persona_pack(
+                                "local-persona-builtin-pixel-migu"
+                            )
+                            is None
+                        )
+                    )
+                library.ensure_builtin(legacy_retired=legacy_retired)
+                controller = getattr(self, "_persona_buddy_controller", None)
+                if controller is None:
+                    config = getattr(self, "app_config", {})
+                    previous = parse_persona_buddy_preferences(
+                        config.get("persona_buddy", {})
                     )
 
-                    ensure_builtin_pixel_migu_buddy(
-                        service, coordinator, profile_root=get_user_data_dir()
+                    def persist_unclaimed_migration(candidate):
+                        # First construction reads app_config under this same lock.
+                        # Keep disk admission and publication together so it sees
+                        # the committed owner, or takes over migration itself.
+                        with self._persona_buddy_controller_lock:
+                            if (
+                                self._persona_buddy_controller is not None
+                                or parse_persona_buddy_preferences(
+                                    config.get("persona_buddy", {})
+                                )
+                                != previous
+                                or not persist_persona_buddy_preferences(candidate)
+                            ):
+                                return False
+                            config["persona_buddy"] = serialize_persona_buddy_preferences(
+                                candidate
+                            )
+                            return True
+
+                    library.migrate_legacy_selection(
+                        previous,
+                        writer=persist_unclaimed_migration,
                     )
-                except Exception:
-                    self.loguru_logger.warning(
-                        "Built-in pixel-migu Buddy installation failed; "
-                        "will retry on next Personas read"
-                    )
+                    controller = getattr(self, "_persona_buddy_controller", None)
+                if controller is not None:
+
+                    def schedule_migration():
+                        self.run_worker(
+                            controller.migrate_legacy_selection(library),
+                            group="buddy-legacy-migration",
+                            exclusive=False,
+                        )
+
+                    if threading.get_ident() == getattr(self, "_thread_id", None):
+                        schedule_migration()
+                    else:
+                        self.call_from_thread(schedule_migration)
+            except Exception:
+                self.loguru_logger.warning(
+                    "Independent Buddy installation/migration deferred; existing choices retained"
+                )
 
     def ensure_actor_pack_staging_sweep(self) -> None:
         """Run the Actor Pack staging crash-sweep once per session (task-22216).
@@ -14394,12 +14567,17 @@ class TldwCli(
 
     async def _ensure_tts_profile_repository(
         self,
-    ) -> TTSProfileRepository | None:
+    ) -> "TTSProfileRepository | None":
         """Open and return the one app-owned profile repository on first use."""
 
+        if getattr(self, "_tts_profile_repository_close_requested", False):
+            return None
         repository = getattr(self, "_tts_profile_repository", None)
         if repository is None:
-            return None
+            from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+
+            repository = TTSProfileRepository(self._tts_profile_repository_path)
+            self._tts_profile_repository = repository
         if getattr(self, "_tts_profile_repository_close_task", None) is not None:
             return None
         if repository.state is ProfileRepositoryState.OPEN:
@@ -14449,6 +14627,7 @@ class TldwCli(
         if (
             not opened
             or repository.state is not ProfileRepositoryState.OPEN
+            or getattr(self, "_tts_profile_repository_close_requested", False)
             or getattr(self, "_tts_profile_repository_close_task", None) is not None
         ):
             return None
@@ -14715,6 +14894,7 @@ class TldwCli(
     async def _close_tts_profile_repository(self) -> None:
         """Definitively close the app-owned profile repository once."""
 
+        self._tts_profile_repository_close_requested = True
         repository = getattr(self, "_tts_profile_repository", None)
         if repository is None:
             return
@@ -14754,6 +14934,18 @@ class TldwCli(
         """Close app-owned TTS resources without masking cancellation."""
 
         failures: list[tuple[str, BaseException]] = []
+        buddy_speech = getattr(self, "buddy_speech_coordinator", None)
+        if buddy_speech is not None:
+            try:
+                close_task = getattr(self, "_buddy_speech_close_task", None)
+                if close_task is None:
+                    close_task = asyncio.create_task(
+                        buddy_speech.aclose(), name="close_buddy_speech"
+                    )
+                    self._buddy_speech_close_task = close_task
+                await join_retained_task(close_task)
+            except BaseException as buddy_close_error:  # noqa: BLE001 - drain all owners before preserving cancellation
+                failures.append(("buddy_speech", buddy_close_error))
         if hasattr(self, "_close_tts_voice_bundle_service"):
             try:
                 await self._close_tts_voice_bundle_service()
@@ -15198,18 +15390,6 @@ class TldwCli(
         self._recover_inflight_transfers_task = asyncio.create_task(
             self.scheduling_service.recover_inflight_transfers(),
             name="recover_inflight_transfers",
-        )
-
-        # Start the background scheduler loop for reminders and scheduled tasks.
-        # A COROUTINE worker, never thread=True: scheduled watchlist checks
-        # dispatch from this loop, and the watchlists in-flight guard
-        # (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is lock-free on
-        # the invariant that every check entrant runs on the app's one event
-        # loop. Moving dispatch off-loop needs a lock there.
-        self.scheduler_worker = self.run_worker(
-            self.scheduler_loop.run(),
-            exclusive=True,
-            group="scheduling",
         )
 
         # TASK-22215: the two FTS backfills (task-688 subscription_items,
@@ -15974,6 +16154,17 @@ class TldwCli(
                 type(exit_context) is not dict or exit_context
             ):
                 return
+        elif exit_route == TAB_LIBRARY:
+            # task-32072: the wizard's "Add your first document" exit. The
+            # route always means Import -- the destination is fixed here
+            # rather than trusted from the wizard's payload.
+            if completed is not True:
+                return
+            if exit_context is not None and (
+                type(exit_context) is not dict or exit_context
+            ):
+                return
+            screen_context = {LIBRARY_NAV_CONTEXT_INGEST: True}
         else:
             return
 
@@ -16208,6 +16399,10 @@ class TldwCli(
 
     async def _post_mount_setup(self) -> None:
         """Operations to perform after the main UI is expected to be fully mounted."""
+        # A delayed setup callback must not admit startup work after quit.
+        # Textual exit() sets _exit before ShutdownRequest sets our flag.
+        if self._shutting_down or self._exit:
+            return
         post_mount_start = time.perf_counter()
         self.loguru_logger.info(
             "App _post_mount_setup: Binding Select widgets and populating dynamic content..."
@@ -16385,6 +16580,22 @@ class TldwCli(
 
             # Final memory usage
             log_resource_usage()
+
+        # The first scheduler tick loads emergency-stop and heartbeat support.
+        # Start only after `_ui_ready`: launching in on_mount let its queue
+        # reads finish during slow UI setup and spend first-frame budget
+        # nondeterministically (ADR-097).
+        # Start the background scheduler loop for reminders and scheduled tasks.
+        # A COROUTINE worker, never thread=True: scheduled watchlist checks
+        # dispatch from this loop, and the watchlists in-flight guard
+        # (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is lock-free on
+        # the invariant that every check entrant runs on the app's one event
+        # loop. Moving dispatch off-loop needs a lock there.
+        self.scheduler_worker = self.run_worker(
+            self.scheduler_loop.run(),
+            exclusive=True,
+            group="scheduling",
+        )
 
         self._schedule_deferred_startup_work()
 
@@ -16814,7 +17025,7 @@ class TldwCli(
 
         Scoped by the boundary ``_wire_watchlists_and_notifications_services``
         captured when it opened the database, so this cannot fail a row the
-        scheduler -- started earlier, in ``on_mount`` -- launched moments ago
+        scheduler -- started earlier in post-mount setup -- launched moments ago
         (Qodo review of PR #1972). No boundary means no sweep: leaving a row
         wedged is recoverable on the next launch, failing a live one is not.
         """

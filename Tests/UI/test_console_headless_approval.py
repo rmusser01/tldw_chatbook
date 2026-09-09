@@ -24,7 +24,8 @@ made for `_attempt`: the visit Event means "the visit that armed this
 round ended". A round armed while NO view is attached was not armed
 during any visit -- reading that Event for it is the same category error,
 one layer down. `_disposed` (app exit), the run's own cancel event and a
-CONFIGURED deadline all still deny, unchanged.
+configured answerable-time budget still deny. TASK-32078 pauses that budget
+while a retained Console is hidden or the round has no answerable view.
 """
 
 from __future__ import annotations
@@ -32,9 +33,9 @@ from __future__ import annotations
 import asyncio
 import functools
 import threading
-import time
 
 import pytest
+from textual.widgets import Button
 
 from Tests.Chat.test_console_fleet_wake import (
     _controller_rig,
@@ -44,25 +45,22 @@ from Tests.Chat.test_console_fleet_wake import (
     _survivor,
     _terminal_subagent_run,
 )
-from Tests.Chat.test_console_runtime_lifetime import _View, _pending_call
+from Tests.Chat.test_console_runtime_lifetime import _pending_call, _View
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_mcp_approval import _pending
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_console_store_continuity import (
-    _StallingWakeGateway,
     _drain_from_child_thread,
     _navigate,
     _seed_console,
+    _StallingWakeGateway,
     _terminal_survivor_run,
 )
-from textual.widgets import Button
-
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
-
 
 # ---------------------------------------------------------------------------
 # rig
@@ -813,25 +811,21 @@ async def test_app_exit_denies_a_round_armed_while_detached():
 
 
 @pytest.mark.asyncio
-async def test_a_configured_deadline_still_expires_a_headless_round():
-    """Plan Task 5 bullet 2: the clock is NOT paused or extended while detached.
-
-    A positive `[mcp] approval_timeout_seconds` is a fail-closed ceiling
-    the user opted into; detachment does not buy the round more time.
-    """
-    runtime, controller, _store, session, _app = _detached_rig(timeout_seconds=2.0)
+async def test_a_configured_deadline_waits_for_an_answerable_view():
+    """ADR-094: an unseen round retains its configured decision-active budget."""
+    runtime, controller, _store, session, _app = _detached_rig(timeout_seconds=0.1)
     await _leave(runtime)
-    started = time.monotonic()
     thread, box = _arm(controller, session.id)
-    assert await _settle(lambda: "decisions" in box, seconds=10.0), (
-        "a configured deadline never expired the headless round"
-    )
-    elapsed = time.monotonic() - started
-    thread.join(timeout=5)
-    assert box["decisions"] == {"write_file": "timeout"}, box["decisions"]
-    assert elapsed < 6.0, (
-        f"the 2s deadline took {elapsed:.2f}s -- detachment must not extend it"
-    )
+    try:
+        assert await _wait_for_round(controller, session.id)
+        await asyncio.sleep(1.2)
+        assert "decisions" not in box
+        runtime.attach_view(_View({"set_pending_approval": lambda payload: None}))
+        assert await _settle(lambda: "decisions" in box, seconds=4.0)
+        assert box["decisions"] == {"write_file": "timeout"}
+    finally:
+        await runtime.dispose()
+        thread.join(timeout=5)
 
 
 @pytest.mark.asyncio
@@ -844,10 +838,12 @@ async def test_no_headless_path_returns_an_approval_without_a_human():
     """
     verdicts: list[str] = []
 
-    # deadline
+    # A finite decision budget starts once a view can show the round.
     runtime, controller, _store, session, _app = _detached_rig(timeout_seconds=1.0)
     await _leave(runtime)
     thread, box = _arm(controller, session.id)
+    assert await _wait_for_round(controller, session.id)
+    runtime.attach_view(_View({"set_pending_approval": lambda payload: None}))
     assert await _settle(lambda: "decisions" in box, seconds=10.0)
     thread.join(timeout=5)
     verdicts.extend(box["decisions"].values())
@@ -951,10 +947,10 @@ async def test_the_risk_floor_still_raises_a_card_in_a_headless_turn(
         def get_kill_switch(self) -> bool:
             return False
 
-        def approve_for_session(self, server_key, tool_name) -> None:
+        def approve_for_session(self, server_key, tool_name, **kwargs) -> None:
             return None
 
-        def is_session_approved(self, server_key, tool_name) -> bool:
+        def is_session_approved(self, server_key, tool_name, **kwargs) -> bool:
             return False
 
     class _RealToolProvider:
@@ -997,14 +993,14 @@ async def test_the_risk_floor_still_raises_a_card_in_a_headless_turn(
     round_id = _armed_round_ids(controller, session.id)[0]
     with controller._approval_state_lock:
         state = controller._pending_approval_rounds[round_id]
-    assert state["names"] == ("read_file",), state["names"]
+    assert state["names"] == ("c1",), state["names"]
     payload = controller._head_round_payload(
         controller._parked_approval_payloads, session.id
     )
     assert payload["calls"][0]["server_key"] == BUILTIN_TOOL_SERVER_KEY
     assert payload["calls"][0]["reason"] == "risk_floored"
 
-    controller.resolve_pending_approval({"read_file": "deny"}, round_id=round_id)
+    controller.resolve_pending_approval({"c1": "deny"}, round_id=round_id)
     thread.join(timeout=10)
     assert verdicts.get("c1") not in (None, "proceed"), (
         f"the refusal did not reach the runtime: {verdicts}"

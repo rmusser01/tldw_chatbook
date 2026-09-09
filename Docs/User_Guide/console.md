@@ -259,6 +259,7 @@ composer-level strip below shows once setup completes.
 | **Attach context** | Opens the "Console context" rail (staging itself is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Search Library** | Runs a user-initiated **Manual Search Library** request before sending; it remains available regardless of the conversation's automatic or assistant policy — see [Context & RAG](console/context-and-rag.md#per-conversation-library-controls). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
+| **Buddy** (composer **Menu**) | Manage independent Buddy artwork, follow a conversation/workspace, and change Persona settings — see [Buddies](buddies.md). |
 | **Help** | Opens the Console help panel (same as F1). |
 | **Speak replies** | Speaks new assistant replies in this conversation. |
 | **Hands-free** | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. |
@@ -268,8 +269,22 @@ with a Kokoro voice value. If an older configuration shows **Server default**,
 choose Exact and save. Selection errors identify the setting or voice profile
 that needs attention; correct it before trying speech again. In **Lab > Speech**,
 Kokoro's **Automatic (from voice)** language option follows the selected voice.
-Speech Lab starts with **Use ONNX** enabled, matching automatic reply speech;
-the switch still allows an explicit PyTorch selection.
+Automatic reply speech follows Kokoro's **Use ONNX** setting in global Settings.
+Speech Lab starts with **Use ONNX** enabled and its switch can explicitly select
+PyTorch for a preview.
+
+Kokoro PyTorch uses the official Kokoro v1 runtime and requires Python 3.11 or
+3.12. Install `tldw_chatbook[local_tts]`; if English language setup fails, run
+`python -m spacy download en_core_web_sm` in that same environment and retry.
+Use a v1 `.pth` checkpoint and `.pt` voice packs; an adjacent `config.json` is
+used when provided, otherwise the official v1 configuration is cached on first
+use. Japanese and Chinese also need `misaki[ja]` and `misaki[zh]`, respectively.
+On Apple Silicon, the PyTorch MPS option runs neural inference on the GPU and
+Fourier operations on CPU. On Python 3.13 or later, use ONNX.
+Oversized non-English phoneme sequences
+fail with a request to split the text with newlines, rather than silently losing
+the end of the speech.
+
 Kokoro WAV, MP3 and other encoded files are limited to five minutes per request.
 For longer speech, shorten the text or choose PCM; an oversized encoded request
 fails without playing a truncated file.
@@ -474,13 +489,12 @@ requires an override. The default test suite makes no paid request.
 
 ### Leaving Console during a run
 
-Agent runs are screen-scoped: navigating to any other screen cancels every
-in-flight run and denies every pending approval. If runs are active, a
-**Leave Console?** dialog warns you first ("N agent runs will be cancelled
-if you leave Console. Leave anyway?") with **Leave** / **Stay** buttons,
-and a one-time toast on return reports what was cancelled. Details in
+Accepted runs, queues, and pending decisions continue when you navigate to another
+screen or open a modal. A hidden decision raises a notice and waits for you; a finite
+decision timeout counts only while its card is available to answer. **Stop**, session
+close, and application quit retain their cancellation behavior. Details in
 [Agent runs & tools](console/agent-runs-and-tools.md) and the
-[guide index](index.md#console-agent-runs-are-screen-scoped).
+[guide index](index.md#console-runs-continue-during-navigation).
 
 ## Common tasks
 

@@ -22,7 +22,7 @@ any of them silently:
    named-constructor-dependency canon retired. They stay until a phase-A
    extraction gives them a controller home; pinned here so the reason is
    recorded rather than remembered.
-3. ``_MEDIA_PERMANENT_SCREEN_ROWS`` (43) -- NOT canvas-origin. Permanent.
+3. ``_MEDIA_PERMANENT_SCREEN_ROWS`` (44) -- NOT canvas-origin. Permanent.
 
 The origin of every row below was established by reading where the control is
 COMPOSED (or, for the three message classes, where the message is POSTED), not
@@ -142,10 +142,15 @@ _MEDIA_DEFERRED_CANVAS_ORIGIN_ROWS: frozenset[str] = frozenset(
 
 #: NOT canvas-origin: 26 posted by the Reader (``LibraryMediaViewer``, 25
 #: controls + its ``SpeakerRenamed`` message), 13 by ``LibraryMediaTrash
-#: Canvas``, 3 by ``LibraryMediaContent`` inside the Reader, and 1
+#: Canvas``, 3 by ``LibraryMediaContent`` inside the Reader, 1
 #: (``MediaShellResized``) by the adaptive shell, which is the canvas's
 #: ANCESTOR -- a message travelling up from there can never reach a
-#: descendant. Permanent delegator rows.
+#: descendant -- and 1 (``handle_library_media_rail_return``) the task-32065
+#: "‹ Library" grip-return control, which ``LibraryScreen._build_library_
+#: media_rail_return`` composes and mounts on the canvas HOST (a sibling of
+#: the media canvas, not a child), its handler posting the screen-level
+#: ``PaneToggleRequested`` -- screen-origin, so permanent. Arrived in the
+#: ``origin/dev`` reconciliation merge (44, was 43). Permanent delegator rows.
 _MEDIA_PERMANENT_SCREEN_ROWS: frozenset[str] = frozenset(
     {
         "_handle_library_media_speaker_renamed",
@@ -172,6 +177,7 @@ _MEDIA_PERMANENT_SCREEN_ROWS: frozenset[str] = frozenset(
         "handle_library_media_image_preview_toggle",
         "handle_library_media_open",
         "handle_library_media_open_original",
+        "handle_library_media_rail_return",
         "handle_library_media_read_later",
         "handle_library_media_reader_find",
         "handle_library_media_reader_mode",
@@ -243,7 +249,7 @@ def test_the_census_covers_every_media_row_on_the_screen_exactly_once() -> None:
     )
     assert len(migrated) == 16
     assert len(_MEDIA_DEFERRED_CANVAS_ORIGIN_ROWS) == 20
-    assert len(_MEDIA_PERMANENT_SCREEN_ROWS) == 43
+    assert len(_MEDIA_PERMANENT_SCREEN_ROWS) == 44
     assert not migrated & _MEDIA_DEFERRED_CANVAS_ORIGIN_ROWS
     assert not migrated & _MEDIA_PERMANENT_SCREEN_ROWS
     assert not _MEDIA_DEFERRED_CANVAS_ORIGIN_ROWS & _MEDIA_PERMANENT_SCREEN_ROWS

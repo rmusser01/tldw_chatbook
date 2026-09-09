@@ -47,6 +47,10 @@ RUNTIME_ASSETS = {
     "/static/canvas_renderer.js": "canvas_renderer.js",
     "/static/canvas_runtime_worker.js": "canvas_runtime_worker.js",
     "/static/quickjs-runtime.js": "quickjs-runtime.js",
+    "/static/canvas_renderer_v2.js": "canvas_renderer_v2.js",
+    "/static/canvas_runtime_worker_v2.js": "canvas_runtime_worker_v2.js",
+    "/static/mermaid-runtime-manifest.json": "mermaid-runtime-manifest.json",
+    "/static/mermaid-subset.json": "mermaid-subset.json",
 }
 RENDERER_CSP = (
     "default-src 'none'; "
@@ -57,7 +61,7 @@ RENDERER_CSP = (
 )
 
 
-def _shell_html(startup_probe_url: str | None = None) -> bytes:
+def _shell_html(startup_probe_url: str | None = None, *, v2: bool = False) -> bytes:
     document = """<!doctype html>
 <meta charset="utf-8">
 <title>Owned Canvas security harness</title>
@@ -112,6 +116,16 @@ def _shell_html(startup_probe_url: str | None = None) -> bytes:
 </script>
 <iframe id="renderer" name="canvas-renderer" sandbox="allow-scripts" src="/renderer.html"></iframe>
 """
+    if v2:
+        document = document.replace("window.loadCanvas = async (plan) => {",
+                                    "window.loadCanvas = async (plan, source) => {")
+        document = document.replace(
+            "frame.contentWindow.postMessage(\n      {type: 'canvas:init', nonce: state.nonce, plan},",
+            "const manifest = await (await fetch('/static/mermaid-runtime-manifest.json')).text();\n"
+            "    const library = await (await fetch('/static/mermaid-subset.json')).text();\n"
+            "    frame.contentWindow.postMessage(\n"
+            "      {type: 'canvas:init', nonce: state.nonce, plan, runtime_data: {manifest, library, source}},",
+        )
     if startup_probe_url is not None:
         document += (
             '<img id="foreign-startup-probe" alt="" src="'
@@ -121,21 +135,24 @@ def _shell_html(startup_probe_url: str | None = None) -> bytes:
     return document.encode("utf-8")
 
 
-def _renderer_html() -> bytes:
-    renderer = STATIC / "canvas_renderer.js"
+def _renderer_html(*, v2: bool = False, renderer_bytes: bytes | None = None) -> bytes:
+    name = "canvas_renderer_v2.js" if v2 else "canvas_renderer.js"
+    renderer = STATIC / name
     digest = base64.b64encode(
-        hashlib.sha384(renderer.read_bytes() if renderer.exists() else b"").digest()
+        hashlib.sha384(renderer_bytes if renderer_bytes is not None else
+                       renderer.read_bytes() if renderer.exists() else b"").digest()
     ).decode("ascii")
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
         '<meta name="referrer" content="no-referrer">'
-        f'<script type="module" src="/static/canvas_renderer.js" integrity="sha384-{digest}" crossorigin="anonymous"></script>'
+        f'<script type="module" src="/static/{name}" integrity="sha384-{digest}" crossorigin="anonymous"></script>'
         '</head><body><div id="canvas-root"></div></body></html>'
     ).encode()
 
 
-def _expected_worker_bootstrap_url(origin: str) -> str:
-    worker_url = f"{origin}/static/canvas_runtime_worker.js"
+def _expected_worker_bootstrap_url(origin: str, *, v2: bool = False) -> str:
+    name = "canvas_runtime_worker_v2.js" if v2 else "canvas_runtime_worker.js"
+    worker_url = f"{origin}/static/{name}"
     bootstrap = (
         f"import({json.dumps(worker_url)}).then((module) => {{ "
         "module.startCanvasRuntimeWorker(globalThis); "
@@ -163,6 +180,7 @@ class _OwnedServer(ThreadingHTTPServer):
         self.assets = assets
         self.requests: list[RequestRecord] = []
         self.runtime_overrides: dict[str, bytes] = {}
+        self.v2 = False
         self.startup_probe_url: str | None = None
         self.lock = Lock()
         super().__init__(("127.0.0.1", 0), _OwnedHandler)
@@ -202,14 +220,15 @@ class _OwnedHandler(BaseHTTPRequestHandler):
         if self.path == "/shell.html":
             self._send(
                 200,
-                _shell_html(self.server.startup_probe_url),
+                _shell_html(self.server.startup_probe_url, v2=self.server.v2),
                 "text/html; charset=utf-8",
             )
             return
         if self.path == "/renderer.html":
             self._send(
                 200,
-                _renderer_html(),
+                _renderer_html(v2=self.server.v2, renderer_bytes=self.server.runtime_overrides.get(
+                    "/static/canvas_renderer_v2.js" if self.server.v2 else "/static/canvas_renderer.js")),
                 "text/html; charset=utf-8",
                 {
                     "Content-Security-Policy": RENDERER_CSP,
@@ -305,13 +324,19 @@ class BrowserRecorder:
 
     def _assert_startup_allowlist(self) -> None:
         origin = self.asset_server.origin
+        suffix = "_v2" if self.asset_server.v2 else ""
         expected_urls = {
             f"{origin}/shell.html": "document",
             f"{origin}/renderer.html": "document",
-            f"{origin}/static/canvas_renderer.js": "script",
-            f"{origin}/static/canvas_runtime_worker.js": "script",
+            f"{origin}/static/canvas_renderer{suffix}.js": "script",
+            f"{origin}/static/canvas_runtime_worker{suffix}.js": "script",
             f"{origin}/static/quickjs-runtime.js": "script",
         }
+        if self.asset_server.v2:
+            expected_urls.update({
+                f"{origin}/static/mermaid-runtime-manifest.json": "fetch",
+                f"{origin}/static/mermaid-subset.json": "fetch",
+            })
         with self._lock:
             startup = [item for item in self.observations if item.phase == "startup"]
         requests = [item for item in startup if item.kind == "request"]
@@ -377,7 +402,7 @@ class BrowserRecorder:
         ), navigations
 
         workers = [item.target for item in startup if item.kind == "worker"]
-        assert workers == [_expected_worker_bootstrap_url(origin)], workers
+        assert workers == [_expected_worker_bootstrap_url(origin, v2=self.asset_server.v2)], workers
         assert all(
             item.kind
             in {"request", "response", "request-finished", "navigation", "worker"}
@@ -413,13 +438,19 @@ class BrowserRecorder:
                 *[
                     ("GET", path, "null", "script", "cors", "cross-site")
                     for path in (
-                        "/static/canvas_renderer.js",
-                        "/static/canvas_runtime_worker.js",
+                        f"/static/canvas_renderer{suffix}.js",
+                        f"/static/canvas_runtime_worker{suffix}.js",
                         "/static/quickjs-runtime.js",
                     )
                 ],
             ]
         )
+        if self.asset_server.v2:
+            expected_http.extend([
+                ("GET", path, None, "empty", "cors", "same-origin")
+                for path in ("/static/mermaid-runtime-manifest.json", "/static/mermaid-subset.json")
+            ])
+            expected_http.sort()
         assert actual_http == expected_http, actual_http
         with self.egress_server.lock:
             egress_requests = list(
@@ -607,9 +638,9 @@ def _render_node(node: RenderNode) -> dict[str, Any]:
     }
 
 
-def _wire_plan(source: str) -> dict[str, Any]:
-    plan = compile_canvas_document(source)
-    return {
+def _wire_plan(source: str, *, runtime_profile: str = "canvas-v1", snapshot=None) -> dict[str, Any]:
+    plan = compile_canvas_document(source, runtime_profile=runtime_profile, snapshot=snapshot)
+    wire = {
         "runtime_profile": plan.runtime_profile,
         "source_identity": asdict(plan.source_identity),
         "root": _render_node(plan.root),
@@ -624,6 +655,10 @@ def _wire_plan(source: str) -> dict[str, Any]:
         "css_rules": list(plan.css_rules),
         "scripts": list(plan.scripts),
     }
+    if runtime_profile != "canvas-v1":
+        wire["diagrams"] = [asdict(item) for item in plan.diagrams]
+        wire["profile_manifest_sha256"] = plan.profile_manifest_sha256
+    return wire
 
 
 def _node_id_for_html_id(node: dict[str, Any], html_id: str) -> str:
@@ -675,13 +710,33 @@ def _attack_source(script: str) -> str:
 
 
 def _new_page(
-    browser: Any, asset_server: _OwnedServer, egress_server: _OwnedServer
+    browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+    *,
+    observe_patches: bool = False,
 ) -> tuple[Any, Any, BrowserRecorder]:
     context = browser.new_context(accept_downloads=True)
     context.add_init_script(
         "window.__canvasNativeWindowSentinel = 'native-frame-clean';"
         "Object.prototype.__canvasNativePrototypeSentinel = 'native-frame-clean';"
     )
+    if observe_patches:
+        # Observe the trusted worker envelope without changing shipped runtime bytes.
+        context.add_init_script("""
+          window.__releasePatchCounts = [];
+          const OwnedWorker = window.Worker;
+          window.Worker = class extends OwnedWorker {
+            constructor(...args) {
+              super(...args);
+              this.addEventListener('message', event => {
+                if (Array.isArray(event.data?.patches)) {
+                  window.__releasePatchCounts.push(event.data.patches.length);
+                }
+              });
+            }
+          };
+        """)
     recorder = BrowserRecorder(asset_server, egress_server)
     page = context.new_page()
     page.expose_function("__canvasApproveExecution", recorder.approve_execution)
@@ -747,11 +802,12 @@ def _new_page(
 
 
 def _load(
-    page: Any, plan: dict[str, Any], recorder: BrowserRecorder | None = None
+    page: Any, plan: dict[str, Any], recorder: BrowserRecorder | None = None, *,
+    source: str | None = None,
 ) -> dict[str, Any]:
     if recorder is not None:
         recorder.arm_plan(plan)
-    page.evaluate("plan => window.loadCanvas(plan)", plan)
+    page.evaluate("args => window.loadCanvas(args.plan, args.source)", {"plan": plan, "source": source})
     try:
         page.wait_for_function(
             "window.__canvasHarness.startupApproved === false || "
@@ -1259,11 +1315,15 @@ document.getElementById("mix-live").addEventListener("click", () => {
 
 
 @pytest.mark.loopback_network
+@pytest.mark.parametrize("runtime_profile", ["canvas-v1", "canvas-v2-mermaid-1"])
 def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
     chromium_browser: Any,
     asset_server: _OwnedServer,
     egress_server: _OwnedServer,
+    candidate_snapshot,
+    runtime_profile,
 ) -> None:
+    asset_server.v2 = runtime_profile == "canvas-v2-mermaid-1"
     cases = json.loads(
         (FIXTURES / "adversarial_scripts.json").read_text(encoding="utf-8")
     )
@@ -1281,7 +1341,8 @@ def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
                     egress_server.origin.replace("http://", "ws://", 1),
                 )
             )
-            status = _load(page, _wire_plan(_attack_source(script)), recorder)
+            source = _attack_source(script)
+            status = _load(page, _wire_plan(source, runtime_profile=runtime_profile, snapshot=candidate_snapshot), recorder, source=source)
             frame = page.frame(name="canvas-renderer")
             assert frame is not None
             if case["expected"] == "failed-after-click":

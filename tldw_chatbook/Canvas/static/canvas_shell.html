@@ -42,6 +42,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
             <span id="connection-state" class="state-badge" role="status">Connecting</span>
             <span id="follow-state" class="state-badge state-follow">Following</span>
             <span id="revision-label" class="revision-label">Revision —</span>
+            <span id="preview-state" class="state-badge" role="status">Preview pending</span>
           </div>
           <div id="provenance" class="provenance" aria-live="polite">Origin unavailable</div>
           <nav class="canvas-actions" aria-label="Canvas actions">
@@ -69,6 +70,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <strong id="compatibility-title">Compatibility note</strong>
       <span id="compatibility-copy"></span>
       <button id="scripts-disabled-button" type="button">Reopen with scripts disabled</button>
+      <button id="repair-button" type="button" hidden>Prepare repair draft</button>
     </section>
 
     <section class="preview-stage" aria-label="Canvas preview">
@@ -92,6 +94,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <div>
           <h2 id="source-heading">Revision source</h2>
           <p>Read-only. Copying or running this HTML outside Chatbook bypasses the Canvas sandbox.</p>
+          <p>Mermaid declarations require their compatible Chatbook profile. Source HTML is not a standalone rendered diagram.</p>
         </div>
         <div class="source-actions">
           <button id="runnable-download-button" type="button">Download as runnable HTML</button>

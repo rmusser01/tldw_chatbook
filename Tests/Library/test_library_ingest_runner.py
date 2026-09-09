@@ -5045,6 +5045,35 @@ async def test_pool_creation_failure_fails_job_retryable_and_app_survives(
         await _wait_for_runner_idle(app, pilot)
 
 
+@pytest.mark.asyncio
+async def test_pool_creation_failure_still_skips_an_unsupported_file(
+    tmp_path: Path,
+) -> None:
+    """(task-32054) A lost pool must not restate a skip as a pool failure.
+
+    The pre-flight forecasts an unsupported file as "will skip" and the
+    parse worker records it SKIPPED. When the pool cannot start, the worker
+    never runs -- and the job used to land FAILED, retryable, carrying an
+    unrelated ``Parse pool could not start: ...`` reason (critique #8).
+    """
+    db = _make_db(tmp_path)
+    source = tmp_path / "photo.heic"
+    source.write_text("not really an image")
+
+    def _always_fails():
+        raise RuntimeError("spawn machinery exploded")
+
+    app = _IngestRunnerHarness(db, pool_factory=_always_fails)
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(source_path=str(source))
+        skipped = await _wait_for_job_state(
+            app, pilot, job.job_id, IngestJobState.SKIPPED
+        )
+        assert "Unsupported file type" in skipped.error
+        assert "Parse pool" not in skipped.error
+
+
 def test_top_up_abandons_pass_when_mark_parsing_rejects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

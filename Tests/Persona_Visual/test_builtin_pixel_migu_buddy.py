@@ -173,11 +173,50 @@ def test_app_readiness_installs_after_recovery_and_before_return(
     )
     app_module.TldwCli.ensure_actor_pack_recovery(app)
     assert coordinator.recovery_attempted
-    assert service.get_persona_profile(PIXEL_MIGU_PERSONA_ID)["name"] == "pixel-migu"
+    from tldw_chatbook.Persona_Buddy.library import BuddyLibrary
+
+    assert BuddyLibrary(db, root).list_buddies()[0].name == "pixel-migu"
     assert (
         PersonaVisualRepository(db).get_active_persona_pack(PIXEL_MIGU_PERSONA_ID)
-        is not None
+        is None
     )
+    with pytest.raises(ValueError):
+        service.get_persona_profile(PIXEL_MIGU_PERSONA_ID)
+
+
+@pytest.mark.parametrize("retirement", ["inactive", "deleted", "archived"])
+def test_app_readiness_preserves_retired_legacy_builtin(
+    components, monkeypatch, retirement
+):
+    from types import SimpleNamespace
+
+    from loguru import logger
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Persona_Buddy.library import BuddyLibrary
+
+    db, service, coordinator, root = components
+    install(components)
+    if retirement == "inactive":
+        service.update_persona_profile(PIXEL_MIGU_PERSONA_ID, {"is_active": False})
+    elif retirement == "deleted":
+        service.delete_persona_profile(PIXEL_MIGU_PERSONA_ID)
+    else:
+        repository = PersonaVisualRepository(db)
+        graph = repository.get_active_persona_pack(PIXEL_MIGU_PERSONA_ID)
+        repository.archive_binding(
+            persona_id=PIXEL_MIGU_PERSONA_ID, expected_identity=graph.identity
+        )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: root)
+    app = SimpleNamespace(
+        chachanotes_db=db,
+        persona_actor_pack_coordinator=coordinator,
+        local_character_persona_service=service,
+        actor_pack_recovery_error=None,
+        loguru_logger=logger,
+    )
+    app_module.TldwCli.ensure_actor_pack_recovery(app)
+    assert BuddyLibrary(db, root).list_buddies() == ()
 
 
 def test_racing_service_loser_cleanup_preserves_winners_frames(components, monkeypatch):

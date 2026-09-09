@@ -15,7 +15,7 @@ pages:
 - [File Notes](library/file-notes.md) — the folder-backed File Notes workspace and its Session Git panel.
 - [Prompts](library/prompts.md) — saved prompts: list, editor, import, and Console insert.
 - [Skills](library/skills.md) — skill packs: import, editing, and the trust/approval flow.
-- [Collections](library/collections.md) — local Collection records for saved content.
+- [Collections](library/collections.md) — the Quick Capture reading list: saved web captures, highlights, and the legacy-records recovery path.
 - [Search & RAG](library/search-and-rag.md) — the Library Search/RAG canvas, evidence, and the Console handoff.
 - [Import & export](library/import-and-export.md) — the Import media flow and the Export bundle (.zip) canvas.
 
@@ -37,8 +37,25 @@ pages:
 
 ## Get started on a new profile
 
+> **You will probably never see this.** "New profile" here means a profile
+> whose `config.toml` was created **in the same run** — the first launch
+> that writes the file. If the config file already existed when the app
+> started, Library opens the **full rail** even on a completely empty
+> profile, and the Get started view below never appears. That includes the
+> ordinary case of quitting during first-run setup and relaunching: setup
+> writes the config, so the next launch is no longer "new". Verified live
+> on an empty profile with a pre-written config: full rail, every count
+> `(0)`, no Get started controls. Making a genuinely empty profile reach
+> Get started regardless of when its config was written is tracked as
+> task-32059.
+
 A new profile starts with a compact rail: **Import…**, **New note**, and
-**Explore all tools**. While Library checks its sources, it says
+**Explore all tools**. The Get started canvas offers the same journey as three
+controls that unlock in order — **Import a file**, **Find it**, and **Use it in
+Console**. A step you cannot run yet stays pressable and says why and what to
+do first ("Find it needs something to search — Import a file first."), on the
+line under the three controls and again if you press it. While Library checks
+its sources, it says
 **Checking existing Library content…** instead of claiming that the Library is
 empty. If a source is unavailable, the same actions stay enabled and one
 **Retry source check** action appears.
@@ -62,12 +79,17 @@ checking sources -- usable content found --> full Library (permanent)
 choice independently of which rail sections are open. While the expanded
 Library is still authoritatively empty, **Back to Get started** is available.
 Adding any usable content permanently graduates the profile to the full
-Library; deleting that content later does not hide tools again.
+Library; deleting that content later does not hide tools again. Graduation
+announces itself once, as the toast "Library tools are now available." — the
+rail growing is the durable evidence, so nothing is added to the canvas, and
+whatever you were reading or typing is left alone.
 
 Compact presentation never blocks navigation. Deep links and command-palette
 routes, including **Tab Navigation: Library — Skills**, can open a tool that is
 not shown in the Get started rail. Existing profiles without this preference
-open the full Library.
+open the full Library. A profile created by this app records its Library
+lifecycle when the profile is created, so Get started still appears if you
+complete first-run setup, quit, and come back before ever opening Library.
 
 ## Returning to a populated Library
 
@@ -120,11 +142,19 @@ knows more than the source owners do:
 - **Quick actions** are **Import…**, **New note**, then **Search**. They use the
   same guarded destinations as the rail.
 
-At compact widths the landing canvas is hidden and the rail remains the
-navigation owner. If focus was on Continue, recovery, a cached summary, or a
-quick action when the terminal became compact, focus moves to that action's
-matching rail destination. Widening restores the landing control only if you
-did not choose a newer rail target in the meantime.
+"Compact" here means the **single-stage** layout below 64 columns, not
+merely a narrow terminal: at 100 columns the rail and the landing canvas
+still paint side by side, with the landing's counts line, **From your
+Library** and **Quick actions** all present (verified live at 100x30). Only
+once the screen drops to one stage does the rail become the sole navigation
+owner and the landing canvas go away. task-32066 settled that the landing
+does not yield earlier than 64 columns.
+
+At compact widths the landing canvas **stays** beside the rail — both panes
+are kept, the rail narrows, and whatever you had focused (Continue, a recovery
+action, a cached summary, a quick action) keeps focus straight through the
+resize. Only Notes' own workflow routes fold to a single pane at those widths;
+the landing does not.
 
 ## Layout tour
 
@@ -150,6 +180,15 @@ the rail or the canvas. Activating a rail destination opens its canvas; use
 the co-present layout and prior focus/scroll position when no newer action has
 replaced it.
 
+- **Chunking Lab strip** — directly under the header, on *every* Library
+  canvas: a **Chunking Lab** button and a **Try selected text** button.
+  This is a developer tool for comparing chunking strategies, not part of
+  the destination you are on; **Chunking Lab** opens it full-screen (see
+  [Search & RAG](library/search-and-rag.md) for what chunking affects).
+  It is deliberately undocumented per-canvas because it is identical
+  everywhere. Escape does not currently leave the Lab — use the nav bar or
+  the command palette. Demoting this strip out of every canvas header is
+  tracked as task-32064.
 - **Header line** — reads **Library | Local**, or **Library | Server:
   \<label\>** when a server runtime is configured.
 - **Left rail**, top to bottom. A new empty profile first sees the compact
@@ -180,10 +219,11 @@ replaced it.
     short label ("Chats", "Cards", "Sets") instead of an ellipsis, so no
     row label ever cuts off mid-word and the count always stays visible.
     The three Study rows are hand-offs (they are a
-    two-step trip out of Library), so they group under their own section
-    and add a second "see what carries over" line — that click opens a
+    two-step trip out of Library), so they group under their own section —
+    one row each. That click opens a
     Library-local staging canvas showing what will carry into Study, not
-    the Study screen itself; **Continue in Study** inside that canvas is
+    the Study screen itself, and the canvas says so ("This page shows what
+    carries over"); **Continue in Study** inside that canvas is
     the click that actually leaves, and **Escape** returns to the hub. The
     selected row is marked **▸**, and the Flashcards row shows "due: N"
     instead of a plain count;
@@ -227,7 +267,8 @@ visible stage so its controls remain on-screen. Escape (or the
 | **New note** | Opens the production note-creation canvas. It is shown directly in the Get started rail. |
 | **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
 | **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is never offered after graduation. |
-| **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). |
+| **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. |
+| **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
 | **▾** / **▸** (section headers) | Open or collapse that rail section. |
 
 ### Browse rows
@@ -400,8 +441,9 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 |---|---|
 | / | Focus the filter of the list you're on — the Media, Conversations, Prompts, or Notes canvas's own **Title/keyword…** / filter box — so the footer's "/ focus search" lands where you're looking. On the landing, or on a canvas `/` isn't wired to (Skills, Collections, Search / RAG, Study), it focuses the rail's **Search Library…** box instead — those canvases have their own filter/query inputs, but `/` does not route to them today. Never fires while a text field already has focus. Get started has no hidden search target; use **Explore all tools** or a direct route. |
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
-| ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list, move to the previous/next row (stops at the first/last row — it does not wrap) |
+| ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list — or the New note canvas's Blank note / template rows — move to the previous/next row (stops at the first/last row — it does not wrap) |
 | Enter | Open the focused list row (same as clicking it) |
+| Tab / Shift+Tab | Move to the next/previous control **within Library**. Tab stays on this screen; the top navigation bar is reached with its own keys (Ctrl+digit / F-keys), never by tabbing off the end of a canvas |
 | Esc | Context-dependent — see below |
 
 Entering a Media, Notes, Prompts, or Skills list (from the rail, or
@@ -409,6 +451,21 @@ returning from its item) focuses the list's first row, so ↑/↓/Enter work
 immediately without tabbing to find it. Escape then reads the surface
 you're on:
 
+- **While a long operation is running** (a Folder files folder change, a
+  skill import, an export bundle write) — Escape, the back cue and Ctrl+Q
+  all still work. A wait that outlives about three seconds says so in its
+  own status line ("… · still working · Cancel") and offers a **Cancel**
+  beside it; what a wait can refuse is a *second* write of the same kind,
+  never your way out.
+- **In any search or filter box** — the rail's **Search Library…** box, a
+  canvas's own filter, the Search / RAG query box — Escape hands focus to
+  the first control on the canvas, so the next key you press is a canvas
+  key rather than another character in the box (press Escape then `i` on
+  the landing and Import opens). Nothing you typed is cleared, and the
+  footer switches from "typing in field" to the canvas's own hints. Where
+  a surface already gives Escape a job (an editor, Import, Export, an
+  armed confirmation — the entries below), that job still wins; the box
+  simply stops holding the key hostage.
 - **On the plain list** — Escape moves focus to the rail's **Search
   Library…** box in the full Library, or **Import…** in Get started; it never
   leaves the canvas or changes what's shown.
@@ -448,6 +505,12 @@ filterless tool canvases rather than over-claiming "any" canvas. Pinned at
 235x52 and 100x30 in `test_slash_focuses_the_media_filter_not_the_rail_search`
 and `test_slash_focuses_the_prompts_filter_not_the_rail_search`).*
 
+*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32051:
+Escape now leaves a focused search/filter box for the canvas, so the next
+printable key is a canvas key; task-32052: Tab stays inside the Library
+screen instead of walking into the top navigation bar. Pinned in
+`Tests/UI/test_library_crit8_keyboard.py`.)*
+
 ## Related settings & docs
 
 - `config.toml`: `[library]` (ingest backend, last directory, and scan
@@ -472,7 +535,7 @@ and `test_slash_focuses_the_prompts_filter_not_the_rail_search`).*
   Library…** box) first.
 - **Clicking Study decks / Flashcards / Quizzes doesn't open Study.**
   That's by design — the row opens a Library-local staging canvas first
-  ("see what carries over"); press **Continue in Study** inside it to
+  (it opens with "This page shows what carries over"); press **Continue in Study** inside it to
   actually leave Library, or **Escape** to return to the hub. Generation
   and review run in the Study screen; Escape there returns to this
   staging canvas.
@@ -694,3 +757,54 @@ time) can be fixed in one action once a provider IS configured — "Analyze
 N skipped" above the import queue, over every skipped id currently in the
 queue. Details on the
 [import & export](library/import-and-export.md) page.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32066:
+this page claimed the landing hides below 120 columns; it does not, and that is
+deliberate — "keep compact landing alongside rail" (1a6c293761) took it out of
+compact single-stage on purpose and pinned the two-pane result at 80 and 100
+columns together with a focus-stability contract. The page now describes what
+the app does. Confirmed live at 100x30.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32059:
+Get started is no longer skipped for a profile that completed setup and
+relaunched before its first Library visit — the lifecycle is recorded at
+profile creation instead of being inferred from a missing key.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32063:
+"Library tools are now available." fires only when the compact Get started
+rail actually gives way to the full one, not on a populated profile's first
+source read. task-32064: the "Chunking Lab / Try selected text" strip left the
+top of every canvas for Details ▸ Actions, with a one-line gloss, and Escape
+in the Lab returns to the Library canvas it was opened from. task-32069: the
+rail search box has an "x" and no longer carries a stale query onto another
+canvas; the three Study rows are one row each. task-32072: Get started's
+"1 Add · 2 Find · 3 Use" is now three live controls.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (fix round:
+task-32063's graduation notice is now the toast and nothing else — the
+in-canvas line that repeated it is gone, so one event has one surface and
+nothing is added to the canvas a reader is working in.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (review of
+PR #2531: Escape leaves the Chunking Lab from its focused sample editor too,
+not only with focus outside a text field; Get started's **Use it in Console**
+unlocks on a *selected* search result and otherwise says "run Find it and pick
+one."; and the graduation toast also reaches a brand-new profile, whose
+lifecycle goes straight from `unknown` to graduated without settling on
+Starter.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073, three
+corrections from critique #8's docs-vs-live pass, each re-tested live at
+235x52 and 100x30 on a seeded and an empty profile):
+(1) **Get started** is reached only by a profile whose config.toml was
+created in the same run — an empty profile with a pre-written config opens
+the full rail with `(0)` on every row and never sees it (task-32059);
+(2) the landing canvas is **not** hidden merely at narrow widths — at 100
+columns it still paints beside the rail; only the below-64-column
+single-stage layout drops it (task-32066);
+(3) the **Chunking Lab / Try selected text** strip under the header, which
+paints on every Library canvas, was undocumented (task-32064).)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: Library's
+structural waits report "still working · Cancel" past three seconds and never
+gate Escape, the back cue, the palette or Quit).*

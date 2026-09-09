@@ -1286,10 +1286,17 @@ ConsoleRunLogModal {
    (DataTable), TASK-2300 (SelectOverlay) and task-31221 (the media type
    chooser). Focus stays visible the sanctioned way: the arrow glyph
    recolours to the accent and goes bold. */
+/* task-32053 fix round 1 (controller ruling): recolouring the arrow and
+   bolding it is still a COLOUR-family change -- critique #8 measured focus
+   as invisible here, and a 1-cell-wide grip has no room for a glyph cue.
+   `reverse` inverts the whole grip as a block, which reads at a glance and
+   survives monochrome, without the outline this rule deliberately refuses
+   (task-31276: an outline on a shell-tall grip paints over the Reader's
+   identity line and reads as a rendering artifact). */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {
     background: $ds-surface-raised;
     color: $ds-action-focus;
-    text-style: bold;
+    text-style: bold reverse;
     tint: transparent;
     outline: none;
 }
@@ -1726,6 +1733,22 @@ ConsoleRunLogModal {
     height: auto;
     min-height: 0;
     margin: 0 0 1 0;
+}
+
+/* task-32056: the actions row now sits directly under Read/Info, so the
+   two read as one header block rather than two unrelated groups. */
+.library-conversation-reader-modes {
+    margin: 0;
+}
+
+/* task-32056 fix round 1: the blocked reason wraps instead of riding in a
+   Button label, which Textual truncates to one line -- at 100 columns the
+   reader pane is ~43 cells and clipped it mid-word. */
+.library-conversation-reader-block-reason {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    padding: 0 1;
 }
 
 .library-conversation-reader-modes > Button,
@@ -2186,6 +2209,22 @@ ConsoleRunLogModal {
     color: $ds-text-primary;
 }
 
+/* task-32052 AC#2: entering the New-note canvas now parks focus on Blank
+   note and Up/Down walk the templates, so these rows need the same
+   focus-only left-edge cue the other Library list rows carry
+   (.library-notes-row:focus, task-31983). The border replaces the row's
+   1-column left padding so the label never shifts or is clipped, and
+   `outline: none` suppresses the generic `*:focus{outline:solid}`
+   fallback (the task-2041 label-eating trap on a compact row). */
+.library-notes-create-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* Same look as .library-notes-row: prompts list rows (library_prompts_canvas.py). */
 .library-prompt-row {
     width: 100%;
@@ -2345,8 +2384,27 @@ a deliberate $ds-grid-line frame on the raised surface instead of the
 near-invisible Textual default border (which read as a borderless void
 with stray left-edge border fragments), and padding 0 1 so the full
 "Search Library…" placeholder still fits at 100 columns. */
-#library-search-input {
+/* task-32069: the box shares its row with a "x" clear button now, so it
+   takes the remaining width rather than the whole row (which squeezed the
+   button to zero cells and painted nothing where the affordance should be). */
+#library-rail-search-row {
+    height: 3;
     width: 100%;
+}
+
+#library-search-clear {
+    width: 3;
+    min-width: 3;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-search-input {
+    width: 1fr;
     height: 3;
     min-height: 3;
     margin: 0 0 1 0;
@@ -9297,6 +9355,16 @@ ListItem.personas-library-row.is-active.-highlight {
     text-style: bold;
 }
 
+/* task-32053 AC#4: Run painted byte-identically focused and blurred (the
+   generic `*:focus{outline:solid}` cannot paint around a 1-row button).
+   Same heavy SIDE rails the compact canvas actions use (task-3302 MI-05):
+   they land on the button's own `padding: 0 1` cells, so the label
+   survives and the dimensions never change on focus/blur. */
+#library-rag-run-query:focus {
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+}
+
 #library-rag-run-query:disabled {
     background: $ds-surface-raised;
     color: $ds-text-disabled;
@@ -9325,9 +9393,26 @@ ListItem.personas-library-row.is-active.-highlight {
     border-bottom: solid $ds-grid-line;
 }
 
+/* task-32053 AC#1 (critique #8 row 4): the card was reachable in five Tabs
+ * from the query box, but the ONLY cue was this border-colour swap -- a
+ * colour-only signal, against the house rule, and the reason two live
+ * reviewers read the cards as unreachable and the keys as inert. The left
+ * edge becomes the house `thick` block bar (`█`, same non-colour cue as
+ * `.library-media-row:focus`/`.library-notes-row:focus`, task-31983);
+ * `thick` occupies the same single cell `solid` already reserved, so
+ * nothing shifts on focus/blur. */
 .library-rag-result-card:focus {
     border: solid $ds-focus-accent;
     border-bottom: solid $ds-focus-accent;
+    border-left: thick $ds-focus-accent;
+    /* Load-bearing, and the reason the card LOOKED colour-only: the generic
+     * `*:focus { outline: solid $ds-focus-accent }` fallback
+     * (core/_reset.tcss) paints its edges OVER this widget's own border
+     * cells, so every edge -- including this one -- came out as the
+     * outline's `│` recoloured to the accent, and the border rule above was
+     * never visible at all. Every sibling row rule already suppresses it
+     * for exactly this reason (`.library-media-row:focus`, task-2856). */
+    outline: none;
 }
 
 /* task-7 PR-2 leftover: this title Static used to draw its own
@@ -11749,4 +11834,14 @@ ConsoleExchangeExportDialog {
 
 #exchange-export-path {
     height: 3;
+}
+
+/* Buddy transcripts scroll the complete decision card. A 1fr batch body
+   inside the auto-height card collapses and clips its controls at 60x20. */
+BuddyConversationModal #approval-batch-body {
+    height: auto;
+}
+BuddyConversationModal .approval-row-decision {
+    width: 1fr;
+    min-width: 10;
 }

@@ -106,6 +106,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     CapturePolicyStaleError,
     ConsoleChatSession,
     ConsoleChatStore,
+    UNSPECIFIED_ASSISTANT,
     ConsoleDispatchSettlementError,
     ConsoleDurableAcceptanceRetired,
     ConsoleDurableAcceptanceFingerprint,
@@ -2523,6 +2524,7 @@ class _PreparedSendContinuation:
     one_shot_prefill_revision: int | None
     staged_evidence_frozen: bool
     staged_evidence: _PreparedEvidenceLease | None
+    preserve_composer: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -7090,6 +7092,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        preserve_composer: bool = False,
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
     ) -> ConsoleSubmitResult:
@@ -7104,6 +7107,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                preserve_composer=preserve_composer,
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
             )
@@ -7125,6 +7129,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        preserve_composer: bool = False,
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
     ) -> ConsoleSubmitResult:
@@ -7157,6 +7162,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                preserve_composer=preserve_composer,
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
             )
@@ -7168,6 +7174,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                preserve_composer=preserve_composer,
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
             )
@@ -7207,6 +7214,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        preserve_composer: bool = False,
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
     ) -> ConsoleSubmitResult:
@@ -7271,6 +7279,15 @@ class ConsoleChatController:
             if _resume_preparation_id is not None
             else None
         )
+        if prepared_continuation is not None:
+            preserve_composer = prepared_continuation.preserve_composer
+        if preserve_composer and not session_id:
+            return ConsoleSubmitResult(False, False, "Choose an explicit conversation.")
+        if preserve_composer and str(draft).lstrip().startswith((COMMAND_PREFIX, MENTION_SIGIL)):
+            return ConsoleSubmitResult(
+                False, False, "Use Console for slash commands and @ references.",
+                session_id=session_id,
+            )
         if _resume_preparation_id is not None and resumed_preparation is None:
             return ConsoleSubmitResult(
                 False, False, "Prepared turn is no longer available."
@@ -7378,6 +7395,17 @@ class ConsoleChatController:
                 self._bind_submit_preparation(
                     active_task, resumed_preparation.preparation_id
                 )
+        if preserve_composer and (
+            self.store.pending_attachments(session.id)
+            or self.store.session_one_shot_prefill(session.id)
+            or self._has_explicit_staged_evidence(session.id) is not False
+        ):
+            return ConsoleSubmitResult(
+                False, False,
+                "This conversation has staged Console attachments, evidence or prefill. "
+                "Review them in Console before sending from Buddy.",
+                session_id=session.id,
+            )
         # PR3a-2 Task 5: a wake never touches the user's staged state --
         # pending attachments belong to the USER's next send and must be
         # neither embedded nor cleared by a machine turn.
@@ -7385,7 +7413,7 @@ class ConsoleChatController:
             list(prepared_continuation.attachments)
             if prepared_continuation is not None
             else self.store.pending_attachments(session.id)
-            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE and not preserve_composer
             else []
         )
         attachment_mode_pendings = [
@@ -7851,16 +7879,18 @@ class ConsoleChatController:
                     session.id
                 ).revision
             one_shot_prefill, captured_prefill_revision = (
-                self.store.session_one_shot_prefill_snapshot(session.id)
+                (None, None) if preserve_composer
+                else self.store.session_one_shot_prefill_snapshot(session.id)
             )
-            frozen_prefill, frozen_prefill_from_one_shot = self._resolve_submit_prefill(
-                session.id
+            frozen_prefill, frozen_prefill_from_one_shot = (
+                (self._pinned_prefill_for_session(session.id), False)
+                if preserve_composer else self._resolve_submit_prefill(session.id)
             )
             (
                 staged_evidence_frozen,
                 staged_evidence,
                 staged_evidence_release,
-            ) = self._snapshot_staged_evidence()
+            ) = (True, None, None) if preserve_composer else self._snapshot_staged_evidence()
             preparation = ConsoleTurnPreparation(
                 preparation_id=str(uuid4()),
                 attempt_id=library_authority.attempt_id,
@@ -7925,6 +7955,7 @@ class ConsoleChatController:
             self._prepared_send_continuations[preparation.preparation_id] = (
                 _PreparedSendContinuation(
                     preparation_id=preparation.preparation_id,
+                    preserve_composer=preserve_composer,
                     attachments=tuple(pendings),
                     prefill=frozen_prefill,
                     prefill_from_one_shot=frozen_prefill_from_one_shot,
@@ -8382,6 +8413,7 @@ class ConsoleChatController:
                 self.store.consume_pending_attachment(session.id, pending.attachment_id)
             self._notify_submission_accepted(
                 session_id=session.id,
+                preserve_composer=preserve_composer,
                 origin=origin,
                 entry_id=queue_entry_id,
                 context_epoch=committed_context_epoch,
@@ -9538,6 +9570,7 @@ class ConsoleChatController:
             )
             if (
                 live_session is not None
+                and not (continuation.prepared and continuation.prepared.preserve_composer)
                 and live_session.draft == continuation.clean_draft
             ):
                 live_session.draft = ""
@@ -9578,7 +9611,11 @@ class ConsoleChatController:
                 raise RuntimeError("Workspace projection remains pending.")
 
         def accepted_hook() -> None:
-            if continuation.origin is ConsoleSubmissionOrigin.MANUAL:
+            if (
+                continuation.origin is ConsoleSubmissionOrigin.MANUAL
+                and not (continuation.prepared and continuation.prepared.preserve_composer)
+                and self.store.active_session_id == session_id
+            ):
                 callback = self.on_submission_accepted
                 if callback is not None:
                     callback()
@@ -10594,13 +10631,16 @@ class ConsoleChatController:
         self,
         *,
         title: str | None = None,
+        workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
         new_chat_default_generation: int = 0,
         ephemeral: bool = False,
-        assistant_kind: str | None = None,
+        assistant_kind: str | None | object = UNSPECIFIED_ASSISTANT,
         assistant_id: str | None = None,
         assistant_label: str | None = None,
+        persona_memory_mode: str | None = None,
+        assistant_default_notice: str = "",
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session.
 
@@ -10611,10 +10651,8 @@ class ConsoleChatController:
                 captured when the blank chat is created.
             ephemeral: Create the session temporary -- never written to local
                 storage until explicitly saved.
-            assistant_kind: Optional durable assistant identity forwarded to
-                ``store.create_session`` (Task 9: the workspace-default
-                persona path passes ``"persona"``). ``None`` keeps the
-                store's default identity.
+            assistant_kind: Omission inherits the target workspace default;
+                None explicitly starts plain. Other values retain the supplied identity.
             assistant_id: Optional assistant id forwarded alongside
                 ``assistant_kind``.
             assistant_label: Optional human label; stamped into the supplied
@@ -10632,17 +10670,16 @@ class ConsoleChatController:
         next_number = len(self.store.sessions()) + 1
         if assistant_label and settings is not None:
             settings = replace(settings, character_label=assistant_label)
-        assistant_kwargs = (
-            {"assistant_kind": assistant_kind, "assistant_id": assistant_id}
-            if assistant_kind is not None
-            else {}
-        )
         session = self.store.create_session(
             title=title or f"Chat {next_number}",
+            workspace_id=workspace_id,
             settings=settings,
             canonical_settings_baseline=canonical_settings_baseline,
             ephemeral=ephemeral,
-            **assistant_kwargs,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
+            persona_memory_mode=persona_memory_mode,
+            assistant_default_notice=assistant_default_notice,
         )
         session.new_chat_default_generation = new_chat_default_generation
         # `create_session` above already activated the new session, so the
@@ -11572,34 +11609,11 @@ class ConsoleChatController:
         instance's teardown is supposed to reach every live round with,
         unconditionally.
 
-        Correction (review, TASK-1052): an earlier revision of this
-        docstring justified ORing in ``_shutdown_requested`` here by
-        calling it "real process teardown" and treating that as
-        inherently global/safe. That premise was FALSE: ``shutdown()`` is
-        also called from ordinary Console-screen unmount
-        (``ChatScreen.on_unmount``), which fires on every navigation AWAY
-        from the Console tab, not only on app exit -- so
-        ``_shutdown_requested`` can be set on a controller instance the
-        user is still actively using the app around. The actual safety
-        argument does not rest on "global by definition"; it rests on
-        this controller's OWN lifecycle: ``ChatScreen`` only ever
-        constructs a fresh ``ConsoleChatController`` lazily
-        (``_ensure_console_chat_controller``) after ``on_unmount`` has
-        both run this instance's ``shutdown()`` and dropped the screen's
-        reference to it, so a torn-down instance -- flag permanently set
-        or not -- is never reused for a later Console visit, and no round
-        still parked on it could ever be resolved through a UI that no
-        longer exists anyway. ``_shutdown_requested`` is set exactly once,
-        only by ``shutdown()``, and never reset for THIS instance's
-        lifetime (see ``shutdown()``'s own docstring and its ``self.
-        _shutdown_requested.set()`` call), so ORing it in here for a real
-        ``session_id`` can never wrongly deny a live round while this
-        controller instance is still the one actually in use -- it can
-        only ever fire once this instance itself is being (or has been)
-        torn down. This does NOT widen scoping for everyday per-session
-        Stop/Close: ``_signal_stop`` still only touches the ONE session's
-        own cancel event; an unrelated session's Stop still leaves both
-        this branch's checks unset.
+        The captured visit Event fences an earlier final-unmount boundary even
+        after ``begin_visit`` installs a fresh Event. App disposal is separately
+        permanent. TASK-31520 ordinary navigation suspends the retained Console
+        and sets neither signal. Per-session Stop/Close only sets that owner's
+        cancel Event, leaving unrelated sessions untouched.
         """
         if session_id is not None:
             # task-15860: `visit_event`, NOT a fresh read of
@@ -11790,7 +11804,7 @@ class ConsoleChatController:
             # did, so an attach landing meanwhile mounts the card instead.
             if not self._approval_view_is_detached():
                 return False
-            self._announce_detached_approval(owning_session_id)
+            self._interrupt_host.announce_hidden_decisions()
             return True
 
         def _on_teardown() -> bool:
@@ -12150,7 +12164,19 @@ class ConsoleChatController:
         """
         from tldw_chatbook.Chat.console_interrupt_rounds import SESSION_REMOUNT_KINDS
 
+        self._interrupt_host.refresh_decision_clocks()
         self._interrupt_host.remount_for_session(session_id, kinds=SESSION_REMOUNT_KINDS)
+
+    def on_console_view_visibility_changed(self, visible: bool) -> None:
+        """Project screen visibility without changing execution or cancellation."""
+        if self._disposed:
+            return
+        self._interrupt_host.set_view_visible(visible)
+        if visible:
+            self.remount_pending_approval_for_active_session()
+            session_id = self.store.active_session_id
+            if session_id:
+                self._remount_session_kinds(session_id)
 
     def remount_pending_approval_for_active_session(self) -> bool:
         """Mount the ACTIVE session's still-armed approval round, if any.
@@ -12195,17 +12221,14 @@ class ConsoleChatController:
         return True
 
     def _approval_view_is_detached(self) -> bool:
-        """True when NO Console view can surface an approval round.
+        """True when Console is hidden or its approval view hooks are absent.
 
-        task-15860 Task 5. Deliberately a property of the SEAMS, not of
-        ``ConsoleRuntime.view``: these two slots are what an announcement
-        would travel through, and ``detach_view`` clears them together
-        (``CONSOLE_VIEW_HOOK_SLOTS``). Asking the runtime instead would
-        make this method wrong in exactly the case it exists for -- a
-        controller whose seams are unwired for any other reason would
-        still surface nothing while claiming a view.
+        TASK-31520 retains hooks during navigation. Attachment alone therefore
+        cannot tell whether the user can see a card; modals also suspend it.
         """
-        return self.set_pending_approval is None and self.park_pending_approval is None
+        return self._interrupt_host.view_visible is False or (
+            self.set_pending_approval is None and self.park_pending_approval is None
+        )
 
     def on_pending_rounds_changed(self, total: int, kind: str, raised: bool) -> None:
         """task-31385: attention when a round blocks on the user off-screen.
@@ -12214,14 +12237,13 @@ class ConsoleChatController:
         or parked) and after every teardown. Two effects, both on the UI
         thread: the Console entry in the app navigation carries a
         pending-interrupt badge while ``total`` is non-zero, and a round
-        that ARMS while no Console view is attached -- the user is on
-        another screen, or Console has not been opened this launch --
+        that ARMS while Console is hidden or detached -- another screen or
+        modal is visible, or Console has not been opened this launch --
         rings the terminal bell once. The bell is governed by
         ``[console] interrupt_bell`` (default on) and never fires in a
         headless app, so tests and embedded runs emit no control bytes.
-        Visibility is read from the view seams (``_approval_view_is_
-        detached``): ``detach_view`` clears every slot together, so the
-        approval pair stands for all five kinds.
+        ``_approval_view_is_detached`` combines suspend/resume visibility
+        with the absent-hook fallback for a truly detached view.
 
         Args:
             total: Rounds of every kind registered after this change.
@@ -12274,8 +12296,14 @@ class ConsoleChatController:
         config_value = _bool_or_none(get_cli_setting("console", "interrupt_bell", None))
         return True if config_value is None else config_value
 
-    def _announce_detached_approval(self, session_id: str) -> None:
-        """Raise the app-wide toast for a round armed with no Console view.
+    def announce_hidden_decision(self, session_id: str, kind: str) -> None:
+        """Use the app-wide notice for all retained human-decision kinds."""
+        self._announce_detached_approval(session_id, kind=kind)
+
+    def _announce_detached_approval(
+        self, session_id: str, *, kind: str = "approval"
+    ) -> None:
+        """Raise the app-wide toast for a round with no visible Console view.
 
         WORKER THREAD. ``App.notify`` is documented thread-safe (it posts
         a message), so this needs no ``call_from_thread`` marshal -- and
@@ -12306,8 +12334,13 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 -- a missing title never blocks the notice
             title = ""
         where = f" in {escape_markup(title)}" if title else ""
+        reason = (
+            "needs your answer to a question"
+            if kind == "question"
+            else "needs approval to use a tool"
+        )
         message = (
-            f"Agent{where} needs approval to use a tool. "
+            f"Agent{where} {reason}. "
             "Open Console to review -- nothing runs until you answer."
         )
         try:
@@ -13115,7 +13148,10 @@ class ConsoleChatController:
         Returns:
             ``{"ask_user": callback}`` or ``{}``.
         """
-        if session_id is None or self.app is None or self.set_pending_question is None:
+        if session_id is None or self.app is None or (
+            self.set_pending_question is None
+            and not self._interrupt_host.has_retained_decision_target(session_id)
+        ):
             return {}
 
         def _ask(questions: list[dict[str, Any]]) -> dict[str, Any]:
@@ -13589,7 +13625,10 @@ class ConsoleChatController:
             True only on an explicit Allow; every other path (deny, cancel,
             stop, timeout, or no wired UI) returns False.
         """
-        if self.app is None or self.set_pending_skill_install is None:
+        if self.app is None or (
+            self.set_pending_skill_install is None
+            and not self._interrupt_host.has_retained_decision_target(session_id)
+        ):
             return False
         event = threading.Event()
         decision: dict[str, bool] = {}
@@ -13761,7 +13800,10 @@ class ConsoleChatController:
             ``{"allow": bool, "remember": bool}``. Every non-Allow path (deny,
             cancel, stop, timeout, no wired UI) returns ``allow=False``.
         """
-        if self.app is None or self.set_pending_skill_script is None:
+        if self.app is None or (
+            self.set_pending_skill_script is None
+            and not self._interrupt_host.has_retained_decision_target(session_id)
+        ):
             return {"allow": False, "remember": False}
         event = threading.Event()
         decision: dict[str, bool] = {}
@@ -14013,7 +14055,10 @@ class ConsoleChatController:
         )
         from tldw_chatbook.Chat.console_agent_bridge import format_question_marker
 
-        if self.app is None or self.set_pending_question is None:
+        if self.app is None or (
+            self.set_pending_question is None
+            and not self._interrupt_host.has_retained_decision_target(session_id)
+        ):
             return unanswered_result("cancelled")
         owning_session_id = (
             session_id if session_id is not None else (self.store.active_session_id or "")
@@ -14240,7 +14285,10 @@ class ConsoleChatController:
             non-Allow path (deny, cancel, stop, timeout, no wired UI)
             returns ``allow=False``.
         """
-        if self.app is None or self.set_pending_worktree_merge is None:
+        if self.app is None or (
+            self.set_pending_worktree_merge is None
+            and not self._interrupt_host.has_retained_decision_target(session_id)
+        ):
             return {"allow": False}
         event = threading.Event()
         decision: dict[str, bool] = {}
@@ -14542,9 +14590,8 @@ class ConsoleChatController:
         only ever resolves the active session.
 
         Production caller: app-owned :class:`ConsoleRuntime` disposal at
-        application exit. Ordinary Console navigation calls
-        ``ConsoleRuntime.leave_console`` instead; that runtime and this
-        controller survive unmount/remount and are reused by the next view.
+        application exit. Ordinary navigation suspends and reuses Console;
+        only final unmount calls ``ConsoleRuntime.leave_console``.
 
         F5 fix (Qodo wave): sets ``_shutdown_requested`` unconditionally
         and FIRST -- before the no-tasks early return below -- so a
@@ -14785,8 +14832,9 @@ class ConsoleChatController:
     async def leave_console(self) -> None:
         """End ONE Console visit. This controller SURVIVES it.
 
-        The nav-away half of the teardown split (task-15860). Everything
-        AC#2 names as screen-scoped still happens:
+        The final-unmount half of the teardown split (task-15860). Ordinary
+        navigation now suspends the retained Console and does not call this.
+        An actual unmount still performs the original visit cleanup:
 
         - this visit's queue chains are tombstoned, before any
           cancellation, exactly as `begin_shutdown` did it;
@@ -14823,10 +14871,8 @@ class ConsoleChatController:
         self.prompt_queue_coordinator.shutdown()
         self._visit_open = False
         self._shutdown_requested.set()
-        # task-15860 Task 5: a round armed while DETACHED deferred to this
-        # moment. The user has now had a Console visit in which to answer
-        # it and has navigated away instead, so AC#2's rule applies to it
-        # exactly as it does to a round armed during the visit.
+        # Final unmount also cancels rounds born detached; ordinary screen
+        # suspension does not enter this teardown boundary.
         self._cancel_headless_rounds()
         for message_id in tuple(self._original_attempts):
             self.clear_original_attempt(message_id)
@@ -18640,6 +18686,7 @@ class ConsoleChatController:
         self,
         *,
         session_id: str,
+        preserve_composer: bool = False,
         origin: ConsoleSubmissionOrigin,
         entry_id: str | None,
         context_epoch: int,
@@ -18660,7 +18707,11 @@ class ConsoleChatController:
         if preparation_id:
             self._ordinary_outcome_ids[session_id] = f"turn:{preparation_id}"
             self._ordinary_outcome_assistant_ids[session_id] = assistant_message_id
-        if origin is not ConsoleSubmissionOrigin.MANUAL:
+        if (
+            origin is not ConsoleSubmissionOrigin.MANUAL
+            or preserve_composer
+            or self.store.active_session_id != session_id
+        ):
             return
         callback = self.on_submission_accepted
         if callback is None:
@@ -22852,6 +22903,7 @@ class ConsoleChatController:
                         self.request_skill_script_confirm, session_id=session_id
                     )
                     if self.set_pending_skill_script is not None
+                    or self._interrupt_host.has_retained_decision_target(session_id)
                     else None
                 ),
                 # TASK-28238 phase 2 Task 6/Task 7: same "advertised must
@@ -22875,6 +22927,7 @@ class ConsoleChatController:
                         self.request_worktree_merge_confirm, session_id=session_id
                     )
                     if self.set_pending_worktree_merge is not None
+                    or self._interrupt_host.has_retained_decision_target(session_id)
                     else None
                 ),
                 # PR2a Task 7: the fleet cancels/abandons children on the
@@ -24368,7 +24421,10 @@ class ConsoleChatController:
         logical_outcome_id = self._ordinary_outcome_ids.get(target)
         if (
             logical_outcome_id
-            and target != (self.store.active_session_id or "")
+            and (
+                target != (self.store.active_session_id or "")
+                or self._interrupt_host.view_visible is False
+            )
             and terminal_notification_eligible
             and run_state.status
             in {
@@ -24537,7 +24593,9 @@ class ConsoleChatController:
         if not self.activity_for(session_id).terminal_notification_eligible:
             return
         active_id = self.store.active_session_id or ""
-        if session_id != active_id and logical_outcome_id:
+        if (
+            session_id != active_id or self._interrupt_host.view_visible is False
+        ) and logical_outcome_id:
             self._publish_inactive_outcome(
                 session_id=session_id,
                 status=status,

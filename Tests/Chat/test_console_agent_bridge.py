@@ -1755,8 +1755,8 @@ def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(tmp_path)
             self.observed: list[tuple[str, int]] = []
             self.released_runs: list[str] = []
 
-        def tool_step(self, run_id, sequence, kind):
-            result = super().tool_step(run_id, sequence, kind)
+        def tool_step(self, run_id, sequence, kind, *, session_id=None):
+            result = super().tool_step(run_id, sequence, kind, session_id=session_id)
             if kind in {"tool_call", "tool_result", "error"}:
                 self.observed.append((kind, self.active_owner_count("tool")))
             return result

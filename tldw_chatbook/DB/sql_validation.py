@@ -5,9 +5,20 @@ This module provides validation for table names, column names, and other SQL ide
 to ensure they match expected patterns and are safe to use in dynamic SQL construction.
 """
 
-import re
 from typing import Optional
+
 from loguru import logger
+
+from tldw_chatbook.DB import sql_identifier_core as _identifier_core
+from tldw_chatbook.DB.sql_identifier_core import (
+    escape_identifier as _escape_identifier,
+)
+from tldw_chatbook.DB.sql_identifier_core import (
+    identifier_error,
+)
+
+SQL_IDENTIFIER_PATTERN = _identifier_core.SQL_IDENTIFIER_PATTERN
+SQL_RESERVED_KEYWORDS = _identifier_core.SQL_RESERVED_KEYWORDS
 
 # Define valid table names for each database
 #
@@ -58,6 +69,8 @@ VALID_TABLES = {
         "actor_pack_persona_intents",
         "actor_portable_identities",
         "agent_lessons_seed_state",
+        "buddy_profiles",
+        "buddy_visual_bindings",
         "canvas_conversation_hints",
         "canvas_documents",
         "canvas_revisions",
@@ -539,59 +552,8 @@ LINK_TABLE_COLUMNS = {
     "PromptKeywords": {"prompt_id", "keyword_id"},
 }
 
+
 # SQL identifier pattern - allows alphanumeric, underscore, and supports Unicode
-# This pattern is designed to be safe while supporting non-English identifiers
-SQL_IDENTIFIER_PATTERN = re.compile(r"^[\w\u0080-\uFFFF]+$", re.UNICODE)
-
-# Reserved SQL keywords that should not be used as identifiers
-SQL_RESERVED_KEYWORDS = {
-    "SELECT",
-    "FROM",
-    "WHERE",
-    "INSERT",
-    "UPDATE",
-    "DELETE",
-    "DROP",
-    "CREATE",
-    "TABLE",
-    "INDEX",
-    "VIEW",
-    "UNION",
-    "JOIN",
-    "LEFT",
-    "RIGHT",
-    "INNER",
-    "OUTER",
-    "ORDER",
-    "BY",
-    "GROUP",
-    "HAVING",
-    "LIMIT",
-    "OFFSET",
-    "AS",
-    "ON",
-    "AND",
-    "OR",
-    "NOT",
-    "NULL",
-    "PRIMARY",
-    "KEY",
-    "FOREIGN",
-    "REFERENCES",
-    "CASCADE",
-    "SET",
-    "VALUES",
-    "INTO",
-    "EXISTS",
-    "BETWEEN",
-    "LIKE",
-    "IN",
-    "IS",
-    "DISTINCT",
-    "ALL",
-}
-
-
 def validate_identifier(identifier: str, identifier_type: str = "identifier") -> bool:
     """
     Validates a SQL identifier (table name, column name, etc.) for safety.
@@ -603,22 +565,23 @@ def validate_identifier(identifier: str, identifier_type: str = "identifier") ->
     Returns:
         bool: True if valid, False otherwise
     """
-    if not identifier:
+    reason = identifier_error(identifier)
+    if reason == "empty":
         logger.warning(f"Empty {identifier_type} provided")
         return False
 
     # Check length limits
-    if len(identifier) > 64:  # Common SQL identifier length limit
+    if reason == "length":
         logger.warning(f"{identifier_type} '{identifier}' exceeds maximum length")
         return False
 
     # Check against pattern
-    if not SQL_IDENTIFIER_PATTERN.match(identifier):
+    if reason == "characters":
         logger.warning(f"{identifier_type} '{identifier}' contains invalid characters")
         return False
 
     # Check against reserved keywords
-    if identifier.upper() in SQL_RESERVED_KEYWORDS:
+    if reason == "reserved":
         logger.warning(f"{identifier_type} '{identifier}' is a reserved SQL keyword")
         return False
 
@@ -825,6 +788,4 @@ def escape_identifier(identifier: str) -> str:
     Returns:
         str: The escaped identifier
     """
-    # Replace any existing double quotes with two double quotes (SQL escaping)
-    escaped = identifier.replace('"', '""')
-    return f'"{escaped}"'
+    return _escape_identifier(identifier)

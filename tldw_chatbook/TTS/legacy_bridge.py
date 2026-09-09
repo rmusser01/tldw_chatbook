@@ -574,6 +574,23 @@ class LegacyBackendHost:
         request: OpenAISpeechRequest,
         progress_sink: ProgressSink | None,
     ) -> AsyncIterator[bytes]:
+        if self.provider_id == "kokoro" and internal_model_id in {
+            "local_kokoro_default_onnx",
+            "local_kokoro_default_pytorch",
+        }:
+            options = request.extra_params or {}
+            if "use_onnx" in options:
+                use_onnx = options["use_onnx"]
+            elif internal_model_id.endswith("_pytorch"):
+                use_onnx = False
+            else:
+                # The legacy ONNX route is also the implicit default emitted
+                # by Console/briefings. Inherit the applied provider setting
+                # unless a request explicitly selects an engine.
+                app_tts = self._app_config.get("app_tts", {})
+                use_onnx = app_tts.get("KOKORO_USE_ONNX", True)
+            engine = "onnx" if use_onnx else "pytorch"
+            internal_model_id = f"local_kokoro_default_{engine}"
         return _LegacyOperation(
             self,
             internal_model_id,

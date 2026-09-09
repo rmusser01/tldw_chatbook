@@ -499,6 +499,19 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 | Enter (on a focused evidence card) | Select that evidence — the same as clicking its select action |
 | `o` (on a focused evidence card) | Open that item in its own Library surface |
 | `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library. With an evidence card focused it selects that card first, so one key stages what you're looking at |
+| Esc (in the query box) | Leave the query box for the panel, so the panel's own keys work on the next keystroke. Nothing you typed is cleared |
+
+Five Tabs from the query box reach the first evidence card: Run, then each
+enabled source toggle, then the cards. The card you are on draws a solid
+block down its left edge — a shape, not just a colour — so it stays
+visible in a monochrome terminal and next to a card that is merely
+selected.
+
+The footer's **enter** hint names what Enter does on the control you are
+actually on: "run search" in the query box and on **Run**, "toggle
+Notes"/"toggle Media"/… on a source button, "switch mode" on the
+Search ⇄ RAG Answer toggle, and "select evidence" on a card. It used to
+read "select evidence" everywhere, including in the query box.
 
 ## Related settings & docs
 
@@ -811,3 +824,20 @@ clears the query cache. Pinned by
 `Tests/Library/test_library_rechunk_service.py`,
 `Tests/UI/test_library_rag_rechunk_action.py`, and
 `Tests/RuntimePolicy/test_rechunk_policy_pin.py`.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): `enter`, `o` and `u` are bound and
+advertised in the footer, and each one gates on a focused
+`.library-rag-result-card` — but nothing gives an evidence card focus by
+keyboard, so the advertised flow is unreachable without a mouse (14
+consecutive Tabs never landed on a card and eventually left Library for
+the nav bar). The keys themselves are unchanged; the table now says which
+half works today. The fix is task-32053.)*
+
+*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32053: the
+focused evidence card now paints a left-edge block instead of only swapping
+its border colour — the generic focus outline had been painting over the
+card's own border, so the cue was colour-alone; **Run** gains the compact
+buttons' focus rails; the footer's Enter hint follows the focused control;
+and Escape leaves the query box. Pinned in
+`Tests/UI/test_library_crit8_keyboard.py`.)*

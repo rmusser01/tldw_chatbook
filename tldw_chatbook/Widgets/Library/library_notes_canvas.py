@@ -52,6 +52,25 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
+#: The storage authority every Database Notes surface answers to. Painted once
+#: per screen: the mounted list pane owns it, and a work pane beside it drops
+#: it rather than repeating the same sentence (task-32063).
+NOTES_AUTHORITY_PREFIX = "Library notes · Library database"
+
+#: Every control a reader types a note into. A refresh that would recompose
+#: this canvas while one of them has focus is deferred instead (task-32062).
+#: The keyword boxes belong here for the same reason the title does -- review
+#: of PR #2531: both are live ``Input``s, and only one of the two is mounted
+#: visible at a time (wide editor vs. context region).
+_NOTE_EDITOR_INPUT_IDS = frozenset(
+    {
+        "library-note-title",
+        "library-note-body",
+        "library-note-keywords",
+        "library-note-context-keywords",
+    }
+)
+
 
 @dataclass(frozen=True)
 class NotesStatusChannels:
@@ -407,18 +426,33 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         yield from self._compose_list()
 
+    def _authority_prefix(self) -> str:
+        """Return the authority this canvas names before its own status.
+
+        Subclasses that render beside a pane already naming the authority
+        return ``""`` -- see ``LibraryNoteWorkPane`` (task-32063).
+        """
+        return NOTES_AUTHORITY_PREFIX
+
     def _authority_copy(self) -> str:
         """Describe Library storage, current status, and the next action."""
-        prefix = "Library notes · Library database"
+        prefix = self._authority_prefix()
+        def line(*parts: str) -> str:
+            """Join the non-empty clauses this state actually has."""
+            return " · ".join(part for part in (prefix, *parts) if part)
+
         if self.mode == "loading":
             if self.load_state == "failed":
                 status = self.load_message or "Could not load note."
-                return f"{prefix} · {status} · Next: Retry loading."
-            return f"{prefix} · Loading note… · Next: Wait for loading to finish."
+                return line(status, "Next: Retry loading.")
+            # task-32063: a "Next:" clause names a control the reader can
+            # press. "Wait for loading to finish" names none, so this state
+            # ends at its status.
+            return line("Loading note…")
         if self.mode == "editor":
             state = self.presentation_state
             if state is None:
-                return f"{prefix} · Editor unavailable · Next: Back to notes."
+                return line("Editor unavailable", "Next: Back to notes.")
             status = state.status_line or "Ready"
             transfer = (
                 f" · {state.transfer_status}"
@@ -427,31 +461,28 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             if state.conflict:
                 next_action = "Resolve the conflict or reload the note."
-            elif state.snapshot.saving:
-                next_action = "Wait for saving to finish."
-            elif state.transfer_running:
-                next_action = "Wait for export to finish."
+            elif state.snapshot.saving or state.transfer_running:
+                next_action = ""
             elif "failed" in f"{status} {state.transfer_status}".lower():
                 next_action = "Review the error, then keep editing."
             else:
                 next_action = "Keep editing; changes save automatically."
-            return f"{prefix} · {status}{transfer} · Next: {next_action}"
+            return line(
+                f"{status}{transfer}",
+                f"Next: {next_action}" if next_action else "",
+            )
         if self.mode == "create":
             status = self.create_status or (
                 "Creating note…" if self.create_running else "Ready"
             )
             next_action = (
-                "Wait for creation to finish."
-                if self.create_running
-                else "Choose Blank note or a template."
+                "" if self.create_running else "Choose Blank note or a template."
             )
-            return f"{prefix} · {status} · Next: {next_action}"
+            return line(status, f"Next: {next_action}" if next_action else "")
         if self.mode == "import":
             state = self.import_snapshot
             status = "Import unavailable" if state is None else state.status_line
-            return (
-                f"{prefix} · Import once · {status} · Next: Review the import workflow."
-            )
+            return line("Import once", status, "Next: Review the import workflow.")
         if self.mode in {"lasting_add", "lasting_roots"}:
             state = self.lasting_sync_snapshot
             status = "Unavailable" if state is None else state.status_line
@@ -460,17 +491,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 if state is None or not state.lasting_available
                 else "Review the current lasting-sync step."
             )
-            return f"{prefix} · Lasting sync · {status} · Next: {next_action}"
+            return line("Lasting sync", status, f"Next: {next_action}")
         state = self.list_state
         status = state.operation_status if state is not None else ""
         running = state is not None and state.operation_running
         status = status or ("Updating notes…" if running else "Ready")
-        next_action = (
-            "Wait for the running notes operation to finish."
-            if running
-            else "Create a note or add from files."
-        )
-        return f"{prefix} · {status} · Next: {next_action}"
+        next_action = "" if running else "Create a note or add from files."
+        return line(status, f"Next: {next_action}" if next_action else "")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Refuse row/action presses while this canvas is resident but hidden.
@@ -625,7 +652,49 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 lasting_sync_snapshot
             )
             return
+        if previous_mode == mode and self.editor_has_focus():
+            # task-32062: a Notes refresh (a save landing, the first note
+            # reaching the list, an evidence-driven reload) recomposed the
+            # surface the reader was typing into: the title Input and body
+            # TextArea were rebuilt and focus fell onto the list grip, so the
+            # next keystrokes went somewhere else. Reported as a title that
+            # swallowed the body. Every compose input above is already stored,
+            # so the next refresh from outside the field paints this state --
+            # only the rebuild is skipped, and only while the surface is
+            # STAYING put: a mode change is a navigation the reader asked for
+            # and must paint immediately.
+            #
+            # Known ceiling: a banner this recompose would have painted (the
+            # "changed elsewhere" conflict, say) waits for the next refresh
+            # that arrives with the reader's hands off the field. Interrupting
+            # a sentence to show it costs them their keystrokes, which is the
+            # worse half of the trade.
+            #
+            # The caller must not queue a post-recompose follow-up for a
+            # rebuild that is not happening -- see the `notes_editor_owned`
+            # guard in ``canvas_sync._sync_library_canvas``, without which the
+            # Notes focus restore sat here and fired at the NEXT recompose,
+            # dragging focus back out of whatever field the reader moved to.
+            return
         self.refresh(recompose=True)
+
+    def editor_has_focus(self) -> bool:
+        """Whether a field of THIS canvas's note editor currently has focus.
+
+        Returns:
+            ``True`` while the focused widget is one of this canvas's own
+            editable note fields (title, body, or either keyword box).
+        """
+        try:
+            focused = self.app.focused
+        except Exception:
+            return False
+        if focused is None or focused.id not in _NOTE_EDITOR_INPUT_IDS:
+            return False
+        try:
+            return self in focused.ancestors_with_self
+        except Exception:
+            return False
 
     def _compose_loading(self) -> ComposeResult:
         """Render the existing note-loading/retry surface inside the canvas."""
@@ -1649,17 +1718,34 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         wide_keywords = self.query_one("#library-note-keywords", Input)
         context_keywords = self.query_one("#library-note-context-keywords", Input)
         presented_title = "" if self.title_placeholder_only else snapshot.title
-        if title_input.value != presented_title:
+        # task-32062: the field the reader is typing in is its OWN authority.
+        # This patch used to overwrite it from a snapshot that could be one
+        # keystroke behind -- and assigning `Input.value` clamps the cursor to
+        # the shorter text, so the rest of the sentence was then inserted at
+        # that stale position. Live: "My first note", Tab, a body typed within
+        # ~0.4 s stored the title "Mhello from jordan, testing the libraryy
+        # first note" with an empty body. A focused field is skipped; its own
+        # Changed events are what the snapshot is built from anyway.
+        if title_input.value != presented_title and not title_input.has_focus:
             with title_input.prevent(Input.Changed):
                 title_input.value = presented_title
         title_input.placeholder = "Untitled" if self.title_placeholder_only else ""
-        if body_input.text != snapshot.body:
+        if body_input.text != snapshot.body and not body_input.has_focus:
             with body_input.prevent(TextArea.Changed):
                 body_input.text = snapshot.body
-        if wide_keywords.value != snapshot.keywords_text:
+        # Same rule as the title above: a keyword box the reader is typing in
+        # is its own authority, and the snapshot is built from its own Changed
+        # events anyway (review of PR #2531).
+        if (
+            wide_keywords.value != snapshot.keywords_text
+            and not wide_keywords.has_focus
+        ):
             with wide_keywords.prevent(Input.Changed):
                 wide_keywords.value = snapshot.keywords_text
-        if context_keywords.value != snapshot.keywords_text:
+        if (
+            context_keywords.value != snapshot.keywords_text
+            and not context_keywords.has_focus
+        ):
             with context_keywords.prevent(Input.Changed):
                 context_keywords.value = snapshot.keywords_text
 

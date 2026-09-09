@@ -41,7 +41,6 @@ from .contracts import (
 )
 from .repository import PersonaVisualIdentity
 
-
 PERSONA_VISUAL_PACK_SCHEMA = "tldw.persona_visual_pack.v1"
 _REQUIRED_MEMBERS = frozenset(
     {
@@ -165,23 +164,7 @@ def import_persona_visual_pack(
         root = _private_staging_root(staging_root)
         _raise_if_cancelled(cancelled)
         with zipfile.ZipFile(BytesIO(source.data), "r") as archive:
-            members = _validated_members(archive)
-            outer = _json_member(archive, members, "manifest.json")
-            checksums = _checksums(
-                _json_member(archive, members, "checksums/sha256.json")
-            )
-            pack = _pack(_json_member(archive, members, "metadata/pack.json"))
-            asset_records = _assets(
-                _json_member(archive, members, "metadata/assets.json")
-            )
-            _validate_declarations(
-                archive,
-                members,
-                outer,
-                checksums,
-                asset_records,
-                cancelled,
-            )
+            members, pack, asset_records = _validated_archive(archive, cancelled)
             _preflight_space(root, members)
             candidate = _create_candidate(root)
             draft_assets = _extract_assets(
@@ -203,6 +186,7 @@ def import_persona_visual_pack(
                 description="Imported Persona Visual pack",
                 manifest_json=manifest_json,
                 assets=draft_assets,
+                source_context=pack["source_context"],
             )
         _raise_if_cancelled(cancelled)
         if not _source_identity_current(
@@ -238,6 +222,23 @@ def import_persona_visual_pack(
             "persona_visual_import_invalid",
             cleanup_candidate=cleanup_candidate,
         ) from None
+
+
+def _validated_archive(archive: zipfile.ZipFile, cancelled: Any):
+    members = _validated_members(archive)
+    outer = _json_member(archive, members, "manifest.json")
+    checksums = _checksums(_json_member(archive, members, "checksums/sha256.json"))
+    pack = _pack(_json_member(archive, members, "metadata/pack.json"))
+    asset_records = _assets(_json_member(archive, members, "metadata/assets.json"))
+    _validate_declarations(
+        archive,
+        members,
+        outer,
+        checksums,
+        asset_records,
+        cancelled,
+    )
+    return members, pack, asset_records
 
 
 def persona_visual_import_source_root(
@@ -447,7 +448,22 @@ def _pack(value: object) -> dict[str, Any]:
     if type(persona) is dict:
         policy_rules = persona.get("policy_rules")
     rule_count = len(policy_rules) if type(policy_rules) is list else 0
-    return {"title": title, "visual_manifest": manifest, "policy_rule_count": rule_count}
+    from .artwork import artwork_from_pack, encode_native_artwork
+    from .repository import _source_context_json
+
+    context = pack.get("source_context", {})
+    if type(context) is not dict:
+        raise ValueError
+    context = dict(context)
+    context.pop("tldw/artwork", None)
+    context["artwork"] = encode_native_artwork(artwork_from_pack(pack))
+    _source_context_json(context)
+    return {
+        "title": title,
+        "visual_manifest": manifest,
+        "policy_rule_count": rule_count,
+        "source_context": context,
+    }
 
 
 def _assets(value: object) -> tuple[dict[str, Any], ...]:

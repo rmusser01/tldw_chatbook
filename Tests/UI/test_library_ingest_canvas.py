@@ -1171,13 +1171,36 @@ async def test_show_details_button_renders_for_error_detail():
 
 
 @pytest.mark.asyncio
-async def test_show_details_button_absent_without_error_detail():
-    """A failed job without error detail does not render Show details."""
+async def test_show_details_button_present_without_structured_error_detail():
+    """A failed job still offers Show details for its raw error (task-32054).
+
+    REVERSED pin: this used to assert the button was ABSENT without an
+    ``error_detail``. Critique #8 found that gate hid the underlying text on
+    exactly the failure that carries no structured detail -- a parse pool
+    that never started -- so the row said "[Errno 28] No space left on
+    device" with nothing to expand and no way to learn more.
+    """
     job = LibraryIngestJob(
         job_id="ingest-job-1",
         source_path="/tmp/report.txt",
         state=IngestJobState.FAILED,
         error="Bad codec",
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        btn = pilot.app.query_one("#library-ingest-details-ingest-job-1", Button)
+        assert "Show details" in str(btn.label)
+
+
+@pytest.mark.asyncio
+async def test_show_details_button_absent_without_any_error_text():
+    """Nothing to expand means no action offered."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.FAILED,
+        error="",
     )
     state = build_library_ingest_state((job,), form=_default_form())
     app = _CanvasHost(state)

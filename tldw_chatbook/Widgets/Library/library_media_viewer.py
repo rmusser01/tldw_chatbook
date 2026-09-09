@@ -550,6 +550,16 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 yield from self._compose_edit_form()
             else:
                 yield Static("\n".join(self.viewer.metadata_lines), id="library-media-viewer-meta", markup=False)
+                # task-32068: why this item has no Rendered view -- asked
+                # and answered here, once, rather than banner-ed over every
+                # read of every plain item.
+                if not self.viewer.is_markdown and self.viewer.has_content:
+                    yield Static(
+                        RENDERED_VIEW_NOTE,
+                        id="library-media-content-mode-note",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
                 yield Static(
                     "\n".join((
                         f"Backend: {self.viewer.backend}",
@@ -563,17 +573,18 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 )
 
     def _compose_content_mode_toggle(self) -> ComposeResult:
-        """Render the Rendered|Raw toggle, or the note that replaces it.
+        """Render the Rendered|Raw toggle, for an item that can render.
 
-        The toggle itself is offered only when ``self.viewer.is_markdown``
-        is true -- a non-markdown item always shows the plain Raw view (no
-        behavior change from before LIB-13). Since task-31635 a non-markdown
-        item gets a one-line note in the same slot instead of nothing at
-        all, and since task-31958 that covers any media type -- whatever
-        the item is, if there is content and it cannot render, the slot
-        says why. An item with NO stored content is the one exception: the
-        body already says "No stored content.", and there is no rendered
-        view to explain the absence of. Mirrors the
+        The toggle is offered only when ``self.viewer.is_markdown`` is true
+        -- a non-markdown item always shows the plain Raw view (no behavior
+        change from before LIB-13) and gets nothing here. The one-line note
+        that explains WHY it has no toggle (task-31635, widened to every
+        media type by task-31958) lives in the Info tab since task-32068:
+        it is a fact about the item, and as a banner over the reading
+        surface it greeted nearly every open. An item with no stored
+        content explains nothing anywhere -- the body already says "No
+        stored content.", and there is no rendered view to explain the
+        absence of. Mirrors the
         screen's own "Database (selected) | Files" source-strip idiom
         exactly (``library_screen.py``'s notes-source strip): a plain
         ``Horizontal`` of two compact, unstyled ``Button``s with a "|"
@@ -582,21 +593,18 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         so the current mode reads correctly even without extra CSS.
 
         Returns:
-            ComposeResult for the toggle strip, or -- for a non-markdown
-            item that has content -- the one-line note that names why
-            there is no toggle (task-31635, task-31958).
+            ComposeResult for the toggle strip, or nothing at all for a
+            non-markdown item (see the Info branch of
+            ``_compose_active_body``).
         """
         if not self.viewer.is_markdown:
-            # task-31635 (critique #5 item 13): the slot names itself rather
-            # than vanishing. Text only -- there is no rendered view to
-            # offer, so a control here would be an affordance for nothing.
-            if self.viewer.has_content:
-                yield Static(
-                    RENDERED_VIEW_NOTE,
-                    id="library-media-content-mode-note",
-                    classes="destination-purpose",
-                    markup=False,
-                )
+            # task-32068: the note is a FACT ABOUT THE ITEM, so it belongs to
+            # Info (``_compose_active_body``'s info branch), not above the
+            # text on every read. Most items are plain, so critique #8 met it
+            # on nearly every open -- a line about a view the reader never
+            # asked for, above the one they did. Text only either way: there
+            # is no rendered view to offer, so a control here would be an
+            # affordance for nothing (task-31635, critique #5 item 13).
             return
         with Horizontal(id="library-media-content-mode-strip"):
             rendered_selected = self.content_mode == "rendered"

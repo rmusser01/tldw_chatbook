@@ -7144,6 +7144,9 @@ class SummaryStep(SetupStep):
             yield Button(
                 "Review provider setup", id="setup-exit-chat", variant="primary"
             )
+            # task-32072: the Summary never said where content lives, so a
+            # finished setup handed the user no way to put a file anywhere.
+            yield Button("Add your first document", id="setup-exit-library")
             yield Button("Explore Home", id="setup-exit-home")
             yield Button("Review settings", id="setup-exit-settings")
 
@@ -7353,6 +7356,13 @@ class SummaryStep(SetupStep):
         from tldw_chatbook.Constants import TAB_CHAT
 
         self._finish(TAB_CHAT)
+
+    @on(Button.Pressed, "#setup-exit-library")
+    def _exit_library(self) -> None:
+        """Finish setup on Library's Import canvas (task-32072)."""
+        from tldw_chatbook.Constants import TAB_LIBRARY
+
+        self._finish(TAB_LIBRARY)
 
     @on(Button.Pressed, "#setup-exit-home")
     def _exit_home(self) -> None:

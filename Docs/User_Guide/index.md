@@ -33,6 +33,7 @@ can sync with a tldw server you configure).
 |-----|--------|----------------|
 | Ctrl+1 | [Home](home.md) | Triage snapshot: what needs attention, what's running, what's recent, and a suggested next action. |
 | Ctrl+2 | [Console](console.md) | Live agent conversations, approvals, tools, RAG, and runs. |
+| Console → Menu → Buddy | [Buddies](buddies.md) | Manage artwork and Personas; follow and reply to conversations across screens. |
 | Ctrl+3 | [Library](library.md) | Source material, imports, notes, media, conversations, prompts, skills, Search/RAG — plus hand-offs to Study for flashcards and quizzes. |
 | Ctrl+4 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
 | Ctrl+5 | [Roleplay](roleplay-chat-dictionaries.md) | Characters, personas, chat dictionaries, and lore/world books. |
@@ -101,37 +102,25 @@ Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
 mnemonics like `s`/`r`/`t` on Settings) is screen-specific — see that
 screen's own page for its "Keyboard & commands" table.
 
-## Console agent runs are screen-scoped
+<a id="console-agent-runs-are-screen-scoped"></a>
+## Console runs continue during navigation
 
-Agent **turns** you start in Console — and any approval/confirmation
-they're waiting on — live only as long as the Console screen itself stays
-mounted. Leaving Console for another screen (e.g. Settings, Ctrl+1…Ctrl+0,
-or the command palette) cancels every in-flight turn and denies every
-pending or parked approval for that visit; coming back starts a fresh
-Console. One thing is deliberately **not** screen-scoped: a background
-sub-agent that already outlived its spawning turn keeps running through
-the leave — its result lands durably in the run log, its completion
-raises a toast on whatever screen you're on plus a durable `◈` marker,
-and the supervisor's auto-wake is staged and claimed when Console next
-mounts (see [Console ▸ Agent runs &
-tools](console/agent-runs-and-tools.md)). Guards make all of this visible
-instead of silent:
+Switching to Settings, Home, Library, or another destination keeps accepted
+Console turns, queued prompts, sub-agents, and pending decisions running. Returning
+resumes the same Console with its latest results. Opening or closing a modal also
+preserves work. Console microphone capture and Console automatic speech stop while
+Console is hidden. Optional [Buddy speech](buddies.md) can continue across screens.
 
-- **Before you leave:** if any run is still in flight or waiting on an
-  approval, a confirmation dialog asks "N agent runs will be cancelled if
-  you leave Console. Leave anyway?" — **Leave** proceeds, **Stay** keeps
-  Console (and the fleet) exactly as it was. An idle Console never shows
-  this prompt.
-- **After you return:** the next Console mount reports each fate
-  truthfully, one-time: "N agent runs were cancelled when you left
-  Console." for the turns the teardown killed, and "… sub-agents kept
-  running in the background when you left Console — you'll be notified
-  as they finish." for the survivors it spared — so neither a lost run
-  nor continuing background work is ever silently unexplained.
+A decision that needs your input while Console is hidden raises one notice and a
+navigation badge. Answer it in Console or a supported Buddy interaction card.
+Configured decision timeouts count only while that session's card is available to
+answer; time away from an answerable card does not consume the budget. Nothing is
+approved automatically.
 
-Nothing is ever auto-approved: an approval that gets caught by this
-teardown is always denied, never resolved on your behalf — and an
-auto-wake can never resolve one either.
+**Stop** still interrupts the selected turn and pauses its queue. Closing a session
+cancels its work, and confirmed application quit shuts down the runtime. Continuation
+after an application exit or crash is not guaranteed. An unsaved queue-manager edit
+must still be saved or cancelled before navigation.
 
 Full detail on runs, approvals, and tools:
 [Console ▸ Agent runs & tools](console/agent-runs-and-tools.md).

@@ -123,6 +123,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         Binding("0", "reset_geometry", "Reset", show=False),
         Binding("c", "toggle_collapse", "Collapse", show=False),
         Binding("x", "close", "Close", show=False),
+        Binding("m", "manage", "Manage Buddy", show=False),
+        Binding("enter", "interact", "Open Buddy conversation", show=False),
     ]
 
     BUNDLED_CSS = """
@@ -269,6 +271,9 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         close = Button("×", id="persona-buddy-close", classes="persona-buddy-control")
         close.tooltip = "Close"
         yield close
+        settings = Button("⚙", id="persona-buddy-settings", classes="persona-buddy-control")
+        settings.tooltip = "Buddy & Persona Management"
+        yield settings
 
     def on_mount(self) -> None:
         """Start bounded snapshot and frame polling without changing focus."""
@@ -931,6 +936,13 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         close.styles.offset = Offset(
             max(0, content_width - close_width - resize_grip_width), 0
         )
+        settings = self.query_one("#persona-buddy-settings", Button)
+        settings.display = (
+            not self.has_class("persona-buddy-compact")
+            and content_width >= collapse_width + close_width + 3
+        )
+        settings.styles.offset = Offset(collapse_width, 0)
+
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Arm pet-surface drag or lower-right resize for a terminal event."""
@@ -966,6 +978,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             y=self.absolute_offset.y,
         )
         self._interaction = (mode, screen_x, screen_y, geometry)
+        self._interaction_moved = False
         self.focus(scroll_visible=False)
         self.capture_mouse(True)
         event.stop()
@@ -990,6 +1003,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         screen_y = int(event.screen_y if event.screen_y is not None else event.y)
         dx = screen_x - origin_x
         dy = screen_y - origin_y
+        if dx or dy:
+            self._interaction_moved = True
         if mode == "drag":
             candidate = replace(
                 original, x=max(0, original.x + dx), y=max(0, original.y + dy)
@@ -1017,8 +1032,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return
         # Terminals may coalesce moves or report the last position only on release.
         self._apply_interaction_position(event)
+        clicked = self._interaction[0] == "drag" and not self._interaction_moved
         self.release_interaction_capture()
-        self._schedule_geometry_persist(self._working_preferences.geometry)
+        if clicked:
+            self.action_interact()
+        else:
+            self._schedule_geometry_persist(self._working_preferences.geometry)
         event.stop()
 
     def release_interaction_capture(self) -> None:
@@ -1130,6 +1149,20 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if inspect.isawaitable(pending):
             await pending
 
+    def action_manage(self) -> None:
+        """Open shared management only from the current presentation generation."""
+        if self._is_current_view():
+            from ...UI.Navigation.buddy_management import open_buddy_management
+
+            open_buddy_management(self.app)
+
+    def action_interact(self) -> None:
+        """Open the captured conversation or workspace; dragging stays geometry-only."""
+        if self._is_current_view():
+            from ...UI.Navigation.buddy_management import open_buddy_interaction
+
+            open_buddy_interaction(self.app)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if not self._is_current_view():
             return
@@ -1137,6 +1170,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self.action_toggle_collapse()
         elif event.button.id == "persona-buddy-close":
             self.action_close()
+        elif event.button.id == "persona-buddy-settings":
+            self.action_manage()
         event.stop()
 
     def _apply_and_schedule_preferences(

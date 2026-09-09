@@ -252,6 +252,13 @@ _LIBRARY_READER_SHELL_SELECTOR = (
 )
 LIBRARY_NOTES_SOURCE_DATABASE = "database"
 LIBRARY_NOTES_SOURCE_FILES = "files"
+# task-32050: a note load that never returns used to leave the canvas on
+# "Loading note…" for the rest of the session. Past this deadline the load
+# is abandoned into the existing failed state, which carries Retry.
+LIBRARY_NOTE_LOAD_DEADLINE_SECONDS = 3.0
+LIBRARY_NOTE_LOAD_TIMEOUT_COPY = (
+    "Unable to load note — timed out after 3 s. Press Retry."
+)
 LIBRARY_CANVAS_KIND_NOTES = "notes"
 LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS = frozenset(
     {LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE}
@@ -304,7 +311,12 @@ LIBRARY_STUDY_HANDOFF_MODES = {
 
 # Single shared ownership line for all three handoff canvases: Library only
 # prepares source context, Study owns everything downstream of "open".
-LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = "Generation and review run in Study."
+# task-32069: the rail spent a second row per handoff row repeating "see
+# what carries over" -- six rows for three destinations. The promise belongs
+# on the staging canvas that keeps it, so it is stated here instead.
+LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = (
+    "This page shows what carries over; generation and review run in Study."
+)
 
 # How many carried-forward source titles the handoff canvas names before
 # collapsing the rest into an "and N more" count.
@@ -379,6 +391,12 @@ _LIBRARY_LIST_ROW_CLASSES = (
     "library-notes-row",
     "library-prompt-row",
     "library-skill-row",
+    # task-32052 AC#2: the New-note canvas's Blank note + template rows are
+    # a stacked list of full-width rows styled after ``library-notes-row``,
+    # so Up/Down must walk them like any other Library list. The "From a
+    # template" heading between them is a ``Static``, which this helper's
+    # own class filter already skips.
+    "library-notes-create-row",
 )
 
 _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID = {

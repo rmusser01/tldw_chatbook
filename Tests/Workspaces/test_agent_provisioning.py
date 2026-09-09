@@ -58,6 +58,37 @@ def test_provision_failure_is_non_fatal(tmp_path):
     assert record.assistant_defaults is None
 
 
+def test_explicit_none_survives_creation_and_pending_backfill_restart(tmp_path):
+    """A user opting out must never acquire an automatically created Persona."""
+    personas = StubPersonaService()
+    registry, store = build(tmp_path, personas)
+    record = registry.create_workspace(
+        workspace_id="plain", name="Plain", assistant_defaults=None
+    )
+    assert record.assistant_defaults is None
+    assert personas.created == []
+    registry.db.close()
+    registry, store = build(tmp_path, personas)
+    provisioner = WorkspaceAgentProvisioner(personas, store)
+    assert run_workspace_agent_backfill(registry=registry, provisioner=provisioner) == 0
+    assert registry.get_workspace("plain").assistant_defaults is None
+    assert personas.created == []
+
+
+def test_clear_survives_pending_backfill_restart(tmp_path):
+    """Clearing a default is durable even before the global backfill completes."""
+    personas = StubPersonaService()
+    registry, store = build(tmp_path, personas)
+    registry.create_workspace(workspace_id="clear", name="Clear")
+    registry.clear_assistant_defaults("clear")
+    registry.db.close()
+    registry, store = build(tmp_path, personas)
+    provisioner = WorkspaceAgentProvisioner(personas, store)
+    assert run_workspace_agent_backfill(registry=registry, provisioner=provisioner) == 0
+    assert registry.get_workspace("clear").assistant_defaults is None
+    assert len(personas.created) == 1
+
+
 def test_backfill_skips_archived_and_default_and_is_idempotent(tmp_path):
     registry, store = build(tmp_path)
     personas = StubPersonaService()

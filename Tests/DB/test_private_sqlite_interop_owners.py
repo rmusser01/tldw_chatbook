@@ -4,30 +4,48 @@ import os
 import sqlite3
 import stat
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
 
 import pytest
 
+from Tests.DB.test_private_sqlite_lock_preservation import (
+    _other_process_can_begin_write,
+)
 from tldw_chatbook.DB import private_sqlite
 from tldw_chatbook.Kanban_Interop import local_kanban_db
+from tldw_chatbook.Notes import note_import_receipts, notes_device_state_store
+from tldw_chatbook.Notes.notes_device_state_schema import (
+    LATEST_NOTES_DEVICE_SCHEMA_VERSION,
+)
 from tldw_chatbook.Notifications import (
     client_notifications_db,
     event_state_repository,
-)
-from tldw_chatbook.Notes import note_import_receipts
-from tldw_chatbook.Notes import notes_device_state_store
-from tldw_chatbook.Notes.notes_device_state_schema import (
-    LATEST_NOTES_DEVICE_SCHEMA_VERSION,
 )
 from tldw_chatbook.Research_Interop import local_research_service
 from tldw_chatbook.Sync_Interop import notes_mirror, sync_state_repository
 from tldw_chatbook.Utils.private_paths import PrivatePathError
 from tldw_chatbook.Writing_Interop import local_writing_service
 
-
 FileOwnerFactory = Callable[[Path], tuple[object, Callable[[], None]]]
+
+
+def test_kanban_real_open_and_close_preserve_independent_wal_writer(tmp_path):
+    path = tmp_path.resolve() / "kanban.sqlite"
+    with closing(local_kanban_db.open_connection(path)) as writer:
+        writer.execute("CREATE TABLE lock_probe(value INTEGER)")
+        writer.execute("BEGIN IMMEDIATE")
+        try:
+            assert not _other_process_can_begin_write(path)
+            with closing(local_kanban_db.open_connection(path)) as observer:
+                assert observer.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+                assert not _other_process_can_begin_write(path)
+            assert writer.in_transaction
+            assert not _other_process_can_begin_write(path)
+        finally:
+            writer.rollback()
 
 
 def _kanban_owner(path: Path) -> tuple[object, Callable[[], None]]:

@@ -29,6 +29,7 @@ idx_briefing_audio_script	pre-convention	plan never captured without stats
 idx_briefing_items_item	pre-convention	plan never captured without stats
 idx_briefing_scripts_briefing	pre-convention	plan never captured without stats
 idx_briefings_watchlist_status	pre-convention	plan never captured without stats
+idx_buddy_visual_bindings_active	plan-pinned	Tests/Persona_Buddy/test_buddy_library.py
 idx_canvas_documents_conversation	plan-pinned	Tests/Canvas/test_repository.py
 idx_canvas_revisions_canvas_sequence	plan-pinned	Tests/Canvas/test_repository.py
 idx_canvas_revisions_origin_message	plan-pinned	Tests/Canvas/test_repository.py

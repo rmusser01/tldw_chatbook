@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     )
     from .preferences import (
         PERSONA_BUDDY_UNPOSITIONED_COORDINATE,
+        BuddySelection,
         PersonaBuddyGeometry,
         PersonaBuddyPreferences,
         PersonaBuddySelection,
@@ -51,6 +52,7 @@ _EXPORTS = {
     "PersonaBuddyGeometry": "preferences",
     "PersonaBuddyPreferences": "preferences",
     "PersonaBuddySelection": "preferences",
+    "BuddySelection": "preferences",
     "parse_persona_buddy_preferences": "preferences",
     "persist_persona_buddy_preferences": "preferences",
     "serialize_persona_buddy_preferences": "preferences",
@@ -71,6 +73,7 @@ __all__ = (
     "PersonaBuddyPreferences",
     "PersonaBuddyPreparedFrame",
     "PersonaBuddySelection",
+    "BuddySelection",
     "PersonaBuddySnapshot",
     "PersonaBuddyVisualSnapshot",
     "load_local_persona_portrait",

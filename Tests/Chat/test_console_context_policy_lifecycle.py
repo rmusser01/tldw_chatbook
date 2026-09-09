@@ -382,17 +382,14 @@ async def test_new_conversation_uses_store_default_without_post_create_write() -
         model="model-a",
     )
     controller._console_new_chat_default_generation = lambda: 0
-    controller._workspace_default_for_new_session = lambda: None
-
-    def _new_session(**kwargs):
-        generation = kwargs.pop("new_chat_default_generation")
-        session = store.create_session(**kwargs)
-        session.new_chat_default_generation = generation
-        return session
-
-    controller._ensure_console_chat_controller_fn = lambda: SimpleNamespace(
-        new_session=_new_session
+    controller._chat_store_accessor = lambda: store
+    controller.app_instance = SimpleNamespace()
+    chat_controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SimpleNamespace(),
+        agent_runtime_enabled=False,
     )
+    controller._ensure_console_chat_controller_fn = lambda: chat_controller
     controller._invalidate_persisted_rows_cache_fn = lambda: None
 
     async def _sync() -> None:

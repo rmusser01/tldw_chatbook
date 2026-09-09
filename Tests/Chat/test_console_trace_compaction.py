@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import time
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
+import tldw_chatbook.Chat.console_trace_maintenance as trace_maintenance
+from tldw_chatbook.Canvas.repository import CanvasRepository
 from tldw_chatbook.Chat.console_trace_maintenance import (
     PhysicalTraceCompactor,
     TraceCompactionPolicy,
@@ -177,6 +181,38 @@ def test_vacuum_shrinks_file_and_preserves_shared_fork_after_reopen(
     path = tmp_path / "trace-compaction.sqlite"
     database = CharactersRAGDB(path, "trace-compaction")
     source_id, child_id, child_segment_id, call_id = _shared_fork_fixture(database)
+    message_id = database.add_message(
+        {
+            "conversation_id": source_id,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "Canvas compaction origin",
+        }
+    )
+    assert message_id is not None
+    canvas_source = "<main>compaction λ root</main>"
+    canvas_child_source = "<main>compaction λ child</main>"
+    canvas_repository = CanvasRepository(database)
+    canvas = canvas_repository.create_canvas(
+        source_id,
+        title="Compaction root",
+        source=canvas_source,
+        runtime_profile="canvas-v1",
+        actor_kind="assistant",
+        origin_message_id=message_id,
+        origin_turn_id="turn-canvas-root",
+    )
+    canvas_child = canvas_repository.append_revision(
+        source_id,
+        canvas.revision.canvas_id,
+        parent_revision_id=canvas.revision.revision_id,
+        title="Compaction child",
+        source=canvas_child_source,
+        runtime_profile="canvas-v1",
+        actor_kind="assistant",
+        origin_message_id=message_id,
+        origin_turn_id="turn-canvas-child",
+    )
     _add_orphan_trace_payload(database)
     gc_result = TraceGarbageCollector(database).collect(
         request_id="gc-compaction-success"
@@ -222,6 +258,34 @@ def test_vacuum_shrinks_file_and_preserves_shared_fork_after_reopen(
                 call.call_id
                 for call in repository.read_conversation_call_lineage(cursor, child_id)
             ] == [call_id]
+            canvas_rows = cursor.execute(
+                "SELECT id, parent_revision_id, sequence, html, content_sha256, "
+                "html_bytes, origin_message_id, origin_turn_id "
+                "FROM canvas_revisions WHERE canvas_id = ? ORDER BY sequence",
+                (canvas.revision.canvas_id,),
+            ).fetchall()
+            assert [tuple(row) for row in canvas_rows] == [
+                (
+                    canvas.revision.revision_id,
+                    None,
+                    1,
+                    canvas_source,
+                    hashlib.sha256(canvas_source.encode("utf-8")).hexdigest(),
+                    len(canvas_source.encode("utf-8")),
+                    message_id,
+                    "turn-canvas-root",
+                ),
+                (
+                    canvas_child.revision_id,
+                    canvas.revision.revision_id,
+                    2,
+                    canvas_child_source,
+                    hashlib.sha256(canvas_child_source.encode("utf-8")).hexdigest(),
+                    len(canvas_child_source.encode("utf-8")),
+                    message_id,
+                    "turn-canvas-child",
+                ),
+            ]
             state = cursor.execute(
                 "SELECT status, reason_code, progress_basis_points, retry_count "
                 "FROM console_trace_compaction_state WHERE singleton_id = 1"
@@ -229,6 +293,184 @@ def test_vacuum_shrinks_file_and_preserves_shared_fork_after_reopen(
             assert tuple(state) == ("complete", "complete", 10000, 0)
     finally:
         reopened.close_connection()
+
+
+def _canvas_fixture(
+    database: CharactersRAGDB,
+) -> tuple[str, str, str, str]:
+    conversation_id, message_id = _conversation(database, "canvas maintenance")
+    created = CanvasRepository(database).create_canvas(
+        conversation_id,
+        title="Maintenance root",
+        source="<main>root</main>",
+        runtime_profile="canvas-v1",
+        actor_kind="assistant",
+        origin_message_id=message_id,
+        origin_turn_id="turn-root",
+    )
+    return (
+        conversation_id,
+        message_id,
+        created.revision.canvas_id,
+        created.revision.revision_id,
+    )
+
+
+@pytest.mark.parametrize("invalid_kind", ["utf8", "digest", "size"])
+def test_maintenance_connection_rejects_invalid_canvas_payloads(
+    invalid_kind: str,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / f"maintenance-invalid-{invalid_kind}.sqlite"
+    database = CharactersRAGDB(path, f"maintenance-invalid-{invalid_kind}")
+    _conversation_id, message_id, canvas_id, parent_revision_id = _canvas_fixture(
+        database
+    )
+    source_bytes = b"\x80" if invalid_kind == "utf8" else b"<main>child</main>"
+    source: object = (
+        sqlite3.Binary(source_bytes)
+        if invalid_kind == "utf8"
+        else source_bytes.decode("utf-8")
+    )
+    digest = hashlib.sha256(source_bytes).hexdigest()
+    declared_bytes = len(source_bytes)
+    if invalid_kind == "digest":
+        digest = "0" * 64
+    elif invalid_kind == "size":
+        declared_bytes += 1
+    statement = (
+        "INSERT INTO canvas_revisions "
+        "(id, canvas_id, parent_revision_id, sequence, title, runtime_profile, "
+        "html, content_sha256, html_bytes, actor_kind, origin_message_id, "
+        "origin_turn_id, created_at, deleted_at) "
+        "VALUES (?, ?, ?, 2, 'invalid', 'canvas-v1', "
+        + ("CAST(? AS TEXT)" if invalid_kind == "utf8" else "?")
+        + ", ?, ?, 'assistant', ?, 'turn-invalid', "
+        "'2026-09-08T00:00:00.000Z', NULL)"
+    )
+
+    try:
+        with database.quiesce_connections(timeout_seconds=1.0):
+            connection = PhysicalTraceCompactor(
+                database, policy=_permissive_policy()
+            )._open_maintenance_connection()
+            try:
+                with pytest.raises(sqlite3.IntegrityError):
+                    connection.execute(
+                        statement,
+                        (
+                            str(uuid4()),
+                            canvas_id,
+                            parent_revision_id,
+                            source,
+                            digest,
+                            declared_bytes,
+                            message_id,
+                        ),
+                    )
+                assert (
+                    connection.execute(
+                        "SELECT COUNT(*) FROM canvas_revisions WHERE canvas_id = ?",
+                        (canvas_id,),
+                    ).fetchone()[0]
+                    == 1
+                )
+            finally:
+                connection.close()
+    finally:
+        database.close_connection()
+
+
+def test_maintenance_connection_has_validator_without_mutation_authority(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "maintenance-authority.sqlite"
+    database = CharactersRAGDB(path, "maintenance-authority")
+    _conversation_id, _message_id, canvas_id, revision_id = _canvas_fixture(database)
+
+    try:
+        with database.quiesce_connections(timeout_seconds=1.0):
+            connection = PhysicalTraceCompactor(
+                database, policy=_permissive_policy()
+            )._open_maintenance_connection()
+            try:
+                functions = {
+                    str(row[0]) for row in connection.execute("PRAGMA function_list")
+                }
+                assert "canvas_revision_payload_valid" in functions
+                assert "canvas_revision_delete_authorized" not in functions
+                assert "console_semantic_mutation_authorized" not in functions
+                assert "console_trace_gc_delete_authorized" not in functions
+                with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+                    connection.execute(
+                        "UPDATE canvas_revisions SET title = 'changed' WHERE id = ?",
+                        (revision_id,),
+                    )
+                with pytest.raises(sqlite3.OperationalError, match="no such function"):
+                    connection.execute(
+                        "DELETE FROM canvas_revisions WHERE id = ?", (revision_id,)
+                    )
+                retained = connection.execute(
+                    "SELECT id, title FROM canvas_revisions WHERE canvas_id = ?",
+                    (canvas_id,),
+                ).fetchall()
+                assert [tuple(row) for row in retained] == [
+                    (revision_id, "Maintenance root")
+                ]
+            finally:
+                connection.close()
+    finally:
+        database.close_connection()
+
+
+def test_maintenance_setup_failure_closes_handle_and_releases_exclusion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "maintenance-setup-failure.sqlite"
+    database = CharactersRAGDB(path, "maintenance-setup-failure")
+    try:
+        opened: list[sqlite3.Connection] = []
+        real_connect = trace_maintenance.connect_private_sqlite
+
+        def recording_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+            connection = real_connect(*args, **kwargs)  # type: ignore[arg-type]
+            opened.append(connection)
+            return connection
+
+        def fail_registration(_connection: sqlite3.Connection) -> None:
+            raise RuntimeError("injected_registration_failure")
+
+        monkeypatch.setattr(
+            trace_maintenance, "connect_private_sqlite", recording_connect
+        )
+        monkeypatch.setattr(
+            trace_maintenance,
+            "_install_canvas_revision_payload_validator",
+            fail_registration,
+        )
+
+        with (
+            database.quiesce_connections(timeout_seconds=1.0),
+            pytest.raises(RuntimeError, match="injected_registration_failure"),
+        ):
+            PhysicalTraceCompactor(
+                database, policy=_permissive_policy()
+            )._open_maintenance_connection()
+
+        assert len(opened) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            opened[0].execute("SELECT 1")
+        resumed = database.get_connection()
+        assert resumed.execute("PRAGMA quick_check(1)").fetchone()[0] == "ok"
+        assert database.registered_connection_count() == 1
+        state = resumed.execute(
+            "SELECT state, lease_id, lease_owner FROM console_trace_maintenance_state "
+            "WHERE singleton_id = 1"
+        ).fetchone()
+        assert tuple(state) == ("idle", None, None)
+    finally:
+        database.close_connection()
 
 
 def test_integrity_verification_failure_keeps_retry_state_and_readability(

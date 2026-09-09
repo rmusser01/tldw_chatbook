@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
+from .compilation import PreparedCanvasDocument
 from .compiler import compile_canvas_document
 from .gateway import (
     BridgeConfirmationRequest,
@@ -25,17 +26,16 @@ from .gateway import (
     CanvasSourceResponse,
 )
 from .limits import (
-    SUPPORTED_CANVAS_RUNTIME_PROFILE,
     UnsupportedCanvasRuntimeProfile,
     sha256_utf8,
     validate_utf8_text,
 )
 from .models import (
     CanvasReadResult,
-    CanvasRenderPlan,
     CanvasRevisionInfo,
     CanvasScope,
 )
+from .profiles import ProfileSnapshot, resolve_profile
 
 
 class _TitleParser(HTMLParser):
@@ -117,13 +117,14 @@ class _ImportCapture:
     selection: tuple[str, str] | None
     owner: Any
     view_generation: int
+    parent_profile: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class _PreparedImport:
     capture: _ImportCapture
     title: str
-    plan: CanvasRenderPlan
+    plan: PreparedCanvasDocument
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +175,7 @@ class NativeConsoleCanvasAuthority:
         *,
         scope_resolver: Callable[[str], CanvasScope],
         canvas_controller: Any,
+        run_scope_resolver: Callable[[str], CanvasScope] | None = None,
         bridge_sink: Callable[[CanvasBridgeTarget, str], None] | None = None,
         bridge_prepare: Callable[[CanvasBridgeTarget], Callable[[str], None]] | None = None,
         auto_open: Callable[[str, CanvasRevisionInfo], None] | None = None,
@@ -181,6 +183,7 @@ class NativeConsoleCanvasAuthority:
         enabled_reader: Callable[[], bool] | None = None,
     ) -> None:
         self._scope_resolver = scope_resolver
+        self._run_scope_resolver = run_scope_resolver
         self._canvas_controller = canvas_controller
         self._compilation = canvas_controller.compilation
         self._bridge_sink = bridge_sink
@@ -191,7 +194,7 @@ class NativeConsoleCanvasAuthority:
         self._gateway_invalidator: Callable[[str], None] | None = None
         self._selection: dict[str, _Selection] = {}
         self._parsed_block_imports: OrderedDict[
-            tuple[str, str, int], _ParsedBlockImport
+            tuple[str, str, int | str], _ParsedBlockImport
         ] = OrderedDict()
         self._browser_targets: OrderedDict[str, CanvasBridgeTarget] = OrderedDict()
         self._publication_receipts: OrderedDict[str, _PublicationReceipt] = (
@@ -225,7 +228,8 @@ class NativeConsoleCanvasAuthority:
         with self._lock:
             if self._disposed or self._enabled_reader() is not True:
                 raise RuntimeError("canvas_scope_unavailable")
-            current = self._scope_resolver(scope.session_id)
+            resolver = self._run_scope_resolver or self._scope_resolver
+            current = resolver(scope.session_id)
             if (
                 current.session_id != scope.session_id
                 or current.conversation_id != scope.conversation_id
@@ -442,11 +446,26 @@ class NativeConsoleCanvasAuthority:
             owner = self._canvas_controller.capture_interactive_owner(
                 scope, temporary=self._is_temporary(scope)
             )
-            return _ImportCapture(scope, selection, owner, self._view_generation)
+            parent_profile = None
+            if selection is not None and not block_arguments.get("create_new", False):
+                parent_profile = self._read_exact(
+                    replace(
+                        scope,
+                        selected_canvas_id=selection[0],
+                        selected_revision_id=selection[1],
+                    ),
+                    selection[0],
+                    selection[1],
+                ).revision.runtime_profile
+            return _ImportCapture(
+                scope, selection, owner, self._view_generation, parent_profile
+            )
 
     def _prepare_import(self, capture: _ImportCapture, source: str) -> _PreparedImport:
         plan = self._canvas_controller.prepare_import(
-            source, temporary=self._is_temporary(capture.scope)
+            source,
+            temporary=self._is_temporary(capture.scope),
+            parent_profile=capture.parent_profile,
         )
         return _PreparedImport(capture, _document_title(source), plan)
 
@@ -632,7 +651,7 @@ class NativeConsoleCanvasAuthority:
         source_turn_id: str | None,
         block_index: int | None,
         block_identity: str | None,
-    ) -> tuple[str, str, int] | None:
+    ) -> tuple[str, str, int | str] | None:
         values = (
             source_message_id,
             origin_message_id,
@@ -654,9 +673,11 @@ class NativeConsoleCanvasAuthority:
             raise ValueError("Canvas source turn is invalid")
         if type(block_index) is not int or not 0 <= block_index <= 1024:
             raise ValueError("Canvas block index is invalid")
-        if block_identity != f"{source_message_id}:canvas-html:{block_index}":
-            raise ValueError("Canvas block identity is invalid")
-        return (scope.conversation_id, origin_message_id, block_index)
+        if block_identity == f"{source_message_id}:canvas-html:{block_index}":
+            return (scope.conversation_id, origin_message_id, block_index)
+        if block_identity == f"{source_message_id}:canvas-mermaid:{block_index}":
+            return (scope.conversation_id, origin_message_id, f"mermaid:{block_index}")
+        raise ValueError("Canvas block identity is invalid")
 
     def gateway_scope(
         self,
@@ -702,16 +723,30 @@ class NativeConsoleCanvasAuthority:
                 revision_id=chosen.revision.revision_id,
             )
 
+    @property
+    def profile_snapshot(self) -> ProfileSnapshot:
+        """Return the same retained authority used to admit exact revisions."""
+        return self._canvas_controller.profile_snapshot
+
     async def resolve_render_plan(self, scope: CanvasGatewayScope):
         captured = self._selected_scope(scope)
         owner = self._canvas_controller.capture_interactive_owner(
             captured, temporary=self._is_temporary(captured)
         )
         read = self._read_exact(captured, scope.canvas_id, scope.revision_id)
-        if read.revision.runtime_profile != SUPPORTED_CANVAS_RUNTIME_PROFILE:
+        snapshot = self._canvas_controller.profile_snapshot
+        resolved = resolve_profile(
+            snapshot,
+            operation="load",
+            parent_profile=read.revision.runtime_profile,
+            has_diagrams=False,
+        )
+        if not resolved.executable:
             raise UnsupportedCanvasRuntimeProfile("unsupported Canvas runtime profile")
         plan = await self._compilation.run_async(
-            lambda: compile_canvas_document(read.source)
+            lambda: compile_canvas_document(
+                read.source, runtime_profile=resolved.profile_id, snapshot=snapshot
+            )
         )
         current = self._selected_scope(scope)
         if (
@@ -1095,7 +1130,7 @@ class NativeConsoleCanvasAuthority:
         *,
         origin_message_id: str,
         origin_turn_id: str,
-        prepared_plan: CanvasRenderPlan,
+        prepared_plan: PreparedCanvasDocument,
         expected_owner: Any,
     ) -> Any:
         result = self._canvas_controller.interactive_create_canvas(
@@ -1105,7 +1140,7 @@ class NativeConsoleCanvasAuthority:
             title=title,
             html=source,
             temporary=self._is_temporary(scope),
-            _prepared_plan=prepared_plan,
+            _preparation=prepared_plan,
             _expected_owner=expected_owner,
         )
         return type(
@@ -1127,7 +1162,7 @@ class NativeConsoleCanvasAuthority:
         *,
         origin_message_id: str,
         origin_turn_id: str,
-        prepared_plan: CanvasRenderPlan,
+        prepared_plan: PreparedCanvasDocument,
         expected_owner: Any,
     ):
         result = self._canvas_controller.interactive_update_canvas(
@@ -1138,7 +1173,7 @@ class NativeConsoleCanvasAuthority:
             expected_parent_revision_id=parent_id,
             html=source,
             temporary=self._is_temporary(scope),
-            _prepared_plan=prepared_plan,
+            _preparation=prepared_plan,
             _expected_owner=expected_owner,
         )
         if not hasattr(result, "revision"):

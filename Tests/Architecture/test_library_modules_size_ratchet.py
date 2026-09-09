@@ -374,7 +374,17 @@ _BUDGETS: dict[str, int] = {
     # receiver. Mutation-verified: removing it reds
     # `test_notes_row_toggle_resolves_the_dotted_state_path[controller]` and
     # leaves the `[screen]` leg green.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5276,
+    #
+    # 2026-09-08, task-32052 AC#1 (critique-8 keyboard branch, PR #2533):
+    # 5276 -> 5283 (+7), a BEHAVIOUR FIX, not a move. The surface-mismatch
+    # guard at the top of `_restore_library_notes_after_targeted_sync` (5
+    # lines of comment + 2 of code) landed on the SCREEN's copy of that
+    # method before wave-8 moved the body here; the merge re-applied it at
+    # the body's new home, which is the only place it can run. Pinned by
+    # `Tests/UI/test_library_crit8_keyboard.py::
+    # test_ctrl_n_into_new_note_also_focuses_blank_note` -- reverting the
+    # guard reds it (focus lands on a notes-tree row, not Blank note).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5283,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

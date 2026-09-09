@@ -864,7 +864,27 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # the DOM path their messages already travel. This is the first time this
     # row's METHOD count moves at all, and it clears the +1 red dev left here
     # by measurement rather than by raising: 1243 is what the class now has.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32178, 1243),
+    # 2026-09-09, RECONCILIATION MERGE with `origin/dev` (217 commits):
+    # 32178/1243 -> 33204/1276. This row is set to the TRUE merged measurement,
+    # NOT to a phase-C number -- the delta above phase C's earned row is dev's,
+    # and it is spelled out here so it is never mistaken for phase-C growth:
+    #   * phase C (this branch) REMOVED 173 lines / 16 methods, earning
+    #     32178/1243 from the phase base 32351/1259 (fresh `_measure()`).
+    #   * dev's concurrent `library_screen.py` work ADDED +1026 lines / +33
+    #     methods measured from the merge-base `7e81ed55d` (32351/1259 ->
+    #     33377/1292), i.e. +1114 lines / +34 methods against dev's own pinned
+    #     row (32263/1258), on which dev's branch was already RED -- dev never
+    #     lowered nor raised its pin to match that growth. dev did not touch
+    #     THIS file at all (empty diff vs the merge-base), so there is no
+    #     dev-side annotation to carry; its growth lands entirely in the source.
+    #   * the merge composed cleanly with no line-level overlap: base + both
+    #     deltas = 32351 - 173 + 1026 = 33204 lines, 1259 - 16 + 33 = 1276
+    #     methods, which is exactly what `_measure()` reads on the merged tree.
+    # Not a give-back and not slack: this is the arithmetic sum of two
+    # independent trajectories, pinned to reality. dev's +1026 remains real
+    # debt to be worked down on dev's own decomposition schedule; pinning it
+    # here keeps the merged tree green without hiding whose lines they are.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33204, 1276),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

@@ -25,9 +25,15 @@ from .contracts import (
 )
 from .validation import validate_persona_visual_manifest
 
-
 _SOURCE_CONTEXT_KEYS = frozenset(
-    {"source_id", "provenance", "license", "source_server_commit"}
+    {
+        "source_id",
+        "provenance",
+        "license",
+        "source_server_commit",
+        "artwork",
+        "mapping_source",
+    }
 )
 _MAX_SOURCE_CONTEXT_VALUE_LENGTH = 256
 _ASSET_KEY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
@@ -44,7 +50,7 @@ _SQLITE_UTF8_DECODE_PREFIX = "Could not decode to UTF-8 column "
 class PersonaVisualIdentity:
     """Complete optimistic identity for one active Persona Visual graph."""
 
-    persona_id: str
+    persona_id: str | None
     persona_revision: int
     binding_id: int
     binding_version: int
@@ -53,6 +59,18 @@ class PersonaVisualIdentity:
     pack_version_id: int
     version_number: int
     manifest_sha256: str
+    buddy_id: str | None = None
+    buddy_revision: int | None = None
+
+    @property
+    def owner_id(self) -> str:
+        return _visual_owner_id(self.persona_id, self.buddy_id)
+
+    @property
+    def owner_revision(self) -> int:
+        return (
+            self.buddy_revision if self.buddy_id is not None else self.persona_revision
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +125,7 @@ class PersonaVisualBindingRecord:
     """One active local-Persona binding snapshot."""
 
     id: int
-    persona_id: str
+    persona_id: str | None
     persona_revision: int
     pack_id: int
     active_version_id: int
@@ -115,6 +133,9 @@ class PersonaVisualBindingRecord:
     created_at: str
     updated_at: str
     revision: int
+
+    buddy_id: str | None = None
+    buddy_revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,27 +187,29 @@ class PersonaVisualRepository:
     def __init__(self, db: CharactersRAGDB) -> None:
         self.db = db
 
-    def get_active_persona_pack(self, persona_id: str) -> PersonaVisualGraph | None:
+    def get_active_persona_pack(
+        self, persona_id: str | None, *, buddy_id: str | None = None
+    ) -> PersonaVisualGraph | None:
         """Return the Persona's active graph, ignoring inactive bindings/packs."""
 
-        _validate_persona_id(persona_id)
+        _visual_owner_id(persona_id, buddy_id)
         try:
             with self.db.transaction():
-                return self._get_active_persona_pack(persona_id)
+                return self._get_active_persona_pack(persona_id, buddy_id=buddy_id)
         except (UnicodeError, RecursionError, TypeError, OverflowError):
             raise ValueError("persona_visual_graph_invalid") from None
         except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_read_failed") from None
 
     def get_active_persona_pack_for_export(
-        self, persona_id: str
+        self, persona_id: str | None, *, buddy_id: str | None = None
     ) -> PersonaVisualExportGraph | None:
         """Return one exact active graph with bounded private export metadata."""
 
-        _validate_persona_id(persona_id)
+        _visual_owner_id(persona_id, buddy_id)
         try:
             with self.db.transaction():
-                graph = self._get_active_persona_pack(persona_id)
+                graph = self._get_active_persona_pack(persona_id, buddy_id=buddy_id)
                 if graph is None:
                     return None
                 pack_row = _fetchone(
@@ -243,6 +266,15 @@ class PersonaVisualRepository:
         except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_read_failed") from None
 
+    def get_active_buddy_pack(self, buddy_id: str) -> PersonaVisualGraph | None:
+        """Read an independent Buddy graph without consulting Persona authority."""
+        return self.get_active_persona_pack(None, buddy_id=buddy_id)
+
+    def get_active_buddy_pack_for_export(
+        self, buddy_id: str
+    ) -> PersonaVisualExportGraph | None:
+        return self.get_active_persona_pack_for_export(None, buddy_id=buddy_id)
+
     def _get_active_asset_storage_key(
         self,
         identity: PersonaVisualIdentity,
@@ -261,7 +293,7 @@ class PersonaVisualRepository:
                     self.db.execute_query(
                         """
                         SELECT asset.storage_relpath
-                          FROM persona_visual_bindings AS binding
+                          FROM visual_owner_bindings AS binding
                           JOIN persona_visual_packs AS pack
                             ON pack.id = binding.pack_id
                           JOIN persona_visual_pack_versions AS version_row
@@ -270,8 +302,8 @@ class PersonaVisualRepository:
                           JOIN persona_visual_assets AS asset
                             ON asset.pack_version_id = version_row.id
                            AND asset.pack_id = pack.id
-                         WHERE binding.id = ? AND binding.persona_id = ?
-                           AND binding.persona_revision = ?
+                         WHERE binding.id = ? AND binding.persona_id IS ? AND binding.buddy_id IS ?
+                           AND binding.persona_revision = ? AND binding.buddy_revision IS ?
                            AND binding.version = ? AND binding.status = 'active'
                            AND binding.pack_id = ?
                            AND binding.active_version_id = ?
@@ -292,7 +324,9 @@ class PersonaVisualRepository:
                         (
                             identity.binding_id,
                             identity.persona_id,
+                            identity.buddy_id,
                             identity.persona_revision,
+                            identity.buddy_revision,
                             identity.binding_version,
                             identity.pack_id,
                             identity.pack_version_id,
@@ -330,20 +364,22 @@ class PersonaVisualRepository:
     def activate_new_pack(
         self,
         *,
-        persona_id: str,
+        persona_id: str | None,
         title: str,
         manifest: object,
         manifest_storage_relpath: str,
         assets: Sequence[Mapping[str, Any]],
         expected_persona_revision: int,
         authority_guard: Callable[[], bool],
+        buddy_id: str | None = None,
+        buddy_revision: int | None = None,
         description: str = "",
         source_kind: str = "manual",
         source_context: object | None = None,
     ) -> PersonaVisualGraph:
         """Create and activate a first immutable graph for a local Persona."""
 
-        _validate_persona_id(persona_id)
+        _visual_owner_id(persona_id, buddy_id)
         _validate_revision(expected_persona_revision)
         try:
             _input_text(title, 256)
@@ -367,8 +403,22 @@ class PersonaVisualRepository:
         try:
             with self.db.transaction(immediate=True):
                 transaction_connection = self.db.get_connection()
-                if self._active_binding_record(persona_id) is not None:
+                if (
+                    self._active_binding_record(persona_id, buddy_id=buddy_id)
+                    is not None
+                ):
                     raise ValueError("persona_visual_binding_changed")
+                if buddy_id is not None:
+                    row = self.db.execute_query(
+                        "SELECT version FROM buddy_profiles WHERE id=? AND status='active'",
+                        (buddy_id,),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or type(buddy_revision) is not int
+                        or row[0] != buddy_revision
+                    ):
+                        raise ValueError("persona_visual_identity_changed")
                 _run_authority_guard(authority_guard, self.db, transaction_connection)
                 pack_id = int(
                     self.db.execute_query(
@@ -401,15 +451,17 @@ class PersonaVisualRepository:
                 )
                 if activated.rowcount != 1:
                     raise ValueError("persona_visual_identity_changed")
-                self.db.execute_query(
-                    """
-                    INSERT INTO persona_visual_bindings(
-                        persona_id, persona_revision, pack_id, active_version_id
-                    ) VALUES (?, ?, ?, ?)
-                    """,
-                    (persona_id, expected_persona_revision, pack_id, version_id),
-                )
-                graph = self._get_active_persona_pack(persona_id)
+                if buddy_id is None:
+                    self.db.execute_query(
+                        "INSERT INTO persona_visual_bindings(persona_id,persona_revision,pack_id,active_version_id) VALUES (?,?,?,?)",
+                        (persona_id, expected_persona_revision, pack_id, version_id),
+                    )
+                else:
+                    self.db.execute_query(
+                        "INSERT INTO buddy_visual_bindings(buddy_id,buddy_revision,pack_id,active_version_id) VALUES (?,?,?,?)",
+                        (buddy_id, buddy_revision, pack_id, version_id),
+                    )
+                graph = self._get_active_persona_pack(persona_id, buddy_id=buddy_id)
                 if graph is None:
                     raise ValueError("persona_visual_activation_failed")
                 return graph
@@ -421,17 +473,20 @@ class PersonaVisualRepository:
     def publish_version(
         self,
         *,
-        persona_id: str,
+        persona_id: str | None,
         manifest: object,
         manifest_storage_relpath: str,
         assets: Sequence[Mapping[str, Any]],
         expected_identity: PersonaVisualIdentity,
         expected_persona_revision: int,
         authority_guard: Callable[[], bool],
+        buddy_id: str | None = None,
+        buddy_revision: int | None = None,
+        source_context: object | None = None,
     ) -> PersonaVisualGraph:
         """Publish and activate the next immutable version under full-graph CAS."""
 
-        _validate_persona_id(persona_id)
+        _visual_owner_id(persona_id, buddy_id)
         _validate_revision(expected_persona_revision)
         if not isinstance(expected_identity, PersonaVisualIdentity):
             raise ValueError("persona_visual_identity_changed")
@@ -446,14 +501,24 @@ class PersonaVisualRepository:
         try:
             with self.db.transaction(immediate=True):
                 transaction_connection = self.db.get_connection()
-                current = self._get_active_persona_pack(persona_id)
+                current = self._get_active_persona_pack(persona_id, buddy_id=buddy_id)
                 if current is None:
+                    raise ValueError("persona_visual_identity_changed")
+                if current.identity.buddy_revision != buddy_revision:
                     raise ValueError("persona_visual_identity_changed")
                 if current.identity.persona_revision != expected_persona_revision:
                     raise ValueError("persona_visual_persona_revision_changed")
                 if current.identity != expected_identity:
                     raise ValueError("persona_visual_identity_changed")
 
+                context_json = None
+                if source_context is not None:
+                    existing = self.get_active_persona_pack_for_export(
+                        persona_id, buddy_id=buddy_id
+                    )
+                    context_json = _source_context_json(
+                        {**dict(existing.source_context), **dict(source_context)}
+                    )
                 source_manifest_json = self._read_identity_snapshot(current.identity)
                 next_number = _db_positive_int(
                     _fetchone(
@@ -482,6 +547,7 @@ class PersonaVisualRepository:
                     """
                     UPDATE persona_visual_packs
                        SET active_version_id = ?,
+                           source_context_json = COALESCE(?, source_context_json),
                            updated_at = CURRENT_TIMESTAMP,
                            version = version + 1
                      WHERE id = ? AND status = 'active'
@@ -500,6 +566,7 @@ class PersonaVisualRepository:
                     """,
                     (
                         version_id,
+                        context_json,
                         current.pack.id,
                         current.version.id,
                         current.pack.revision,
@@ -513,29 +580,45 @@ class PersonaVisualRepository:
                     ),
                     redact_params=True,
                 )
-                binding_update = self.db.execute_query(
-                    """
-                    UPDATE persona_visual_bindings
-                       SET active_version_id = ?,
-                           updated_at = CURRENT_TIMESTAMP,
-                           version = version + 1
-                     WHERE id = ? AND persona_id = ? AND persona_revision = ?
-                       AND pack_id = ? AND active_version_id = ?
-                       AND status = 'active' AND version = ?
-                    """,
-                    (
-                        version_id,
-                        current.binding.id,
-                        persona_id,
-                        expected_persona_revision,
-                        current.pack.id,
-                        current.version.id,
-                        current.binding.revision,
-                    ),
-                )
+                if buddy_id is not None:
+                    binding_update = self.db.execute_query(
+                        "UPDATE buddy_visual_bindings SET active_version_id=?, updated_at=CURRENT_TIMESTAMP, version=version+1 "
+                        "WHERE id=? AND buddy_id=? AND buddy_revision=? AND pack_id=? AND active_version_id=? "
+                        "AND status='active' AND version=?",
+                        (
+                            version_id,
+                            current.binding.id,
+                            buddy_id,
+                            buddy_revision,
+                            current.pack.id,
+                            current.version.id,
+                            current.binding.revision,
+                        ),
+                    )
+                else:
+                    binding_update = self.db.execute_query(
+                        """
+                        UPDATE persona_visual_bindings
+                           SET active_version_id = ?,
+                               updated_at = CURRENT_TIMESTAMP,
+                               version = version + 1
+                         WHERE id = ? AND persona_id = ? AND persona_revision = ?
+                           AND pack_id = ? AND active_version_id = ?
+                           AND status = 'active' AND version = ?
+                        """,
+                        (
+                            version_id,
+                            current.binding.id,
+                            persona_id,
+                            expected_persona_revision,
+                            current.pack.id,
+                            current.version.id,
+                            current.binding.revision,
+                        ),
+                    )
                 if pack_update.rowcount != 1 or binding_update.rowcount != 1:
                     raise ValueError("persona_visual_identity_changed")
-                graph = self._get_active_persona_pack(persona_id)
+                graph = self._get_active_persona_pack(persona_id, buddy_id=buddy_id)
                 if graph is None:
                     raise ValueError("persona_visual_activation_failed")
                 return graph
@@ -670,8 +753,10 @@ class PersonaVisualRepository:
         except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_write_failed") from None
 
-    def _get_active_persona_pack(self, persona_id: str) -> PersonaVisualGraph | None:
-        binding = self._active_binding_record(persona_id)
+    def _get_active_persona_pack(
+        self, persona_id: str | None, *, buddy_id: str | None = None
+    ) -> PersonaVisualGraph | None:
+        binding = self._active_binding_record(persona_id, buddy_id=buddy_id)
         if binding is None:
             return None
         pack_row = _fetchone(
@@ -721,6 +806,8 @@ class PersonaVisualRepository:
         identity = PersonaVisualIdentity(
             persona_id=binding.persona_id,
             persona_revision=binding.persona_revision,
+            buddy_id=binding.buddy_id,
+            buddy_revision=binding.buddy_revision,
             binding_id=binding.id,
             binding_version=binding.revision,
             pack_id=pack.id,
@@ -738,15 +825,23 @@ class PersonaVisualRepository:
         )
 
     def _active_binding_record(
-        self, persona_id: str
+        self, persona_id: str | None, *, buddy_id: str | None = None
     ) -> PersonaVisualBindingRecord | None:
+        if buddy_id is None:
+            row = _fetchone(
+                self.db.execute_query(
+                    "SELECT * FROM persona_visual_bindings WHERE persona_id = ? AND status = 'active'",
+                    (persona_id,),
+                )
+            )
+            return None if row is None else _decode_binding(row)
         row = _fetchone(
             self.db.execute_query(
                 """
-                SELECT * FROM persona_visual_bindings
-                 WHERE persona_id = ? AND status = 'active'
+                SELECT * FROM visual_owner_bindings
+                 WHERE persona_id IS ? AND buddy_id IS ? AND status = 'active'
                 """,
-                (persona_id,),
+                (persona_id, buddy_id),
             )
         )
         return None if row is None else _decode_binding(row)
@@ -824,13 +919,13 @@ class PersonaVisualRepository:
             self.db.execute_query(
                 """
             SELECT version_row.manifest_json
-              FROM persona_visual_bindings AS binding
+              FROM visual_owner_bindings AS binding
               JOIN persona_visual_packs AS pack ON pack.id = binding.pack_id
               JOIN persona_visual_pack_versions AS version_row
                 ON version_row.id = binding.active_version_id
                AND version_row.pack_id = binding.pack_id
-             WHERE binding.id = ? AND binding.persona_id = ?
-               AND binding.persona_revision = ? AND binding.pack_id = ?
+             WHERE binding.id = ? AND binding.persona_id IS ? AND binding.buddy_id IS ?
+               AND binding.persona_revision = ? AND binding.buddy_revision IS ? AND binding.pack_id = ?
                AND binding.active_version_id = ?
                AND binding.status = 'active' AND binding.version = ?
                AND pack.status = 'active' AND pack.active_version_id = ?
@@ -840,7 +935,9 @@ class PersonaVisualRepository:
                 (
                     identity.binding_id,
                     identity.persona_id,
+                    identity.buddy_id,
                     identity.persona_revision,
+                    identity.buddy_revision,
                     identity.pack_id,
                     identity.pack_version_id,
                     identity.binding_version,
@@ -1070,11 +1167,17 @@ def _decode_binding(row: Mapping[str, Any]) -> PersonaVisualBindingRecord:
     """Decode one binding before selecting its active graph."""
 
     try:
-        persona_id = _db_text(row["persona_id"], 200)
+        buddy_id = row["buddy_id"] if "buddy_id" in row.keys() else None  # noqa: SIM118 - sqlite.Row membership checks values
+        persona_id = row["persona_id"]
+        _visual_owner_id(persona_id, buddy_id)
         return PersonaVisualBindingRecord(
             id=_db_positive_int(row["id"]),
             persona_id=persona_id,
             persona_revision=_db_nonnegative_int(row["persona_revision"]),
+            buddy_id=buddy_id,
+            buddy_revision=_db_positive_int(row["buddy_revision"])
+            if buddy_id is not None
+            else None,
             pack_id=_db_positive_int(row["pack_id"]),
             active_version_id=_db_positive_int(row["active_version_id"]),
             status=_db_enum(row["status"], _GRAPH_STATUSES),
@@ -1255,7 +1358,12 @@ def _reject_json_constant(_value: str) -> None:
 def _validate_source_context_content(value: object) -> None:
     if type(value) is not dict or not set(value) <= _SOURCE_CONTEXT_KEYS:
         raise ValueError
-    for item in value.values():
+    for key, item in value.items():
+        if key == "artwork":
+            from .artwork import decode_native_artwork
+
+            decode_native_artwork(item)
+            continue
         if not isinstance(item, str) or not item:
             raise ValueError
         item.encode("utf-8")
@@ -1382,3 +1490,17 @@ def _is_sha256(value: object) -> bool:
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
     )
+
+
+def _visual_owner_id(persona_id: object, buddy_id: object) -> str:
+    """Exactly one concrete local owner; Buddy identifiers are never Persona IDs."""
+    if buddy_id is None:
+        _validate_persona_id(persona_id)
+        return persona_id
+    if (
+        persona_id is not None
+        or type(buddy_id) is not str
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", buddy_id)
+    ):
+        raise ValueError("persona_visual_owner_invalid")
+    return buddy_id

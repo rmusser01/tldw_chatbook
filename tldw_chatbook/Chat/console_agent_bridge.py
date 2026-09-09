@@ -4182,7 +4182,7 @@ def build_console_first_request_plan(
                 build_canvas_runtime_guidance,
             )
 
-            canvas_guidance = build_canvas_runtime_guidance(disclosed_schemas)
+            canvas_guidance = build_canvas_runtime_guidance(disclosed_schemas, messages=messages)
             if canvas_guidance:
                 budget_system_prompt = f"{budget_system_prompt}\n\n{canvas_guidance}"
             if workspace_note:
@@ -5627,11 +5627,11 @@ class ConsoleAgentBridge:
                     buddy_tool_sequences.setdefault(buddy_run_id, deque()).append(
                         step.index
                     )
-                    buddy_sink.tool_step(buddy_run_id, step.index, step.kind)
+                    buddy_sink.tool_step(buddy_run_id, step.index, step.kind, session_id=session_id)
                 elif step.kind == STEP_TOOL_RESULT:
                     sequences = buddy_tool_sequences.get(buddy_run_id)
                     sequence = sequences.popleft() if sequences else step.index
-                    buddy_sink.tool_step(buddy_run_id, sequence, step.kind)
+                    buddy_sink.tool_step(buddy_run_id, sequence, step.kind, session_id=session_id)
                     if sequences is not None and not sequences:
                         buddy_tool_sequences.pop(buddy_run_id, None)
                 elif step.kind == STEP_ERROR:

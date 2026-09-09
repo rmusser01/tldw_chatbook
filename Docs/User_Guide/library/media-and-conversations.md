@@ -30,8 +30,9 @@ Wide (Media)
 
 Narrow (Media)
 
-+›+›+ Reader -------------------------------------------------------+
-| both pane grips remain reachable; Reader gets the available width |
++›+ Items ----------------------------------+›+ Reader -------------+
+| ‹ Library                                  | Select a media item  |
+| filter · type · sort · item rows           | to read it here.     |
 ```
 
 Media's two grips are one column each — the `‹` (open pane) and `›`
@@ -79,7 +80,15 @@ list uses the width that frees up:
   11.
 - **The navigation rail joins Media at 112 columns.** Below that the screen
   shows Items and the Reader only, and the Items pane itself collapses below
-  88 columns.
+  88 columns — except below **64 columns with nothing open in the Reader**,
+  where the list is all there is to show: Items stays, the Reader keeps what
+  is left for its placeholder, and a **‹ Library** (or **< Library** with
+  ASCII glyphs) control at the top of the Items pane returns to the rail.
+  It is the only width that shows that control; opening an item hands the
+  width back to the Reader as usual. Going back to the rail gives it the
+  width while you are there — selecting **Media** again returns to the list
+  and its **‹ Library** control, so the two are a round trip rather than a
+  one-way door.
 
 *Verified against fix/media-crit6-layout — 2026-09-07 (task-31979: the
 empty-reader widening. Pinned in tests at 235x52 and 100x30 — with no item
@@ -137,9 +146,9 @@ text carries the term already shows you why it is there and says nothing
 extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
 wide CJK characters, or five flag emoji) to keep the line short — the cut
 counts a flag by the two columns it paints and never leaves half of one, so
-the row frame does not drift. It can still be too long for a narrow Items pane: at the
-pane's narrowest the row clips mid-term at the pane edge, and a row that is
-both analysed and a keyword hit can clip at the default width too. The
+the row frame does not drift. It can still be too long for a narrow Items pane:
+at the pane's narrowest the row ends in an ellipsis mid-term, and a row that is
+both analysed and a keyword hit can run out of room at the default width too. The
 Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
 full stored keyword but drops a dangling half-flag so that surface's frame
 does not drift either (the edit form still prefills the stored keyword
@@ -276,7 +285,9 @@ match instead of refusing.)
 ### Media Trash
 
 Press **"Trash"** on the Media toolbar to swap the list for the Trash
-view: "‹ Media" (back), a "Trash (N)" heading, and one two-line row per
+view: "‹ Media" (back), a **"Local Trash · N items"** heading ("· 1 item"
+for one; "· N matching" while a Trash search is active; the bare "Local
+Trash" at widths too narrow for the suffix), and one two-line row per
 deleted item — the title, then a dim "type · trashed 2h" line saying when
 it was deleted, newest first. Press a row to select it (the **▸** marker
 moves), then **"Restore"** to put it back: the row leaves the Trash, the
@@ -431,7 +442,9 @@ harness, not re-verified live.)*
 
 Its header is deliberately short: **‹ Back**, the title, the action row, and
 the mode row — five rows above the reading surface, border included. A byline
-row appears only when the item actually has an author or a URL, and an
+row appears only when the item actually has an author or a URL — an author
+stored as the literal "Unknown", which is what most local imports write when
+a file names none, counts as no author and paints no byline — and an
 identity line ("Server item · not in local Media list") only for a server
 item a local Media list cannot show. The mode row is the only label for the
 open mode; no section header repeats it. Body text wraps at a reading measure
@@ -446,12 +459,13 @@ still spans the pane.
   characters, using the same renderer as Notes' own "Preview". Press
   "Raw" to see the plain source instead. A rendered heading starts in the
   same column as the prose beneath it. Any item with content but no
-  markdown gets no toggle, whatever its media type; that slot reads
-  "No Markdown formatting to render — showing the stored text" instead of
-  going silently blank — it names what THIS item has, so a plain-prose
-  transcript is not told that rendering is "for transcripts". An item with no stored content shows no such note — the
-  box already says "No stored content." and there is no rendered view to
-  explain away. Below the toggle (or directly
+  markdown gets no toggle, whatever its media type; **Info** then carries the
+  one-line reason, "No Markdown formatting to render — showing the stored
+  text", so the reading surface is not banner-ed with it on every open — it
+  names what THIS item has, so a plain-prose transcript is not told that
+  rendering is "for transcripts". An item with no stored content shows no such
+  note anywhere — the box already says "No stored content." and there is no
+  rendered view to explain away. Below the toggle (or directly
   above Content for everything else) is a "Search content…" box — its
   placeholder reads "Search content (raw text)…" whenever the toggle is
   present, since search always matches the raw stored text regardless of
@@ -487,8 +501,10 @@ still spans the pane.
   press "Add highlight". Each saved highlight shows the quote with a
   color swatch, its color/note details, and a "✕ Delete" button.
 - **Info** — metadata and provenance: backend-qualified ID, original source,
-  stored representation, preview status, and the representation **Use in
-  Console** will send. The Items catalogue is local-only. A finished server
+  stored representation, preview status, the representation **Use in
+  Console** will send, and — for an item with content that has no Markdown —
+  the "No Markdown formatting to render — showing the stored text" line that
+  explains why Read offers no Rendered|Raw toggle. The Items catalogue is local-only. A finished server
   import may open one read-only compatibility detail labelled **Server item ·
   not in local Media list**; it does not become a local Items row.
 - **Primary toolbar**:
@@ -615,7 +631,15 @@ while its pager stays visible underneath it. The pager always states the exact
 range, total, and page: with 45 conversations it reads **"1-20 of 45 · Page 1
 of 3"**, then **"21-40 of 45 · Page 2 of 3"**, and finally **"41-45 of 45 ·
 Page 3 of 3"**. Previous and Next show a visible reason when unavailable, such
-as "Already on the first page." or "No more results."
+as "Already on the first page." or "No more results." A list that fits one page
+shows only its range ("1-2 of 2") — the page counter, those reasons and the
+Previous/Next controls all return the moment a second page exists, exactly as
+on the Media list.
+
+The reader above names the open conversation by **title**, not by its stored
+id ("Loaded Design review notes · 30 of 30 messages · complete."), and each
+message is headed with its sender and the same compact age the list uses
+("user · 27m"), never a raw timestamp.
 
 Filtering searches the **full conversation source before paging**, so a match
 on the oldest page is still found; clearing the filter returns to unfiltered
@@ -629,9 +653,25 @@ requested load.
 |---|---|
 | "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
-| Row press | Selects the row and shows the preview (title, "Messages: N", "Updated: age"). |
-| "Open in Console" | Stages the conversation as **source context** in Console — see below. |
+| Row press | Selects the row and loads it into the **Conversation reader** — not a preview. See below. |
+| "Open in Console" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Stages the conversation as **source context** in Console — see below. |
+| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. One press links it, and "Open in Console" enables in place. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
+
+**The detail pane is a transcript reader.** Pressing a row loads the whole
+conversation into a pane headed **"Conversation reader"** with:
+
+- a **Read** / **Info** mode row (the same shape the media Reader uses);
+- a status line reading `Loaded <conversation id> · N of M messages ·
+  complete.`;
+- a **"Find in complete transcript…"** box; and
+- the transcript itself, one block per message, each headed
+  `user` / `assistant` and the message's timestamp.
+
+Two rough edges are known and tracked separately: the status line shows the
+raw conversation UUID and each message shows a full ISO timestamp rather
+than an age string, and **"Open in Console"** sits below the transcript
+rather than in the reader header.
 
 Empty state: "No conversations yet. Chat in Console and it appears here."
 There is no create, rename, or delete here — this panel treats your chats
@@ -672,7 +712,9 @@ setting**; it supplies one bundle of **staged context** for the next send.
 3. Press "Add highlight" — it appears in the list with a ● swatch.
 
 ### Stage a conversation as Console context
-1. In **Conversations**, click a row, then "Open in Console" in the preview.
+1. In **Conversations**, click a row, then "Open in Console" in the reader
+   header (beside Read/Info, or press `c`). If it reads "○ Open in Console ·
+   not in this workspace", press "Link to workspace" first.
 2. Console opens with the conversation staged and the prompt "Use this
    conversation as source context for my next question." ready to go — edit
    or replace it, then send.
@@ -685,15 +727,18 @@ setting**; it supplies one bundle of **staged context** for the next send.
 
 ### Recover something you deleted last week
 1. In **Media**, click "Trash" on the toolbar.
-2. Find the item ("Trash (N)" lists everything deleted, newest first, each
-   row saying "type · trashed 3d"), press its row, then "Restore".
+2. Find the item ("Local Trash · N items" lists everything deleted, newest
+   first, each row saying "type · trashed 3d"), press its row, then
+   "Restore".
 3. "Restored 'Title'." confirms it; "‹ Media" (or Escape) takes you back to
    the list, where the item — and the rail's "Media N" count — are back.
 
 ### Delete selected media items
 1. In **Media**, click "Select", check the rows you want to remove.
-2. Click "Delete selected" — the strip becomes "Delete N selected items?
-   This moves them to trash." with "Delete" / "Cancel".
+2. Click "Delete selected" — the strip becomes "Delete N selected items? You
+   can undo right away, or restore later from Trash." with "Delete" /
+   "Cancel". The sentence wraps inside the Items pane at every width,
+   including its narrowest.
 3. Click "Delete" to confirm (or "Cancel" to back out without deleting
    anything). The rows disappear and the rail's "Media N" count drops
    immediately; the items are trashed, not permanently destroyed.
@@ -717,11 +762,12 @@ stop, and the footer drops its `esc` chip there rather than advertise a key
 that does nothing.
 Where the Library pane is collapsed but the Items pane still shows the list
 (verified at 100x30) the "‹ Back" control returns you to the list, and so
-does Escape from the Items row. Below 88 columns both panes are
+does Escape from the Items row. Between 64 and 88 columns both panes are
 collapsed: the control and the key still register the exit, but nothing on
 screen changes yet — the Reader keeps painting the item it had, and `]`/`[`
-stop working until you re-enter Media from the rail. A follow-up will open
-the Items pane on that exit.
+stop working until you re-enter Media from the rail. Below 64 columns, with
+nothing open in the Reader, the Items pane is the stage instead (see the
+layout tour above).
 **F6** cycles Library → Items → the Reader's content box, which draws a
 heavy border while it holds focus, so the state is visible in a plain-text
 capture and not by colour alone (no overlay, so the text stays readable).
@@ -791,11 +837,18 @@ Escape's return to the list live at 100x30).*
   collection scopes apply before paging; selections retain captured versions
   across pages, and a failed refresh keeps the last applied rows read-only with
   an exact Retry action. See [Library prompts](prompts.md).
-- **"Open in Console" can refuse with "Copy or link blocked Library
-  sources into the active workspace before using them in Console."** The
-  handoff requires the conversation to be eligible for the active
-  workspace; until your sources are linked into it, staging is blocked
-  (the same gate guards the other "Use in Console" actions).
+- **A conversation outside the active workspace says so on the button.**
+  The handoff requires the conversation to be eligible for the active
+  workspace. When it is not, the reader header reads "○ Open in Console ·
+  not in this workspace" (or "· in another workspace") with the action
+  disabled, and a **"Link to workspace"** button beside it performs the
+  remedy. The `c` accelerator refuses in exactly the same cases, so the key
+  never reaches a refusal the button already explains. A block that linking
+  cannot resolve reads "· blocked for this workspace" and offers no link —
+  hovering the disabled action gives that block's own remedy (with no active
+  workspace: "Select an active workspace before using this item in
+  Console."), never a link button that is not on screen. The same gate
+  guards the other "Use in Console" actions.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent
@@ -964,3 +1017,63 @@ Notes** blocks the main thread for **51–78 ms** where the pre-phase-C screen
 blocked for the 139–380 ms freeze the redesign set out to remove — measured
 base-vs-current on one machine, six interleaved runs per side. Media has
 graduated to a resident canvas; nothing on this page moved.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8; live at 235x52 and 100x30 on a seeded
+profile):
+(1) the Trash heading is **"Local Trash · N items"**, not "Trash (N)" —
+corrected in both places it appeared;
+(2) the Conversations detail is a full **transcript reader** with a
+Read/Info mode row and a "Find in complete transcript…" box, not the
+"title / Messages: N / Updated: age" preview this page described;
+(3) the **F6 heavy-border** claim HOLDS and is unchanged — F6 onto the
+Reader's content box repainted its frame from `┌──┐` to `┏━━┓` in a
+plain-text capture, so critique #8's listing of it as contradicted was
+itself wrong;
+(4) the **select-strip labels** were re-measured at 235x52 and at 100x30
+with the Reader open — "0 selected", "Select all 11 shown", "Clear",
+"○ Export", "○ Review", "○ Analyze", "○ Delete" and "Done" all painted in
+full, with no clipping. Clipping of the bulk toolbar below 110 columns
+remains tracked as task-15140; this page makes no wider claim.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32060:
+**s** now enters Select mode from any focused Items row, in every layout
+that shows the list beside the Reader — it used to be inert (and drop its
+footer chip) wherever the Reader still had a real exit, e.g. the
+Library-collapsed layout at 100x30. The bulk-delete confirm sentence also
+wraps instead of clipping at the Items pane's narrowest, which is 32 cells,
+not the 36 the list canvas used to claim.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32065: at
+60x24 the Media stage now paints the Items list plus a **‹ Library** control
+instead of an empty Reader between two collapsed-pane grips; the control
+returns to the rail and comes back when the rail is collapsed again — all three
+live in tmux at 60x24. task-32067: the conversation reader says "Loaded 🚀
+Launch checklist · 5 of 5 messages · complete." and heads messages "user · 4h",
+and a 6-of-6 list's pager reads "1-6 of 6" with no page counter and no
+Previous/Next. task-32068: a plain PDF whose stored author is the literal
+"Unknown" paints no byline, and its "No Markdown formatting to render" line is
+in Info — both live at 100x30. task-32070: after a rail search at 235x52 the
+footer is one row, and select mode lists "space toggle selection | s done
+selecting" the moment it is entered.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32065,
+fix round 2: the below-64 reset above is bounded to that band. At an
+ordinary width (100 columns, say) Library and Items do not always both fit
+beside the Reader either, so opening Library with its own grip can close
+Items the same way — a deliberate choice, not the below-64 emergency. The
+round-1 fix cleared that choice too on the next "Browse Media" press; it now
+survives re-entry at ordinary widths, and only resets below 64 columns.)*
+
+*Verified against fix/library-crit8-recovery-copy — 2026-09-08 (task-32056:
+"Open in Console" moved from the bottom of the reader into its header beside
+Read/Info and gained the `c` accelerator; a conversation outside the active
+workspace now states that on the disabled action and offers "Link to
+workspace" right beside it, instead of raising a toast naming a workspace
+with nothing on screen to link into.)*
+
+*Verified against fix/library-crit8-recovery-copy — 2026-09-08, fix round 1
+(task-32056: the blocked reason moved out of the button label into a wrapping
+line beneath it, so it no longer truncates in a narrow reader pane; `c` now
+consults the workspace gate the button consults; a block linking cannot
+resolve says so and withholds the link.)*

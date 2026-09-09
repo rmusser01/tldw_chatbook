@@ -14,7 +14,7 @@ from textual.widgets import Button, Checkbox, Input, ListItem, ListView, Static
 from ...Constants import PERSONAS_CONVERSATIONS_PAGE_SIZE
 from ..Console.console_image_viewer_modal import ClickableAvatarBox
 
-from .personas_messages import ActorPackExportRequested, PersonaBuddyActionRequested
+from .personas_messages import ActorPackExportRequested
 from .personas_pane_messages import (
     ConversationRowSelected,
     ConversationSearchChanged,
@@ -120,11 +120,11 @@ class PersonasInspectorPane(VerticalScroll):
         text-wrap: wrap;
     }
 
-    PersonasInspectorPane #personas-inspector-actions {
+    PersonasInspectorPane #personas-inspector-actions, PersonasInspectorPane #personas-independent-buddy-actions {
         height: auto;
     }
 
-    PersonasInspectorPane #personas-inspector-actions Button {
+    PersonasInspectorPane #personas-inspector-actions Button, PersonasInspectorPane #personas-independent-buddy-actions Button {
         width: 100%;
         min-width: 0;
         height: 1;
@@ -297,30 +297,6 @@ class PersonasInspectorPane(VerticalScroll):
                 classes="console-action-secondary",
                 tooltip=_NO_SELECTION_GUIDANCE,
             )
-            yield Button(
-                "Use for Buddy",
-                id="personas-buddy-use",
-                disabled=True,
-                classes="console-action-secondary persona-buddy-action",
-            )
-            yield Button(
-                "Show Buddy",
-                id="personas-buddy-show",
-                disabled=True,
-                classes="console-action-subdued persona-buddy-action",
-            )
-            yield Button(
-                "Close Buddy",
-                id="personas-buddy-close",
-                disabled=True,
-                classes="console-action-subdued persona-buddy-action",
-            )
-            yield Button(
-                "Disable Buddy",
-                id="personas-buddy-disable",
-                disabled=True,
-                classes="console-action-subdued persona-buddy-action",
-            )
             tts_checkbox = Checkbox(
                 "Include assigned voice profile",
                 id="personas-export-include-tts",
@@ -358,6 +334,32 @@ class PersonasInspectorPane(VerticalScroll):
                 disabled=True,
                 classes="console-action-subdued personas-destructive",
                 tooltip=_NO_SELECTION_DELETE_TOOLTIP,
+            )
+
+        with Vertical(id="personas-independent-buddy-actions"):
+            yield Button(
+                "Manage Buddy",
+                id="personas-buddy-use",
+                disabled=True,
+                classes="console-action-secondary persona-buddy-action",
+            )
+            yield Button(
+                "Show Buddy",
+                id="personas-buddy-show",
+                disabled=True,
+                classes="console-action-subdued persona-buddy-action",
+            )
+            yield Button(
+                "Close Buddy",
+                id="personas-buddy-close",
+                disabled=True,
+                classes="console-action-subdued persona-buddy-action",
+            )
+            yield Button(
+                "Disable Buddy",
+                id="personas-buddy-disable",
+                disabled=True,
+                classes="console-action-subdued persona-buddy-action",
             )
 
     def show_selection(
@@ -1141,99 +1143,33 @@ class PersonasInspectorPane(VerticalScroll):
             else (None if selected else _NO_SELECTION_DELETE_TOOLTIP)
         )
 
-        buddy_applies = selected and kind == "persona"
-        buddy_eligible = (
-            buddy_applies
-            and not unsaved
-            and self._buddy_profile_current
-            and self._buddy_source == "local"
-            and bool(self._buddy_persona_id)
-            and type(self._buddy_revision) is int
-            and self._buddy_revision >= 1
-            and self._buddy_active
-        )
-        if self._buddy_source == "server":
-            buddy_tooltip = "Save a local copy first"
-        elif unsaved:
-            buddy_tooltip = _UNSAVED_TOOLTIP
-        elif not self._buddy_profile_current:
-            buddy_tooltip = "Persona details are unavailable. Refresh and try again."
-        elif not self._buddy_active:
-            buddy_tooltip = "Activate this Persona first."
-        else:
-            buddy_tooltip = "Select a saved local Persona."
-        use_button = self.query_one("#personas-buddy-use", Button)
-        use_button.display = buddy_applies
-        use_button.disabled = not buddy_eligible
-        use_button.tooltip = None if buddy_eligible else buddy_tooltip
-        owner = bool(
-            buddy_eligible
-            and self._buddy_owner_source == "local"
-            and self._buddy_owner_persona_id == self._buddy_persona_id
-        )
-        owner_tooltip = "Select the Persona currently used by Buddy"
-        if not buddy_eligible:
-            state = {
-                "personas-buddy-show": (False, buddy_tooltip),
-                "personas-buddy-close": (False, buddy_tooltip),
-                "personas-buddy-disable": (False, buddy_tooltip),
-            }
-        elif not owner:
-            state = {
-                "personas-buddy-show": (False, owner_tooltip),
-                "personas-buddy-close": (False, owner_tooltip),
-                "personas-buddy-disable": (False, owner_tooltip),
-            }
-        elif not self._buddy_enabled:
-            disabled_tooltip = "Buddy is disabled. Use for Buddy to enable it."
-            state = {
-                "personas-buddy-show": (False, disabled_tooltip),
-                "personas-buddy-close": (False, disabled_tooltip),
-                "personas-buddy-disable": (False, "Buddy is already disabled."),
-            }
-        elif self._buddy_open:
-            state = {
-                "personas-buddy-show": (False, "Buddy is already open."),
-                "personas-buddy-close": (True, None),
-                "personas-buddy-disable": (True, None),
-            }
-        else:
-            state = {
-                "personas-buddy-show": (True, None),
-                "personas-buddy-close": (False, "Buddy is already closed."),
-                "personas-buddy-disable": (True, None),
-            }
-        for button_id, (enabled, tooltip) in state.items():
+        manage = self.query_one("#personas-buddy-use", Button)
+        manage.display = True
+        manage.disabled = False
+        manage.tooltip = "Manage independent Buddy artwork, Follow and Persona."
+        for button_id, enabled in (
+            ("personas-buddy-show", not self._buddy_enabled or not self._buddy_open),
+            ("personas-buddy-close", self._buddy_enabled and self._buddy_open),
+            ("personas-buddy-disable", self._buddy_enabled),
+        ):
             button = self.query_one(f"#{button_id}", Button)
-            button.display = buddy_applies
+            button.display = True
             button.disabled = not enabled
-            button.tooltip = tooltip
+            button.tooltip = "Controls the current independent Buddy."
 
     @on(Button.Pressed, ".persona-buddy-action")
     def _buddy_action_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        actions = {
-            "personas-buddy-use": "use",
+        from tldw_chatbook.UI.Navigation.buddy_management import get_buddy_management
+
+        action = {
+            "personas-buddy-use": "manage",
             "personas-buddy-show": "show",
             "personas-buddy-close": "close",
             "personas-buddy-disable": "disable",
-        }
-        action = actions.get(str(event.button.id or ""))
-        if (
-            action is None
-            or self._buddy_source not in {"local", "server"}
-            or not self._buddy_persona_id
-            or type(self._buddy_revision) is not int
-        ):
-            return
-        self.post_message(
-            PersonaBuddyActionRequested(
-                action=action,
-                source=self._buddy_source,
-                persona_id=self._buddy_persona_id,
-                revision=self._buddy_revision,
-            )
-        )
+        }.get(event.button.id)
+        if action and not event.button.disabled:
+            get_buddy_management(self.app).request_visibility(action)
 
     @on(Button.Pressed, "#personas-export-actor-pack")
     def _actor_pack_export_pressed(self, event: Button.Pressed) -> None:

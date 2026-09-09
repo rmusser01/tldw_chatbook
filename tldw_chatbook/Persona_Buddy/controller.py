@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from numbers import Real
 from pathlib import Path
 from threading import RLock
-from typing import Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from tldw_chatbook.Persona_Visual.repository import (
     PersonaVisualGraph,
@@ -24,10 +24,12 @@ from tldw_chatbook.Persona_Visual.runtime import (
     PersonaVisualCacheIdentity,
     PersonaVisualPortrait,
     PersonaVisualResolution,
+    resolve_active_buddy_visual,
     resolve_active_persona_visual,
 )
 
 from .preferences import (
+    BuddySelection,
     PersonaBuddyPreferences,
     PersonaBuddySelection,
     persist_persona_buddy_preferences,
@@ -42,6 +44,8 @@ from .rendering import (
     prepare_persona_buddy_portrait,
 )
 
+if TYPE_CHECKING:
+    from .library import BuddyLibrary
 
 _BUILTIN_STATES = frozenset(
     {
@@ -138,7 +142,7 @@ class PersonaBuddySnapshot:
     """Immutable controller state safe for app-owned consumers."""
 
     generation: int
-    selection: PersonaBuddySelection | None
+    selection: PersonaBuddySelection | BuddySelection | None
     state: str
     state_source: str | None = None
     state_owner: str | None = None
@@ -169,11 +173,12 @@ class PersonaBuddyVisualSnapshot:
     frame_rate: float | None = None
     loop: bool = False
     animate: bool = False
+    buddy_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class _ResolutionTicket:
-    selection: PersonaBuddySelection
+    selection: PersonaBuddySelection | BuddySelection
     requested_state: str
     controller_generation: int
     preferences_generation: int
@@ -187,9 +192,10 @@ class _ResolutionTicket:
 
 @dataclass(frozen=True, slots=True)
 class _LocalPersona:
-    persona_id: str
+    persona_id: str | None
     revision: int
     portrait: PersonaVisualPortrait | None = field(default=None, repr=False)
+    buddy_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,7 +323,7 @@ class PersonaBuddyController:
     def __init__(
         self,
         *,
-        selection: PersonaBuddySelection | None = None,
+        selection: PersonaBuddySelection | BuddySelection | None = None,
         preferences: PersonaBuddyPreferences | None = None,
         clock: Callable[[], float] = time.monotonic,
         local_persona_service: object | None = None,
@@ -337,7 +343,10 @@ class PersonaBuddyController:
         on_change: Callable[[], None] | None = None,
         phase_barrier: Callable[[str], Awaitable[None] | None] | None = None,
     ) -> None:
-        if selection is not None and type(selection) is not PersonaBuddySelection:
+        if selection is not None and type(selection) not in (
+            PersonaBuddySelection,
+            BuddySelection,
+        ):
             raise PersonaBuddyStateError()
         if preferences is not None and type(preferences) is not PersonaBuddyPreferences:
             raise PersonaBuddyStateError()
@@ -434,7 +443,12 @@ class PersonaBuddyController:
             self._apply_preferences_locked(candidate)
             return self._preferences_generation
 
-    async def persist_preferences_revision(self, revision: int) -> bool:
+    async def persist_preferences_revision(
+        self,
+        revision: int,
+        *,
+        extra_sections: Mapping[str, Mapping[str, object]] | None = None,
+    ) -> bool:
         """Persist current merged preferences once for one applied revision.
 
         A failed write leaves the immediate in-memory intent authoritative; it is
@@ -452,9 +466,35 @@ class PersonaBuddyController:
                 with self._lock:
                     if revision > self._preferences_generation:
                         raise PersonaBuddyStateError()
+                    if (
+                        extra_sections is not None
+                        and revision != self._preferences_generation
+                    ):
+                        return False
                     candidate = self._preferences
+                writer = self._preference_writer
+                if extra_sections is not None:
+                    from .preferences import (
+                        save_settings_to_cli_config,
+                        serialize_persona_buddy_preferences,
+                    )
+
+                    if not isinstance(extra_sections, Mapping) or set(
+                        extra_sections
+                    ) != {"buddy_interaction"}:
+                        raise PersonaBuddyStateError()
+                    sections = {
+                        name: dict(values) for name, values in extra_sections.items()
+                    }
+                    sections["persona_buddy"] = serialize_persona_buddy_preferences(
+                        candidate
+                    )
+
+                    def writer(_candidate):
+                        return save_settings_to_cli_config(sections)
+
                 write = await self._drain_owned(
-                    asyncio.to_thread(self._preference_writer, candidate),
+                    asyncio.to_thread(writer, candidate),
                     name="preferences:patch-write",
                 )
                 return write.completed and write.value is True
@@ -465,6 +505,63 @@ class PersonaBuddyController:
         if outcome.cancellation is not None:
             raise outcome.cancellation
         return outcome.completed and outcome.value is True
+
+    async def migrate_legacy_selection(self, library: BuddyLibrary) -> bool:
+        """Publish a retryable independent copy before changing durable selection."""
+
+        async def serialized() -> bool:
+            async with self._operation_lock:
+                previous = self.current_preferences()
+                if type(previous.selection) is not PersonaBuddySelection:
+                    return False
+                outcome = await self._drain_owned(
+                    asyncio.to_thread(
+                        library.migrate_legacy_selection,
+                        previous,
+                        writer=lambda _: True,
+                    ),
+                    name="legacy:copy",
+                )
+                candidate = outcome.value
+                if (
+                    not outcome.completed
+                    or candidate == previous
+                    or self.current_preferences() != previous
+                ):
+                    return False
+                written = await self._drain_owned(
+                    asyncio.to_thread(self._preference_writer, candidate),
+                    name="legacy:preferences",
+                )
+                if not written.completed or written.value is not True:
+                    return False
+                with self._lock:
+                    if self._preferences == previous:
+                        self._apply_preferences_locked(candidate)
+                        return True
+                    current = self._preferences
+                # A newer UI preference won during the write; restore that durable
+                # snapshot under the same serialized writer before returning.
+                await self._drain_owned(
+                    asyncio.to_thread(self._preference_writer, current),
+                    name="legacy:newer-preferences",
+                )
+                return False
+
+        result = await self._drain_owned(serialized(), name="legacy:migration")
+        return result.completed and result.value is True
+
+    def rollback_preferences_revision(
+        self, revision: int, previous: PersonaBuddyPreferences
+    ) -> bool:
+        """Restore a failed staged Apply only while its exact revision still owns state."""
+        if type(previous) is not PersonaBuddyPreferences:
+            raise PersonaBuddyStateError()
+        with self._lock:
+            if revision != self._preferences_generation:
+                return False
+            self._apply_preferences_locked(previous)
+            return True
 
     def select_local_persona(self, persona_id: str) -> int:
         """Explicitly replace the selected local Persona and return generation."""
@@ -477,6 +574,10 @@ class PersonaBuddyController:
                 self._preferences_generation += 1
                 self._advance_generation_locked()
             return self._generation
+
+    def select_buddy(self, buddy_id: str) -> int:
+        """Select independent artwork; persist the returned preference revision."""
+        return self.apply_preferences_patch(selection=BuddySelection(buddy_id))
 
     def invalidate_profile(self) -> int:
         """Advance local Persona/graph authority without clearing preferences."""
@@ -759,7 +860,12 @@ class PersonaBuddyController:
                     )
 
                 persona_outcome = await self._drain_owned(
-                    asyncio.to_thread(self._read_local_persona, ticket.selection),
+                    asyncio.to_thread(
+                        self._read_local_buddy
+                        if type(ticket.selection) is BuddySelection
+                        else self._read_local_persona,
+                        ticket.selection,
+                    ),
                     name="resolve:persona-read",
                 )
                 if not self._is_current(ticket):
@@ -775,7 +881,15 @@ class PersonaBuddyController:
                     return self._stale_snapshot(ticket)
 
                 graph_outcome = await self._drain_owned(
-                    asyncio.to_thread(self._read_graph, persona.persona_id),
+                    asyncio.to_thread(
+                        self._read_graph,
+                        persona.persona_id,
+                        **(
+                            {"buddy_id": persona.buddy_id}
+                            if persona.buddy_id is not None
+                            else {}
+                        ),
+                    ),
                     name="resolve:graph-read",
                 )
                 if not self._is_current(ticket):
@@ -784,7 +898,8 @@ class PersonaBuddyController:
                 if (
                     type(graph) is not PersonaVisualGraph
                     or graph.identity.persona_id != persona.persona_id
-                    or graph.identity.persona_revision != persona.revision
+                    or graph.identity.buddy_id != persona.buddy_id
+                    or graph.identity.owner_revision != persona.revision
                 ):
                     return self._apply_unavailable(
                         "persona_buddy_binding_unavailable",
@@ -859,7 +974,10 @@ class PersonaBuddyController:
                     reason=resolution.reason,
                     source=resolution.source,
                     persona_id=persona.persona_id,
-                    persona_revision=persona.revision,
+                    persona_revision=persona.revision
+                    if persona.persona_id is not None
+                    else None,
+                    buddy_id=persona.buddy_id,
                     requested_state=resolution.requested_state,
                     resolved_state=resolution.resolved_state,
                     animation_id=resolution.animation_id,
@@ -1013,8 +1131,23 @@ class PersonaBuddyController:
                 return False
         return self._is_current(ticket)
 
+    def _read_local_buddy(self, selection: BuddySelection) -> _LocalPersona | None:
+        from .library import BuddyLibrary
+
+        try:
+            buddy = BuddyLibrary(self._profile_db, self._profile_root).get_buddy(
+                selection.buddy_id
+            )
+            return (
+                None
+                if buddy is None
+                else _LocalPersona(None, buddy.revision, buddy_id=buddy.id)
+            )
+        except Exception:  # noqa: BLE001 - reject invalid private library authority without paths
+            return None
+
     def _read_local_persona(
-        self, selection: PersonaBuddySelection
+        self, selection: PersonaBuddySelection | BuddySelection
     ) -> _LocalPersona | None:
         service = self._local_persona_service
         getter = getattr(service, "get_persona_profile", None)
@@ -1042,12 +1175,17 @@ class PersonaBuddyController:
         except Exception:
             return None
 
-    def _read_graph(self, persona_id: str) -> PersonaVisualGraph | None:
+    def _read_graph(
+        self, persona_id: str | None, *, buddy_id: str | None = None
+    ) -> PersonaVisualGraph | None:
         if self._profile_db is None:
             return None
         try:
-            return self._repository_factory(self._profile_db).get_active_persona_pack(
-                persona_id
+            repository = self._repository_factory(self._profile_db)
+            return (
+                repository.get_active_buddy_pack(buddy_id)
+                if buddy_id is not None
+                else repository.get_active_persona_pack(persona_id)
             )
         except Exception:
             return None
@@ -1061,6 +1199,14 @@ class PersonaBuddyController:
         if self._profile_db is None or self._profile_root is None:
             return None
         try:
+            if persona.buddy_id is not None:
+                return resolve_active_buddy_visual(
+                    self._repository_factory(self._profile_db),
+                    persona.buddy_id,
+                    self._profile_root,
+                    requested_state,
+                    reduced_motion=reduced_motion,
+                )
             return resolve_active_persona_visual(
                 self._repository_factory(self._profile_db),
                 persona.persona_id,
@@ -1169,6 +1315,7 @@ class PersonaBuddyController:
                 previous is not None
                 and previous.available
                 and previous.persona_id == persona.persona_id
+                and previous.buddy_id == persona.buddy_id
                 and previous.frames
             ):
                 retained = replace(previous, reason=reason)
@@ -1214,7 +1361,10 @@ class PersonaBuddyController:
             reason=reason,
             source="unavailable",
             persona_id=persona.persona_id if persona else None,
-            persona_revision=persona.revision if persona else None,
+            persona_revision=persona.revision
+            if persona and persona.persona_id is not None
+            else None,
+            buddy_id=persona.buddy_id if persona else None,
             requested_state=requested_state,
             resolved_state=None,
             animation_id=None,
@@ -1229,7 +1379,12 @@ class PersonaBuddyController:
             available=False,
             reason="persona_buddy_resolution_stale",
             source="unavailable",
-            persona_id=ticket.selection.local_persona_id,
+            persona_id=ticket.selection.local_persona_id
+            if type(ticket.selection) is PersonaBuddySelection
+            else None,
+            buddy_id=ticket.selection.buddy_id
+            if type(ticket.selection) is BuddySelection
+            else None,
             persona_revision=None,
             requested_state=ticket.requested_state,
             resolved_state=None,

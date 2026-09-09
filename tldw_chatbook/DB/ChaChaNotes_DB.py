@@ -461,6 +461,19 @@ def _canvas_revision_payload_valid(
     )
 
 
+def _install_canvas_revision_payload_validator(
+    connection: sqlite3.Connection,
+) -> None:
+    """Install the pure Canvas payload validator required by the schema."""
+
+    connection.create_function(
+        _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
+        3,
+        _canvas_revision_payload_valid,
+        deterministic=True,
+    )
+
+
 class _CanvasRevisionDeletionAuthorization:
     """Connection-local capability for an exact repository-owned hard purge."""
 
@@ -660,7 +673,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 69  # Pin the exact saved source of Console calls.
+    _CURRENT_SCHEMA_VERSION = 70  # Independent local Buddy visual ownership.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3437,12 +3450,7 @@ UPDATE db_schema_version
                     self._local.semantic_mutation_authorization = (
                         register_semantic_mutation_guard(conn)
                     )
-                    conn.create_function(
-                        _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
-                        3,
-                        _canvas_revision_payload_valid,
-                        deterministic=True,
-                    )
+                    _install_canvas_revision_payload_validator(conn)
                     canvas_deletion_authorization = (
                         _CanvasRevisionDeletionAuthorization(conn)
                     )
@@ -8011,6 +8019,29 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v69_to_v70(self, conn: sqlite3.Connection) -> None:
+        """Add independent local Buddy owners and versioned visual bindings."""
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v69_to_v70_independent_buddy.sql"
+        )
+        with self.transaction() as cursor:
+            self._require_migration_entry_version(cursor.connection, 69, "V69→V70")
+            self._execute_migration_statements(
+                cursor, path.read_text(encoding="utf-8"), "V69→V70"
+            )
+            if cursor.execute("PRAGMA foreign_key_check").fetchall():
+                raise SchemaError("Buddy migration foreign key audit failed")
+            updated = cursor.execute(
+                "UPDATE db_schema_version SET version=70 WHERE schema_name=? AND version=69",
+                (self._SCHEMA_NAME,),
+            )
+            if updated.rowcount != 1:
+                raise SchemaError("Buddy migration version update failed")
+            if self._get_db_version(cursor.connection) != 70:
+                raise SchemaError("Buddy migration version check failed")
+
     def _migrate_from_v68_to_v69(self, conn: sqlite3.Connection) -> None:
         """Permit the existing event FK to pin a call's exact saved source."""
 
@@ -8281,6 +8312,7 @@ UPDATE db_schema_version
                     66: self._migrate_from_v66_to_v67,
                     67: self._migrate_from_v67_to_v68,
                     68: self._migrate_from_v68_to_v69,
+                    69: self._migrate_from_v69_to_v70,
                 }
 
                 if current_db_version == 0:
@@ -11567,18 +11599,17 @@ UPDATE db_schema_version
         }
 
     def get_all_conversation_ids(self) -> List[str]:
-        """Return every non-deleted conversation id owned by this client (no page cap).
+        """Return every non-deleted conversation the Library lists (no page cap).
 
-        Mirrors the WHERE clause `search_conversations_page` builds for the
-        Library's conversations snapshot fetch: the Library screen calls
+        Built from the SAME filter `search_conversations_page` builds for the
+        Library's conversations snapshot fetch -- literally
+        `_conversation_search_filter(None, scope_type='all')` -- rather than a
+        hand-copied WHERE clause. The Library screen calls
         `ChatConversationService.list_conversations(mode="local", scope_type="all",
         limit=..., offset=0)`, which spans both 'global' and 'workspace'
         scoped conversations (Console chats persisted inside a workspace
-        session are workspace-scoped); `search_conversations_page` then
-        also scopes to `client_id = self.client_id` (its default when no
-        explicit `client_id` is passed) and excludes soft-deleted rows
-        (`deleted = 0`). This method issues the same client/deleted filter,
-        but returns the full id list instead of a `limit`/`offset` page --
+        session are workspace-scoped) and, since TASK-721, spans client ids
+        too. This method issues that filter with no `limit`/`offset` page --
         the truncation-proof source for Library chatbook export
         (`Library/library_export_scope.py`): the Library conversations
         canvas only ever renders a capped snapshot
@@ -11586,19 +11617,23 @@ UPDATE db_schema_version
         an export from that rendered snapshot would silently drop everything
         past the cap for a library larger than the page size.
 
+        task-32058: the hand-copied clause is what made the two surfaces
+        disagree. TASK-721 removed the `client_id` filter from the browse
+        scope but not from here, so a library seeded or synced by another
+        client counted six in the rail and zero in Export ▸ Everything.
+
         Returns:
             List[str]: Every matching conversation id, in ascending id order.
 
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = (
-            "SELECT id FROM conversations "
-            "WHERE client_id = ? AND deleted = 0 "
-            "ORDER BY id ASC"
+        where_clause, params = self._conversation_search_filter(
+            None, scope_type=CONVERSATION_SCOPE_ALL
         )
+        query = f"SELECT id FROM conversations WHERE {where_clause} ORDER BY id ASC"
         try:
-            cursor = self.execute_query(query, (self.client_id,))
+            cursor = self.execute_query(query, tuple(params))
             return [row["id"] for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
             logger.error(
