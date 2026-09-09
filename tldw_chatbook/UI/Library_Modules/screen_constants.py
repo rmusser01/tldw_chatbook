@@ -378,6 +378,12 @@ _LIBRARY_LIST_ROW_CLASSES = (
     "library-notes-row",
     "library-prompt-row",
     "library-skill-row",
+    # task-32052 AC#2: the New-note canvas's Blank note + template rows are
+    # a stacked list of full-width rows styled after ``library-notes-row``,
+    # so Up/Down must walk them like any other Library list. The "From a
+    # template" heading between them is a ``Static``, which this helper's
+    # own class filter already skips.
+    "library-notes-create-row",
 )
 
 _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID = {

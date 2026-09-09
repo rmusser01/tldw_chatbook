@@ -2014,6 +2014,13 @@ class LibraryNotesController:
         Returns:
             None.
         """
+        # task-32052 AC#1: never replay an identity captured on a DIFFERENT
+        # surface. ``_sync_library_canvas``'s own skip only watches the WORK
+        # pane's mode, so a list -> create switch slipped through and the
+        # navigator identity was replayed over the create canvas (Ctrl+N
+        # landed on a notes-tree row, not Blank note).
+        if identity.region and identity.region != self._library_notes_focus_region():
+            return
         # Focus FIRST and synchronously: the callback runs from the canvas's
         # own ``recompose``, so focus is restored before any frame in which
         # it could be seen sitting outside the canvas.
