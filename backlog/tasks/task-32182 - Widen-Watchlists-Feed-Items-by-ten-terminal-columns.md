@@ -1,5 +1,5 @@
 ---
-id: TASK-32135
+id: TASK-32182
 title: Widen Watchlists Feed Items by ten terminal columns
 status: Done
 assignee:
@@ -60,3 +60,16 @@ on dev changes only the four Watchlists width declarations.
 The CLI assigned TASK-31384, already used by the older Console unified interrupt
 surface task on remote branches. Renumbered this new task to TASK-32135 after
 sweeping local remote refs and worktrees (highest observed ID: 32115).
+
+## Renumbering provenance
+
+This task previously held id TASK-32135, colliding with the older
+"Library-Notes-Import-once-review-71-five-line-rows-with-no-bulk-action-and-the-SkipCreate-controls-130-columns-from-the-path"
+task (created 2026-09-08 21:40, add commit f054f35ae1 on
+docs/library-notes-critique-2026-09-08) that arrived first; this task was
+created 2026-09-09 07:07 (add commit 04222fe8eb on dev). Per the owner rule
+decided 2026-08-21 in TASK-19601 (**older id keeps it; the younger task
+renumbers with a provenance note, regardless of Done status**), it renumbered
+to TASK-32182 in PR #2535. Citations to TASK-32135 in the commit message
+04222fe8eb and the Watchlists feed-items width design spec refer to THIS
+task; the other TASK-32135 holder is the older arrival and keeps the id.
