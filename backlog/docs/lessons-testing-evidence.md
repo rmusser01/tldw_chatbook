@@ -12656,3 +12656,16 @@ could corrupt an outside file on both successful and interrupted downloads.
 Exclusive temporary siblings fixed that second boundary; fake HTTP with real
 filesystem assertions verified content preservation and ownership-scoped cleanup.
 A helper's passing tests establish only the routes that actually call it.
+
+## Observe pending repaint during widget teardown
+
+**TASK-32114 / PR #2534, 2026-09-09.** Linux Fast Lane hit a missing
+`text-area--gutter` style when Escape closed the MCP Test Tool panel. The visible
+editor remained in Textual's compositor after teardown cleared its component
+styles. The same Escape test passed locally because no repaint hit that interval.
+A deterministic observer delegated real widget teardown and invoked the actual
+pending Screen timer. Requesting a public editor refresh was necessary to clear
+cached Rich styles that otherwise concealed the uncached render failure. The
+test reproduced the exact CI exception before the fix and passed when panel
+removal used `app.batch_update()`. It also verifies nonce revocation and a normal
+post-close repaint, so a deferred timer alone cannot masquerade as clean teardown.

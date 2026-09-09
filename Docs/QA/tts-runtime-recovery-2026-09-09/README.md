@@ -100,6 +100,24 @@ logs left a stale pin. Statement review found six fewer diagnostic calls, one
 fewer model-path candidate, and no new sinks; the replacement runtime log records
 only the validated compute device. The inventory was regenerated after review.
 
+The next Fast Lane run passed 754 tests and exposed a separate MCP Test Tool
+teardown race. A visible raw editor could remain in Textual's compositor after
+its component styles were cleared. TASK-32114 batches the awaited panel removal,
+while still clearing the preview and posting nonce revocation first. A real
+Escape/timer regression reproduced the exact missing-gutter `KeyError` before
+the fix; both Escape tests and all 26 selected lifecycle/preview tests passed
+afterward. Formatting passes and the two existing files add no Ruff findings.
+The regression deliberately observes Textual's private lifecycle boundary;
+production uses its public `batch_update()` API.
+
+The latest rebase targets dev
+`c4a7b1911f14181faa471eb1ea209cfdeed98226`. All measured TTS source hashes still
+match the final playback wheel below; that wheel predates the unrelated Library
+changes from dev and the MCP teardown fix. [CI follow-up](ci-followup.json)
+records the failing job, deterministic reproduction and targeted repair checks.
+The combined diagnostic inventory reproduces exactly, retaining dev's one new
+redacted Library count diagnostic and all reviewed Kokoro changes.
+
 The final review regression run passed 340 tests with one optional ONNX skip.
 The diagnostic guard reproduced its inventory exactly. New/replaced-file Ruff
 and all five review-modified Python files' formatting pass; the three existing
