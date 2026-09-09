@@ -402,6 +402,9 @@ LIBRARY_CANVAS_HOST_ID = "library-canvas"
 def _library_resident_canvas_awaits_display(canvas: Widget) -> bool:
     """Whether this canvas is resident but has not been shown yet.
 
+    TASK-32089 (phase C, task 2.5) -- the DISPLAY half of the residency guard;
+    its three siblings carry the same marker so a grep finds all four.
+
     The second half of the phase-C residency guard, and the same argument as
     the route-ownership half above: with both browse canvases permanently
     mounted, a sync can now land on one that is parked in the canvas host with
@@ -414,7 +417,13 @@ def _library_resident_canvas_awaits_display(canvas: Widget) -> bool:
     Refusing is safe because showing a resident canvas is exactly what
     re-paints it: ``library_browse_route_swap._adopt_library_browse_canvas``
     syncs every resident canvas at the moment it displays it, and the route
-    swap is the only writer of a browse canvas's ``display``.
+    swap is the only writer that leaves a browse canvas **hidden and alive**.
+    Three other sites do write ``child.display = False`` over canvas-host
+    children (``library_screen.py:10345``, ``:10516``, ``:10963``) -- each one
+    microseconds before ``remove_children`` on the same tuple, so the canvas
+    they hide does not survive to be refused, and any sync landing in that
+    window is caught by the projection-depth block below the refusal and
+    replayed through ``_library_canvas_resync_pending``.
 
     Args:
         canvas: The mounted canvas the dispatcher just resolved.

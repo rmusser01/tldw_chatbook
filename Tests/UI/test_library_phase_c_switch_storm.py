@@ -17,7 +17,9 @@ to its trigger and to the application line that caused it. Measured on this
 worktree, per switch:
 
     media (switch-back)    423 applies / 86 ms restyle
-                           238 (56%) from apply_route's TWO marker-class flips
+                           240 (57%) from apply_route (4 marker classes in
+                                     3 set_class calls; 238 of them the two
+                                     full-subtree flips on the shell itself)
                             89 (21%) mount-proportional
     notes (switch, 1st)    463 applies / 92 ms restyle
                            205 (44%) from sync_layout's pane ``disabled`` flips
@@ -199,6 +201,10 @@ async def test_route_switch_does_not_restyle_the_whole_shell_subtree(
     marker), and each fire applied the stylesheet to all 96-119 nodes of the
     shell subtree -- 238 of the 423 apply calls on a media switch-back, 43 ms
     of its 86 ms of restyle, for two classes no stylesheet rule references.
+    (``apply_route`` costs 240 in total; the other 2 are its grip-class flip,
+    which is cheap because a grip has no children. Note that an ``applies``
+    count is apply CALLS: ``Stylesheet.apply`` recurses once per component
+    class of the node it is applying, 56 of that 423.)
     """
     host = _seeded_host()
     counter = _SubtreeRestyleCounter()

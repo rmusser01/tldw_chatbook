@@ -44,18 +44,35 @@ is what showed the same flip happening twice per switch.
 
 ### The table (start commit `4e84a77fb` = task 2 as landed)
 
-| switch | applies | restyle ms | `apply_route` (2 class flips) | `sync_layout` (`disabled`) | mount | other |
+| switch | applies | restyle ms | `apply_route` (4 marker classes, 3 `set_class` calls) | `sync_layout` (`disabled`) | mount | other |
 |---|---|---|---|---|---|---|
-| media (switch-back) | 423 | 86 | **238 (56%) / 43 ms** | 0 | 89 (21%) / 17 ms | 96 |
-| notes (switch), 1st | 463 | 92 | 192 (41%) / 36 ms | **205 (44%) / 41 ms** | 30 (6%) / 5 ms | 36 |
-| notes (switch), later | 333 | 65 | **206 (62%) / 34 ms** | 0 | 74 (22%) / 12 ms | 53 |
+| media (switch-back) | 423 | 86 | **240 (57%) / ~43 ms** | 0 | 89 (21%) / 17 ms | 94 |
+| notes (switch), 1st | 463 | 92 | 194 (42%) / ~36 ms | **205 (44%) / 41 ms** | 30 (6%) / 5 ms | 34 |
+| notes (switch), later | 333 | 65 | **208 (62%) / ~34 ms** | 0 | 74 (22%) / 12 ms | 51 |
+
+**Two disclosures the review asked for, both re-measured at `4e84a77fb` while
+addressing it (the counts reproduce exactly; the ms vary run to run):**
+
+* **`applies` is apply CALLS, not nodes.** `Stylesheet.apply` recurses into
+  `_process_component_classes`, which applies a throwaway node per component
+  class of the node being applied. Those nested calls are inside every total
+  here — the probe reports them as its `virt` column and its docstring
+  explains them, but these tables did not say so. Measured: **56 of the media
+  arm's 423, 44 of the 1st-notes 463, 36 of the later-notes 333** — so "423
+  applies" is 367 real nodes plus 56 component-class virtual ones.
+* **`apply_route` flips FOUR classes in THREE `set_class` calls**, not two:
+  the two route markers on the shell (119 + 119 applies on the media arm) and
+  the grip class on each of the two grips (2 applies total — a grip has no
+  children). The old "(2 class flips)" label counted the shell pair only and
+  left the grips' 2 applies in `other`; the rows above are the corrected split
+  (240 / 194 / 208, with `other` down by 2 on each row).
 
 **The table overturned the leads' ordering, and the task's own instruction was
 to follow the table.** Leads 1 and 2 are mount-side; mounts are 6–22% of the
 applies. The largest originator on all three arms was
 `LibraryBrowseReaderShell.apply_route` — the marker-class seam the design
 record introduced in task 2 — running TWO full-subtree restyles of the entire
-Library per switch, 96–119 applies each, for two classes **no stylesheet rule
+Library per switch, 96–119 applies each, for classes **no stylesheet rule
 anywhere references**. Second, on the arm with the worst block time, was
 `LibraryAdaptiveReaderShell.sync_layout`'s `pane.disabled = not open`, firing
 four times: both panes closed at 23 ms, reopened at 76 ms.
@@ -213,12 +230,23 @@ adopt-sync short-circuited) and probed three times:
 | media (switch-back) | mounts | block |
 |---|---|---|
 | paint-retained-then-patch (landed) | 62 | 55 ms (51–65, n=6) |
-| render-once-when-worker-lands | 58, 62, 62 | 51, 52, 57 ms |
+| render-once-when-worker-lands — my spike, n=3 | 58, 62, 62 | 51, 52, 57 ms |
+| **the same comparison re-run in review, load-matched and interleaved** | 58/62 on BOTH arms (identical distributions) | landed 54, 54, 55 vs option A 55, 53, 53 |
+
+**Protocol caveat, and the review's correction.** My spike was n = 3,
+non-interleaved and not order-swapped — below the §9 bar the rest of this task
+holds itself to — and its raw numbers leaned slightly toward option A, which
+is exactly the direction a warm-up artifact leans. The reviewer re-ran the
+comparison load-matched and interleaved and got the two arms overlapping in
+both directions with identical mount distributions. **The conclusion is
+unchanged and is now properly evidenced; the evidence is the reviewer's, not
+mine.**
 
 **Option A buys nothing measurable.** The reason is the effect task 2 already
 documented for the first three coalesced calls: repaints coalesce by FRAME,
 not by call, so removing one of two syncs landing in the same frame removes a
-call, not a rebuild. The 58 in the first run did not reproduce.
+call, not a rebuild. The 58 in my first run did not reproduce, and under the
+interleaved protocol 58 appears on both arms.
 
 It is also not merely neutral. With hidden repaints now refused, the
 adopt-sync is the ONLY thing that shows a result which arrived while the
@@ -258,6 +286,7 @@ argued from totals.
 | `test_library_phase_c_resident_canvas.py` | 5 passed | green |
 | `test_library_phase_c_switch_storm.py` (new) | 6 passed | green |
 | `test_library_canvas_sync_defects.py` | green | green (one one-off red, `test_notes_row_press_to_editor_keeps_focus_inside_the_canvas`, did not reproduce on re-run or in isolation — load flake) |
+| `test_library_screen_reuse.py` | 1 failed / 3 passed (`test_on_screen_suspend_stops_every_timer_in_isolation`) | pre-existing and deterministic: same 1/3 at `4e84a77fb`, same `AttributeError: 'LibraryScreen' object has no attribute '_unavailable_navigation'` (`library_screen.py:7891` at base, `:7884` here — the statement did not change, the file shrank above it). The TASK-31521 composition ruling it covers is separately pinned, and passing, by `test_suspend_and_resume_keep_the_resident_set_and_its_selection` |
 | `test_library_canvas_scoped_sync.py` | 1 failed (`test_notes_per_click_updates_keep_screen_and_canvas_identity`) | pre-existing (task 2 recorded the same) |
 | `test_library_selection_updates.py` | 1 failed (`test_tier1_toggle_falls_back_to_recompose_on_query_one_failure`) | pre-existing, §7-documented |
 | `test_library_notes_reader.py` | 13 failed / 21 passed | **failure NAME sets IDENTICAL at base and changed** (both 13, diffed name by name) |

@@ -140,9 +140,11 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
         ``DOMNode.update_node_styles`` -> ``App.update_styles(self)`` ->
         ``stylesheet.update_nodes(self.walk_children(with_self=True))``: one
         ``Stylesheet.apply`` for EVERY node in this shell's subtree, which is
-        the whole Library. Phase-C task 2.5 measured the two flips below at
-        **238 of the 423 apply calls on a media switch-back (43 ms of its 86 ms
-        of restyle)** and 192-206 on the notes arms -- the single largest
+        the whole Library. Phase-C task 2.5 measured the two SHELL flips below
+        at **238 of the 423 apply calls on a media switch-back (43 ms of its
+        86 ms of restyle)**, and this method as a whole -- four classes across
+        the three ``set_class`` calls, the grips included -- at **240**;
+        194-208 on the notes arms. That is the single largest
         restyle originator on all three, larger than every mount on the switch
         put together. The work is entirely wasted because these classes are
         QUERY markers: no rule in the app's stylesheet references any of them,

@@ -794,18 +794,32 @@ restyle is expensive, an originator names the line.
 Measured on the task's start commit (`4e84a77fb` = task 2 as landed), per
 switch:
 
-| switch | applies | restyle | apply_route (2 class flips) | sync_layout (`disabled`) | mount | other |
+| switch | applies | restyle | `apply_route` (4 marker classes, 3 `set_class` calls) | sync_layout (`disabled`) | mount | other |
 |---|---|---|---|---|---|---|
-| media (switch-back) | 423 | 86 ms | **238 (56%), 43 ms** | 0 | 89 (21%) | 96 |
-| notes (switch), 1st | 463 | 92 ms | 192 (41%), 36 ms | **205 (44%), 41 ms** | 30 (6%) | 36 |
-| notes (switch), later | 333 | 65 ms | **206 (62%), 34 ms** | 0 | 74 (22%) | 53 |
+| media (switch-back) | 423 | 86 ms | **240 (57%), ~43 ms** | 0 | 89 (21%) | 94 |
+| notes (switch), 1st | 463 | 92 ms | 194 (42%), ~36 ms | **205 (44%), 41 ms** | 30 (6%) | 34 |
+| notes (switch), later | 333 | 65 ms | **208 (62%), ~34 ms** | 0 | 74 (22%) | 51 |
+
+Two things these totals are NOT, both re-verified in review:
+
+* **`applies` counts apply CALLS, not nodes.** `Stylesheet.apply` recurses
+  through `_process_component_classes` — one nested apply on a throwaway node
+  per component class of the node being applied — and those nested calls are
+  in the totals (the probe reports them as its `virt` column and its docstring
+  says so; the tables did not). Measured at this commit: **56 of the media
+  arm's 423, 44 of the 1st-notes 463, 36 of the later-notes 333.**
+* **`apply_route` flips FOUR classes in THREE `set_class` calls** — the two
+  route markers on the shell (119 + 119 applies on the media arm) and the grip
+  class on each of the two grips (2 applies total, since a grip has no
+  children). An earlier version of this row said "2 class flips" and counted
+  only the shell pair, leaving the grips' 2 in `other`.
 
 **The table overturned the leads' ordering.** Leads 1 and 2 (the two wasted
 canvas rebuilds) are mount-side, and mounts are 6–22% of the applies. The
 single largest originator on all three arms was `LibraryBrowseReaderShell.
 apply_route` — the marker-class seam this very design record introduced —
 running TWO full-subtree restyles of the whole Library, 96–119 applies each,
-for two classes **no stylesheet rule anywhere references**. Second was
+for classes **no stylesheet rule anywhere references**. Second was
 `LibraryAdaptiveReaderShell.sync_layout`'s `pane.disabled = not open`
 (`disabled` is a pseudo-class, so it restyles the pane's subtree too), which
 fired four times on a first Notes switch: both panes closed at 23 ms and
@@ -893,13 +907,21 @@ against the landed tree:
 | media (switch-back) | mounts | block |
 |---|---|---|
 | paint-retained-then-patch (landed) | 62 | 55 ms (51–65, n=6) |
-| render-once-when-worker-lands | 58, 62, 62 | 51, 52, 57 ms |
+| render-once-when-worker-lands — the task's spike, n=3, NOT interleaved | 58, 62, 62 | 51, 52, 57 ms |
+| the same comparison re-run in review, load-matched and interleaved | 58/62 on BOTH arms | landed 54, 54, 55 vs option A 55, 53, 53 |
+
+**Read the second row, not the first.** The task's own spike did not meet the
+§9 bar the rest of its evidence does (n = 3, not interleaved, not
+order-swapped) and its numbers leaned toward option A — the direction a
+warm-up artifact leans. Review re-ran it load-matched and interleaved: the
+arms overlap in both directions and the mount distributions are identical. The
+conclusion below is unchanged and now properly evidenced.
 
 **Option A buys nothing measurable.** The reason is the effect the record
 already documented for the first three coalesced sync calls: repaints coalesce
 by FRAME, not by call, so removing one of the two syncs that land in the same
-frame removes a call and not a rebuild. The 58 in the first run did not
-reproduce.
+frame removes a call and not a rebuild. The 58 appears on both arms under the
+interleaved protocol.
 
 And it is not merely neutral — it is unsafe in one direction this task's own
 guard created. With hidden repaints refused, the adopt-sync is the ONLY thing
