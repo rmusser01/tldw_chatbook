@@ -226,6 +226,43 @@ async def test_label_switches_to_folder_path_when_typed_value_is_a_directory(
 
 
 @pytest.mark.asyncio
+async def test_label_refreshes_after_browsing_without_re_editing_the_field(
+    tmp_path,
+):
+    """Qodo review round 4 ("Folder picker users see wrong field label"):
+
+    ``_field_label_text`` resolves a relative typed value against the
+    *currently browsed* directory. Type a relative name that is not a
+    directory here, browse somewhere it now IS one -- without touching the
+    field again -- and the label must catch up; it used to only refresh on
+    ``Input.Changed``, going stale after pure navigation even though
+    "Select folder" already resolves the new, correct target.
+    """
+    sub = tmp_path / "sub"
+    (sub / "target").mkdir(parents=True)
+    dialog = FileOpen(tmp_path, title="Import once", offer_select_folder=True)
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        label = dialog.query_one("#file-name-label")
+
+        def _text() -> str:
+            return getattr(label.renderable, "plain", str(label.renderable))
+
+        field = _field(dialog)
+        field.value = "target"
+        await pilot.pause()
+        assert "File name" in _text()  # not a directory of tmp_path yet
+
+        dialog.query_one(DirectoryNavigation).location = sub
+        await pilot.pause()
+
+        assert "Folder path" in _text()
+        assert "File name" not in _text()
+
+
+@pytest.mark.asyncio
 async def test_hint_line_names_open_and_select_folder(tmp_path):
     """AC#4: the Enter-vs-Select hint must actually render (task-32122)."""
     dialog = FileOpen(tmp_path, title="Import once", offer_select_folder=True)

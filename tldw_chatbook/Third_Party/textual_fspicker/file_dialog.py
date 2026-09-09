@@ -188,11 +188,40 @@ class BaseFileDialog(FileSystemPickerScreen):
             # click-fill) -- not the queued echo of the click-fill that
             # set it. See ``_select_folder_click_fill``'s docstring.
             self._select_folder_click_fill = None
+        self._refresh_field_label(event.value)
+
+    @on(DirectoryNavigation.Changed)
+    def _refresh_field_label_on_navigation(
+        self, event: DirectoryNavigation.Changed
+    ) -> None:
+        """Keep the label in step with browsing too, not just typing.
+
+        ``_field_label_text`` resolves a *relative* typed value against
+        ``DirectoryNavigation.location`` -- so browsing elsewhere without
+        touching the field again changes what "Select folder" would
+        resolve it to, and the label must follow (Qodo review round 4:
+        this handler used to exist only for ``Input.Changed``, so it went
+        stale after pure navigation). This fires alongside
+        ``FileSystemPickerScreen._on_directory_changed``'s own handler for
+        the same message -- ``@on``-decorated handlers run for every class
+        in the MRO, not just the most-derived one (see
+        ``_focus_initial_widget``'s docstring in ``base_dialog.py``).
+        """
+        try:
+            bar_input = self.query_one(InputBar).query_one(Input)
+        except Exception:
+            return
+        self._refresh_field_label(bar_input.value)
+
+    def _refresh_field_label(self, value: str) -> None:
+        """Recompute and repaint ``#file-name-label`` for ``value``."""
+        if not getattr(self, "_offer_select_folder", False):
+            return
         try:
             label = self.query_one("#file-name-label", Label)
         except Exception:
             return
-        label.update(self._field_label_text(event.value))
+        label.update(self._field_label_text(value))
 
     @on(Mount)
     def _initial_filter(self) -> None:
