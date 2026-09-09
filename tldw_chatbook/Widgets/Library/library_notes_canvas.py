@@ -38,6 +38,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
+from tldw_chatbook.Widgets.Library.library_rail import LibraryRailSearchInput
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
     library_row_button,
@@ -773,10 +774,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         yield database_purpose
         with Horizontal(id="library-notes-filter-row"):
             yield Static("Filter", id="library-notes-filter-label", markup=False)
-            yield Input(
+            # task-32131: a plain ``Input`` here let a SECOND "/" -- pressed
+            # while the filter already had focus -- insert a literal slash
+            # (Screen.on_key's "/" handling bails as soon as an Input owns
+            # focus, so it never gets a chance to redirect). Reuse the rail
+            # search box's widget instead of re-solving it -- but with
+            # ``swallow_slash_on_focus=False`` (fix round 1 Important 4,
+            # controller ruling): notes filter content can legitimately
+            # contain "/" (folder-style filters like "Work/Q3"), so once
+            # this box has focus "/" must be a plain typeable character,
+            # not an accelerator that swallows it. The screen-level "/"
+            # handler already only fires while this box is NOT focused.
+            yield LibraryRailSearchInput(
                 placeholder="Filter notes… (Enter)",
                 id="library-notes-filter",
                 value=self.filter_value,
+                swallow_slash_on_focus=False,
             )
         select_mode = list_state.select_mode
         # Gate/label off the RENDERED rows, not any total-count field -- only
@@ -1393,15 +1406,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # of rendering the delimiter block as note content.
         from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 
+        # task-32139: Edit/Preview said "‹ Notes", Info said "‹ Note" (two
+        # wordings for the identical Back action, live-caught at 235x52),
+        # and BOTH said "‹ Notes" on a compact terminal where the guide
+        # documents "‹ Back to list" (60x24). One label now, sized by
+        # ``self.compact`` like the guide's own compact-vs-wide split.
+        back_label = "‹ Back to list" if self.compact else "‹ Notes"
         with Horizontal(id="library-note-heading"):
             yield Button(
-                "‹ Notes",
+                back_label,
                 id="library-note-back",
                 classes="library-canvas-action",
                 compact=True,
             )
             yield Button(
-                "‹ Note",
+                back_label,
                 id="library-note-context-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1498,6 +1517,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             yield TextArea(content, id="library-note-body")
 
         with VerticalScroll(id="library-note-preview-region", can_focus=True):
+            # task-32142 AC#1: the shared heading row's title Static (above)
+            # sits in a crowded strip with the mode buttons and Back --
+            # easy to miss, and NOT part of the scrolling content, so it
+            # never reads as the document's own title the way Edit's Title
+            # field does. This one renders INSIDE the preview, immediately
+            # above the rendered body, like a document heading.
+            yield Static(
+                ellipsize_note_title_cells(title, 72),
+                id="library-note-preview-body-title",
+                classes="destination-section",
+                markup=False,
+            )
             yield Markdown(
                 content,
                 id="library-note-preview-body",
@@ -1801,10 +1832,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         conflict = state.conflict
         confirming_delete = state.confirming_delete and not conflict
         bulk_read_only = state.bulk_read_only
+        # task-32132: Delete is only reachable from the Info Danger section
+        # (the Edit pane's own Delete lives in ``library-note-wide-
+        # utilities``, permanently hidden below). Confirming used to force
+        # ``show_context`` off unconditionally, snapping the pane to Edit --
+        # "delete this note?" painted 14 rows away, under a body editor the
+        # user never opened. Info stays put while confirming; only Preview
+        # (which never hosts a Delete button) still yields to Edit.
         show_context = (
             state.region == "context"
             and not conflict
-            and not confirming_delete
             and not bulk_read_only
         )
         show_preview = bulk_read_only or (
@@ -1857,6 +1894,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-editor-title",
             "#library-note-preview-title",
             "#library-note-context-title",
+            "#library-note-preview-body-title",
         ):
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != title:
@@ -1898,10 +1936,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         self.apply_compact_presentation(state.compact)
         self.set_class(state.validation, "library-note-validation")
-        self.query_one("#library-note-back").display = (
-            not show_context and not bulk_read_only
-        )
-        self.query_one("#library-note-context-back").display = show_context
+        # task-32139: one Back label, sized by compact -- see the matching
+        # compose-time comment above.
+        back_label = "‹ Back to list" if state.compact else "‹ Notes"
+        back_button = self.query_one("#library-note-back", Button)
+        if str(back_button.label) != back_label:
+            back_button.label = back_label
+        back_button.display = not show_context and not bulk_read_only
+        context_back_button = self.query_one("#library-note-context-back", Button)
+        if str(context_back_button.label) != back_label:
+            context_back_button.label = back_label
+        context_back_button.display = show_context
         self.query_one("#library-note-editor-title").display = show_editor
         self.query_one("#library-note-preview-title").display = show_preview
         self.query_one("#library-note-context-title").display = show_context
@@ -1916,7 +1961,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             bulk_status.update(bulk_copy)
         self.query_one("#library-note-editor-region").display = show_editor
         self.query_one("#library-note-preview-region").display = show_preview
-        self.query_one("#library-note-context-status").display = show_context
+        # task-32142 AC#2: this Static repeats the identical text
+        # ``#library-note-status`` (the header-second-row status, visible
+        # in every mode) already shows -- Info printed "Saved" twice, once
+        # in the header and once again immediately above the panel.
+        self.query_one("#library-note-context-status").display = False
         self.query_one("#library-note-context-region").display = show_context
         self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
         self.query_one("#library-note-preview", Button).set_class(
@@ -1958,7 +2007,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-delete",
         ):
             self.query_one(selector, Button).disabled = (
-                state.destructive_running or bulk_read_only
+                state.destructive_running or bulk_read_only or confirming_delete
             )
         for selector in (
             "#library-note-use-in-console",
@@ -1971,7 +2020,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-copy",
         ):
             self.query_one(selector, Button).disabled = (
-                state.destructive_running or state.transfer_running or bulk_read_only
+                state.destructive_running
+                or state.transfer_running
+                or bulk_read_only
+                # task-32132 fix round 1 Important 5: Info stays visible
+                # while confirming (this fix's own AC#1), so its Danger/
+                # Reuse & Export buttons -- Delete, Copy, Export, Use in
+                # Console -- were still live behind the confirmation
+                # prompt; a press could navigate away (Use in Console) or
+                # mutate (Copy/Export) with the delete admission still
+                # pending.
+                or confirming_delete
             )
         discard_new = self.query_one("#library-note-discard-new", Button)
         discard_new.display = state.discard_new_note
