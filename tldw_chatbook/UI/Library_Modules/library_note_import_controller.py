@@ -177,6 +177,17 @@ class LibraryNoteImportController:
         self._error_message = ""
         self.publish()
 
+    def set_obsidian_mode(self, enabled: bool) -> None:
+        """Retain the vault-reading choice; the caller re-runs the read-only check.
+
+        Args:
+            enabled: True to read the selection as an Obsidian vault.
+        """
+        if type(enabled) is not bool:
+            raise TypeError("enabled must be a boolean.")
+        self._state = replace(self._state, obsidian_mode=enabled)
+        self.publish()
+
     def clear_selection(self) -> None:
         """Drop the current selection without leaving the import workflow."""
         self._state = clear_selection(self._state)
@@ -240,7 +251,9 @@ class LibraryNoteImportController:
         self.publish()
         self._check_task = asyncio.current_task()
         try:
-            plan, names, effects = await asyncio.to_thread(self._plan_selection, before)
+            plan, names, effects, vault_detected = await asyncio.to_thread(
+                self._plan_selection, before
+            )
         except asyncio.CancelledError:
             self._state = before
             self.publish()
@@ -257,12 +270,17 @@ class LibraryNoteImportController:
             self._before_check = None
         self._existing_top_level_names = names
         self._state = show_review(self._state, plan, review_effects=effects)
+        self._state = replace(self._state, vault_detected=vault_detected)
         self.publish()
 
     def _plan_selection(
         self, selected: NoteImportWorkflowSnapshot
-    ) -> tuple[Any, tuple[str, ...], tuple[NoteImportReviewEffect, ...]]:
-        discovery = self._discover(selected.selected_paths, self._bounds)
+    ) -> tuple[Any, tuple[str, ...], tuple[NoteImportReviewEffect, ...], bool]:
+        discovery = self._discover(
+            selected.selected_paths,
+            self._bounds,
+            obsidian_mode=selected.obsidian_mode,
+        )
         destination = (
             selected.destination_segments if selected.requires_destination else None
         )
@@ -270,6 +288,7 @@ class LibraryNoteImportController:
             discovery,
             self._bounds,
             destination_folder_segments=destination,
+            obsidian_mode=selected.obsidian_mode,
         )
         preliminary = self._classify(batch, self._bounds)
         observations = self._receipt_repository().prior_observations_for_plan_read_only(
@@ -282,7 +301,7 @@ class LibraryNoteImportController:
         )
         names = self._top_level_folder_names()
         plan = self._analyze_collision(plan, names)
-        return plan, names, self._build_review_effects(plan)
+        return plan, names, self._build_review_effects(plan), discovery.vault_detected
 
     def _build_review_effects(self, plan: Any) -> tuple[NoteImportReviewEffect, ...]:
         matched = tuple(item for item in plan.items if item.match is not None)

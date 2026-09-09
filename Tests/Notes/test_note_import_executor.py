@@ -1052,6 +1052,103 @@ def test_executor_creates_multi_payload_notes_with_exact_keywords_and_membership
     assert durable.items[0].outcome is ImportItemOutcome.IMPORTED
 
 
+def test_executor_links_wikilink_targets_created_in_the_same_batch(
+    real_executor,
+) -> None:
+    """Obsidian links to batch mates become note links; the rest stay literal."""
+    executor, target, _receipts, _service, _folders, _db = real_executor
+    linking = _execution_item(
+        item_id="link-source",
+        payloads=(
+            ParsedNotePayload(
+                title="A",
+                content=(
+                    "See [[link-target]] and [[Reading/link-deep|see it]] "
+                    "and [[Missing]]."
+                ),
+                wikilinks=("link-target", "Reading/link-deep", "Missing"),
+            ),
+        ),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    linked = _execution_item(
+        item_id="link-target",
+        payloads=(_payload(title="B", content="B body"),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    deep = replace(
+        _execution_item(
+            item_id="link-deep",
+            payloads=(_payload(title="C", content="C body"),),
+            action=ImportAction.CREATE_NEW,
+            memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+            add_membership=True,
+        ),
+        source=ImportSource(
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path="Selected/Reading/link-deep.md",
+            source_path=Path("/private/import/Reading/link-deep.md"),
+        ),
+    )
+    approved = _approved_execution_plan(
+        linking,
+        linked,
+        deep,
+        proposed_folder_paths=(("Imported Root",),),
+    )
+
+    receipt = executor.execute(approved)
+
+    assert (receipt.state, receipt.imported, receipt.failed) == (
+        ImportSessionState.COMPLETED,
+        3,
+        0,
+    )
+    note = target.read_note(note_id=_expected_note_id("link-source", 0))
+    assert note is not None
+    assert note.content == (
+        f"See [link-target](note://{_expected_note_id('link-target', 0)}) "
+        f"and [see it](note://{_expected_note_id('link-deep', 0)}) "
+        "and [[Missing]]."
+    )
+
+
+def test_executor_leaves_wikilink_text_alone_outside_obsidian_mode(
+    real_executor,
+) -> None:
+    """A payload with no recorded wikilinks is written exactly as parsed."""
+    executor, target, _receipts, _service, _folders, _db = real_executor
+    literal = _execution_item(
+        item_id="link-source",
+        payloads=(_payload(title="A", content="See [[link-target]]."),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    linked = _execution_item(
+        item_id="link-target",
+        payloads=(_payload(title="B", content="B body"),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        add_membership=True,
+    )
+    approved = _approved_execution_plan(
+        literal,
+        linked,
+        proposed_folder_paths=(("Imported Root",),),
+    )
+
+    executor.execute(approved)
+
+    note = target.read_note(note_id=_expected_note_id("link-source", 0))
+    assert note is not None
+    assert note.content == "See [[link-target]]."
+
+
 @pytest.mark.parametrize(
     ("batch_size", "item_count", "expected_running_completed"),
     [

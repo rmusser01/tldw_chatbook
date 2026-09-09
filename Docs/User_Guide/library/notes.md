@@ -552,6 +552,37 @@ unfinished items**. **Back to Notes** may hide a running import without
 stopping it; the list then offers **View import** or **Continue import** until
 it settles. **Last import** reopens the same-session receipt afterward.
 
+#### Obsidian vaults
+
+If the folder you chose holds an `.obsidian/` directory, the review shows an
+**Obsidian vault** toggle, on by default, and one line saying what it does.
+With it on:
+
+- `.obsidian/`, `.trash/` and `Templates/` are listed under **Skipped** as one
+  row each, naming the vault reason ("Obsidian configuration — skipped…"),
+  rather than one row per file inside them.
+- YAML frontmatter is read: `title` becomes the note title, and `tags` and
+  `aliases` become keywords (there is no separate alias field, and keeping them
+  as keywords is what makes the note findable by its alternate names). The
+  frontmatter block is removed from the note body — unless it is the whole file,
+  in which case the note keeps it and still takes its title and keywords from it.
+- `[[wikilinks]]` and `[[link|alias]]` whose target is imported in the same
+  batch become note links; a link to anything else stays as plain text, and a
+  `[[link]]` written inside a code block or backticks is left alone.
+
+Turn the toggle off to import the vault exactly as any other folder — every
+directory walked, frontmatter left in the body, links left as text. The config
+files inside are then listed one by one, still as **Skipped** ("Not a note file
+(app configuration).") rather than as failures. One rule
+applies either way: a title that is only a template placeholder, such as a
+`# {{date:YYYY-MM-DD}}` heading, is never used, and the file name is used
+instead. Toggling re-runs the read-only check, so nothing is written either way
+and Import once never modifies the vault on disk; it does rebuild the review,
+so any per-item Skip/Create choices you had already made are reset.
+
+Review rows for new notes state what will be created — the resulting title, its
+keywords, and how many links it carries — before you approve anything.
+
 ## Common tasks
 
 ### Create a note from a template
@@ -568,7 +599,8 @@ it settles. **Last import** reopens the same-session receipt afterward.
    destination. A folder already supplies its proposed hierarchy. Picked the
    wrong source? Use **Change selection** or **Clear**.
 3. Click **Check selection** and review classifications, actions, matches, and
-   any top-level folder collision.
+   any top-level folder collision. For an Obsidian vault, check the
+   **Obsidian vault** toggle first — see "Obsidian vaults" above.
 4. Click **Import selected items**. You can cancel cooperatively, retry work
    identified by the receipt, or return to Notes and reopen **Last import**.
 
@@ -806,6 +838,13 @@ than failed while a mixed one stays a failure, an automatic skip keeps its own
 reason on the receipt instead of "Skipped by you.", the receipt keeps its
 skipped paths after another selection starts, and the follow-on review choices
 moved onto their own line so nothing is clipped out of reach.)*
+
+*Verified against fix/library-notes-obsidian — 2026-09-09 (task-32129: Import
+once detects an Obsidian vault, skips `.obsidian/`, `.trash/` and `Templates/`
+with reasons, reads frontmatter titles and tags, and links wikilinks resolved
+within the batch. Merged with the import-ux wave above: the Obsidian toggle
+lives in that wave's single review options slot, and an Obsidian skip is
+listed in the receipt's **Skipped (N)** disclosure with its own reason.)*
 
 *Verified against fix/library-notes-file-notes — 2026-09-09 (task-32136:
 Folder files is a mode of Notes — at wide sizes the Library rail and the

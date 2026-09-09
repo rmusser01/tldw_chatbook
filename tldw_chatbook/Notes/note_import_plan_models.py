@@ -1,17 +1,23 @@
 """Immutable domain vocabulary for one-time Database Notes import plans.
 
 The records in this module describe a read-only preview. They deliberately carry
-no receipt fingerprints, persistence services, or execution behavior. Generic
-dataclass serialization such as :func:`dataclasses.asdict` is not safe for logs;
-use :meth:`NoteImportPlan.to_diagnostic` for the supported redacted projection.
+no receipt fingerprints and no persistence services. The one piece of behavior
+here is :func:`rewrite_wikilinks`, a pure text transform over one payload that
+both the parser and the executor need and that therefore cannot live in either.
+Generic dataclass serialization such as :func:`dataclasses.asdict` is not safe
+for logs; use :meth:`NoteImportPlan.to_diagnostic` for the supported redacted
+projection.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import TypeVar
+from unicodedata import normalize
 
 
 class ImportClassification(str, Enum):
@@ -22,8 +28,9 @@ class ImportClassification(str, Enum):
     CHANGED_REPEAT = "changed_repeat"
     UNCERTAIN_MATCH = "uncertain_match"
     UNSUPPORTED = "unsupported"
-    # task-32130: an empty file and an application config file are neither
-    # unsafe nor unsupported; reporting them as FAILED was dishonest.
+    # task-32130 / task-32129: an empty file, an application config file and an
+    # Obsidian vault's own config, trash or templates are neither unsafe nor
+    # unsupported; reporting them as FAILED was dishonest.
     SKIPPED = "skipped"
     EMPTY = "empty"
     FAILED = "failed"
@@ -93,6 +100,72 @@ MAX_IMPORT_KEYWORD_LENGTH = 512
 MAX_IMPORT_ITEM_ID_LENGTH = 256
 """Absolute length ceiling for opaque preview item identifiers."""
 
+_CODE_SPAN = r"```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[^`\n]*`"
+
+WIKILINK_SCAN = re.compile(
+    rf"(?P<code>{_CODE_SPAN})"
+    r"|(?<!!)\[\[(?P<target>[^\[\]|#^]+)(?:[#^][^\[\]|]*)?"
+    r"(?:\|(?P<alias>[^\[\]]*))?\]\]"
+)
+"""One code span, or one non-embedded `[[target]]`/`[[target|alias]]`.
+
+The single definition of the Obsidian link grammar: the parser records targets
+with it and the executor rewrites the same spans with it. Code spans are matched
+FIRST and on purpose -- a `[[Target]]` inside a fenced block or backticks is
+sample text, and rewriting it would corrupt the note.
+"""
+
+
+def wikilink_target(match: re.Match[str]) -> str | None:
+    """Return the link target of one scan match, or None for a code span."""
+    if match.group("code") is not None:
+        return None
+    return (match.group("target") or "").strip() or None
+
+
+def wikilink_key(target: str) -> str:
+    """Return the comparable form of one link target or vault-relative path."""
+    return normalize("NFC", target).strip().strip("/").casefold()
+
+
+def rewrite_wikilinks(
+    payload: ParsedNotePayload,
+    note_ids: Mapping[str, str],
+) -> ParsedNotePayload:
+    """Return `payload` with resolvable `[[links]]` rewritten as note links.
+
+    A target with no entry in `note_ids` — a note outside the batch, an
+    attachment, a heading-only link — is left exactly as the author wrote it, and
+    so is anything inside a code span.
+
+    Args:
+        payload: One parsed note, whose `wikilinks` licence the rewrite.
+        note_ids: Comparable link keys mapped to the note id each will get.
+
+    Returns:
+        The same payload when nothing resolves, else a copy with linked content.
+    """
+    if not payload.wikilinks or not note_ids:
+        return payload
+
+    def _link(match: re.Match[str]) -> str:
+        target = wikilink_target(match)
+        if target is None:
+            return match.group(0)
+        note_id = note_ids.get(wikilink_key(target))
+        if note_id is None:
+            return match.group(0)
+        label = (match.group("alias") or "").strip() or target
+        # The grammar already excludes `[` and `]` from a target and an alias,
+        # so a label cannot close the link text early -- except through a
+        # trailing backslash, which would escape the `]` and let the link
+        # swallow the text after it. An escaped backslash renders the same.
+        label = label.replace("\\", "\\\\")
+        return f"[{label}](note://{note_id})"
+
+    content = WIKILINK_SCAN.sub(_link, payload.content)
+    return payload if content == payload.content else replace(payload, content=content)
+
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
@@ -154,6 +227,13 @@ class ParsedNotePayload:
     content: str = field(repr=False)
     keywords: tuple[str, ...] = field(default=(), repr=False)
     template_name: str | None = field(default=None, repr=False)
+    wikilinks: tuple[str, ...] = field(default=(), repr=False)
+    """Obsidian ``[[target]]`` names found in ``content``, in first-use order.
+
+    Only an Obsidian-mode parse fills this; it is the executor's sole licence to
+    rewrite links, so an ordinary import that happens to contain ``[[…]]`` text
+    keeps it literal.
+    """
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not isinstance(self.content, str):
@@ -174,7 +254,14 @@ class ParsedNotePayload:
             and len(self.template_name) > MAX_IMPORT_TEMPLATE_NAME_LENGTH
         ):
             raise ValueError("template_name exceeds its absolute safety ceiling.")
+        wikilinks = _as_tuple(self.wikilinks, field_name="wikilinks")
+        if not all(
+            isinstance(link, str) and link.strip() and len(link) <= MAX_IMPORT_TITLE_LENGTH
+            for link in wikilinks
+        ):
+            raise ValueError("wikilinks must contain bounded non-blank text values.")
         object.__setattr__(self, "keywords", keywords)
+        object.__setattr__(self, "wikilinks", wikilinks)
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,9 +565,13 @@ class ImportPreviewItem:
         """Reject classification, match, and action combinations that cannot run."""
         if self.classification in _NON_IMPORTABLE_CLASSIFICATIONS:
             if allowed_actions != (ImportAction.SKIP,):
-                raise ValueError("Non-importable items must only allow Skip.")
+                raise ValueError(
+                    "Unsupported, skipped, empty and failed items must only allow Skip."
+                )
             if self.match is not None:
-                raise ValueError("Non-importable items cannot carry a match.")
+                raise ValueError(
+                    "Unsupported, skipped, empty and failed items cannot carry a match."
+                )
             return
 
         if self.classification is ImportClassification.NEW:

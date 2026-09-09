@@ -143,19 +143,32 @@ def _controller(
     planning_error: Exception | None = None,
     review_note_reader=None,
     bounds: ImportBounds = BOUNDS,
+    vault_detected: bool = False,
 ) -> LibraryNoteImportController:
     published: list[object] = []
     executor = _Executor(calls, receipt or _receipt(), executor_error)
 
-    def discover(paths, bounds):
-        calls.append(("discover", tuple(paths), bounds))
+    def discover(paths, bounds, *, obsidian_mode=False):
+        calls.append(("discover", tuple(paths), bounds, obsidian_mode))
         if planning_error is not None:
             raise planning_error
-        return "discovery"
+        return SimpleNamespace(vault_detected=vault_detected)
 
-    def parse(discovery, bounds, *, destination_folder_segments=None):
+    def parse(
+        discovery,
+        bounds,
+        *,
+        destination_folder_segments=None,
+        obsidian_mode=False,
+    ):
         calls.append(
-            ("parse", discovery, bounds, tuple(destination_folder_segments or ()))
+            (
+                "parse",
+                discovery,
+                bounds,
+                tuple(destination_folder_segments or ()),
+                obsidian_mode,
+            )
         )
         return "batch"
 
