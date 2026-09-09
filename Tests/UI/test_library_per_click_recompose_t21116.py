@@ -210,7 +210,7 @@ async def test_open_item_by_id_media_mounts_the_adaptive_shell_boundary() -> Non
         assert calls == [screen]
         assert refresh_calls == []
         assert screen.query_one("#library-rail") is not rail_before
-        assert screen.query_one("#library-media-reader-shell")
+        assert screen.query_one(".library-media-route")
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
         assert screen._media_state.view == "viewer"
 

@@ -355,7 +355,9 @@ _BUDGETS: dict[str, int] = {
     # `LibraryMediaCanvas(...)` construction site, which is what lets the
     # canvas own its sixteen canvas-origin `@on` rows without reaching back
     # through the screen. The screen shrank 63 lines in the same commit.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4670,
+    # PR-2427 retains its shorter documentation; phase-C actions wiring fits
+    # at 4646 lines, below the previously published 4669 ceiling.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4646,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
