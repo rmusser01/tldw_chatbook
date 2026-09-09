@@ -22,22 +22,20 @@ pinned here:
 from __future__ import annotations
 
 import pytest
-
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Input
-
-from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
-    LibraryAdaptiveReaderPaneGrip,
-)
-from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_CREATE_NOTE,
 )
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    LibraryAdaptiveReaderPaneGrip,
+)
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
