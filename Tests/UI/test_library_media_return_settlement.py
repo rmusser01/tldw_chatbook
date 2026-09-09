@@ -58,18 +58,19 @@ def _media_canvas(screen) -> Widget:
 #: A scroll offset deep in the wide row list and reachable at BOTH sizes these
 #: return tests use. task-31633 made a wide item two painted rows instead of
 #: three, so a 20-row page's virtual height fell from 60 to 40 and the old
-#: literal ``y=42`` is now past the end everywhere (max_scroll_y is 37 at
-#: 100x20 and 33 at 80x24) -- it clamps, which is a different settlement
+#: literal ``y=42`` is now past the end everywhere (historical max_scroll_y
+#: was 37 at 100x20 and 33 at 80x24) -- it clamps, a different settlement
 #: outcome rather than a deeper scroll.
 DEEP_ROW_SCROLL_Y = 28
 
 #: The offset ``_open_scrolled_compact_media_viewer`` leaves the compact row
 #: list at when it scrolls row 15 into view at ``COMPACT_SCROLL_SIZE``. It was
 #: 42 while a wide item painted three rows; task-31633 made it two, so the same
-#: row now sits shallower. Measured, not derived -- the helper returns the real
-#: offset and the tests below compare against that; this constant keeps the
-#: absolute number pinned so a silent clamp cannot pass as a deep scroll.
-COMPACT_ROW_SCROLL_Y = 29
+#: row now sits shallower. TASK-32064 then removed the one-row global Chunking
+#: tools strip: the viewport grew from three rows to four, changing 29 to 28.
+#: The helper returns the real offset; this exact pin ensures a silent clamp
+#: cannot pass as a deep scroll.
+COMPACT_ROW_SCROLL_Y = 28
 
 
 def _park_row_scroll(owner) -> tuple[int, int]:

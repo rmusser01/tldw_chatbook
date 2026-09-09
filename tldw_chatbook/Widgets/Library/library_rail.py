@@ -1105,6 +1105,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             # empty it -- the next keystroke replaced it, but a reader looking
             # at a stale query had no affordance at all.
             clear = Button("x", id="library-search-clear", compact=True)
+            clear.styles.line_pad = 0
             clear.tooltip = "Clear the Library search box"
             # task-32212 (critique #9 row 9): MEASURED, not inferred. Every
             # region already sat inside the rail; what overflowed was this

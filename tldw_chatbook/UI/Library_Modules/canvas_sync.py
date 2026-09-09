@@ -577,6 +577,7 @@ def _sync_library_canvas(
     note_work: LibraryNoteWorkPane | None = None
     note_work_kwargs: dict[str, Any] = {}
     note_work_surface_changed = False
+    note_work_in_place = False
     notes_editor_owned = False
     prompt_work: LibraryPromptWorkPane | None = None
     prompt_work_kwargs: dict[str, Any] = {}
@@ -670,21 +671,12 @@ def _sync_library_canvas(
                 notes_editor_owned = (
                     not note_work_surface_changed and note_work.editor_has_focus()
                 )
-                note_work.sync_state(**note_work_kwargs)
-                if notes_editor_owned:
-                    # task-32185 AC#5: that skipped rebuild is the ONE case
-                    # ``sync_state`` stores a fresh presentation state and
-                    # paints nothing -- so entering select mode beside an
-                    # open editor (``bulk_read_only`` flipped, the reader's
-                    # focus still in the title) left the pane fully editable
-                    # with no "Read-only preview" banner. Every select-mode
-                    # handler (toggle, select-all, clear, Escape, filter,
-                    # sort) lands here, so the one re-apply lives here rather
-                    # than at each of them. Gated on exactly the skip: every
-                    # other sync recomposes, and ``_apply_post_compose_state``
-                    # applies the stored state to the children it mounts --
-                    # re-applying there too would run against children a
-                    # pending mode-change recompose has not mounted yet.
+                note_work_in_place = note_work.sync_state(**note_work_kwargs)
+                if note_work_in_place or notes_editor_owned:
+                    # Retained editor children cannot own a future-rebuild callback.
+                    note_work.queue_after_recompose(None)
+                if notes_editor_owned and not note_work_in_place:
+                    # A focused editor skipped rebuilding but still needs new state.
                     screen._apply_library_note_presentation_state()
         elif kind == "prompts":
             canvas = screen.query_one(
@@ -907,6 +899,7 @@ def _sync_library_canvas(
         if (
             note_work is not None
             and not notes_editor_owned
+            and not note_work_in_place
             and note_work_kwargs.get("mode") != "list"
         ):
             # Notes keeps its navigator mounted in Items while editor/load
@@ -924,6 +917,11 @@ def _sync_library_canvas(
             or skill_work_kwargs.get("import_open")
         ):
             follow_up_canvas = skill_work
+        if note_work is not None and then is not None:
+            # A newer explicit Notes intent supersedes either former owner,
+            # including an Items callback queued before Work starts rebuilding.
+            other_notes_canvas = canvas if follow_up_canvas is note_work else note_work
+            other_notes_canvas.queue_after_recompose(None)
         if follow_up is not None:
             follow_up_canvas.queue_after_recompose(follow_up)
         canvas.sync_state(*sync_args, **sync_kwargs)

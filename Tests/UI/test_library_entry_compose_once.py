@@ -15,6 +15,10 @@ from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
@@ -646,6 +650,46 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
+
+
+@pytest.mark.asyncio
+async def test_same_route_notes_focus_restore_rejects_a_stale_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A superseded resident recompose cannot restore its captured Notes row.
+
+    Args:
+        monkeypatch: Scoped control over the resident canvas refresh.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        row = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row.focus()
+        await pilot.pause()
+
+        canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        monkeypatch.setattr(canvas, "refresh", lambda *args, **kwargs: canvas)
+        shell = library_screen_module.build_library_shell_state(
+            screen._build_library_shell_input(),
+            selected_row_id=screen._library_selected_row_id,
+        )
+
+        assert await screen._replace_library_browse_canvas(shell) is True
+        callback = canvas._post_recompose_callback
+        assert callback is not None
+        canvas._post_recompose_callback = None
+
+        screen.set_focus(None)
+        screen._library_snapshot_state_generation += 1
+        callback()
+
+        assert screen.focused is None
 
 
 @pytest.mark.asyncio
