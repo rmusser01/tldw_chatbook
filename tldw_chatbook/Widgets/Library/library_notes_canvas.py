@@ -401,6 +401,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if self.import_snapshot is not None:
                 yield LibraryNoteImportCanvas(
                     self.import_snapshot,
+                    compact=self.compact,
                     id="library-note-import-canvas",
                 )
             yield Button(
@@ -604,6 +605,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if authority:
                 authority.first(Static).update(self._authority_copy())
             child = import_canvases.first(LibraryNoteImportCanvas)
+            child.compact = compact
             callback = self._post_recompose_callback
             self._post_recompose_callback = None
             child.queue_after_recompose(callback)

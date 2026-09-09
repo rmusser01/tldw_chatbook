@@ -350,6 +350,8 @@ async def test_review_reserves_an_options_slot_above_the_groups() -> None:
         body = app.query_one("#note-import-body")
         ids = [child.id for child in body.children]
         assert "notes-import-review-options" in ids
+        # An empty 1fr slot would push every group to the bottom of the body.
+        assert app.query_one("#notes-import-review-options").size.height == 0
         first_heading = next(
             child
             for child in body.children
@@ -358,3 +360,56 @@ async def test_review_reserves_an_options_slot_above_the_groups() -> None:
         assert ids.index("notes-import-review-options") < body.children.index(
             first_heading
         )
+
+
+async def test_a_clipped_row_still_reaches_its_effect_and_destination() -> None:
+    """At 60 columns the row clips, so the rest stays reachable (32135 review)."""
+    from textual.containers import Container
+
+    snapshot = _import_snapshot(
+        phase="review",
+        status_line="Review 1 item before import.",
+        preview_items=(_item(1),),
+        can_import=True,
+        import_disabled_reason="",
+    )
+
+    class _CompactHost(ConsolidatedCSSApp):
+        CSS_PATH = TldwCli.CSS_PATH
+
+        def compose(self) -> ComposeResult:
+            with Container(id="library-canvas", classes="library-notes-compact"):
+                yield LibraryNoteImportCanvas(
+                    snapshot,
+                    compact=True,
+                    id="library-note-import-canvas",
+                )
+
+    app = _CompactHost()
+    async with app.run_test(size=(60, 24)) as pilot:
+        await pilot.pause()
+        summary = app.query_one(".note-import-row-text", Static)
+        # The row is clipped at this width…
+        assert summary.size.width < len(_plain(summary))
+        # …so the whole sentence is on the tooltip,
+        assert "create 1 new note" in str(summary.tooltip)
+        assert "vault / Archive" in str(summary.tooltip)
+        # and the destination repeats on its own line.
+        destination = app.query_one(".note-import-row-destination", Static)
+        assert destination.display is True
+        assert "vault / Archive" in _plain(destination)
+
+
+async def test_a_wide_row_does_not_repeat_its_destination() -> None:
+    """The second line is compact-only; the wide row already ends in it."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 1 item before import.",
+            preview_items=(_item(1),),
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        assert not app.query(".note-import-row-destination")

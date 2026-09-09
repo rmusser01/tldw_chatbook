@@ -787,3 +787,68 @@ def test_last_import_stays_available_after_leaving_the_receipt() -> None:
 
     assert state.can_revisit_receipt is True
     assert clear_selection(state).can_revisit_receipt is True
+
+
+def test_cancelled_receipt_lists_only_the_skips_it_actually_reached() -> None:
+    """The disclosure heading and its rows come from one count."""
+    third = replace(
+        _skipped_item(),
+        item_id="item-3",
+        source=replace(
+            _skipped_item().source, display_path="vault/.obsidian/theme.json"
+        ),
+    )
+    plan = _plan(_skipped_item(), _item(5), third)
+    state = _file_review(plan)
+    approved = approve_note_import_plan(plan)
+    state = begin_importing(set_approved_plan(state, approved))
+    # Cancelled after two items: one skip reached, the second never ran.
+    receipt = ImportExecutionReceipt(
+        approval_id=approved.approval_id,
+        state=ImportSessionState.CANCELLED,
+        total=3,
+        completed=2,
+        imported=1,
+        updated=0,
+        skipped=1,
+        failed=0,
+        retryable=0,
+        reason_code="cancelled",
+    )
+
+    projection = project_library_note_import_snapshot(settle_import(state, receipt))
+
+    assert projection.skipped_count == 1
+    assert len(projection.skipped_items) == 1
+
+
+def test_a_source_you_skipped_is_not_listed_with_its_planner_reason() -> None:
+    """'Ready to import as a new note.' under Skipped would be a lie."""
+    skipped_by_user = replace(
+        _item(),
+        selected_action=ImportAction.SKIP,
+        add_membership=False,
+        replace_content=False,
+    )
+    plan = _plan(skipped_by_user, _skipped_item())
+    state = _file_review(plan)
+    approved = approve_note_import_plan(plan)
+    state = begin_importing(set_approved_plan(state, approved))
+    receipt = ImportExecutionReceipt(
+        approval_id=approved.approval_id,
+        state=ImportSessionState.COMPLETED,
+        total=2,
+        completed=2,
+        imported=0,
+        updated=0,
+        skipped=2,
+        failed=0,
+        retryable=0,
+    )
+
+    projection = project_library_note_import_snapshot(settle_import(state, receipt))
+
+    assert projection.skipped_items == (
+        ("record-1.md", "Skipped by you."),
+        ("vault/.obsidian/app.json", "Not a note file (app configuration)."),
+    )

@@ -2952,6 +2952,12 @@
 
     /* task-32135: one review row is one line -- path, effect and destination
        beside the controls that change them. */
+    /* An empty container defaults to 1fr and would push every group to the
+       bottom of the body until the toggle lands in it. */
+
+
+
+
 
 
 

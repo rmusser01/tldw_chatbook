@@ -147,13 +147,22 @@ class LibraryNoteImportController:
         path: Path,
         *,
         is_folder: bool | None = None,
+        replace: bool = False,
     ) -> None:
-        """Admit one picker result as a file or the exclusive folder source."""
+        """Admit one picker result as a file or the exclusive folder source.
+
+        ``replace`` drops the previous selection first, and only once a path
+        has actually arrived -- cancelling the picker leaves the selection the
+        user already had (task-32134).
+        """
         if not isinstance(path, Path):
             raise TypeError("path must be a Path.")
         folder = path.is_dir() if is_folder is None else is_folder
         if type(folder) is not bool:
             raise TypeError("is_folder must be a boolean when provided.")
+        if replace:
+            self._state = clear_selection(self._state)
+            self._existing_top_level_names = ()
         self._state = (
             select_folder(self._state, path)
             if folder

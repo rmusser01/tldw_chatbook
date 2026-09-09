@@ -110,6 +110,12 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     /* task-32135: one review row is one line -- path, effect and destination
        beside the controls that change them. */
+    /* An empty container defaults to 1fr and would push every group to the
+       bottom of the body until the toggle lands in it. */
+    LibraryNoteImportCanvas #notes-import-review-options {
+        height: auto;
+    }
+
     LibraryNoteImportCanvas .note-import-row {
         height: 1;
         width: 1fr;
@@ -123,6 +129,12 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     LibraryNoteImportCanvas .note-import-row-text {
         width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    LibraryNoteImportCanvas .note-import-row-destination {
+        height: 1;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
@@ -220,9 +232,22 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             super().__init__()
             self.delta = delta
 
-    def __init__(self, snapshot: LibraryNoteImportSnapshot, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        snapshot: LibraryNoteImportSnapshot,
+        *,
+        compact: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.snapshot = snapshot
+        # A compact shell clips the one-line row, so it repeats the
+        # destination underneath (review of task-32135).
+        # ponytail: read at compose time only. A resize across the compact
+        # threshold mid-review leaves the second line stale until the next
+        # recompose -- recomposing on the flag instead unmounted the
+        # destination and collision inputs while the user was typing in them.
+        self.compact = compact
         self._destination_value = snapshot.destination
         self._collision_name = (
             snapshot.collision_rename_input or snapshot.collision_name
@@ -605,11 +630,16 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         # task-32135: this was five stacked lines per item, with the controls
         # right-aligned about 130 columns from the path they governed.
         with Horizontal(classes="note-import-row"):
-            yield Static(
+            summary = Static(
                 self._review_row_summary(item),
                 classes="note-import-row-text",
                 markup=False,
             )
+            # A narrow terminal clips the line to the path, so the whole
+            # sentence stays reachable on hover and, in the compact layout,
+            # on a second line below (review of task-32135).
+            summary.tooltip = self._review_row_summary(item)
+            yield summary
             yield Button(
                 _choice_label(selected=item.action == "skip", text="Skip"),
                 id=f"note-import-action-{dom_token}-skip",
@@ -693,6 +723,18 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                     ),
                     compact=True,
                 )
+        if (
+            self.compact
+            and item.classification not in _NON_IMPORTABLE
+            and item.membership_summary
+        ):
+            # Only the compact shell needs it: at full width the row already
+            # ends in the destination.
+            yield Static(
+                item.membership_summary,
+                classes="note-import-row-destination note-import-quiet",
+                markup=False,
+            )
         # Only a matched item carries these, so the bulk of a review stays
         # exactly one line per source.
         for detail in (item.target_label, item.content_diff):

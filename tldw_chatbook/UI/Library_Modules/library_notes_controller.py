@@ -4660,10 +4660,9 @@ class LibraryNotesController:
     def handle_library_note_import_change_source(
         self, event: LibraryNoteImportCanvas.ChangeSourceRequested
     ) -> None:
-        """Drop the current selection, then reopen the picker (task-32134)."""
+        """Reopen the picker; the selection changes only if one comes back."""
         event.stop()
-        self._library_note_import_controller.clear_selection()
-        self._push_library_note_import_picker()
+        self._push_library_note_import_picker(replace=True)
     @on(LibraryNoteImportCanvas.ClearSourceRequested)
     def handle_library_note_import_clear_source(
         self, event: LibraryNoteImportCanvas.ClearSourceRequested

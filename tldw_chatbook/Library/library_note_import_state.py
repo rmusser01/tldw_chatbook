@@ -18,6 +18,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     normalize_folder_name,
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
+    _NON_IMPORTABLE_CLASSIFICATIONS,
     ImportAction,
     ImportMatchKind,
     ImportPreviewItem,
@@ -856,7 +857,11 @@ def project_library_note_import_snapshot(
         ),
         receipt_detail=_receipt_detail(receipt),
         skipped_count=receipt.skipped if receipt else 0,
-        skipped_items=_skipped_items(state) if receipt else (),
+        skipped_items=(
+            _skipped_items(state, min(receipt.skipped, MAX_RECEIPT_SKIPPED_ROWS))
+            if receipt
+            else ()
+        ),
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
         retry_label=(
@@ -932,16 +937,30 @@ def _receipt_status(receipt: ImportExecutionReceipt | None) -> str:
 
 def _skipped_items(
     state: NoteImportWorkflowSnapshot,
+    limit: int,
 ) -> tuple[tuple[str, str], ...]:
-    """Name the reviewed sources this import left alone, with their reason."""
+    """Name the reviewed sources this import left alone, with their reason.
 
-    if state.plan is None:
+    The executor works the plan in order, so the first ``limit`` skips are the
+    ones a partial run actually reached. ``limit`` is the receipt's own skipped
+    count (bounded), which keeps the rendered rows and the disclosure heading
+    from disagreeing on a cancelled import.
+    """
+
+    if state.plan is None or limit <= 0:
         return ()
     return tuple(
-        (item.source.display_path, item.reason)
+        (
+            item.source.display_path,
+            # A source the user skipped keeps no classification reason of its
+            # own -- "Ready to import as a new note." under Skipped is a lie.
+            item.reason
+            if item.classification in _NON_IMPORTABLE_CLASSIFICATIONS
+            else "Skipped by you.",
+        )
         for item in state.plan.items
         if item.selected_action is ImportAction.SKIP
-    )[:MAX_RECEIPT_SKIPPED_ROWS]
+    )[:limit]
 
 
 def _receipt_detail(receipt: ImportExecutionReceipt | None) -> str:

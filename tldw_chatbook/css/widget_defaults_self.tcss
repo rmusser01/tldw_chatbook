@@ -2654,6 +2654,12 @@
 
     /* task-32135: one review row is one line -- path, effect and destination
        beside the controls that change them. */
+    /* An empty container defaults to 1fr and would push every group to the
+       bottom of the body until the toggle lands in it. */
+    LibraryNoteImportCanvas #notes-import-review-options {
+        height: auto;
+    }
+
     LibraryNoteImportCanvas .note-import-row {
         height: 1;
         width: 1fr;
@@ -2667,6 +2673,12 @@
 
     LibraryNoteImportCanvas .note-import-row-text {
         width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    LibraryNoteImportCanvas .note-import-row-destination {
+        height: 1;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
