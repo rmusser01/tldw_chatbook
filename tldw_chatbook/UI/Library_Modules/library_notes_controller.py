@@ -3167,8 +3167,6 @@ class LibraryNotesController:
     ) -> None:
         """Reset presentation, invalidate old work, and start one editor load."""
         navigation_generation = self._supersede_library_notes_navigation()
-        topology_epoch = self._library_notes_tree_topology_epoch
-        lifecycle_generation = self._library_notes_tree_lifecycle_generation
         self._library_note_session.close_session()
         self._selected_note_id = note_id
         self._library_notes_view = "editor"
@@ -3187,9 +3185,6 @@ class LibraryNotesController:
             self._refresh_library_note_detail(
                 note_id,
                 entry_origin=entry_origin,
-                navigation_generation=navigation_generation,
-                topology_epoch=topology_epoch,
-                lifecycle_generation=lifecycle_generation,
             ),
             exclusive=True,
             group="library_note_detail",
