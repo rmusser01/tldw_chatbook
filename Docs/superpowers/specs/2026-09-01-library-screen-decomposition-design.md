@@ -911,10 +911,12 @@ painted. So: kept, decided by measurement rather than by preference.
 ### 5. What is left, measured rather than guessed
 
 At 135 and 64 applies per switch the restyle is no longer the dominant
-bucket. What remains on a media switch-back is 89 mount-proportional applies
-(the destination canvas's own repaint, which residency cannot avoid — it has
-been off-route since the last visit) and ~46 from small compose-time class
-flips inside the rebuilt rows. The next lever would be the canvas widgets
+bucket, and what is left is evenly split between the two triggers: a media
+switch-back now runs **66 mount applies and 65 class-flip applies** (30 ms
+total), and both halves belong to the destination canvas's own repaint —
+residency cannot avoid it, since that canvas has been off-route since the last
+visit, and the class flips are the row widgets' own compose-time
+`set_class` calls inside it. The next lever would be the canvas widgets
 themselves painting in place rather than recomposing their whole child list —
 a canvas-widget design change, not a storm fix, and not required for this
 task's acceptance.

@@ -12549,3 +12549,32 @@ producing a plausible end state. **And a shared dispatcher with a blanket
 `except` degrades duck-typed harnesses silently every time it grows a new
 receiver call** — census the harnesses when you add one, or they keep passing
 while covering nothing.
+
+## Rank a performance fix by the metric you MEASURED the cost in, not the one you already have
+
+A profile that reports one quantity well (here: widget mounts) invites ranking
+fixes by that quantity and assuming everything else follows it. It does not,
+and the assumption is invisible in a green result.
+
+**The incident.** Library phase C task 2 measured a rail switch's mounts by
+region and correctly identified three redundant canvas rebuilds. It then
+ranked the remaining work by those mounts, and its first draft claimed the
+rebuilds owned the whole remaining freeze. The other arm falsified it: the
+switch with the FEWEST mounts (26, no canvas rebuild at all) ran the MOST
+`Stylesheet.apply` calls (459) — so apply count was not mount-proportional and
+the ranking was unfounded. The report retracted the claim and the follow-up
+task was ordered to OPEN with an attribution measurement instead of a fix.
+
+It did, and the table inverted the plan's own lead list: mounts were 6–22% of
+the applies, while two class flips nobody had suspected were 41–62%. Fixing
+the leads in their planned order would have spent the task on the smaller half
+and reported a real improvement while missing the larger one.
+
+**What the attribution instrument needs to be useful.** Wrap every entry point
+into the expensive primitive and attribute each call to (a) which entry point,
+and (b) **the first stack frame outside the framework** — the second half is
+what turns "restyle is 86 ms" into "this line is 43 ms of it". Add a per-fire
+trace as well as aggregates: the aggregate says a flip is expensive, the trace
+is what shows the same flip happening twice per interaction and therefore
+being removable. `Helper_Scripts/library_restyle_attribution_probe.py` is the
+worked example.

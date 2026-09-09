@@ -137,12 +137,15 @@ def _originator(skip: int = 2) -> str:
     return f"(textual only) {last_textual}"
 
 
-def _push(label: str, origin: str) -> tuple | None:
+def _push(label: str, origin: str) -> list | None:
     if STATE["pending"] is None:
         return None
     if STATE["stack"]:
         STATE["nested_trigger"][f"{STATE['stack'][-1][0]} > {label}"] += 1
-    entry = (label, origin, [0])
+    # A LIST, not a tuple, so ``_pop`` can find this exact frame by identity:
+    # two triggers firing from the same line would compare equal as tuples and
+    # ``list.remove`` would drop whichever came first.
+    entry = [label, origin]
     STATE["stack"].append(entry)
     STATE["trigger_calls"][label] += 1
     STATE["origins"][(label, origin)] += 1
@@ -152,10 +155,10 @@ def _push(label: str, origin: str) -> tuple | None:
 def _pop(entry) -> None:
     if entry is None:
         return
-    try:
-        STATE["stack"].remove(entry)
-    except ValueError:  # pragma: no cover - defensive
-        pass
+    for index in range(len(STATE["stack"]) - 1, -1, -1):
+        if STATE["stack"][index] is entry:
+            del STATE["stack"][index]
+            return
 
 
 def _node_label(node) -> str:

@@ -160,11 +160,16 @@ async def test_route_marker_classes_have_no_stylesheet_rules() -> None:
     test fails, naming the seam that has to be restored. Scanning the parsed
     stylesheet rather than the ``.tcss`` sources on purpose: widget
     ``DEFAULT_CSS`` is part of the same stylesheet and a grep of the css/
-    directory would miss it.
+    directory would miss it. BOTH browse routes are visited before the scan,
+    because a widget's ``DEFAULT_CSS`` only joins the stylesheet once that
+    widget class has been mounted -- scanning from the landing route would
+    leave every canvas-side rule out of the sample.
     """
     host = _seeded_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        await _open_library(host, pilot)
+        screen = await _open_library(host, pilot)
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_MEDIA)
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_NOTES)
         patterns = {
             marker: re.compile(rf"\.{re.escape(marker)}(?![\w-])")
             for marker in LIBRARY_ROUTE_MARKER_CLASSES
