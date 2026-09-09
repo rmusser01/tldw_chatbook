@@ -284,6 +284,13 @@ class ConsoleSetupModal(Vertical):
         return self._card_state.mode == "card"
 
     def compose(self) -> ComposeResult:
+        """Build the backdrop and setup card, including its action buttons.
+
+        Returns:
+            The backdrop widget followed by the setup card's title, steps,
+            and action buttons (provider recovery, notes, and any
+            detected-server action).
+        """
         # Children mirror the container's blocking state so hidden-modal copy
         # never leaks into visible-text scrapes before the first guidance sync.
         blocking = self.is_blocking
@@ -516,7 +523,13 @@ class ConsoleSetupModal(Vertical):
             pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Route card actions through the owning Workbench screen."""
+        """Route card actions through the owning Workbench screen.
+
+        Args:
+            event: The button-press event; ``event.button.id`` selects
+                which ``WorkbenchActionRequested`` action id gets posted
+                (detected-server, notes, or provider recovery).
+        """
         if event.button.id == CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID:
             event.stop()
             self.post_message(

@@ -1163,7 +1163,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # "no rows" check above never fires and the empty state never
         # renders. Render it above the tree whenever the library itself is
         # empty, independent of whether the projection has folder rows.
-        if list_state.empty_kind == "source-empty":
+        # PR #2538 review (Qodo finding 5): a fresh visit renders with
+        # empty_kind == "source-empty" before the bulk source-count lookup
+        # resolves, while the tree's own root "folders"/"placements" slices
+        # are still loading (a loading pager row, not an empty projection).
+        # Skip the banner while any row is still in flight so a user who
+        # does have notes never sees "No notes yet" flash ahead of the
+        # load result.
+        if list_state.empty_kind == "source-empty" and not any(
+            row.loading for row in projection.rows
+        ):
             yield Static(
                 list_state.empty_copy,
                 id="library-notes-empty",

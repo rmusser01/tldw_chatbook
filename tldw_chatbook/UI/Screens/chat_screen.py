@@ -4615,7 +4615,13 @@ class ChatScreen(BaseAppScreen):
         self,
         event: WorkbenchActionRequested,
     ) -> None:
-        """Route visible Workbench actions through Console-owned helpers."""
+        """Route visible Workbench actions through Console-owned helpers.
+
+        Args:
+            event: The requested action, identified by ``event.action_id``
+                (e.g. ``"new-tab"``, ``"settings"``,
+                ``CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION``).
+        """
         event.stop()
         action_id = event.action_id
         if action_id == "new-tab":
