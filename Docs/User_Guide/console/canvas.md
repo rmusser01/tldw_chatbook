@@ -9,9 +9,12 @@ Mermaid code fences offer the same **Open in Canvas** and **Open as new**
 actions. The diagram text is escaped into a text-only declaration in a complete
 HTML document. HTML fence identities remain stable when Mermaid fences appear
 before them. Each diagram must contain nonempty valid Unicode within 8 KiB.
-Mermaid execution is not yet enabled: candidate `canvas-v2-mermaid-1` remains
-unavailable while its final release gate is blocked. There is no environment or
-archive override. Ordinary Canvas documents continue to use V1.
+The exact locally qualified `canvas-v2-mermaid-1` subset is enabled as the diagram
+profile. There is no environment or archive override. Ordinary Canvas documents
+without diagrams continue to use V1. Qualification used local Chromium and does
+not claim hosted-CI or cross-engine coverage; see the
+[qualification record](../../Canvas/V2_VERIFICATION.md) for exact scope and
+limitations.
 
 The initial Mermaid subset covers acyclic TD/TB/LR flowcharts and simple sequence
 diagrams with explicit participants, messages and notes. It excludes subgraphs,

@@ -141,8 +141,10 @@ parent/child protocol requires matching snapshot identities; mixed versions or
 snapshots leave Canvas unavailable while the terminal remains usable. Unknown,
 missing, and revoked profiles preserve source/history/export without substituting
 another runtime. Scripts-disabled V2 openings show inert source. The packaged
-`canvas-v2-mermaid-1` remains disabled pending its final release gate; neither an
-environment variable nor a conversation archive can install or enable a profile.
+`canvas-v2-mermaid-1` subset is admitted as the diagram default after local
+Chromium qualification; this does not claim hosted-CI or cross-engine coverage.
+Neither an environment variable nor a conversation archive can install or enable
+a profile.
 
 After revocation, preserve or export the original source/history and explicitly
 create a new Canvas under an allowed profile; never edit an old profile's pinned

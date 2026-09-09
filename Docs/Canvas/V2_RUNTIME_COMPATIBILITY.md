@@ -70,15 +70,21 @@ policy reload. `runtime_snapshot_id()` is the canonical, source-free cross-proce
 identity for parent/child consistency and cache binding; it is not a browser
 credential.
 
-The production catalog admits only `canvas-v1`. Candidate
-`canvas-v2-mermaid-1` remains disabled with `default_diagram_profile: null`:
-the final release gate is blocked by owned-child native SQLite crashes, recorded
-in [V2 verification](V2_VERIFICATION.md). V2 candidate manifest
-SHA-256 is `17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466`.
+The production catalog admits the exact locally qualified
+`canvas-v2-mermaid-1` profile as the diagram default. Its manifest SHA-256 is
+`17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466` and its
+admitted policy identity is
+`cd4f0cdd756732e686b05031ce12c6bd086473cc72ff2f9d58340d8528b40f15`.
 It shares the exact pinned QuickJS engine with V1 and owns separate V2 facade,
 plan, grammar and layout identities. V1 still has zero library bytes and remains
-the creation default when diagrams are absent. Released semantic bytes cannot
-change under this profile ID; changed semantics require a new qualified identity.
+the creation default when diagrams are absent. Unknown, missing, tampered,
+retired or revoked profiles remain source-only without substitution. Applying a
+packaged policy change requires restarting the native host or the served parent
+and all children; no environment variable or archive can enable a profile.
+Qualification used local Chromium and does not claim hosted-CI or cross-engine
+coverage; exact results and limitations are recorded in
+[V2 verification](V2_VERIFICATION.md). Released semantic bytes cannot change
+under this profile ID; changed semantics require a new qualified identity.
 
 ## Mermaid build and private interface
 

@@ -1,7 +1,7 @@
 {
   "build_id": "5cdfdfcf09ed257bce900fa94472cc9ff79eb58506ec86e0a55ce0cd2d7e95d8",
-  "default_diagram_profile": null,
-  "policy_id": "15430aedabd3179e8f0764611b8f6ed129f6b381a9469d5f20109f3b133d22d2",
+  "default_diagram_profile": "canvas-v2-mermaid-1",
+  "policy_id": "cd4f0cdd756732e686b05031ce12c6bd086473cc72ff2f9d58340d8528b40f15",
   "profiles": [
     {
       "executable": true,
@@ -15,7 +15,7 @@
       "reason": null
     },
     {
-      "executable": false,
+      "executable": true,
       "library": {
         "bytes": 175569,
         "files": {
@@ -32,7 +32,7 @@
       "manifest": "mermaid-runtime-manifest.json",
       "manifest_sha256": "17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466",
       "profile_id": "canvas-v2-mermaid-1",
-      "reason": "profile-unavailable"
+      "reason": null
     }
   ],
   "schema_version": 1

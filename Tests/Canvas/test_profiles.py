@@ -186,7 +186,7 @@ def _isolated_static(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return package_root / "static"
 
 
-def test_packaged_snapshot_defers_mermaid_admission_until_release_gate_passes():
+def test_packaged_snapshot_admits_exact_qualified_mermaid_profile():
     snapshot = load_profile_snapshot()
 
     assert (
@@ -195,15 +195,15 @@ def test_packaged_snapshot_defers_mermaid_admission_until_release_gate_passes():
     )
     assert (
         snapshot.policy_id
-        == "15430aedabd3179e8f0764611b8f6ed129f6b381a9469d5f20109f3b133d22d2"
+        == "cd4f0cdd756732e686b05031ce12c6bd086473cc72ff2f9d58340d8528b40f15"
     )
-    assert snapshot.default_diagram_profile is None
+    assert snapshot.default_diagram_profile == "canvas-v2-mermaid-1"
     assert [(record.profile_id, record.executable) for record in snapshot.profiles] == [
         ("canvas-v1", True),
-        ("canvas-v2-mermaid-1", False),
+        ("canvas-v2-mermaid-1", True),
     ]
     assert snapshot.profiles[0].library_bytes == 0
-    assert snapshot.profiles[1].reason == "profile-unavailable"
+    assert snapshot.profiles[1].reason is None
 
 
 def test_owned_snapshot_does_not_reread_mutated_packaged_inputs(tmp_path, monkeypatch):

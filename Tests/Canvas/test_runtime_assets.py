@@ -4,23 +4,22 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tarfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from threading import Thread
 from types import ModuleType
 from typing import Any
 from urllib.request import Request
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = ROOT / "tldw_chatbook" / "Canvas" / "static"
@@ -116,7 +115,7 @@ def _load_mermaid_vendor():
     return module
 
 
-def test_deferred_mermaid_admission_retains_exact_candidate_assets(candidate_snapshot):
+def test_admitted_mermaid_profile_retains_exact_qualified_assets():
     from tldw_chatbook.Canvas.profiles import (
         load_profile_snapshot,
         resolve_profile,
@@ -125,16 +124,16 @@ def test_deferred_mermaid_admission_retains_exact_candidate_assets(candidate_sna
 
     base = load_profile_snapshot()
     candidate = "canvas-v2-mermaid-1"
-    assert not resolve_profile(
+    assert resolve_profile(
         base, operation="load", parent_profile=candidate, has_diagrams=True
     ).executable
-    assert base.default_diagram_profile is None
+    assert base.default_diagram_profile == candidate
     assert next(
         row for row in base.profiles if row.profile_id == candidate
     ).manifest_sha256 == (
         "17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466"
     )
-    owned = runtime_assets_for(candidate_snapshot, candidate)
+    owned = runtime_assets_for(base, candidate)
     library = json.loads(owned.library_files["mermaid-subset.json"])
     assert library["source_bytes"] == len(library["source"].encode())
     assert (
@@ -420,7 +419,7 @@ def test_profile_asset_loader_rejects_unsafe_manifest_name() -> None:
 def test_runtime_loader_fails_closed_with_a_bounded_content_free_diagnostic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
 ) -> None:
-    import tldw_chatbook.Canvas.runtime_assets as runtime_assets
+    from tldw_chatbook.Canvas import runtime_assets
 
     package_root = tmp_path / "Canvas"
     shutil.copytree(STATIC, package_root / "static")
@@ -529,7 +528,7 @@ def test_download_rejects_redirect_before_target_request(
     requests = {"redirect": 0, "target": 0}
 
     class RedirectHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        def do_GET(self) -> None:
             if self.path == "/redirect":
                 requests["redirect"] += 1
                 self.send_response(302)

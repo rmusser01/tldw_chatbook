@@ -1,6 +1,127 @@
-# Canvas V2 Mermaid qualification — 2026-09-07
+# Canvas V2 Mermaid qualification
 
-Task31941, ADR124. **Release gate blocked; V2 remains disabled.** The corrected
+Task31941, ADR124. **Required local gates passed on 2026-09-08; the exact V2
+profile is admitted. Independent review is pending.** The historical withdrawn
+admission and SQLite investigation below remain unchanged evidence, not passing
+results. This is local qualification, not hosted CI or merge approval.
+
+## Current qualification — 2026-09-08
+
+The separately reviewed SQLite prerequisite is complete; see
+[acceptance closeout](../superpowers/reviews/2026-09-08-sqlite-acceptance-closeout.md).
+Fresh candidate and admitted selections now pass against the unchanged immutable
+`canvas-v2-mermaid-1` executable assets:
+
+- Build: `5cdfdfcf09ed257bce900fa94472cc9ff79eb58506ec86e0a55ce0cd2d7e95d8`.
+- Manifest: `17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466`.
+- Admitted policy: `cd4f0cdd756732e686b05031ce12c6bd086473cc72ff2f9d58340d8528b40f15`.
+
+Only the catalog's diagram default, policy identity, V2 execution flag and refusal
+reason changed. V1 remains executable and the default without diagrams. No
+manifest, library, worker, renderer, engine, quota, schema, archive format or
+generated-code privilege changed. Unknown/revoked profiles remain source-only.
+
+| Fresh stage | Result |
+| --- | --- |
+| Required five-file Chromium candidate selection | 176 passed, 2 optional browser skips, 1 warning, 475.87s |
+| Complete Canvas candidate selection plus CI workflow contracts | 1383 passed, 2 optional browser skips, 2 warnings, 661.78s |
+| Admission assertions against disabled catalog | 2 expected failures, 1 warning, 0.88s |
+| Same assertions after exact catalog admission | 2 passed, 1 warning, 0.73s |
+| Complete admitted selection plus CI workflow contracts | 1383 passed, 2 optional browser skips, 1 warning, 767.12s |
+| Touched-file Ruff, formatter and whitespace checks | Passed |
+
+Root followed every pytest invocation through process exit. Both integrated JUnit
+records contain 1385 cases, zero errors/failures and only missing Firefox/WebKit
+skips. Their collected node identities differ only by the two intentional
+admission-test renames. No required Chromium or offline rebuild gate was skipped.
+The admitted assertions load the real packaged snapshot and its verified assets,
+not the test-only candidate snapshot. The RED failed on the disabled policy and
+non-executable profile, not on setup or environment errors.
+
+### Reproduction and retained evidence
+
+Both integrated runs use the complete broader selection in the historical
+Commands section below, plus `Tests/CI/test_github_actions_test_workflow.py`.
+The first selection is the exact five-file browser command there. All use `-x`
+for fail-stop, except the intentional two-node RED/GREEN commands, and unique
+owned `--basetemp`, pytest cache and JUnit paths. The evidence root is
+`/private/tmp/mermaid-qualification.lga1Y7`; retain it rather than reusing its
+basetemp paths. Each phase has a full `*-invocation.json`, console `*.log` and
+JUnit `*.xml`: `browser-candidate`, `canvas-candidate`, `admission-red`,
+`admission-green`, and `canvas-admitted`. Browser output snapshots have the
+matching `*-playwright` directory; earlier output is separately preserved as
+`pre-qualification-playwright` and is not attributed to these runs.
+
+Candidate runs started at clean commit `2ed6ce926f1b78a452b2cb2fd9cb66179996e0e4`.
+The admitted source delta is `admission-diff.patch`, SHA-256
+`89b67f053796d27d751fb8057cd3103f514c62603cc34617a44b02e304b50084`; root verified
+that this exact diff remained unchanged through the admitted run. It contains
+two admission-test updates, mechanical test-only lint cleanup, and the four
+catalog policy fields. Complete command arguments and environment are in the
+invocation receipts. The per-command environment uses:
+
+- `TLDW_CANVAS_RUNTIME_ARCHIVE_DIR=/private/tmp/mermaid-qualification.lga1Y7/runtime-inputs`.
+- `TLDW_CANVAS_MERMAID_INPUT_DIR=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/canvas-mermaid-inputs-4i3rl_al`.
+- `TLDW_CANVAS_CHROMIUM_EXECUTABLE=/Users/macbook-dev/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell`.
+- `PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/canvas-v1/packages/tldw_profile_core/src`.
+
+The existing interpreter is Python 3.12.11; Node is 24.6.0, Chromium
+151.0.7922.34, Playwright 1.58.0, Textual 8.2.8, aiohttp 3.13.5 and Ruff 0.16.6
+on macOS 26.5.2 ARM64. Browser binary SHA-256 is
+`7687bff7cb2db075f250e6d5848bbc8838cac3802ac3952a899c574f8eccab45`.
+Repository pre-import pytest isolation supplies owned config/data; no ad hoc
+application import, actual provider or user database is involved.
+
+All eight declared Mermaid/Unicode inputs matched byte sizes and SHA-256. The
+earlier QuickJS input cache was empty, so only its four already-pinned HTTPS
+archives were restored into the new owned cache and authenticated with declared
+SHA-512 SRI. No package installation, lifecycle script, dependency update or
+runtime network permission was introduced. Both vendor builders regenerated
+twice offline with exact checkout-byte equality. Each integrated run passed 39
+runtime-assets cases, 34 Chatbook archive cases, 3 wheel/sdist cases and 19 CI
+workflow contract cases. Hosted CI itself was not run in this continuation.
+
+The candidate integration also emitted a compiler-test invalid-escape
+SyntaxWarning; the admitted run emitted only the existing Requests dependency
+compatibility warning. Neither is interpreted as a passing security/resource
+refusal. Three Ruff findings in the touched asset-test file were reproduced
+against the starting commit and corrected mechanically; final static checks
+passed without new suppressions or rule waivers. No full repository sweep or
+cross-engine qualification is claimed.
+
+### Visual, resource and lifecycle checks
+
+Root inspected all 16 wide/narrow candidate screenshots for branch/rejoin, notes,
+both shipped guide examples, four diagrams, mixed HTML/diagrams, Unicode and the
+near-limit chain. Tests separately exercise Count interactions, far-right scroll
+reachability, first/last SVG visibility, inherited styles and explicit restyling.
+A tall or horizontally scrolled screenshot alone does not establish complete
+diagram visibility. Local Unicode glyph/wrapping observations do not establish
+cross-font pixel parity or full bidi typography. The separate visual note is
+`browser-candidate-visual-review.md` in the evidence root.
+
+The eight standalone fresh-context load-to-ready samples ranged 79.745–103.937ms.
+The near-limit chain took 103.937ms standalone, 85.352ms in candidate integration,
+and 104.622ms in admitted integration. These are individual observed samples, not
+percentiles, cold-machine startup, CPU-only timings or hard real-time guarantees.
+Its 270-byte HTML has 16 nodes/15 edges, 152×1920 logical geometry, 63 SVG elements
+and 410 startup patches. The admitted direct Node/QuickJS library+layout sample
+was 65.892ms, with 165599 evaluated library bytes, 768076 guest bytes, 2318 work
+units, 9244 output bytes and area 291840. Component heap is not complete guest DOM
+memory or browser RSS. Mandatory browser engine quotas and worker termination
+controls passed in all applicable selections without changed limits.
+
+The final admitted run includes the actual-child confirmed unsent repair
+(24.30s call) and separate parent/all-children same-origin restart/revocation
+(68.09s call), alongside native/served create-update, two-browser isolation,
+archive recovery and package closure. Their assertions retain the distinctions
+described below: source acceptance versus preview success, explicit previous
+revision versus silent fallback, and a confirmed composer draft versus sending.
+Independent task and whole-branch review remain before Backlog completion.
+
+## Historical qualification — 2026-09-07, admission withdrawn
+
+At that checkpoint, **the release gate was blocked and V2 disabled.** The corrected
 candidate selection passed, but the final admitted selection failed four tests.
 Admission was rolled back; no release qualification is claimed. This record supplements the historical
 [V1 verification](V1_VERIFICATION.md) and [Mermaid spike](V2_MERMAID_SPIKE.md).
