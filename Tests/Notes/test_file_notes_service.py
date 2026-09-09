@@ -29,7 +29,9 @@ from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     LARGE_FILE_EXCERPT_CHARS,
     MAX_FILE_BYTES,
     MAX_FILE_CHARS,
+    SCAN_PROGRESS_INTERVAL,
     FileNotesService,
+    ScanCancelled,
 )
 
 
@@ -1251,10 +1253,10 @@ def test_close_waits_for_active_operation_before_closing_replica(
     release_scan = Event()
     real_walk = service._walk_candidates
 
-    def delayed_walk():
+    def delayed_walk(**kwargs):
         scan_started.set()
         release_scan.wait(5)
-        return real_walk()
+        return real_walk(**kwargs)
 
     monkeypatch.setattr(service, "_walk_candidates", delayed_walk)
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -1268,3 +1270,57 @@ def test_close_waits_for_active_operation_before_closing_replica(
 
     with pytest.raises(sqlite3.ProgrammingError):
         replica.list_deleted(str(root.resolve()))
+
+
+def _wide_tree(root: Path, directories: int, files_per_directory: int) -> int:
+    """Create a tree and return how many entries a walk will report."""
+    root.mkdir(parents=True, exist_ok=True)
+    entries = directories
+    for directory in range(directories):
+        child = root / f"dir{directory:03d}"
+        child.mkdir()
+        for index in range(files_per_directory):
+            (child / f"note{index:03d}.md").write_text("body", encoding="utf-8")
+        entries += files_per_directory
+    return entries
+
+
+def test_scan_stops_between_directories_and_releases_the_lock(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32121: an abandoned scan must let go of the operation lock.
+
+    Holding it to the end of an accidental home-directory scan is what
+    wedged every later folder change for the rest of the session.
+    """
+    root = tmp_path / "notes"
+    _wide_tree(root, directories=5, files_per_directory=2)
+    service = FileNotesService(root, replica)
+
+    with pytest.raises(ScanCancelled):
+        service.scan(should_cancel=lambda: True)
+
+    assert service._operation_lock.acquire(blocking=False)
+    service._operation_lock.release()
+    # Uncancelled, the same service still scans normally.
+    assert len(service.scan().entries) == 10
+
+
+def test_scan_reports_the_entries_it_has_walked(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32121: the busy row's count comes from here."""
+    root = tmp_path / "notes"
+    expected = _wide_tree(root, directories=3, files_per_directory=100)
+    service = FileNotesService(root, replica)
+
+    seen: list[int] = []
+    result = service.scan(on_progress=seen.append)
+
+    assert result.status == "ok"
+    assert seen, "a scan of 300+ entries reported no progress at all"
+    assert seen == sorted(seen)
+    assert seen[-1] == expected
+    assert max(seen) >= SCAN_PROGRESS_INTERVAL

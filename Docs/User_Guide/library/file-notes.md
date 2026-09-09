@@ -45,11 +45,24 @@ Using compact **Back to navigator** does not reset it.
 
 ![File Notes workspace](../images/library/file-notes.svg)
 
+- **Source strip** (above the workspace) — **Library notes** | **Folder
+  files**, with **Folder files** marked as the selected source. At wide sizes
+  the strip stays visible while you are in Folder files: it is a mode of
+  Notes, not a separate screen, and **Library notes** is the way back. On
+  compact terminals the strip collapses to a **‹ Library / Notes** cue
+  instead.
+- **Library navigation** (left of the workspace) — the same Library rail as
+  the rest of the screen, so you can leave for Media, Prompts or Skills
+  without going back through Notes first. Its grip collapses it.
 - **Folder link row** (top) — before setup the status reads "Choose a notes
-  folder." with buttons **Details** and **Choose folder…**. Once linked, the
-  status becomes "Linked — \<folder\>" (or "Checking — …" / "Offline — …"
-  when the folder can't be verified) and the button relabels to **Change…**.
-  **Details** opens the read-only "File Notes folder details" dialog.
+  folder." with buttons **Details** and **Choose folder…**, and the line
+  under it explains the mode: "Folder files edits Markdown files in a folder
+  on disk, in place. Nothing is copied into the Library." When
+  `[notes] sync_directory` is set, a **Use \<folder\>** button offers that
+  folder directly. Once linked, the status becomes "Linked — \<folder\>"
+  (or "Checking — …" / "Offline — …" when the folder can't be verified) and
+  the button relabels to **Change…**. **Details** opens the read-only "File
+  Notes folder details" dialog.
 - **Folder navigator** (left) — a **New** action, a "File contents…" search
   input, the **Files** tree of everything under the linked folder, and a
   **Search results** tree that appears only while a query is active. Its grip
@@ -77,15 +90,26 @@ Using compact **Back to navigator** does not reset it.
 | **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
 | **Cancel** (folder change) | Appears beside **Change…** only while a folder change is running. Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
+| **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
+| **Choose another** (folder change) | Appears with **Keep waiting**. Abandons the change, keeps the folder you already had, and reopens the folder picker in one step |
+| **Use \<folder\>** | Appears only before a folder is linked, and only when `[notes] sync_directory` is set in config.toml. Links that folder without opening the picker |
 
 While a folder change runs, the folder line reads `Changing folder…`. If it
-is still going after about three seconds it becomes `Changing folder… ·
-still working · Cancel`, and after 30 seconds it gives up on its own with
-"Folder change timed out · previous folder kept. Try again or choose a
-different folder." Either way the previously linked folder is untouched —
-unless the change had already finished saving when you cancelled, in which
-case the status says "Folder change finished before it could be stopped ·
-now linked to the new folder." and the new folder is the one in use.
+is still going after about three seconds it starts reporting how far the
+scan has got — `Changing folder… · 1,240 entries so far` (or `· still
+working` before the first count) — and **Keep waiting** and **Choose
+another** appear beside **Cancel**. After 30 seconds the change gives up on
+its own and the folder line itself reads "Folder change timed out · previous
+folder kept. Try again or choose a different folder." That reason stays on
+the folder line until you start another folder change. Either way the
+previously linked folder is untouched — unless the change had already
+finished saving when you cancelled, in which case the status says "Folder
+change finished before it could be stopped · now linked to the new folder."
+and the new folder is the one in use.
+
+Abandoning a folder change — by **Cancel**, by **Choose another**, or by
+letting it time out — also stops the folder scan itself. Picking a different
+folder afterwards works normally; you do not have to restart the app.
 
 ### Edit and Manage
 
@@ -430,3 +454,11 @@ claim on this page changed.)*
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a folder
 change shows "still working · Cancel" after three seconds, times out after
 30, and never blocks Escape, the back cue or Quit).*
+
+*Verified against fix/library-notes-file-notes — 2026-09-09 (task-32121: an
+abandoned or timed-out folder change stops its scan, so the next folder still
+links normally; the timeout reason is painted on the folder line and stays
+there; a slow scan reports its entry count and offers Keep waiting / Choose
+another. task-32136: Folder files keeps the Library rail and the source
+strip at wide sizes, and its empty state explains the mode and offers the
+configured `[notes] sync_directory` folder.)*
