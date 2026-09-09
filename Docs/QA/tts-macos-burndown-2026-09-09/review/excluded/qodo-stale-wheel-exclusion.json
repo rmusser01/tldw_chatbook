@@ -1,0 +1,19 @@
+{
+  "qualification": "excluded_from_final_source_matched_release_evidence",
+  "reason": "Stale setuptools build cache retained a deleted Library Python module; exact wheel/source file-set verification failed before an incorrectly sequenced controller launch. Runtime receipts remain preserved.",
+  "extra_module": "tldw_chatbook/Widgets/Library/library_media_reader_shell.py",
+  "extra_sha256": "0a60284ddb8fce2f76a0ff43b27cc9717bbb693cf859a82694cd575c6957c0de",
+  "processes": {
+    "29155": "absent",
+    "29157": "absent",
+    "29291": "absent",
+    "29326": "absent",
+    "29437": "absent",
+    "29448": "absent",
+    "29591": "absent",
+    "29600": "absent",
+    "29678": "absent",
+    "29699": "absent",
+    "29799": "absent"
+  }
+}

@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/verify_live_tts_content.py", line 167, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/verify_live_tts_content.py", line 107, in main
+    model = WhisperModel(
+            ^^^^^^^^^^^^^
+  File "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/faster_whisper/transcribe.py", line 689, in __init__
+    self.model = ctranslate2.models.Whisper(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Cannot load the vocabulary from the model directory

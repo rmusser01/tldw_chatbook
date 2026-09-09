@@ -1,0 +1,62 @@
+"""Serialized real playback/cancellation controls for the final installed wheel."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import time
+
+root = Path('/private/tmp/tts-macos-burndown')
+source = Path('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown')
+python = root / 'final-wheel-venv/bin/python'
+package = root / 'final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook'
+asr = root / 'languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120'
+receipt = root / 'installed-wheel-matrix.json'
+assert not receipt.exists()
+output_root = root / 'installed-wheel'
+output_root.mkdir(exist_ok=False)
+env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
+env.pop('PYTHONPATH', None)
+results = []
+for engine, device, audio_format in [('pytorch', 'cpu', 'wav'), ('pytorch', 'mps', 'wav'), ('onnx', 'cpu', 'mp3')]:
+    name = f'{engine}-{device}-{audio_format}'
+    output = output_root / name
+    command = [str(python), '-I', '-B', str(source / 'scripts/validate_live_tts.py'),
+               '--engine', engine, '--device', device, '--voice', 'af_heart',
+               '--language', 'en-us', '--format', audio_format,
+               '--expected-package-root', str(package), '--output', str(output),
+               '--scenarios', 'playback,cancel', '--repeats', '1', '--play-audio']
+    if engine == 'pytorch':
+        command += ['--model', str(root / 'languages/kokoro-model/kokoro-v1_0.pth'),
+                    '--voice-dir', str(root / 'languages/kokoro-model/voices')]
+    else:
+        command += ['--model', '/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx',
+                    '--voices', '/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin']
+    result = {'name': name, 'command': command, 'started': time.time()}
+    print('START', name, flush=True)
+    with (output_root / f'{name}-parent.log').open('w') as log:
+        child = subprocess.Popen(command, cwd=output_root, env=env, stdout=log, stderr=subprocess.STDOUT)
+        result['parent_pid'] = child.pid
+        result['runtime_exit'] = child.wait()
+    evidence = output / 'evidence.json'
+    if evidence.exists():
+        data = json.loads(evidence.read_text())
+        result.update(status=data['status'], cleanup_joined=data.get('cleanup_joined'),
+                      source_unchanged=data.get('source_unchanged'), failure=data.get('failure'))
+    if result['runtime_exit'] == 0:
+        content_command = [str(python), '-I', '-B', str(source / 'scripts/verify_live_tts_content.py'),
+                           '--evidence', str(evidence), '--model', str(asr), '--language', 'en',
+                           '--output', str(output / 'content.json')]
+        result['content_command'] = content_command
+        with (output / 'content.log').open('w') as log:
+            child = subprocess.Popen(content_command, cwd=output_root, env=env, stdout=log, stderr=subprocess.STDOUT)
+            result['asr_pid'] = child.pid
+            result['content_exit'] = child.wait()
+        if (output / 'content.json').exists():
+            content = json.loads((output / 'content.json').read_text())
+            result.update(content_status=content['status'], successful_clips=len(content['clips']))
+    result['finished'] = time.time()
+    results.append(result)
+    receipt.write_text(json.dumps(results, indent=2) + '\n')
+    print('RESULT', json.dumps(result), flush=True)
+    if result['runtime_exit'] or result.get('content_exit'):
+        raise SystemExit(1)

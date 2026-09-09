@@ -1,0 +1,347 @@
+[
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-es-final-01/application.log",
+    "sha256": "4a7402c8494c34f116b0ae5a6d6f5310751e6e2f52b58b6ed6804ee34430b297",
+    "bytes": 4072
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-es-final-01/content.log",
+    "sha256": "6810aa3d10e64040cf714964e229baa7b8b9be0d4da6aa63a8d467db5447f688",
+    "bytes": 1692
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-es-final-01/worker.log",
+    "sha256": "dc549ca83328d267b677859bbc66421d99bfd47b35214a84ee974538460e8f46",
+    "bytes": 6449
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-fr-final-01/application.log",
+    "sha256": "df67c32cd17a07796ce7c12d92490cbf983144520dbe9a6227bef873f5908eda",
+    "bytes": 4072
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-fr-final-01/content-medium-final-02.log",
+    "sha256": "ca258db36810a210d8a21002d884c910bc7bade47ed83e701910348a0b6ab195",
+    "bytes": 1618
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-fr-final-01/content-medium.log",
+    "sha256": "b1e3d1aa08375ce1e38d18dbc07fb96999db5c7046ed4547807d82303ed710a5",
+    "bytes": 730
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-fr-final-01/content.log",
+    "sha256": "b6c7c7e60bf7af2b6a2e02cd23acde6cd6b59155292fe19c65a2bbddebac7984",
+    "bytes": 1690
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-fr-final-01/worker.log",
+    "sha256": "985e983270b4f9cf66baa620abb113d4202d8e69e5244396b0b8e6fdb86e8efd",
+    "bytes": 6449
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01/application.log",
+    "sha256": "df7e29c8b0fedbc85714c3397255a3d8ef9b23de4c72a6b5b009f35c42393979",
+    "bytes": 4072
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01/content-medium-final-02.log",
+    "sha256": "6175a2ec5f22e1613c6420dfda07cae1f5a854554f14837434cda053d3b4d544",
+    "bytes": 2584
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01/content-medium.log",
+    "sha256": "b1e3d1aa08375ce1e38d18dbc07fb96999db5c7046ed4547807d82303ed710a5",
+    "bytes": 730
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01/content.log",
+    "sha256": "4024e5f824604504305cea495bbe175f69aa0eeb02c6bfc49fd1471528030b8d",
+    "bytes": 2574
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01/worker.log",
+    "sha256": "47bee7b12f9840181dd4589ade919130a6629a9a8fd1a98e8f39ccaeb88e1fb1",
+    "bytes": 6449
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-it-final-01/application.log",
+    "sha256": "3208dad88e65d48e6d842310994ecc361aa87805d02945480422f578ffcfc036",
+    "bytes": 4072
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-it-final-01/content.log",
+    "sha256": "fcef6c3b21a199b00c4bb9689578f553933a8e8d5125afe7eb61d24f5294bba3",
+    "bytes": 1532
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-it-final-01/worker.log",
+    "sha256": "be93ecd3372c34da2775b9bc90e763b171eaa1f2ba5e8e1c79d86cf1c08f2ada",
+    "bytes": 6449
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-pt-br-final-01/application.log",
+    "sha256": "7fa168458d99b6b4355edd986ac805593e6e0df6ddb698cf42dac115535bd5f9",
+    "bytes": 4081
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-pt-br-final-01/content-medium-final-02.log",
+    "sha256": "cbac0f4deade1b3996e311b1e877a1bc203cff8fc3707f5657d24f66222948c2",
+    "bytes": 1726
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-pt-br-final-01/content-medium.log",
+    "sha256": "b1e3d1aa08375ce1e38d18dbc07fb96999db5c7046ed4547807d82303ed710a5",
+    "bytes": 730
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-pt-br-final-01/content.log",
+    "sha256": "845a9a15103765a24b4b184f288cc112745e38a147b4c0536b32cd5e00a7ef7b",
+    "bytes": 1663
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-pt-br-final-01/worker.log",
+    "sha256": "e001e96f1668996d0d1a30b22672707fc580e7519f3e3c9b5bf51b137237b9d7",
+    "bytes": 6455
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-01/application.log",
+    "sha256": "d128f8505ee17d3a573d11f0d1e8e9075d61a73ee1d5d0031be46340bd361508",
+    "bytes": 4072
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-01/worker.log",
+    "sha256": "53d40b2a96a0d872c0232ca87342d5b609f131afeb0bfa1e861bd75831462b69",
+    "bytes": 22617
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-zh-final-01/application.log",
+    "sha256": "6407ed46480d3e471f11a5388f275c1d1eb079d2bbbd64e3628fe5bda39c83c6",
+    "bytes": 4072
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-zh-final-01/content-medium-final-02.log",
+    "sha256": "2c28273f7975041874853abe1e45f7941e21bdf5eb764f77489f2281a627da96",
+    "bytes": 1615
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-zh-final-01/content-medium.log",
+    "sha256": "b1e3d1aa08375ce1e38d18dbc07fb96999db5c7046ed4547807d82303ed710a5",
+    "bytes": 730
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-zh-final-01/content.log",
+    "sha256": "af39ac0ad3320e37e2a31ff78d8e5e54bbda1763dd801cb8915df76eadda1dc5",
+    "bytes": 1438
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-zh-final-01/worker.log",
+    "sha256": "d4ebe7365ba1401ba820e666f778408c76698878c93b682e88fc25ecaed8f222",
+    "bytes": 7553
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-es-final-01/application.log",
+    "sha256": "d739eba23ace1489ee624b1df339ddf77166826abd79f83e383699f33eaacd1b",
+    "bytes": 17549
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-es-final-01/content.log",
+    "sha256": "81d06e5d5aa1c7181880c64602005d281c67f918200f3d5ab86da96617ceb151",
+    "bytes": 1698
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-es-final-01/worker.log",
+    "sha256": "85d635981cccef51684f905c87acb24e95123fc9cd402e78c22e7ab3864095fa",
+    "bytes": 307
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-01/application.log",
+    "sha256": "5a2f406d6ce5ce034045131b71345fd417784a6c54253df06dcfce36fc5a8073",
+    "bytes": 11809
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-01/worker.log",
+    "sha256": "38be2f0fbb1d6a985e7f91e77c2e9e7533cabf7bc232f1e41c6127fb75946099",
+    "bytes": 1459
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-hi-final-01/application.log",
+    "sha256": "b2daefe583272d94765e460259345f16531972acb70f6c01a2d8eb45597e3659",
+    "bytes": 17553
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-hi-final-01/content-medium-final-02.log",
+    "sha256": "e97b7d0bdb08b87998e479339db7e171404c9928eb68431bec95964baf85bed3",
+    "bytes": 2610
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-hi-final-01/content-medium.log",
+    "sha256": "b1e3d1aa08375ce1e38d18dbc07fb96999db5c7046ed4547807d82303ed710a5",
+    "bytes": 730
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-hi-final-01/content.log",
+    "sha256": "ac8d042fa4d39d3b41688a62db70e4da88d9cc41877f6ec4f8b9404474a49f39",
+    "bytes": 2572
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-hi-final-01/worker.log",
+    "sha256": "85d635981cccef51684f905c87acb24e95123fc9cd402e78c22e7ab3864095fa",
+    "bytes": 307
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-it-final-01/application.log",
+    "sha256": "87be7d3071aa94bc3aa87369bb6253694ff87040e7cd3c7131a225dc8ceb2800",
+    "bytes": 17549
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-it-final-01/content.log",
+    "sha256": "27060315485b468f53245a622036ede5742df7b7ae379105a1210434c119e52c",
+    "bytes": 1646
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-it-final-01/worker.log",
+    "sha256": "85d635981cccef51684f905c87acb24e95123fc9cd402e78c22e7ab3864095fa",
+    "bytes": 307
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-pt-br-final-01/application.log",
+    "sha256": "df3e4077e60e3cb31318aa892c934140f362f62dbc4a0fb16abcc5c3982cb5b9",
+    "bytes": 17573
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-pt-br-final-01/content.log",
+    "sha256": "1864c7b731f71957ab1bed8eeaee27c2e34b19b2ae74deb33f4de4313f22397d",
+    "bytes": 1666
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-pt-br-final-01/worker.log",
+    "sha256": "85d635981cccef51684f905c87acb24e95123fc9cd402e78c22e7ab3864095fa",
+    "bytes": 307
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-01/application.log",
+    "sha256": "e3008a48bc7b2c842ff92ff7cbfc97cea95db96498397741f24ef371654d6469",
+    "bytes": 17554
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-01/content.log",
+    "sha256": "0c18c658cdc6d994b65357f1150f3a90815a992f72260a039b04883e0117d843",
+    "bytes": 3088
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-01/worker.log",
+    "sha256": "be369a2d48ad8e6ff7d32ede360d9f87781dfa814966d12261918f9c75c3edb2",
+    "bytes": 891
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-zh-final-01/application.log",
+    "sha256": "44c95740da8e8a18387fbb68fc977f8ec9a3fe4a8384a322e5bc696763aeb2e6",
+    "bytes": 11812
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-zh-final-01/worker.log",
+    "sha256": "38be2f0fbb1d6a985e7f91e77c2e9e7533cabf7bc232f1e41c6127fb75946099",
+    "bytes": 1459
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02/application.log",
+    "sha256": "d88d8879379b16502a026b43595ae62503acfe65d4156c676943e0c1c685a0c8",
+    "bytes": 17553
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02/content-medium-final-02.log",
+    "sha256": "0e2c8283af8a00d96fc775963d98f1df2262a5e4000825a901ba8f814f5bd496",
+    "bytes": 1708
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02/content-medium.log",
+    "sha256": "b1e3d1aa08375ce1e38d18dbc07fb96999db5c7046ed4547807d82303ed710a5",
+    "bytes": 730
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02/content.log",
+    "sha256": "4debc7e19c29f503ffe3872ddc65ea0c99d549966b26edf363fe2f2bd1bd924f",
+    "bytes": 1696
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02/worker.log",
+    "sha256": "85d635981cccef51684f905c87acb24e95123fc9cd402e78c22e7ab3864095fa",
+    "bytes": 307
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-02/application.log",
+    "sha256": "a6742eee487711a0062e1e65ce1918908c040b77322d38de00b1e8f274f6bf65",
+    "bytes": 17709
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-02/content-medium-final-02.log",
+    "sha256": "e7923aafb039fbd0d4c17f1f6bfee784baf209efcf09c90612b5df2c2f67a014",
+    "bytes": 1834
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-02/content-medium.log",
+    "sha256": "b1e3d1aa08375ce1e38d18dbc07fb96999db5c7046ed4547807d82303ed710a5",
+    "bytes": 730
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-02/content.log",
+    "sha256": "1896bfe3b01dd35aafeb727a7850e6c207546427a0e5260df09438b53f5625d3",
+    "bytes": 1954
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-02/worker.log",
+    "sha256": "85d635981cccef51684f905c87acb24e95123fc9cd402e78c22e7ab3864095fa",
+    "bytes": 307
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-zh-final-02/application.log",
+    "sha256": "1fcbfb7ddada21b97e10509dafe52e959a45edbea0db91e13544b4b9f4e4b798",
+    "bytes": 17717
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-zh-final-02/content-medium-final-02.log",
+    "sha256": "12eeafb550870aaa1ccbed2737dc3833cdd456329e4cbe8600a01cc16f912b91",
+    "bytes": 1590
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-zh-final-02/content-medium.log",
+    "sha256": "b1e3d1aa08375ce1e38d18dbc07fb96999db5c7046ed4547807d82303ed710a5",
+    "bytes": 730
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-zh-final-02/content.log",
+    "sha256": "ab35e4a7f799eaacfb0507c7c986f836abc82e02ad25234e1595937ea8ca859a",
+    "bytes": 1590
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-zh-final-02/worker.log",
+    "sha256": "e4f26f002c51a1289c5a33d16f5274932bd4744cad37393202834b64cb6d6762",
+    "bytes": 1406
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-02/application.log",
+    "sha256": "f8ad53791542f4ed7c1d9e664dc3d7f6163e9ef1f2e084bd8e120a55a5b9f440",
+    "bytes": 4072
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-02/content-medium-final-02.log",
+    "sha256": "21172bd5a3ae3dd0f8da9bc0c06d0bda37742ae0e6af798fce529e24592b97fd",
+    "bytes": 1852
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-02/content-medium.log",
+    "sha256": "b1e3d1aa08375ce1e38d18dbc07fb96999db5c7046ed4547807d82303ed710a5",
+    "bytes": 730
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-02/content.log",
+    "sha256": "af3cbdfde521268dca34577a6c0a1ca53522798c02d0a4dd178376ff70bc5578",
+    "bytes": 1846
+  },
+  {
+    "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-02/worker.log",
+    "sha256": "16138669db699ab7549ebb03e52c919f5ce5664ae9ae01320f5795e6e53a70fa",
+    "bytes": 6452
+  }
+]

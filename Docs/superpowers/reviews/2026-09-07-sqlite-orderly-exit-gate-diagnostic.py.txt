@@ -1,0 +1,274 @@
+"""Real lock and process-exit gates for retained TTS SQLite authority."""
+
+from __future__ import annotations
+
+import json
+import os
+import select
+import signal
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_store_lock import (
+    ProfileStoreLease,
+    ProfileStoreLockMode,
+)
+
+
+def _other_process_can_begin_write(path: Path) -> bool:
+    """Only successful write admission or exact SQLITE_BUSY is evidence."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            """
+import sqlite3, sys
+connection = sqlite3.connect(sys.argv[1], timeout=0.05, isolation_level=None)
+try:
+    connection.execute('BEGIN IMMEDIATE')
+except sqlite3.OperationalError as error:
+    print(error.sqlite_errorcode)
+else:
+    print(0)
+    connection.rollback()
+finally:
+    connection.close()
+""",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    code = int(result.stdout.strip())
+    assert code in {0, sqlite3.SQLITE_BUSY}, result.stdout
+    return code == 0
+
+
+@pytest.mark.asyncio
+async def test_closing_one_repository_preserves_sibling_writer(tmp_path):
+    """Closing the first proof must not release the second connection's lock."""
+    path = tmp_path / "profiles.sqlite3"
+    first = TTSProfileRepository(path)
+    second = TTSProfileRepository(path)
+    await first.open()
+    await second.open()
+    await second._submit_operation(
+        lambda connection: connection.execute("BEGIN IMMEDIATE")
+    )
+    try:
+        assert not _other_process_can_begin_write(path)
+        await first.close()
+        assert not _other_process_can_begin_write(path)
+    finally:
+        await second._submit_operation(lambda connection: connection.rollback())
+        await second.close()
+        await first.close()
+
+
+_RETAINED_REPOSITORY_CHILD = """
+import asyncio, atexit, json, os, sys
+from pathlib import Path
+import Tests.conftest  # Repository pre-import configuration isolation.
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+
+# The app retains its repository on failed close. Keep the actual owner at
+# module scope through asyncio.run and ordinary interpreter finalization.
+repository = TTSProfileRepository(Path(sys.argv[1]))
+
+def observe_before_interpreter_finalizers():
+    print(json.dumps({
+        "phase": "atexit",
+        "sql_retained": repository._connection is not None,
+        "lease_retained": repository._lease is not None,
+        "worker_retained": repository._executor is not None,
+        "wal_exists": Path(sys.argv[1] + "-wal").exists(),
+        "shm_exists": Path(sys.argv[1] + "-shm").exists(),
+    }), flush=True)
+
+atexit.register(observe_before_interpreter_finalizers)
+
+def prepare_helper_shape():
+    from tldw_chatbook.DB.private_sqlite_process import (
+        HELPER_ADMISSION, HelperLease, OperationDeadline,
+    )
+    from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
+    deadline = OperationDeadline(None)
+    with HELPER_ADMISSION.reserve(
+        transient=1, retained=1, deadline=deadline,
+    ) as reservation:
+        helper = HelperLease.start(
+            PrepareRequest(sys.argv[1], False, False, False),
+            operation="tts_exact_current", reservation=reservation,
+            deadline=deadline,
+        )
+        assert helper.initial_response["status"] == "ok"
+        assert helper.request("tts_pin_sidecars", deadline=deadline)["status"] == "ok"
+        # Only remove the legacy ownership difference, while every pathname
+        # still names the exact owned cohort and no sibling transaction exists.
+        owner = repository._connection
+        owner._evidence_connection.close()
+        owner._evidence_connection = None
+        for descriptor in owner.sidecar_fds.values():
+            os.close(descriptor)
+        owner.sidecar_fds.clear()
+        os.close(owner.file_fd)
+        owner.file_fd = -1
+        # Recheck after the last legacy original-inode close. The SQL handle,
+        # directory-only FD, SHARED lease and worker remain in their real owner.
+        assert helper.request("tts_recheck", deadline=deadline)["status"] == "ok"
+        repository._gate_helper = helper
+        reservation.handoff_retained(helper)
+
+def lose_helper():
+    from tldw_chatbook.DB.private_sqlite_process import (
+        HELPER_ADMISSION, HelperProtocolError, HelperUnavailableError, OperationDeadline,
+    )
+    helper = repository._gate_helper
+    helper.retain_terminal_owner()
+    helper._child.kill()
+    helper._child.wait(timeout=5)
+    try:
+        helper.request("tts_recheck", deadline=OperationDeadline(None))
+    except (HelperUnavailableError, HelperProtocolError):
+        pass
+    else:
+        raise AssertionError("dead helper still authorized recheck")
+    helper.close()
+    assert helper.cleanup_state == "terminal_retained"
+    assert HELPER_ADMISSION._used == {"transient": 0, "retained": 1}
+
+async def main():
+    await repository.open()
+    if sys.argv[2] == "helper_shape":
+        # Submit directly: deliberately removing legacy raw pins makes the
+        # baseline wrapper's next authority check fail, as it must.
+        await asyncio.wrap_future(repository._executor.submit(prepare_helper_shape))
+    print(json.dumps({"phase": "ready"}), flush=True)
+    assert sys.stdin.readline().strip() == "substituted"
+    if sys.argv[2] == "helper_shape":
+        await asyncio.wrap_future(repository._executor.submit(lose_helper))
+    try:
+        await repository.close()
+    except ProfileRepositoryError as error:
+        assert error.code == "operation_failed"
+    else:
+        raise AssertionError("foreign cohort close unexpectedly succeeded")
+    assert repository._connection is not None
+    assert repository._lease is not None
+    assert repository._executor is not None
+    assert repository._exact_authority_quarantined
+    print(json.dumps({"phase": "retained"}), flush=True)
+    assert sys.stdin.readline().strip() == "exit"
+
+asyncio.run(main())
+"""
+
+
+def _phase(child: subprocess.Popen, expected: str) -> None:
+    assert select.select([child.stdout], [], [], 15)[0], "owned child phase timed out"
+    line = child.stdout.readline()
+    assert line, f"owned child exited early: {child.poll()}: {child.stderr.read()}"
+    assert json.loads(line) == {"phase": expected}
+
+
+@pytest.mark.parametrize("exit_kind", ["orderly", "abrupt"])
+@pytest.mark.parametrize("ownership", ["baseline", "helper_shape"])
+def test_retained_repository_exit_preserves_foreign_sidecar_cohort(
+    tmp_path, exit_kind, ownership
+):
+    """Characterize the real repository's existing shutdown retention gate.
+
+    This early gate uses healthy-proof namespace quarantine, not yet the new
+    helper-loss error. Both keep the same live SQLite owner through shutdown.
+    A baseline failure needs a helper-shaped ownership control before attributing
+    it to the proposed design.
+    """
+    path = tmp_path / "profiles.sqlite3"
+    child = subprocess.Popen(
+        [sys.executable, "-c", _RETAINED_REPOSITORY_CHILD, str(path), ownership],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    observers = []
+    try:
+        _phase(child, "ready")
+        foreign = []
+        for suffix in ("-wal", "-shm"):
+            selected = Path(f"{path}{suffix}")
+            selected.rename(tmp_path / f"retained{suffix}")
+            with selected.open("xb") as stream:
+                stream.write(b"foreign cohort sentinel" + suffix.encode())
+            selected.chmod(0o600)
+            observer = os.open(selected, os.O_RDONLY)
+            observers.append(observer)
+            foreign.append(
+                (selected, observer, os.fstat(observer), selected.read_bytes())
+            )
+        child.stdin.write("substituted\n")
+        child.stdin.flush()
+        _phase(child, "retained")
+        with pytest.raises(ProfileRepositoryError):
+            ProfileStoreLease(
+                path, ProfileStoreLockMode.EXCLUSIVE, timeout_seconds=0.1
+            ).acquire()
+        for selected, observer, identity, content in foreign:
+            assert selected.stat().st_ino == identity.st_ino
+            assert os.pread(observer, len(content) + 1, 0) == content
+        if exit_kind == "orderly":
+            child.stdin.write("exit\n")
+            child.stdin.flush()
+            assert child.wait(timeout=15) == 0, child.stderr.read()
+            assert json.loads(child.stdout.read()) == {
+                "phase": "atexit",
+                "sql_retained": True,
+                "lease_retained": True,
+                "worker_retained": True,
+                "wal_exists": True,
+                "shm_exists": True,
+            }
+        else:
+            child.kill()  # Only this test's captured, private child.
+            assert child.wait(timeout=5) == -signal.SIGKILL
+        exclusive = ProfileStoreLease(
+            path, ProfileStoreLockMode.EXCLUSIVE, timeout_seconds=0.1
+        ).acquire()
+        exclusive.release()
+        observed = {
+            selected.name: {
+                "named_exists": selected.exists(),
+                "same_inode": selected.exists()
+                and selected.stat().st_ino == identity.st_ino,
+                "observer_nlink": os.fstat(observer).st_nlink,
+                "observer_bytes_unchanged": os.pread(observer, len(content) + 1, 0)
+                == content,
+            }
+            for selected, observer, identity, content in foreign
+        }
+        assert all(
+            item["named_exists"]
+            and item["same_inode"]
+            and item["observer_nlink"] == 1
+            and item["observer_bytes_unchanged"]
+            for item in observed.values()
+        ), observed
+    finally:
+        if child.poll() is None:
+            child.kill()  # Failed-test containment; never product exit behavior.
+            child.wait(timeout=5)
+        for observer in observers:
+            os.close(observer)
+        child.stdin.close()
+        child.stdout.close()
+        child.stderr.close()

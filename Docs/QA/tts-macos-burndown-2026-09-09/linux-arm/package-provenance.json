@@ -1,0 +1,256 @@
+{
+  "packaged_utc": "2026-09-09T07:36:02.927540+00:00",
+  "raw_root": "/private/tmp/tts-macos-burndown/linux",
+  "source_manifest": {
+    "path": "provenance/source-hashes.json",
+    "sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+    "source_file_count": 2253
+  },
+  "records": [
+    {
+      "path": "runs/run-01-setup-failure/evidence.json",
+      "encoding": "shared-source-maps-semantic-round-trip",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/evidence/linux-onnx-live-20260909-01/evidence.json",
+      "original_sha256": "acdddd2758ae57b5c2403a67ed30d31c551923d58bea463c627510ac25fc5c35",
+      "packaged_sha256": "d6a68059e7cda9b926ed880c2f45cf60540e96541b8eea0a711c5ea5e6ddf3f5",
+      "bytes": 11351,
+      "semantic_round_trip_equal": true
+    },
+    {
+      "path": "runs/run-01-setup-failure/launch.json",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-01-launch.json",
+      "original_sha256": "aa6b6eaa815902d402f0819ddbad8abe70c5e961b335fa54c815982e3c423231",
+      "packaged_sha256": "aa6b6eaa815902d402f0819ddbad8abe70c5e961b335fa54c815982e3c423231",
+      "bytes": 2580
+    },
+    {
+      "path": "runs/run-01-setup-failure/worker.log",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-01.log",
+      "original_sha256": "c3cb62c4f1ea3915a88832ab94f6d79d64fed0e1c06a423ef36f76808f77ab88",
+      "packaged_sha256": "c3cb62c4f1ea3915a88832ab94f6d79d64fed0e1c06a423ef36f76808f77ab88",
+      "bytes": 6426
+    },
+    {
+      "path": "runs/run-02/evidence.json",
+      "encoding": "shared-source-maps-semantic-round-trip",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/evidence/linux-onnx-live-20260909-02/evidence.json",
+      "original_sha256": "394ab4d2a80928e8cb4afcf3b2dbc5a03e712cc88ea0de43e2c362a74741a31c",
+      "packaged_sha256": "b8043f6e70600f5ffbfbe1ad7de62e58d7759c6348790d2da9d36ae8989e1416",
+      "bytes": 9049,
+      "semantic_round_trip_equal": true
+    },
+    {
+      "path": "runs/run-02/launch.json",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-02-launch.json",
+      "original_sha256": "e4f17f0ff705eba8aec2a1a10812000c4dc74679dfb16513c615e03aa2133262",
+      "packaged_sha256": "e4f17f0ff705eba8aec2a1a10812000c4dc74679dfb16513c615e03aa2133262",
+      "bytes": 2585
+    },
+    {
+      "path": "runs/run-02/worker.log",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-02.log",
+      "original_sha256": "cfa21598ac4538d78493bec052a7bc888a3ccfcab9f121facb0f9c125c9122d4",
+      "packaged_sha256": "cfa21598ac4538d78493bec052a7bc888a3ccfcab9f121facb0f9c125c9122d4",
+      "bytes": 228
+    },
+    {
+      "path": "content/content.json",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-02-content.json",
+      "original_sha256": "002391c9b8d15ce3b71d5a640aa30f5ef0e0fa1ea72bd2c4d8a1a03117c11fee",
+      "packaged_sha256": "002391c9b8d15ce3b71d5a640aa30f5ef0e0fa1ea72bd2c4d8a1a03117c11fee",
+      "bytes": 3271
+    },
+    {
+      "path": "content/asr-command.json",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-02-asr-command.json",
+      "original_sha256": "e6bb96d844d42e38d74a2bb9034060a44156a64bf0260af93f2bfd7b9a835c98",
+      "packaged_sha256": "e6bb96d844d42e38d74a2bb9034060a44156a64bf0260af93f2bfd7b9a835c98",
+      "bytes": 972
+    },
+    {
+      "path": "content/asr.log",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-02-asr.log",
+      "original_sha256": "0ca1dffc4371549f5c9b03db677c03972aab06bdd1ecdead65f536d02350f8a9",
+      "packaged_sha256": "0ca1dffc4371549f5c9b03db677c03972aab06bdd1ecdead65f536d02350f8a9",
+      "bytes": 1711
+    },
+    {
+      "path": "provenance/image-inspect.json",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/image-inspect.json",
+      "original_sha256": "9c53dc65d0072226b00967180e4c9fa63665df5e2831bb92cdf415d1540dbfe7",
+      "packaged_sha256": "9c53dc65d0072226b00967180e4c9fa63665df5e2831bb92cdf415d1540dbfe7",
+      "bytes": 2906
+    },
+    {
+      "path": "provenance/pip-freeze.txt",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/pip-freeze.txt",
+      "original_sha256": "1b97429f8c094e2004d4b55915518f0a1e99cc9deadf0bae2c130ab5015f2be6",
+      "packaged_sha256": "1b97429f8c094e2004d4b55915518f0a1e99cc9deadf0bae2c130ab5015f2be6",
+      "bytes": 1653
+    },
+    {
+      "path": "provenance/dpkg-packages.txt",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/dpkg-packages.txt",
+      "original_sha256": "0bfcb6316626b7ebf6448ccfcaed864fec8e8843fa6ea39aef4368a288780059",
+      "packaged_sha256": "0bfcb6316626b7ebf6448ccfcaed864fec8e8843fa6ea39aef4368a288780059",
+      "bytes": 8574
+    },
+    {
+      "path": "provenance/base-reference.txt",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/base-reference.txt",
+      "original_sha256": "0cb07540d006c04e26814946474ef7d2be2a275829f96e9c184c12c4267edfbb",
+      "packaged_sha256": "0cb07540d006c04e26814946474ef7d2be2a275829f96e9c184c12c4267edfbb",
+      "bytes": 97
+    },
+    {
+      "path": "provenance/input-provenance.json",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/input-provenance.json",
+      "original_sha256": "c5bb0744dca5e1e8ae5f9075a28ea94b35258e4f744e0e8c8bd646a72a85b809",
+      "packaged_sha256": "c5bb0744dca5e1e8ae5f9075a28ea94b35258e4f744e0e8c8bd646a72a85b809",
+      "bytes": 1371
+    },
+    {
+      "path": "provenance/provisioning.json",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/provisioning.json",
+      "original_sha256": "d7bbea5f925b1a0107f257fff872529a936bf061f7c882ac28e987258d018947",
+      "packaged_sha256": "d7bbea5f925b1a0107f257fff872529a936bf061f7c882ac28e987258d018947",
+      "bytes": 5746
+    },
+    {
+      "path": "provenance/Dockerfile",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/Dockerfile",
+      "original_sha256": "0c67c8e4adaeffa98b41a37f1f2cc4c88929b9696b273e843aceca7ca4bd8ed6",
+      "packaged_sha256": "0c67c8e4adaeffa98b41a37f1f2cc4c88929b9696b273e843aceca7ca4bd8ed6",
+      "bytes": 1076
+    },
+    {
+      "path": "provenance/requirements.in",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/requirements.in",
+      "original_sha256": "aa21225a855f3892f1cb448364ac876d53880a09b9b66e8435ca1d4a923d34ca",
+      "packaged_sha256": "aa21225a855f3892f1cb448364ac876d53880a09b9b66e8435ca1d4a923d34ca",
+      "bytes": 590
+    },
+    {
+      "path": "provenance/final-launch.py",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/launch.py",
+      "original_sha256": "f6d22bf70ece6dbe5a033fafcb0d2b8ea33b8799af07f1377c899be5d09b7e73",
+      "packaged_sha256": "f6d22bf70ece6dbe5a033fafcb0d2b8ea33b8799af07f1377c899be5d09b7e73",
+      "bytes": 4514
+    },
+    {
+      "path": "provenance/validate_linux_onnx.py",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/validate_linux_onnx.py",
+      "original_sha256": "c3149dbd2b7360186c48d0895acd876a3e5b7835501f4909de2d99e601c9d6ac",
+      "packaged_sha256": "c3149dbd2b7360186c48d0895acd876a3e5b7835501f4909de2d99e601c9d6ac",
+      "bytes": 13112
+    },
+    {
+      "path": "environment/tmpfs-library-controls.json",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/tmpfs-library-controls.json",
+      "original_sha256": "5e166a05188b6d4331db8b0ae235d64183dd382f92ec6025973b3643aa98848d",
+      "packaged_sha256": "5e166a05188b6d4331db8b0ae235d64183dd382f92ec6025973b3643aa98848d",
+      "bytes": 3081
+    },
+    {
+      "path": "environment/check_tmpfs_library.py",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/check_tmpfs_library.py",
+      "original_sha256": "c7cd28e8b2d3a4a6946bc89367da3a545b2078ff770bf5e694479c537871fdac",
+      "packaged_sha256": "c7cd28e8b2d3a4a6946bc89367da3a545b2078ff770bf5e694479c537871fdac",
+      "bytes": 1887
+    },
+    {
+      "path": "environment/credential-negative-control.txt",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/credential-negative-control.txt",
+      "original_sha256": "da50f08c9cbe2b04c53d937145b1796e0b5a7d86241858fd89221f5a8dce1df5",
+      "packaged_sha256": "da50f08c9cbe2b04c53d937145b1796e0b5a7d86241858fd89221f5a8dce1df5",
+      "bytes": 95
+    },
+    {
+      "path": "environment/launcher-safety-check.txt",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/launcher-safety-check.txt",
+      "original_sha256": "f7134b56397833598dd45195bc6553bdf15933239170aa769542028ff0589f83",
+      "packaged_sha256": "f7134b56397833598dd45195bc6553bdf15933239170aa769542028ff0589f83",
+      "bytes": 233
+    },
+    {
+      "path": "environment/import-preflight-failure.log",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/preflight.log",
+      "original_sha256": "0ab85920f7e9a4a9795cff148b629971198290e18a34cb6f44fcce5588a3b2c7",
+      "packaged_sha256": "0ab85920f7e9a4a9795cff148b629971198290e18a34cb6f44fcce5588a3b2c7",
+      "bytes": 599
+    },
+    {
+      "path": "environment/import-diagnostic-failure.log",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/preflight-diagnostic.log",
+      "original_sha256": "ea5c573b7aa0a47dea054fa9974f2ef1dbdc4510600e011ea1934d894205e09e",
+      "packaged_sha256": "ea5c573b7aa0a47dea054fa9974f2ef1dbdc4510600e011ea1934d894205e09e",
+      "bytes": 614
+    },
+    {
+      "path": "environment/import-ready.log",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/preflight-ready.log",
+      "original_sha256": "6fbc3c502b32fc69abb18672d1165e42b22720663c65d7c3739d87bd36e8e99e",
+      "packaged_sha256": "6fbc3c502b32fc69abb18672d1165e42b22720663c65d7c3739d87bd36e8e99e",
+      "bytes": 463
+    },
+    {
+      "path": "provenance/ownership-release.json",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/ownership-release.json",
+      "original_sha256": "32880daa742a81bfe2bdbed67673855516cf6e3221413cd1d586489eb03930b7",
+      "packaged_sha256": "32880daa742a81bfe2bdbed67673855516cf6e3221413cd1d586489eb03930b7",
+      "bytes": 797
+    },
+    {
+      "path": "provenance/containers-before.jsonl",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/containers-before-live.jsonl",
+      "original_sha256": "e5939c88f444142474ff6945c7ba58eb58b9030c8f53080756b4438bc88b7303",
+      "packaged_sha256": "e5939c88f444142474ff6945c7ba58eb58b9030c8f53080756b4438bc88b7303",
+      "bytes": 642
+    },
+    {
+      "path": "provenance/containers-after.jsonl",
+      "encoding": "byte-preserving-copy",
+      "original_path": "/private/tmp/tts-macos-burndown/linux/containers-after-release.jsonl",
+      "original_sha256": "e5939c88f444142474ff6945c7ba58eb58b9030c8f53080756b4438bc88b7303",
+      "packaged_sha256": "e5939c88f444142474ff6945c7ba58eb58b9030c8f53080756b4438bc88b7303",
+      "bytes": 642
+    }
+  ],
+  "excluded": [
+    "models",
+    "audio binaries",
+    "image layers",
+    "private application profiles",
+    "large build logs"
+  ],
+  "raw_build_log": {
+    "path": "/private/tmp/tts-macos-burndown/linux/build.log",
+    "sha256": "d7ed0fda6d3f2a9597e35c4bcbd2e9069beb796a12283513a61932a56d1482ed"
+  }
+}

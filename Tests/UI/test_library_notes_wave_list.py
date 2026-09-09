@@ -155,17 +155,43 @@ def test_notes_list_keeps_sixty_columns_beside_an_open_note() -> None:
     assert layout.items_width >= min(int(WIDE[0] * 0.4), 60)
 
 
-def test_notes_list_keeps_its_share_beside_an_open_note_when_compact() -> None:
-    """The same floor holds at 100 columns, where 40% is the smaller number."""
+#: The narrowest Notes shell that still holds a list beside an open note:
+#: two five-cell grips (Notes keeps the default grip, unlike Media), the
+#: shared 50-cell list target and the profile's 48-cell work floor. It was
+#: 98 while that target was 40; dev raised it to 50 under the phase-C
+#: graduation, so 100 columns now shows the Reader alone.
+_NOTES_TWO_PANE_MIN_WIDTH = 108
+
+
+def test_notes_list_keeps_its_share_beside_an_open_note_when_narrow() -> None:
+    """The same floor holds at the narrowest width that fits two panes."""
     layout = resolve_adaptive_reader_layout(
-        COMPACT[0],
+        _NOTES_TWO_PANE_MIN_WIDTH,
         AdaptiveReaderLayoutPreferences(),
         LIBRARY_NOTES_READER_PROFILE,
         reader_has_item=True,
     )
 
     assert layout.items_open is True
-    assert layout.items_width >= min(int(COMPACT[0] * 0.4), 60)
+    assert layout.items_width >= min(int(_NOTES_TWO_PANE_MIN_WIDTH * 0.4), 60)
+
+
+def test_notes_list_closes_rather_than_starving_below_the_two_pane_width() -> None:
+    """A column short of the floor, the list closes instead of shrinking.
+
+    Recorded rather than asserted as a wish: a starved 32-cell list beside a
+    48-cell editor is the shape task-32127 set out to remove, so the honest
+    narrow answer is one pane and a grip to reopen the other.
+    """
+    layout = resolve_adaptive_reader_layout(
+        _NOTES_TWO_PANE_MIN_WIDTH - 1,
+        AdaptiveReaderLayoutPreferences(),
+        LIBRARY_NOTES_READER_PROFILE,
+        reader_has_item=True,
+    )
+
+    assert layout.items_open is False
+    assert layout.items_width == 0
 
 
 def _layout_screen_fake(*, width: int, view: str):

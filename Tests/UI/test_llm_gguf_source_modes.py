@@ -1209,10 +1209,37 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
             assert control.region.x >= view.content_region.x
             assert control.region.right <= view.content_region.right
 
+        mode.scroll_visible(animate=False)
         mode.focus()
-        await pilot.press("enter", "up", "enter")
-        await pilot.pause()
-        assert mode.value == "managed"
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                mode.has_focus
+                and mode in app.screen._compositor.visible_widgets
+                and mode.region.y >= view.content_region.y
+                and mode.region.bottom <= view.content_region.bottom
+            ),
+            message="source mode did not receive visible keyboard focus",
+        )
+        await pilot.press("enter")
+        overlay = mode.query_one(SelectOverlay)
+        await _settle_pilot_until(
+            pilot,
+            lambda: mode.expanded and overlay.has_focus,
+            message="source mode overlay did not receive keyboard focus",
+        )
+        await pilot.press("up")
+        await _settle_pilot_until(
+            pilot,
+            lambda: overlay.highlighted == 0,
+            message="managed source option did not receive keyboard highlight",
+        )
+        await pilot.press("enter")
+        await _settle_pilot_until(
+            pilot,
+            lambda: mode.value == "managed",
+            message="managed source selection did not settle",
+        )
         managed.scroll_visible(animate=False)
         await pilot.pause()
         assert managed.region.right <= view.content_region.right

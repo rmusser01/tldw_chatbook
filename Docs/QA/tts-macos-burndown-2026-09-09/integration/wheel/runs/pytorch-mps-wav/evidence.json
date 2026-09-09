@@ -1,0 +1,589 @@
+{
+  "schema_version": 1,
+  "status": "runtime_passed_content_pending",
+  "pid": 55693,
+  "started_utc": "2026-09-09T08:35:59.867683+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2179068.84028975,
+      "native_calls": [
+        {
+          "request_id": "speech-lab",
+          "class": "kokoro.model.KModel",
+          "device": "mps:0",
+          "speed": 1.0,
+          "fourier_module": "_CpuSTFT",
+          "enter_at": 2179070.229866583,
+          "thread_id": 6117011456,
+          "exit_at": 2179070.778837708
+        }
+      ],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "request": {
+        "model_id": "kokoro",
+        "voice_id": "af_heart",
+        "speed": 1.0
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav/audio/speech-lab.wav",
+        "sha256": "ca4ed8e142a8c3fd95d8fc391f86da5fe466a1d3a8e4f4f0c771af42cbff41bf",
+        "pcm_sha256": "4a108a4ae7ffe688a3490a31cb21f92810930f840312c55b8dc05b8f82b01960",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.051195630835635164,
+        "peak": 0.42755126953125
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 55715,
+        "player": "afplay",
+        "started_at": 2179071.006309208,
+        "exit_code": 0,
+        "elapsed_seconds": 9.891137832775712
+      },
+      "settled_at": 2179080.897587375,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2179080.897591041,
+        "threads": 3,
+        "rss_bytes": 1484226560,
+        "peak_rss_bytes": 1516470272,
+        "mps_allocated_bytes": 562577408,
+        "mps_driver_bytes": 1277673472
+      }
+    },
+    {
+      "id": "console-warmup",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2179080.920934041,
+      "native_calls": [
+        {
+          "request_id": "console-warmup",
+          "class": "kokoro.model.KModel",
+          "device": "mps:0",
+          "speed": 1.0,
+          "fourier_module": "_CpuSTFT",
+          "enter_at": 2179080.940475333,
+          "thread_id": 6117011456,
+          "exit_at": 2179081.167838166
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2179081.193989958
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2179090.268530125
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195403,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "0063b86632724b0719d0c632d0cf96b30b744a5610f4dfd915b43b5e50ca18a5"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "02eab800-7a1f-44a2-a43c-aae8fe3d456c",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 8.986401916015893,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "f348481532f8393f53a25043f43a091f35c416a960996334324364a1ec79305f",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav/audio/console-warmup.wav",
+        "sha256": "f348481532f8393f53a25043f43a091f35c416a960996334324364a1ec79305f",
+        "pcm_sha256": "1c389d1e3f0a41f12dbdc60e05409880bdb291e9b942155301b35bb7486d34e1",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.051173569120689384,
+        "peak": 0.413116455078125
+      },
+      "settled_at": 2179090.275541041,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2179090.275541458,
+        "threads": 3,
+        "rss_bytes": 1495449600,
+        "peak_rss_bytes": 1516470272,
+        "mps_allocated_bytes": 566706176,
+        "mps_driver_bytes": 1277673472
+      }
+    },
+    {
+      "id": "console-cancel",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2179090.300433166,
+      "native_calls": [
+        {
+          "request_id": "console-cancel",
+          "class": "kokoro.model.KModel",
+          "device": "mps:0",
+          "speed": 1.0,
+          "fourier_module": "_CpuSTFT",
+          "enter_at": 2179090.322505625,
+          "thread_id": 6117011456,
+          "exit_at": 2179091.089598708
+        }
+      ],
+      "states": [
+        "stopped"
+      ],
+      "outcomes": [
+        true
+      ],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "cancelled",
+      "message_id": "e33752e3-1b1e-4e74-a7e6-bda2044165eb",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "stop_requested_at": 2179090.339148291,
+      "resources_at_stop": {
+        "generation_owner": 1,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 1,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 1,
+        "leases": 1,
+        "backend_tasks": 1,
+        "native_calls": 1,
+        "player_processes": 0
+      },
+      "stop_returned_at": 2179091.091218333,
+      "settled_at": 2179091.091235041,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2179091.091235333,
+        "threads": 3,
+        "rss_bytes": 1547091968,
+        "peak_rss_bytes": 1547091968,
+        "mps_allocated_bytes": 567359488,
+        "mps_driver_bytes": 2429452288
+      }
+    },
+    {
+      "id": "console-successor",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2179091.115701166,
+      "native_calls": [
+        {
+          "request_id": "console-successor",
+          "class": "kokoro.model.KModel",
+          "device": "mps:0",
+          "speed": 1.0,
+          "fourier_module": "_CpuSTFT",
+          "enter_at": 2179091.126053458,
+          "thread_id": 6117011456,
+          "exit_at": 2179091.339136791
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2179091.382339291
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2179100.45535325
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195296,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "ddbd0d8fdfa8eb9589a374b9b0be4a8786290175e5f6630ab9b526a7c4997da0"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "476c471e-65ef-4e06-af86-34ba095844d6",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.006360749714077,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "19d85b5d53c2fb2609eaaac5f479f35dbf0e990f317f4bc74cd69eb69b3235fb",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav/audio/console-successor.wav",
+        "sha256": "19d85b5d53c2fb2609eaaac5f479f35dbf0e990f317f4bc74cd69eb69b3235fb",
+        "pcm_sha256": "959d017451eafac810ef5ef571b11e6a3362b98a803c1cf5527c5dd7b16de652",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.051148607092774565,
+        "peak": 0.423828125
+      },
+      "settled_at": 2179100.456653208,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2179100.456653458,
+        "threads": 3,
+        "rss_bytes": 1552990208,
+        "peak_rss_bytes": 1553186816,
+        "mps_allocated_bytes": 565196800,
+        "mps_driver_bytes": 2351857664
+      }
+    }
+  ],
+  "arguments": {
+    "engine": "pytorch",
+    "device": "mps",
+    "model": "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth",
+    "voice": "af_heart",
+    "voice_dir": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices",
+    "voices": null,
+    "language": "en-us",
+    "format": "wav",
+    "speed": 1.0,
+    "text_file": null,
+    "cancel_text_file": null,
+    "scenarios": "playback,cancel",
+    "repeats": 1,
+    "phase_timeout": 300,
+    "cleanup_timeout": 60,
+    "run_timeout": 1800,
+    "expected_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+    "output": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav",
+    "play_audio": true,
+    "worker": true
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/final-wheel-venv/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+  "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+  "assets": {
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "source_revision_if_git": null,
+  "versions": {
+    "tldw_chatbook": "0.2.0",
+    "textual": "8.2.8",
+    "numpy": "2.5.3",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": "0.9.4",
+    "kokoro-onnx": "0.6.1",
+    "torch": "2.14.0",
+    "onnxruntime": "1.29.0",
+    "misaki": "0.9.4",
+    "spacy": "3.8.16",
+    "en-core-web-sm": "3.8.0"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2179066.566869666,
+    "threads": 2,
+    "rss_bytes": 225247232,
+    "peak_rss_bytes": 225247232
+  },
+  "runtime_files": {
+    "torch._C": {
+      "path": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/torch/_C.cpython-312-darwin.so",
+      "sha256": "b5b5b86566d6e00ee22b73c51e6c243bd894ffbf06f12c58d0bab0549b1840ac"
+    },
+    "kokoro.model": {
+      "path": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/kokoro/model.py",
+      "sha256": "301c55350a068c4ed3b4cbd1209d2afb848bebca72db5657405e47e9dfb604db"
+    }
+  },
+  "backend_assets": [
+    {
+      "model": "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth",
+      "engine": "pytorch"
+    }
+  ],
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation complete!",
+      "severity": "information"
+    },
+    {
+      "message": "Playback complete",
+      "severity": "information"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "02eab800-7a1f-44a2-a43c-aae8fe3d456c",
+      "error": null
+    },
+    {
+      "message_id": "476c471e-65ef-4e06-af86-34ba095844d6",
+      "error": null
+    }
+  ],
+  "memory_after_cleanup": {
+    "at": 2179100.48522225,
+    "threads": 2,
+    "rss_bytes": 1553022976,
+    "peak_rss_bytes": 1553186816,
+    "mps_allocated_bytes": 565196800,
+    "mps_driver_bytes": 2351857664
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "ended_utc": "2026-09-09T08:36:36.317941+00:00",
+  "_packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/installed-wheel/pytorch-mps-wav/evidence.json",
+    "original_sha256": "eb3308af66d1fc440da2e5f5947addddbcadfaa7e0e2e85362ccda6a4773cfca",
+    "source_maps": {
+      "source_hashes": {
+        "path": "../../../../kokoro-english/provenance/source-hashes.json",
+        "shared_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+        "key_prefix": "",
+        "overrides": {
+          "Agents/agent_service.py": "1e5338322ef23d89570e46460209be5195ab59039689473117e6637716f8a3f4",
+          "Agents/canvas_tool_provider.py": "8c39b2b5b4da0e68bb1df00f8a30d79d3045df32742bae47c9b8d163b39ea6d9",
+          "Canvas/authoring.py": "2609b0da3c456ac2c6b94d181eb7a53e910e04eb56c46418bff1d25469a7f702",
+          "Canvas/compilation.py": "229543a83f4c4359b8ec3b31ffb52dbfb106362250809d33cc47487ec7a25c6e",
+          "Canvas/compiler.py": "a16d31e9c1fc51625e71f1517f212337140ad6aad561c38185ee6731985502d1",
+          "Canvas/control_protocol.py": "53dc38f40a2209e8e255734dcf833d3e8941cbacbff2b914eb51990de07fa737",
+          "Canvas/gateway.py": "2a2c259984581fd2de29776788d1b60439688c669feafca6d7ccf8a397d0b8c5",
+          "Canvas/models.py": "193858addd9615b34fc1816abf3308eac467c97be66c15b6dc93d24aaf46c742",
+          "Canvas/native_authority.py": "f43113fa9330198e2771f8da57c51d6e1c3af297babb5ae31c38f0a490c9c469",
+          "Canvas/profiles.py": "20c3d3d478e3547eccb6904bc04f9b3bc0ffc2bee0918abbd7bf37e3d70e867d",
+          "Canvas/repository.py": "7315763ac48b9a75d07a0ebb6af2f91c9e26e91462193039a6c67b4fa2b543e9",
+          "Canvas/runtime_assets.py": "15fff9ac43d3ccfb1e94fe9a0277a03f5c6dc52237ffc94af8ad10481c6242e1",
+          "Canvas/service.py": "958e1b7f17a9f502d837ad1d111904b13dafcf85fbf1882495ca5ac1d2d35531",
+          "Canvas/staging.py": "ae350eccf7b2c3487e04b09976636abd63c52e0f542124d37927e4ac1f8018bf",
+          "Chat/console_agent_bridge.py": "f4f01da512f83f3888e51999ba7ccbfab38e59817d43a0703211fdb7d6e11a6c",
+          "Chat/console_canvas_controller.py": "b83a90715a7ee5b8b32cab1e4e781be444b8ff8bac857f4a795c537bd238b7a0",
+          "Chat/console_message_actions.py": "3e14471acb01729c6740e3e77e68691a961eb48aeaaeb1210becd92f6b639c38",
+          "Chat/console_runtime.py": "b2910189a6f35b31dd573dda544f37cb679e5bc097db35ddbebbf0e55220b347",
+          "Chat/console_trace_maintenance.py": "327f325b99f37461f123526776acc8be730c35a0457c736a1e38ff594c1a7688",
+          "DB/ChaChaNotes_DB.py": "198873f60eb1a9a8f94b5e8f795d7bdec740a658f5e12b24ba0406eac270470b",
+          "DB/private_sqlite.py": "cbac6a6985b7e019e937bc70316c1c7112fc39528123e532e4cb7a0f35c9b3e0",
+          "DB/private_sqlite_files.py": "27f383d59ee990c4645395538dcaa16c9ce9d85cdc6c055c8c4b2ef6f0f4ec06",
+          "DB/private_sqlite_helper.py": "448c7f38ba6e6a26df0fb8bf082933c62de98a7eb86bead2b7050888361e869a",
+          "DB/private_sqlite_helper_entry.py": "f5bee36ca8743a6769d32e9930656f698b686b9c08677ae2fcd03ab38f4ae985",
+          "DB/private_sqlite_process.py": "9202aa648cb8010cf72a1e2a9c413af931f96748227c7d83413608a3f2aec0d9",
+          "DB/private_sqlite_protocol.py": "4e903471e334e81ec524f21c77feed564fc47848198f7fa9aa7e66a5523251f7",
+          "DB/sql_identifier_core.py": "e6caf27bae6d30ae7f6bd51a770d37ce3a1d3dd131692e9e8c93c210c01d6442",
+          "DB/sql_validation.py": "127fc9c409ec709b761768632e397ccc85cc25fa2cf643b6148b1abb7e1c2d91",
+          "Library/collections_legacy_recovery.py": "a216db69a35ea826454365dc3ad052842e83f8109c1d09cd3eacfba5d8f48221",
+          "TTS/__init__.py": "495ba9bdcdb5b8a22a0ec92b8c1a9d33448860d1ec03a0d82cd32f8b2ed1eff4",
+          "TTS/backends/kokoro.py": "77f1dd6c0deb3985e1bd931726954c3bec9242266cff50f391c4016f25ac5dec",
+          "TTS/kokoro_languages.py": "e34e4dd905a2fe82d23ed0787896dc86fffe741b84d5172702fb286f91d7a430",
+          "TTS/kokoro_pytorch.py": "4dbe256bbf020dcc0e1a3092e1d6e5e31de599bcaff279dc5daf3bccc1ec4743",
+          "TTS/profile_errors.py": "8ef24b71e3d41b61e19e0931499594642c4e7f479c0df8bfcab9c1220c453442",
+          "TTS/profile_migration_candidate.py": "4b0b9e1b0070b3955bc244d19c7b57ff2d9b725afa0c6df01b2d6f11f1dac2ba",
+          "TTS/profile_migration_namespace.py": "d4dacc3e77f67082c7307433d0626595c16bed35fceb67485a753c7f1a51bbb3",
+          "TTS/profile_migration_publication.py": "4b3bfa379c6a88b97c8129f3db48115dee97800cdeaabe68f05cf1e4155173be",
+          "TTS/profile_migration_recovery.py": "f6e5d87e2a97c96425fceef8a52784bcec6f9e75fb9ff10a43d33bb7c8a52bb4",
+          "TTS/profile_repository.py": "c0475ecd65ca8a4982f18e90d03b6588029694450453ac5d134c06c1c85721a1",
+          "TTS/profile_schema.py": "24c26f82488677a4a4b0f08e7e55954f947593219cf8a806a4c6abf1e372f71b",
+          "TTS/profile_sqlite_policy.py": "b777e76c359222c94c61668ccbebd570abc770f93afac9bdaa23a8c390a40f89",
+          "TTS/profile_sqlite_proof.py": "8e5bc8b5cc8f9b33d51cc6e4351ea0390f9dc425a0e47bb10301e8d08f10f89c",
+          "TTS/profile_validation.py": "86bb77e0a7b5a2848d88d958e6e43c675a0ad1602f595035dbd302a8af8d02ee",
+          "UI/Screens/chat_screen.py": "9a525f67dbb6b4e375d7d71099632686b8579598792910bb3efce060d35bb946",
+          "UI/stts_profile_library.py": "4d683fea0f3cf844ece764099f95572321b8644086b8ba4a555a05e65605d1bd",
+          "Web_Server/serve.py": "f9766f4e5a1603c939bb8f7b696e698231f827d401c82fe27589142e475cc8f3",
+          "app.py": "24b27d6e7e0d1e84cf7b054bbb48a55f527397cd258a3ff2963562a66109b692"
+        },
+        "removed": []
+      },
+      "source_hashes_after": {
+        "path": "../../../../kokoro-english/provenance/source-hashes.json",
+        "shared_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+        "key_prefix": "",
+        "overrides": {
+          "Agents/agent_service.py": "1e5338322ef23d89570e46460209be5195ab59039689473117e6637716f8a3f4",
+          "Agents/canvas_tool_provider.py": "8c39b2b5b4da0e68bb1df00f8a30d79d3045df32742bae47c9b8d163b39ea6d9",
+          "Canvas/authoring.py": "2609b0da3c456ac2c6b94d181eb7a53e910e04eb56c46418bff1d25469a7f702",
+          "Canvas/compilation.py": "229543a83f4c4359b8ec3b31ffb52dbfb106362250809d33cc47487ec7a25c6e",
+          "Canvas/compiler.py": "a16d31e9c1fc51625e71f1517f212337140ad6aad561c38185ee6731985502d1",
+          "Canvas/control_protocol.py": "53dc38f40a2209e8e255734dcf833d3e8941cbacbff2b914eb51990de07fa737",
+          "Canvas/gateway.py": "2a2c259984581fd2de29776788d1b60439688c669feafca6d7ccf8a397d0b8c5",
+          "Canvas/models.py": "193858addd9615b34fc1816abf3308eac467c97be66c15b6dc93d24aaf46c742",
+          "Canvas/native_authority.py": "f43113fa9330198e2771f8da57c51d6e1c3af297babb5ae31c38f0a490c9c469",
+          "Canvas/profiles.py": "20c3d3d478e3547eccb6904bc04f9b3bc0ffc2bee0918abbd7bf37e3d70e867d",
+          "Canvas/repository.py": "7315763ac48b9a75d07a0ebb6af2f91c9e26e91462193039a6c67b4fa2b543e9",
+          "Canvas/runtime_assets.py": "15fff9ac43d3ccfb1e94fe9a0277a03f5c6dc52237ffc94af8ad10481c6242e1",
+          "Canvas/service.py": "958e1b7f17a9f502d837ad1d111904b13dafcf85fbf1882495ca5ac1d2d35531",
+          "Canvas/staging.py": "ae350eccf7b2c3487e04b09976636abd63c52e0f542124d37927e4ac1f8018bf",
+          "Chat/console_agent_bridge.py": "f4f01da512f83f3888e51999ba7ccbfab38e59817d43a0703211fdb7d6e11a6c",
+          "Chat/console_canvas_controller.py": "b83a90715a7ee5b8b32cab1e4e781be444b8ff8bac857f4a795c537bd238b7a0",
+          "Chat/console_message_actions.py": "3e14471acb01729c6740e3e77e68691a961eb48aeaaeb1210becd92f6b639c38",
+          "Chat/console_runtime.py": "b2910189a6f35b31dd573dda544f37cb679e5bc097db35ddbebbf0e55220b347",
+          "Chat/console_trace_maintenance.py": "327f325b99f37461f123526776acc8be730c35a0457c736a1e38ff594c1a7688",
+          "DB/ChaChaNotes_DB.py": "198873f60eb1a9a8f94b5e8f795d7bdec740a658f5e12b24ba0406eac270470b",
+          "DB/private_sqlite.py": "cbac6a6985b7e019e937bc70316c1c7112fc39528123e532e4cb7a0f35c9b3e0",
+          "DB/private_sqlite_files.py": "27f383d59ee990c4645395538dcaa16c9ce9d85cdc6c055c8c4b2ef6f0f4ec06",
+          "DB/private_sqlite_helper.py": "448c7f38ba6e6a26df0fb8bf082933c62de98a7eb86bead2b7050888361e869a",
+          "DB/private_sqlite_helper_entry.py": "f5bee36ca8743a6769d32e9930656f698b686b9c08677ae2fcd03ab38f4ae985",
+          "DB/private_sqlite_process.py": "9202aa648cb8010cf72a1e2a9c413af931f96748227c7d83413608a3f2aec0d9",
+          "DB/private_sqlite_protocol.py": "4e903471e334e81ec524f21c77feed564fc47848198f7fa9aa7e66a5523251f7",
+          "DB/sql_identifier_core.py": "e6caf27bae6d30ae7f6bd51a770d37ce3a1d3dd131692e9e8c93c210c01d6442",
+          "DB/sql_validation.py": "127fc9c409ec709b761768632e397ccc85cc25fa2cf643b6148b1abb7e1c2d91",
+          "Library/collections_legacy_recovery.py": "a216db69a35ea826454365dc3ad052842e83f8109c1d09cd3eacfba5d8f48221",
+          "TTS/__init__.py": "495ba9bdcdb5b8a22a0ec92b8c1a9d33448860d1ec03a0d82cd32f8b2ed1eff4",
+          "TTS/backends/kokoro.py": "77f1dd6c0deb3985e1bd931726954c3bec9242266cff50f391c4016f25ac5dec",
+          "TTS/kokoro_languages.py": "e34e4dd905a2fe82d23ed0787896dc86fffe741b84d5172702fb286f91d7a430",
+          "TTS/kokoro_pytorch.py": "4dbe256bbf020dcc0e1a3092e1d6e5e31de599bcaff279dc5daf3bccc1ec4743",
+          "TTS/profile_errors.py": "8ef24b71e3d41b61e19e0931499594642c4e7f479c0df8bfcab9c1220c453442",
+          "TTS/profile_migration_candidate.py": "4b0b9e1b0070b3955bc244d19c7b57ff2d9b725afa0c6df01b2d6f11f1dac2ba",
+          "TTS/profile_migration_namespace.py": "d4dacc3e77f67082c7307433d0626595c16bed35fceb67485a753c7f1a51bbb3",
+          "TTS/profile_migration_publication.py": "4b3bfa379c6a88b97c8129f3db48115dee97800cdeaabe68f05cf1e4155173be",
+          "TTS/profile_migration_recovery.py": "f6e5d87e2a97c96425fceef8a52784bcec6f9e75fb9ff10a43d33bb7c8a52bb4",
+          "TTS/profile_repository.py": "c0475ecd65ca8a4982f18e90d03b6588029694450453ac5d134c06c1c85721a1",
+          "TTS/profile_schema.py": "24c26f82488677a4a4b0f08e7e55954f947593219cf8a806a4c6abf1e372f71b",
+          "TTS/profile_sqlite_policy.py": "b777e76c359222c94c61668ccbebd570abc770f93afac9bdaa23a8c390a40f89",
+          "TTS/profile_sqlite_proof.py": "8e5bc8b5cc8f9b33d51cc6e4351ea0390f9dc425a0e47bb10301e8d08f10f89c",
+          "TTS/profile_validation.py": "86bb77e0a7b5a2848d88d958e6e43c675a0ad1602f595035dbd302a8af8d02ee",
+          "UI/Screens/chat_screen.py": "9a525f67dbb6b4e375d7d71099632686b8579598792910bb3efce060d35bb946",
+          "UI/stts_profile_library.py": "4d683fea0f3cf844ece764099f95572321b8644086b8ba4a555a05e65605d1bd",
+          "Web_Server/serve.py": "f9766f4e5a1603c939bb8f7b696e698231f827d401c82fe27589142e475cc8f3",
+          "app.py": "24b27d6e7e0d1e84cf7b054bbb48a55f527397cd258a3ff2963562a66109b692"
+        },
+        "removed": []
+      }
+    }
+  }
+}

@@ -1,0 +1,128 @@
+onnxruntime cpuid_info warning: Unknown CPU vendor. cpuinfo_vendor value: 0
+PHASE linux-warmup
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/phonemize.py", line 57, in _cached_backend
+    backend = _BACKENDS_CACHE.pop(key)
+KeyError: ('espeak', 'en-us', ';:,.!?¡¿—…"«»“”(){}[]', True, True, False, 'keep-flags', 'ignore', <Logger phonemizer (WARNING)>)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/workspace/tldw_chatbook/TTS/backends/kokoro.py", line 733, in run
+    await producer
+  File "/workspace/tldw_chatbook/TTS/backends/kokoro.py", line 717, in produce
+    async for chunk in stream:
+    ...<5 lines>...
+        await asyncio.wrap_future(delivery)
+  File "/usr/local/lib/python3.13/site-packages/kokoro_onnx/__init__.py", line 365, in create_stream
+    voice, _, batches = self._prepare(
+                        ~~~~~~~~~~~~~^
+        text, voice, speed, lang, is_phonemes, sentence_pause, clause_pause
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/kokoro_onnx/__init__.py", line 193, in _prepare
+    phonemes = text if is_phonemes else self.tokenizer.phonemize(text, lang)
+                                        ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/kokoro_onnx/tokenizer.py", line 85, in phonemize
+    phonemes = phonemizer.phonemize(
+        text, lang, preserve_punctuation=True, with_stress=True
+    )
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/phonemize.py", line 244, in phonemize
+    phonemizer = _cached_backend(key, lambda: BACKENDS[backend](
+        language,
+    ...<5 lines>...
+        words_mismatch=words_mismatch,
+        logger=logger))
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/phonemize.py", line 59, in _cached_backend
+    backend = factory()
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/phonemize.py", line 244, in <lambda>
+    phonemizer = _cached_backend(key, lambda: BACKENDS[backend](
+                                              ~~~~~~~~~~~~~~~~~^
+        language,
+        ^^^^^^^^^
+    ...<5 lines>...
+        words_mismatch=words_mismatch,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        logger=logger))
+        ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/espeak.py", line 45, in __init__
+    super().__init__(
+    ~~~~~~~~~~~~~~~~^
+        language, punctuation_marks=punctuation_marks,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        preserve_punctuation=preserve_punctuation, logger=logger)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/base.py", line 39, in __init__
+    super().__init__(
+    ~~~~~~~~~~~~~~~~^
+        language,
+        ^^^^^^^^^
+        punctuation_marks=punctuation_marks,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        preserve_punctuation=preserve_punctuation,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        logger=logger)
+        ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/backend/base.py", line 76, in __init__
+    if not self.is_available():
+           ~~~~~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/base.py", line 87, in is_available
+    EspeakWrapper()
+    ~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/wrapper.py", line 89, in __init__
+    self._espeak = EspeakAPI(self.library(), self.data_path)
+                   ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/api.py", line 87, in __init__
+    self._library = ctypes.cdll.LoadLibrary(str(espeak_copy))
+                    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/ctypes/__init__.py", line 482, in LoadLibrary
+    return self._dlltype(name)
+           ~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.13/ctypes/__init__.py", line 361, in __init__
+    self._handle = self._load_library(name, mode, handle, winmode)
+                   ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/ctypes/__init__.py", line 403, in _load_library
+    return _dlopen(name, mode)
+OSError: /tmp/tmpe7yr2w4y/libespeak-ng.so: failed to map segment from shared object
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/probe/validate_linux_onnx.py", line 233, in main
+    asyncio.run(run())
+    ~~~~~~~~~~~^^^^^^^
+  File "/usr/local/lib/python3.13/asyncio/runners.py", line 196, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.13/asyncio/runners.py", line 119, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.13/asyncio/base_events.py", line 726, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/probe/validate_linux_onnx.py", line 188, in run
+    await bounded(asyncio.create_task(consume(warmup)))
+  File "/probe/validate_linux_onnx.py", line 163, in bounded
+    return task.result()
+           ~~~~~~~~~~~^^
+  File "/probe/validate_linux_onnx.py", line 170, in consume
+    async for chunk in source:
+    ...<2 lines>...
+            raise ValueError("Validation audio capture exceeds its bound")
+  File "/workspace/tldw_chatbook/TTS/backends/kokoro.py", line 684, in generate_speech_stream
+    async for chunk in stream:
+        yield chunk
+  File "/workspace/tldw_chatbook/TTS/backends/kokoro.py", line 922, in _generate_onnx_stream
+    async for samples, sr in audio_generator:
+    ...<21 lines>...
+        )
+  File "/workspace/tldw_chatbook/TTS/backends/kokoro.py", line 780, in _create_onnx_stream
+    await join_retained_task(worker)
+  File "/workspace/tldw_chatbook/TTS/_async_lifecycle.py", line 73, in join_retained_task
+    raise task_error
+  File "/workspace/tldw_chatbook/TTS/_async_lifecycle.py", line 64, in join_retained_task
+    task.result()
+    ~~~~~~~~~~~^^
+tldw_chatbook.TTS.adapter_types.TTSOperationError: Kokoro ONNX generation failed.
+LAUNCH_RECORD /private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-01-launch.json

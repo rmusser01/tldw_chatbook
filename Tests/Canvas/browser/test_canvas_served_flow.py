@@ -13,6 +13,7 @@ import tomllib
 from http.cookies import SimpleCookie
 from pathlib import Path
 from threading import Event, Thread
+from time import monotonic
 from types import SimpleNamespace
 from typing import ClassVar
 from urllib.parse import parse_qs, urlsplit
@@ -62,6 +63,7 @@ from tldw_chatbook.Canvas.gateway import (
 from tldw_chatbook.Canvas.limits import CanvasLimits, sha256_utf8
 from tldw_chatbook.Canvas.models import CanvasBridgeRequest, CanvasScope
 from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
+from tldw_chatbook.Canvas.profiles import load_profile_snapshot, runtime_snapshot_id
 from tldw_chatbook.Canvas.service import CanvasService
 from tldw_chatbook.Canvas.web_auth import (
     SESSION_COOKIE_NAME,
@@ -135,7 +137,7 @@ class _MountedAuthority:
 
     async def read_source(self, scope):
         source = f"<!doctype html><h1>{scope.revision_id}</h1>"
-        return CanvasSourceResponse(source, sha256_utf8(source))
+        return CanvasSourceResponse(source, sha256_utf8(source), "canvas-v1")
 
     async def describe_selection(self, scope):
         source = f"<!doctype html><h1>{scope.revision_id}</h1>"
@@ -196,7 +198,7 @@ class _MountedAuthority:
         return BridgeConfirmationResponse(request.request.request_id, status)
 
 
-def _server(tmp_path: Path, *, port: int = 8000):
+def _server(tmp_path: Path, *, port: int = 8000, profile_snapshot=None):
     statics = tmp_path / "static"
     templates = tmp_path / "templates"
     (statics / "js").mkdir(parents=True)
@@ -216,6 +218,7 @@ def _server(tmp_path: Path, *, port: int = 8000):
         statics_path=str(statics),
         templates_path=str(templates),
         web_auth_policy=policy,
+        canvas_profile_snapshot=profile_snapshot,
     )
     server._canvas_control_broker = _FlowBroker()
     return server
@@ -321,6 +324,38 @@ async def _login_live_page(page, *, origin: str, access_token: str) -> None:
     await page.get_by_label("Access token").fill(access_token)
     await page.get_by_role("button", name="Sign in").click()
     await expect(page.locator("#terminal-region")).to_be_visible()
+
+
+async def _wait_for_initial_console_ready(page, *, timeout_ms=45_000) -> None:
+    """Wait for both initial Console signals within one shared deadline."""
+
+    deadline = monotonic() + timeout_ms / 1_000
+
+    def remaining_ms(stage: str) -> float:
+        remaining = (deadline - monotonic()) * 1_000
+        if remaining <= 0:
+            raise PlaywrightTimeoutError(
+                f"initial Console startup deadline expired before {stage}"
+            )
+        return remaining
+
+    first_output_timeout = remaining_ms("first output")
+    try:
+        await expect(page.locator("body")).to_have_class(
+            re.compile("first-byte"), timeout=first_output_timeout
+        )
+    except AssertionError as error:
+        error.add_note("initial Console readiness stage: first output")
+        raise
+
+    composer_timeout = remaining_ms("terminal Composer")
+    try:
+        await expect(page.locator("#terminal")).to_contain_text(
+            "Composer", timeout=composer_timeout
+        )
+    except AssertionError as error:
+        error.add_note("initial Console readiness stage: terminal Composer")
+        raise
 
 
 async def _live_browser_session_id(server, page, *, port: int) -> str:
@@ -534,18 +569,263 @@ async def test_actual_chatbook_scripted_gateway_emits_create_then_stable_update(
     assert call["arguments"]["expected_parent_revision_id"] == revision_id
 
 
-@pytest.mark.loopback_network
-async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Run deterministic provider tool cycles through an actual TldwCli child."""
+def _release_lifecycle_diagnostics(stack, monkeypatch, name):
+    """Persist bounded, source/secret-free broker state before owned cleanup."""
+    from tldw_chatbook.Canvas import control_protocol
 
+    path = Path("output/playwright/mermaid-release") / f"{name}-lifecycle.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    original_write = control_protocol._write_message
+
+    def record(kind, code=None):
+        broker = stack.server._canvas_control_broker
+        gateway = stack.server._served_canvas_gateway
+        rows.append(
+            {
+                "time": asyncio.get_running_loop().time(),
+                "kind": kind,
+                "code": code,
+                "children": [
+                    {
+                        "id": key,
+                        "connected": value.connected.is_set(),
+                        "pending": len(value.pending),
+                        "events": value.events.qsize(),
+                    }
+                    for key, value in broker._children.items()
+                ]
+                if broker
+                else [],
+                "processes": [
+                    {
+                        "pid": service._process.pid,
+                        "returncode": service._process.returncode,
+                    }
+                    for service in stack.services
+                    if service._process
+                ],
+                "sessions": [
+                    {
+                        "epoch": value.selection_epoch,
+                        "canvas": value.scope.canvas_id,
+                        "revision": value.scope.revision_id,
+                        "conversation_session": value.scope.conversation_session_id,
+                    }
+                    for value in gateway._sessions.values()
+                ]
+                if gateway
+                else [],
+            }
+        )
+        path.write_text(json.dumps(rows[-300:]), encoding="utf-8")
+
+    async def write(writer, lock, message):
+        if message.message_type == "control.error":
+            record("control.error", message.payload.get("code"))
+        return await original_write(writer, lock, message)
+
+    monkeypatch.setattr(control_protocol, "_write_message", write)
+    return record
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("failure", ["snapshot", "old-version", "absent-broker"])
+async def test_actual_child_control_refusal_keeps_terminal_usable(
+    tmp_path, monkeypatch, failure
+):
+    from dataclasses import replace
+
+    if failure == "snapshot":
+        # A fixed test-only policy differs even after production admission.
+        monkeypatch.setenv("TLDW_CANVAS_RELEASE_POLICY", "revoked")
     access_token = secrets.token_urlsafe(24)
     stack = await start_live_served_stack(
         tmp_path,
         monkeypatch,
         access_token=access_token,
         child_module="Tests.Canvas.browser.canvas_live_chatbook_child",
+    )
+    if failure == "absent-broker":
+        # The parent remains latched off, but a fresh child reads enabled config.
+        await stack.server._disable_canvas_runtime()
+        assert stack.server._canvas_control_broker is None
+    if failure == "old-version":
+        issue_child = stack.server._canvas_control_broker.issue_child
+
+        def legacy_launch(child_id):
+            launch = issue_child(child_id)
+            return replace(
+                launch,
+                environment={
+                    **launch.environment,
+                    "CHATBOOK_CANVAS_CONTROL_VERSION": "1",
+                },
+            )
+
+        monkeypatch.setattr(
+            stack.server._canvas_control_broker, "issue_child", legacy_launch
+        )
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=live_chromium_executable(playwright.chromium),
+            )
+            page = await browser.new_page(ignore_https_errors=True)
+            await _login_live_page(page, origin=stack.origin, access_token=access_token)
+            await expect(page.locator("#terminal")).to_contain_text(
+                "Composer", timeout=45_000
+            )
+            if failure != "absent-broker":
+                child_id = await _live_child_for_page(stack.server, page, port=stack.port)
+                with pytest.raises(
+                    ControlProtocolError, match="connection_deadline_exceeded"
+                ):
+                    await stack.server._canvas_control_broker.wait_connected(
+                        child_id, timeout=0.2
+                    )
+            await _send_console_prompt(
+                page,
+                "Create the requested Canvas",
+                tmp_path / "test_data" / "canvas-live-composer-focused",
+            )
+            await expect(page.locator("#terminal")).to_contain_text(
+                "CHATBOOK_CANVAS_CREATED", timeout=45_000
+            )
+            await expect(page.locator("#terminal.-connected")).to_be_visible()
+            await expect(page.locator("#served-canvas-region")).to_be_hidden()
+            owner_receipt = tmp_path / "test_data" / "canvas-live-delivery-owner"
+            previous_receipt = owner_receipt.stat().st_mtime_ns
+            await page.keyboard.press("F11")
+            for _ in range(50):
+                if owner_receipt.stat().st_mtime_ns != previous_receipt:
+                    break
+                await asyncio.sleep(0.1)
+            assert owner_receipt.stat().st_mtime_ns != previous_receipt
+            assert json.loads(owner_receipt.read_text()) == {
+                "served": True,
+                "native_gateway": False,
+                "enabled": True,
+                "control": failure == "snapshot",
+            }
+            await browser.close()
+    finally:
+        await stack.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("diagrams", [False, True])
+@pytest.mark.parametrize("interleaving", [False, True], ids=["normal", "read-publication"])
+async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
+    tmp_path: Path, monkeypatch, candidate_snapshot, diagrams, interleaving
+) -> None:
+    """Run deterministic provider tool cycles through an actual TldwCli child."""
+
+    access_token = secrets.token_urlsafe(24)
+    if diagrams:
+        monkeypatch.setenv("TLDW_CANVAS_TEST_CANDIDATE", "1")
+        monkeypatch.setattr(serve, "load_profile_snapshot", lambda: candidate_snapshot)
+    stack = await start_live_served_stack(
+        tmp_path,
+        monkeypatch,
+        access_token=access_token,
+        child_module="Tests.Canvas.browser.canvas_live_chatbook_child",
+    )
+
+    broker_events = []
+    diagnostic_name = f"actual-{interleaving}-{diagrams}"
+    record_lifecycle = _release_lifecycle_diagnostics(stack, monkeypatch, diagnostic_name)
+    original_request = stack.server._canvas_control_broker.request
+
+    async def observed_request(child_id, message_type, payload, *, timeout):
+        nonlocal hold_read, raced_read_code
+        raced = hold_read and message_type == "canvas.read.request"
+        if raced:
+            hold_read = False
+            read_pending.set()
+            await release_read.wait()
+        started = asyncio.get_running_loop().time()
+        outcome = "ok"
+        code = None
+        try:
+            return await original_request(
+                child_id, message_type, payload, timeout=timeout
+            )
+        except Exception as error:  # Test diagnostic never records error text.
+            outcome = type(error).__name__[:64]
+            candidate = getattr(error, "code", None)
+            if raced:
+                raced_read_code = candidate
+            code = (
+                candidate
+                if candidate
+                in {
+                    "deadline_exceeded",
+                    "backpressure",
+                    "child_not_connected",
+                    "operation_failed",
+                    "selection_refused",
+                    "connection_closed",
+                    "canvas_scope_unavailable",
+                    "scope_unavailable",
+                    "canvas_unavailable",
+                }
+                else "other"
+            )
+            raise
+        finally:
+            record_lifecycle(message_type, code)
+            if len(broker_events) < 160:
+                broker_events.append(
+                    {
+                        "type": message_type,
+                        "outcome": outcome,
+                        "code": code,
+                        "elapsed_ms": round(
+                            (asyncio.get_running_loop().time() - started) * 1000
+                        ),
+                    }
+                )
+                (tmp_path / "broker-diagnostics.json").write_text(
+                    json.dumps(broker_events), encoding="utf-8"
+                )
+
+    monkeypatch.setattr(
+        stack.server._canvas_control_broker, "request", observed_request
+    )
+    proxy_events = []
+    read_pending = asyncio.Event()
+    release_read = asyncio.Event()
+    hold_read = False
+    raced_read_code = None
+    original_proxy_request = serve._ServedCanvasAuthorityProxy._request
+
+    async def observed_proxy_request(proxy, scope, message_type, payload):
+        response = await original_proxy_request(proxy, scope, message_type, payload)
+        if message_type == "canvas.read.request" and len(proxy_events) < 80:
+            body = response.payload
+            metadata = body.get("render_metadata")
+            proxy_events.append(
+                {
+                    "canvas_matches": body.get("canvas_id") == scope.canvas_id,
+                    "revision_matches": body.get("revision_id") == scope.revision_id,
+                    "metadata_present": isinstance(metadata, dict),
+                    "source_present": isinstance(metadata, dict)
+                    and isinstance(metadata.get("source"), str),
+                    "scope_generation_present": scope.selection_generation is not None,
+                    "generation_matches": isinstance(metadata, dict)
+                    and metadata.get("selection_generation")
+                    == scope.selection_generation,
+                }
+            )
+            (tmp_path / "proxy-diagnostics.json").write_text(
+                json.dumps(proxy_events), encoding="utf-8"
+            )
+        return response
+
+    monkeypatch.setattr(
+        serve._ServedCanvasAuthorityProxy, "_request", observed_proxy_request
     )
 
     async def assert_persisted_complete(marker):
@@ -570,11 +850,25 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             )
             page = await browser.new_page(ignore_https_errors=True)
             page.set_default_timeout(45_000)
+            await page.add_init_script("""(() => {
+              const Original = MessageChannel;
+              window.MessageChannel = class extends Original {
+                constructor() {
+                  super();
+                  this.port1.addEventListener('message', event => {
+                    const value = event.data;
+                    if (value?.type === 'canvas:status') {
+                      window.__lastRendererStatus = {
+                        state: ['ready', 'failed'].includes(value.state) ? value.state : 'invalid',
+                        code: typeof value.code === 'string' && /^[a-z-]{1,64}$/.test(value.code) ? value.code : null
+                      };
+                    }
+                  });
+                }
+              };
+            })();""")
             await _login_live_page(page, origin=stack.origin, access_token=access_token)
-            await expect(page.locator("body")).to_have_class(re.compile("first-byte"))
-            await expect(page.locator("#terminal")).to_contain_text(
-                "Composer", timeout=45_000
-            )
+            await _wait_for_initial_console_ready(page)
             await expect(page.locator("#terminal")).not_to_contain_text("Check online")
             child_id = await _live_child_for_page(stack.server, page, port=stack.port)
             await stack.server._canvas_control_broker.wait_connected(
@@ -608,9 +902,21 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
                 "CHATBOOK_APP_CANVAS", timeout=60_000
             )
             await expect(preview.locator("#chatbook-app-revision")).to_have_text("v1")
+            if diagrams:
+                await expect(preview.locator("svg")).to_be_visible()
             await expect(shell.get_by_text("Revision 1", exact=True)).to_be_visible()
 
             await page.wait_for_timeout(1_000)
+            await page.context.tracing.start(screenshots=True, snapshots=True)
+            if interleaving:
+                # A real same-selection change makes the shell refresh state.
+                # Hold its selected read across the next genuine tool publication.
+                existing = next(iter(stack.server._served_canvas_launches.values()))[0]
+                hold_read = True
+                stack.server._served_canvas_gateway.change_selection(
+                    browser_session_id=existing.browser_session_id, scope=existing
+                )
+                await asyncio.wait_for(read_pending.wait(), 5)
             await _send_console_prompt(page, "Revise the active Canvas", focus_ack)
             await _wait_for_gateway_calls(
                 tmp_path / "test_data" / "canvas-live-gateway-calls", 3
@@ -625,10 +931,48 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
                 encoding="ascii"
             ) == "canvas_create,staged"
             await assert_persisted_complete("CHATBOOK_CANVAS_UPDATED")
-            await expect(preview.locator("#chatbook-app-revision")).to_have_text(
-                "v2", timeout=15_000
-            )
-            await expect(shell.get_by_text("Revision 2", exact=True)).to_be_visible()
+            if interleaving:
+                await page.request.get(f"{stack.origin}/canvas/api/session")
+                release_read.set()
+                for _ in range(100):
+                    if raced_read_code is not None:
+                        break
+                    await asyncio.sleep(0.01)
+            try:
+                if interleaving:
+                    assert raced_read_code == "canvas_unavailable"
+                await expect(preview.locator("#chatbook-app-revision")).to_have_text(
+                    "v2", timeout=15_000
+                )
+                await expect(shell.get_by_text("Revision 2", exact=True)).to_be_visible()
+            except AssertionError as error:
+                diagnostics = await shell.locator("body").evaluate("""() => {
+                  const text = id => (document.getElementById(id)?.textContent || '').slice(0, 512);
+                  const frame = document.getElementById('canvas-preview');
+                  return {previewState: text('preview-state'), loading: text('loading-state'),
+                    connection: text('connection-state'), revision: text('revision-label'),
+                    rendererStatus: window.__lastRendererStatus || null,
+                    iframeHasSrc: !!frame?.getAttribute('src'), iframeHidden: frame?.hidden,
+                    hiddenElements: [...document.querySelectorAll('[hidden], [inert]')].map(e => e.id),
+                    bodyVisible: !!document.body.getClientRects().length};
+                }""")
+                try:
+                    projection = await _served_shell_projection(page)
+                    diagnostics["selection"] = projection["selection"]
+                except (AssertionError, PlaywrightTimeoutError):
+                    diagnostics["selection"] = "unavailable"
+                record_lifecycle("assertion-failure")
+                diagnostics["outerVisible"] = await page.locator("#served-canvas-region").is_visible()
+                diagnostic_path = Path("output/playwright/mermaid-release") / f"{diagnostic_name}-failure.json"
+                diagnostic_path.write_text(json.dumps(diagnostics), encoding="utf-8")
+                trace_path = diagnostic_path.with_suffix(".zip")
+                await page.context.tracing.stop(path=trace_path)
+                error.add_note(
+                    f"Preview diagnostics: {diagnostic_path}; trace: {trace_path}; state: {diagnostics}"
+                )
+                raise
+            else:
+                await page.context.tracing.stop()
             await page.locator("#terminal .xterm-helper-textarea").focus()
             await page.locator("#terminal .xterm-helper-textarea").press("F12")
             for _ in range(100):
@@ -741,6 +1085,7 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             assert (await page.request.get(f"{stack.origin}{old_url}")).status == 404
             await browser.close()
     finally:
+        release_read.set()
         await stack.aclose()
     assert all(not path.exists() for path in stack.owned_paths)
     assert not stack.runner.sites
@@ -1311,6 +1656,7 @@ async def test_canonical_adversarial_corpus_stays_in_served_product_route(
         stack = await start_live_served_stack(
             tmp_path, monkeypatch, access_token=access_token
         )
+        record_lifecycle = _release_lifecycle_diagnostics(stack, monkeypatch, "served-corpus")
         try:
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(
@@ -1384,6 +1730,7 @@ async def test_canonical_adversarial_corpus_stays_in_served_product_route(
 
                 accepted_sequence = 1
                 for case_index, case in enumerate(cases):
+                    record_lifecycle(f"case-{case_index}-start")
                     prior_prepares = len(bridge_prepare_responses)
                     recorder.begin_load()
                     await _send_terminal_command(page, "next-adversarial")
@@ -1411,6 +1758,7 @@ async def test_canonical_adversarial_corpus_stays_in_served_product_route(
                             preview.locator("#adversarial-marker")
                         ).to_have_text(str(case_index), timeout=15_000)
                     except AssertionError:
+                        record_lifecycle(f"case-{case_index}-failure")
                         renderer_state = {
                             "startup_error": recorder.startup_error,
                             "http_failures": [
@@ -1437,6 +1785,9 @@ async def test_canonical_adversarial_corpus_stays_in_served_product_route(
                                 )
                             ),
                         }
+                        Path("output/playwright/mermaid-release/served-corpus-failure.json").write_text(
+                            json.dumps(renderer_state), encoding="utf-8"
+                        )
                         pytest.fail(
                             f"{case['name']} renderer did not mount; "
                             f"state={renderer_state}",
@@ -1542,7 +1893,9 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
     server = _server(tmp_path, port=unused_tcp_port)
     app = await _browser_app(server)
     test_server = TestServer(app, host="127.0.0.1", port=unused_tcp_port)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     child: CanvasControlClient | None = None
     await test_server.start_server()
     try:
@@ -1577,7 +1930,9 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
             )
             child_launch = broker.issue_child("child-browser-mount")
             child = CanvasControlClient(
-                child_launch.environment, handler=handler.handle
+                child_launch.environment,
+                runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+                handler=handler.handle,
             )
             await child.start()
             cookies = await page.context.cookies()
@@ -1626,8 +1981,232 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.parametrize(
+    "package_damage",
+    [
+        "missing-v2-library",
+        "tampered-v2-worker",
+        "missing-catalog",
+        "malformed-catalog",
+    ],
+)
+async def test_unavailable_served_parent_keeps_authenticated_source_lineage_export_only(
+    tmp_path: Path,
+    unused_tcp_port: int,
+    candidate_snapshot,
+    damage_canvas_package,
+    package_damage: str,
+) -> None:
+    """A damaged install retains child-owned history but no executable bytes."""
+    source = (
+        '<!doctype html><pre data-canvas-diagram="mermaid">'
+        "flowchart TD\nA[Stored] --> B[History]</pre>"
+    )
+
+    class StoredHistoryAuthority(_MountedAuthority):
+        async def read_source(self, _scope):
+            return CanvasSourceResponse(
+                source, sha256_utf8(source), "canvas-v2-mermaid-1"
+            )
+
+        async def describe_selection(self, scope):
+            return CanvasGatewayProjection(
+                scope=scope,
+                options=(
+                    CanvasGatewayOption(scope.canvas_id, scope.revision_id, "Current"),
+                ),
+                title="Current",
+                sequence=2,
+                parent_revision_id="revision-old",
+                source_bytes=len(source.encode("utf-8")),
+                content_sha256=sha256_utf8(source),
+                origin_message_id="message-stored",
+                origin_turn_id="turn-stored",
+                temporary=False,
+                following=False,
+            )
+
+    damage_canvas_package(package_damage)
+    server = _server(tmp_path, port=unused_tcp_port)
+    app = await _browser_app(server)
+    unavailable = server._canvas_profile_snapshot
+    assert unavailable.profiles == ()
+    assert unavailable.default_diagram_profile is None
+    assert server._served_canvas_gateway.profile_snapshot is unavailable
+    assert server._served_canvas_gateway.start_count == 0
+
+    broker = CanvasControlBroker(runtime_snapshot_id=runtime_snapshot_id(unavailable))
+    child = None
+    mismatch = None
+    client = TestClient(TestServer(app))
+    await broker.start()
+    server._canvas_control_broker = broker
+    await client.start_server()
+    try:
+        grant = server._web_auth.authenticate_local(client_ip="127.0.0.1")
+        browser = server._web_auth.authenticate_request(
+            RequestFacts(
+                method="GET",
+                path="/",
+                peer_ip="127.0.0.1",
+                scheme="http",
+                host=f"127.0.0.1:{unused_tcp_port}",
+                cookie_value=grant.cookie_value,
+            )
+        )
+        handler = ServedCanvasControlHandler()
+        handler.bind(
+            StoredHistoryAuthority(),
+            CanvasGatewayScope(
+                browser_session_id=browser.session_id,
+                conversation_session_id="conversation-stored",
+                canvas_id="canvas-stored",
+                revision_id="revision-current",
+            ),
+        )
+        launch = broker.issue_child("child-unavailable")
+        child = CanvasControlClient(
+            launch.environment,
+            runtime_snapshot_id=runtime_snapshot_id(unavailable),
+            handler=handler.handle,
+        )
+        await child.start()
+        await broker.wait_connected("child-unavailable", timeout=1)
+
+        mismatch_launch = broker.issue_child("child-healthy")
+        mismatch = CanvasControlClient(
+            mismatch_launch.environment,
+            runtime_snapshot_id=runtime_snapshot_id(candidate_snapshot),
+        )
+        with pytest.raises(ControlProtocolError, match="runtime_snapshot_mismatch"):
+            await mismatch.start()
+
+        server.bind_served_browser(browser.session_id, "child-unavailable")
+        served_state = await server.served_canvas_state(browser.session_id)
+        shell_url = urlsplit(str(served_state["url"]))
+        shell_base = shell_url.path.rstrip("/")
+        outer_cookie = f"{SESSION_COOKIE_NAME}={grant.cookie_value}"
+        mutation_headers = {
+            "Host": f"127.0.0.1:{unused_tcp_port}",
+            "Cookie": outer_cookie,
+            "Origin": f"http://127.0.0.1:{unused_tcp_port}",
+            "Content-Type": "application/json",
+        }
+        boot = await client.post(
+            f"{shell_base}/api/boot",
+            headers=mutation_headers,
+            data=json.dumps({"bootstrap": parse_qs(shell_url.fragment)["boot"][0]}),
+        )
+        assert boot.status == 200
+        boot_body = await boot.json()
+        canvas_cookie = _response_cookie(boot, "canvas_session")
+        inner_headers = {
+            "Host": f"127.0.0.1:{unused_tcp_port}",
+            "Cookie": f"{outer_cookie}; canvas_session={canvas_cookie}",
+        }
+
+        state = await client.get(f"{shell_base}/api/state", headers=inner_headers)
+        assert state.status == 200
+        state_body = await state.json()
+        assert [item["revision_id"] for item in state_body["options"]] == [
+            "revision-current"
+        ]
+        assert state_body["metadata"]["sequence"] == 2
+        assert state_body["metadata"]["parent_revision_id"] == "revision-old"
+
+        async def action_capability(action: str) -> str:
+            response = await client.post(
+                f"{shell_base}/api/actions",
+                headers={
+                    **mutation_headers,
+                    "Cookie": inner_headers["Cookie"],
+                    "X-Canvas-CSRF": boot_body["csrf"],
+                },
+                data=json.dumps({"action": action}),
+            )
+            assert response.status == 200
+            return (await response.json())["capability"]
+
+        source_capability = await action_capability("source_read")
+        source_response = await client.get(
+            f"{shell_base}/api/source",
+            headers={
+                **inner_headers,
+                "Authorization": f"CanvasCapability {source_capability}",
+            },
+        )
+        assert source_response.status == 200
+        assert await source_response.text() == source
+
+        export_capability = await action_capability("source_download")
+        exported = await client.get(
+            f"{shell_base}/api/source-download",
+            headers={
+                **inner_headers,
+                "Authorization": f"CanvasCapability {export_capability}",
+            },
+        )
+        assert exported.status == 200
+        assert await exported.text() == source
+        assert exported.headers["Content-Disposition"].startswith("attachment;")
+
+        frame = await client.post(
+            f"{shell_base}/api/frame",
+            headers={
+                **mutation_headers,
+                "Cookie": inner_headers["Cookie"],
+                "X-Canvas-CSRF": boot_body["csrf"],
+            },
+            data="{}",
+        )
+        assert frame.status == 200
+        frame_cookie = _response_cookie(frame, "canvas_frame")
+        plan_cookie = _response_cookie(frame, "canvas_plan")
+        renderer = await client.get(
+            f"{shell_base}/render",
+            headers={
+                **inner_headers,
+                "Cookie": f"{inner_headers['Cookie']}; canvas_frame={frame_cookie}",
+                "Sec-Fetch-Dest": "iframe",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+        assert renderer.status == 503
+        assert await renderer.json() == {"error": "runtime_unavailable"}
+        plan = await client.get(
+            f"{shell_base}/api/plan",
+            headers={
+                **inner_headers,
+                "Cookie": f"{inner_headers['Cookie']}; canvas_plan={plan_cookie}",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+        assert plan.status == 503
+        assert await plan.json() == {"error": "plan_unavailable"}
+
+        runtime_asset = await client.get(
+            "/static/chatbook-canvas/canvas_runtime_worker_v2.js",
+            headers={
+                "Host": f"127.0.0.1:{unused_tcp_port}",
+                "Cookie": outer_cookie,
+            },
+        )
+        assert runtime_asset.status == 404
+        assert server._served_canvas_gateway.start_count == 0
+    finally:
+        if mismatch is not None:
+            await mismatch.aclose()
+        if child is not None:
+            await child.aclose()
+        await client.close()
+        await broker.aclose()
+        await server._served_canvas_gateway.aclose()
+
+
+@pytest.mark.parametrize("diagrams", [False, True, "failed"])
 async def test_mounted_production_authority_renders_and_settles_submit(
-    tmp_path: Path, unused_tcp_port: int
+    tmp_path: Path, unused_tcp_port: int, candidate_snapshot, diagrams
 ) -> None:
     """Catch opaque-renderer auth and durable-conversation bridge mismatches."""
 
@@ -1667,7 +2246,10 @@ async def test_mounted_production_authority_renders_and_settles_submit(
         active_leaf_message_id=assistant_id,
         before_message_id=None,
     )
-    controller = ConsoleCanvasController(durable_service=CanvasService(db))
+    snapshot = candidate_snapshot if diagrams else load_profile_snapshot()
+    controller = ConsoleCanvasController(
+        durable_service=CanvasService(db, profile_snapshot=snapshot)
+    )
 
     def scope_resolver(requested: str) -> CanvasScope:
         assert requested == session_id
@@ -1692,6 +2274,13 @@ async def test_mounted_production_authority_renders_and_settles_submit(
             "<button id='send-result'>Send result</button>"
             "<script>document.getElementById('send-result').addEventListener("
             "'click', () => canvas.submit({profile: 'alpha'}));</script>"
+            + (
+                ('<pre data-canvas-diagram="mermaid">flowchart TD\n'
+                 + ('A[PRIVATE_LABEL] --> A' if diagrams == "failed" else 'A[Tea]')
+                 + '</pre>')
+                if diagrams
+                else ""
+            )
         ),
         create_new=True,
     )
@@ -1704,17 +2293,21 @@ async def test_mounted_production_authority_renders_and_settles_submit(
     handler = ServedCanvasControlHandler()
     handler.bind(authority, child_scope)
 
-    server = _server(tmp_path, port=unused_tcp_port)
+    server = _server(tmp_path, port=unused_tcp_port, profile_snapshot=snapshot)
     app = await _browser_app(server)
     test_server = TestServer(app, host="127.0.0.1", port=unused_tcp_port)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(runtime_snapshot_id=runtime_snapshot_id(snapshot))
     child: CanvasControlClient | None = None
     await test_server.start_server()
     await broker.start()
     server._canvas_control_broker = broker
     try:
         child_launch = broker.issue_child(child_id)
-        child = CanvasControlClient(child_launch.environment, handler=handler.handle)
+        child = CanvasControlClient(
+            child_launch.environment,
+            runtime_snapshot_id=runtime_snapshot_id(snapshot),
+            handler=handler.handle,
+        )
         await child.start()
 
         async with async_playwright() as playwright:
@@ -1723,6 +2316,11 @@ async def test_mounted_production_authority_renders_and_settles_submit(
                 executable_path=_chromium_executable(playwright.chromium),
             )
             page = await browser.new_page(viewport={"width": 1100, "height": 760})
+            recorder = ProductRouteRecorder(
+                served=True, profile="canvas-v2-mermaid-1" if diagrams else "canvas-v1"
+            )
+            await recorder.install_execution_boundary(page.context)
+            recorder.attach(page.context, page)
             page.set_default_timeout(7_000)
             await page.goto(str(test_server.make_url("/")))
             outer_cookie = next(
@@ -1744,16 +2342,43 @@ async def test_mounted_production_authority_renders_and_settles_submit(
 
             canvas_shell = page.frame_locator("#served-canvas-frame")
             preview = canvas_shell.frame_locator("#canvas-preview")
-            await expect(preview.locator("#profile-identity")).to_have_text(
-                "Profile Alpha"
-            )
-            await expect(canvas_shell.locator("#loading-state")).to_be_hidden()
+            if diagrams == "failed":
+                await expect(canvas_shell.locator("#preview-state")).to_have_text("Preview failed")
+                await expect(canvas_shell.locator("#loading-state")).to_contain_text("Diagram 1: cycle")
+                assert drafts == []
+                await canvas_shell.locator("#repair-button").click()
+            else:
+                await expect(preview.locator("#profile-identity")).to_have_text("Profile Alpha")
+                await expect(canvas_shell.locator("#loading-state")).to_be_hidden()
+                if diagrams:
+                    await expect(preview.locator("svg")).to_be_visible()
+                await canvas_shell.locator("#pin-button").click()
+                await expect(canvas_shell.get_by_text("Pinned", exact=True)).to_be_visible()
+                await preview.get_by_role("button", name="Send result").click()
+            await expect(page.locator("#terminal-region")).to_be_visible()
 
-            await preview.get_by_role("button", name="Send result").click()
             await expect(canvas_shell.locator("#bridge-dialog")).to_be_visible()
+            assert drafts == []
+            if diagrams == "failed":
+                draft = await canvas_shell.locator("#bridge-complete-text").input_value()
+                assert "cycle" in draft
+                assert "PRIVATE_LABEL" not in draft
             await canvas_shell.get_by_role("button", name="Send to composer").click()
             await expect(canvas_shell.locator("#bridge-dialog")).to_be_hidden()
-            assert drafts == ['{"profile":"alpha"}']
+            assert drafts == ([draft] if diagrams == "failed" else ['{"profile":"alpha"}'])
+            suffix = "_v2" if diagrams else ""
+            shell_url = await page.locator("#served-canvas-frame").get_attribute("src")
+            recorder.assert_generated_confined(
+                trusted_origin=f"http://127.0.0.1:{unused_tcp_port}",
+                trusted_route_root=urlsplit(shell_url).path,
+                forbidden_canary_path="/canvas-forbidden-canary",
+                trusted_shell_paths=(("/canvas/api/session", "GET", "fetch"),),
+                trusted_static_paths=(
+                    f"/static/chatbook-canvas/canvas_renderer{suffix}.js",
+                    f"/static/chatbook-canvas/canvas_runtime_worker{suffix}.js",
+                    "/static/chatbook-canvas/quickjs-runtime.js",
+                ),
+            )
             await browser.close()
     finally:
         if child is not None:
@@ -1770,7 +2395,9 @@ async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnect
     server = _server(tmp_path, port=unused_tcp_port)
     app = await _browser_app(server)
     test_server = TestServer(app, host="127.0.0.1", port=unused_tcp_port)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     children: list[CanvasControlClient] = []
     await test_server.start_server()
     await broker.start()
@@ -1791,7 +2418,11 @@ async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnect
                 ),
             )
             launch = broker.issue_child(child_id)
-            child = CanvasControlClient(launch.environment, handler=handler.handle)
+            child = CanvasControlClient(
+                launch.environment,
+                runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+                handler=handler.handle,
+            )
             await child.start()
             children.append(child)
 
@@ -1908,7 +2539,9 @@ async def test_terminal_websocket_echo_survives_private_control_channel_loss(
         async def start(self, width: int, height: int) -> None:
             del width, height
             self.control_client = CanvasControlClient(
-                self._build_environment(), handler=self.handler.handle
+                self._build_environment(),
+                runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+                handler=self.handler.handle,
             )
             await self.control_client.start()
 
@@ -1930,7 +2563,9 @@ async def test_terminal_websocket_echo_survives_private_control_channel_loss(
             return None
 
     server = _server(tmp_path)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     await broker.start()
     server._canvas_control_broker = broker
     server._chatbook_app_service_class = serve.build_chatbook_app_service_class(
@@ -2114,6 +2749,114 @@ async def test_parent_scope_poll_marks_delayed_selection_as_passive_sync(
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.parametrize(
+    "transition",
+    [
+        "new-canvas",
+        "same-selection",
+        "cross-session",
+        "disconnect",
+        "child-rebind",
+        "malformed",
+    ],
+)
+async def test_event_scope_mismatch_reconciles_only_same_live_child(
+    tmp_path, transition
+):
+    """Discard mismatched events; only a trusted same-owner snapshot can advance selection."""
+    server = _server(tmp_path)
+    app = await _browser_app(server)
+    grant = server._web_auth.authenticate_local(client_ip="127.0.0.1")
+    authenticated = server._web_auth.authenticate_request(
+        RequestFacts(
+            method="GET",
+            path="/",
+            peer_ip="127.0.0.1",
+            scheme="http",
+            host="127.0.0.1:8000",
+            cookie_value=grant.cookie_value,
+        )
+    )
+    browser_id = authenticated.session_id
+    server.bind_served_browser(browser_id, "child-a")
+    client = TestClient(TestServer(app))
+    await client.start_server()
+
+    class PublicationBroker(_FlowBroker):
+        race = False
+
+        async def request(self, child_id, kind, payload, *, timeout):
+            assert child_id == "child-a" and kind == "canvas.events.request"
+            return SimpleNamespace(
+                payload={
+                    "events": [
+                        {
+                            "event_id": "new-event",
+                            "kind": "updated",
+                            "canvas_id": "canvas-b",
+                            "revision_id": "revision-b",
+                            "metadata": {},
+                        }
+                        if transition != "malformed"
+                        else {"wrong": True}
+                    ]
+                }
+            )
+
+        async def browser_state(self, child_id):
+            result = await super().browser_state(child_id)
+            if self.race and transition in {"disconnect", "child-rebind"}:
+                server.unbind_served_browser(browser_id, "child-a")
+                if transition == "child-rebind":
+                    server.bind_served_browser(browser_id, "child-b")
+            return result
+
+    broker = PublicationBroker()
+    server._canvas_control_broker = broker
+    broker.states["child-a"] = {
+        "status": "ready",
+        "canvas_id": "canvas-a",
+        "revision_id": "revision-a",
+        "conversation_session_id": "session-a",
+    }
+    try:
+        state = await server.served_canvas_state(browser_id)
+        url = urlsplit(state["url"])
+        boot = await client.post(
+            f"{url.path.rstrip('/')}/api/boot",
+            headers={
+                "Host": "127.0.0.1:8000",
+                "Origin": "http://127.0.0.1:8000",
+                "Cookie": f"{SESSION_COOKIE_NAME}={grant.cookie_value}",
+            },
+            json={"bootstrap": parse_qs(url.fragment)["boot"][0]},
+        )
+        assert boot.status == 200
+        scope, launch = server._served_canvas_launches[browser_id]
+        broker.race = True
+        if transition != "same-selection":
+            broker.states["child-a"].update(
+                canvas_id="canvas-b", revision_id="revision-b"
+            )
+        if transition == "cross-session":
+            broker.states["child-a"]["conversation_session_id"] = "session-b"
+        with pytest.raises(serve.ServedCanvasUnavailable):
+            await serve._ServedCanvasAuthorityProxy(server).read_events(
+                scope, after_event_id=None
+            )
+        current = server._served_canvas_launches.get(browser_id)
+        if transition == "new-canvas":
+            assert current[0].canvas_id == "canvas-b"
+            assert current[1] is launch
+        elif transition in {"disconnect", "child-rebind"}:
+            assert current is None
+        else:
+            assert current == (scope, launch)
+    finally:
+        await client.close()
+        await server._served_canvas_gateway.aclose()
+
+
 async def test_two_browser_sessions_cannot_reuse_child_canvas_scope(
     tmp_path: Path,
 ) -> None:
@@ -2155,12 +2898,18 @@ async def test_connected_child_without_canvas_is_terminal_only_then_reconnecting
 ) -> None:
     server = _server(tmp_path)
     await _browser_app(server)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     await broker.start()
     server._canvas_control_broker = broker
     handler = ServedCanvasControlHandler()
     child_launch = broker.issue_child("child-empty")
-    child = CanvasControlClient(child_launch.environment, handler=handler.handle)
+    child = CanvasControlClient(
+        child_launch.environment,
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+        handler=handler.handle,
+    )
     await child.start()
     server.bind_served_browser("browser-empty", "child-empty")
 
@@ -2823,7 +3572,9 @@ async def test_mounted_canvas_url_is_not_transferable_between_authenticated_brow
     tmp_path: Path,
 ) -> None:
     server = _server(tmp_path)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     await broker.start()
     server._canvas_control_broker = broker
     app = await _browser_app(server)
@@ -2852,8 +3603,16 @@ async def test_mounted_canvas_url_is_not_transferable_between_authenticated_brow
     )
     launch_a = broker.issue_child("child-a")
     launch_b = broker.issue_child("child-b")
-    child_a = CanvasControlClient(launch_a.environment, handler=handler_a.handle)
-    child_b = CanvasControlClient(launch_b.environment, handler=handler_b.handle)
+    child_a = CanvasControlClient(
+        launch_a.environment,
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+        handler=handler_a.handle,
+    )
+    child_b = CanvasControlClient(
+        launch_b.environment,
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+        handler=handler_b.handle,
+    )
     await child_a.start()
     await child_b.start()
 

@@ -5,20 +5,23 @@ from __future__ import annotations
 
 # Imports
 import asyncio
-import os
-import sys
-import time
+import hashlib
 import io
 import json
-import wave
-import tempfile
+import os
 import shutil
-import hashlib
+import sys
+import tempfile
+import threading
+import time
+import wave
+from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
-from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
+
 from loguru import logger
 
 # Optional requests import for model downloading
@@ -41,17 +44,22 @@ except ImportError:
     logger.warning("numpy not available. Kokoro TTS backend will not function.")
 
 # Local imports
-from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_types import TTSOperationError
-from tldw_chatbook.TTS.base_backends import LocalTTSBackend
+from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_service import get_audio_service
+from tldw_chatbook.TTS.base_backends import LocalTTSBackend
 from tldw_chatbook.TTS.text_processing import TextChunker, TextNormalizer
 from tldw_chatbook.TTS.voice_blend_paths import (
     default_kokoro_backend_blend_directory,
     write_private_json,
 )
-from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.Utils.path_validation import validate_path, validate_path_simple
+from tldw_chatbook.Utils.path_validation import (
+    validate_filename,
+    validate_path,
+    validate_path_simple,
+)
 from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
     verify_trusted_directory,
@@ -82,6 +90,19 @@ _KOKORO_PROGRESS_INTERVAL_SECONDS = 2.0
 # Encoded requests retain at most five minutes of 24 kHz mono float32 audio
 # (28.8 MB). Raw PCM does not require a complete-file buffer.
 KOKORO_MAX_ENCODED_AUDIO_SAMPLES = 24000 * 300
+
+# All generation paths infer the same language from official voice prefixes.
+KOKORO_VOICE_LANGUAGES = {
+    "a": "en-us",
+    "b": "en-gb",
+    "j": "ja",
+    "z": "zh",
+    "e": "es",
+    "f": "fr",
+    "h": "hi",
+    "i": "it",
+    "p": "pt-br",
+}
 
 
 def _check_audio_sample_limit(total_samples: int, max_samples: int | None) -> None:
@@ -121,7 +142,7 @@ def _kokoro_stream_download(
     Blocking by design -- callers run it via ``asyncio.to_thread`` so the event
     loop stays responsive (task-19560).
 
-    Writes to a ``.part`` sibling and ``os.replace``s it into place only after
+    Writes to an exclusively created ``.part`` sibling and replaces the target after
     the body is fully read, so an interrupted or failed download can never
     leave a truncated file that the next run's ``os.path.exists`` check treats
     as a complete model.
@@ -138,15 +159,11 @@ def _kokoro_stream_download(
     Raises:
         requests.RequestException: On any transport failure or timeout.
     """
-    parent = os.path.dirname(destination) or "."
+    target = Path(destination)
+    destination = str(validate_path(target.name, target.parent, redact_paths=True))
+    parent = os.path.dirname(destination)
     os.makedirs(parent, exist_ok=True)
-    # Qodo #4: every filesystem write in this app goes through
-    # path_validation. These destinations are internally derived (config'd
-    # model/voice dirs), not user input, but validating anyway means a
-    # future caller passing a traversal-shaped path is refused here rather
-    # than discovering the rule does not apply to downloads.
-    validate_path(destination, parent, redact_paths=True)
-    partial = destination + ".part"
+    partial = None
 
     try:
         with requests.get(
@@ -158,7 +175,14 @@ def _kokoro_stream_download(
             written = 0
             last_log = time.monotonic()
 
-            with open(partial, "wb") as handle:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix=f"{os.path.basename(destination)}.",
+                suffix=".part",
+                dir=parent,
+                delete=False,
+            ) as handle:
+                partial = handle.name
                 for chunk in response.iter_content(chunk_size=8192):
                     if not chunk:
                         continue
@@ -188,16 +212,10 @@ def _kokoro_stream_download(
         # Includes cancellation: never leave a partial file behind that the
         # next run would mistake for a finished download.
         try:
-            if os.path.exists(partial):
+            if partial is not None and os.path.exists(partial):
                 os.remove(partial)
         except OSError as cleanup_exc:
-            # No path here on purpose. `partial` is `destination + ".part"`,
-            # and two of this function's four call sites pass the user's
-            # CONFIGURED model/voice directory, so the path is user data.
-            # The two diagnostics this file lost in the same change
-            # ("Downloaded model to {self.model_path}") were removed for
-            # exactly that reason; the label identifies the download without
-            # naming where it lives.
+            # The configured directory is user data; keep it out of diagnostics.
             logger.debug(
                 f"{label}: could not remove the partial file; "
                 f"error_type={type(cleanup_exc).__name__}"
@@ -246,10 +264,14 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         # Lazy-loaded heavy dependencies
         self._torch = None
-        self._nltk = None
-        self._transformers = None
         self._kokoro_onnx = None
         self._kokoro_pt_modules = None
+        self._native_tasks: dict[asyncio.Task[Any], Callable[[], None] | None] = {}
+        self._onnx_tasks: dict[asyncio.Task[None], Callable[[], None]] = {}
+        self._onnx_phonemizers: dict[str, Any] = {}
+        self._onnx_phonemizer_lock = threading.Lock()
+        self._closing = False
+        self._close_task: asyncio.Task[None] | None = None
 
         # Configuration
         self.use_onnx = self.config.get("KOKORO_USE_ONNX", True)
@@ -261,7 +283,11 @@ class KokoroTTSBackend(LocalTTSBackend):
         # Try to get paths from CLI config if not provided
         if not self.model_path:
             self.model_path = get_cli_setting(
-                "app_tts", "KOKORO_ONNX_MODEL_PATH_DEFAULT", "kokoro-v1.0.onnx"
+                "app_tts",
+                "KOKORO_ONNX_MODEL_PATH_DEFAULT"
+                if self.use_onnx
+                else "KOKORO_PT_MODEL_PATH_DEFAULT",
+                "kokoro-v1.0.onnx" if self.use_onnx else None,
             )
         if not self.voices_json:
             self.voices_json = get_cli_setting(
@@ -271,7 +297,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         # Model instances
         self.kokoro_instance = None  # ONNX instance
         self.kokoro_model_pt = None  # PyTorch model
-        self.tokenizer = None
 
         # Services
         self.audio_service = get_audio_service()
@@ -386,7 +411,9 @@ class KokoroTTSBackend(LocalTTSBackend):
                 from pathlib import Path
 
                 model_dir = Path.home() / ".config" / "tldw_cli" / "models" / "kokoro"
-                self.model_path = str(model_dir / "kokoro-v1_0.pth")
+                self.model_path = self.config.get(
+                    "KOKORO_PT_MODEL_PATH_DEFAULT"
+                ) or str(model_dir / "kokoro-v1_0.pth")
                 await self._initialize_pytorch()
         else:
             await self._initialize_pytorch()
@@ -414,6 +441,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             if not os.path.exists(self.model_path):
                 logger.info(f"Kokoro ONNX model not found at {self.model_path}")
                 # Download the model with checksum verification
+                tmp_path = None
                 try:
                     logger.info("Downloading Kokoro ONNX model...")
                     if not REQUESTS_AVAILABLE:
@@ -439,7 +467,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                         prefix="kokoro-download-", suffix="-model.onnx"
                     )
                     os.close(tmp_fd)
-                    await asyncio.to_thread(
+                    await self._run_native_work(
                         _kokoro_stream_download,
                         url,
                         tmp_path,
@@ -471,10 +499,14 @@ class KokoroTTSBackend(LocalTTSBackend):
                     logger.error(f"Failed to download ONNX model: {e}")
                     self.use_onnx = False
                     return
+                finally:
+                    if tmp_path is not None:
+                        Path(tmp_path).unlink(missing_ok=True)
 
             if not os.path.exists(self.voices_json):
                 logger.info(f"Kokoro voices file not found at {self.voices_json}")
                 # Download the voices.json with checksum verification
+                tmp_path = None
                 try:
                     logger.info("Downloading Kokoro voices file...")
                     if not REQUESTS_AVAILABLE:
@@ -499,7 +531,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                         prefix="kokoro-download-", suffix="-voices.bin"
                     )
                     os.close(tmp_fd)
-                    await asyncio.to_thread(
+                    await self._run_native_work(
                         _kokoro_stream_download,
                         url,
                         tmp_path,
@@ -520,14 +552,17 @@ class KokoroTTSBackend(LocalTTSBackend):
                     logger.error(f"Failed to download voices file: {e}")
                     self.use_onnx = False
                     return
+                finally:
+                    if tmp_path is not None:
+                        Path(tmp_path).unlink(missing_ok=True)
 
             # Check for espeak
             espeak_lib = os.getenv("PHONEMIZER_ESPEAK_LIBRARY")
             espeak_config = EspeakConfig(lib_path=espeak_lib) if espeak_lib else None
 
             # Create Kokoro instance
-            self.kokoro_instance = Kokoro(
-                self.model_path, self.voices_json, espeak_config=espeak_config
+            self.kokoro_instance = await self._run_native_work(
+                Kokoro, self.model_path, self.voices_json, espeak_config=espeak_config
             )
 
             logger.info("KokoroTTSBackend: ONNX backend initialized successfully")
@@ -551,34 +586,6 @@ class KokoroTTSBackend(LocalTTSBackend):
                     "PyTorch is required but not installed. Install with: pip install torch"
                 )
         return self._torch
-
-    @property
-    def nltk(self):
-        """Lazy load nltk module"""
-        if self._nltk is None:
-            try:
-                import nltk
-
-                self._nltk = nltk
-            except ImportError:
-                raise ImportError(
-                    "NLTK is required but not installed. Install with: pip install nltk"
-                )
-        return self._nltk
-
-    @property
-    def transformers(self):
-        """Lazy load transformers module"""
-        if self._transformers is None:
-            try:
-                import transformers
-
-                self._transformers = transformers
-            except ImportError:
-                raise ImportError(
-                    "Transformers is required but not installed. Install with: pip install transformers"
-                )
-        return self._transformers
 
     @property
     def kokoro_onnx_module(self):
@@ -623,21 +630,13 @@ class KokoroTTSBackend(LocalTTSBackend):
                 logger.warning("CUDA requested but not available, falling back to CPU")
                 self.device = "cpu"
 
-            # Ensure NLTK data is available
-            try:
-                self.nltk.data.find("tokenizers/punkt")
-            except LookupError:
-                logger.info("Downloading NLTK punkt tokenizer...")
-                self.nltk.download("punkt", quiet=True)
-
-            # Initialize tokenizer
-            AutoTokenizer = self.transformers.AutoTokenizer
-            self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-
             # Load model if it exists, otherwise mark for download
             if os.path.exists(self.model_path):
-                self._load_pytorch_model()
+                await self._run_native_work(self._load_pytorch_model)
             else:
+                from tldw_chatbook.TTS.kokoro_pytorch import require_runtime
+
+                await self._run_native_work(require_runtime)
                 logger.warning(f"Kokoro PyTorch model not found at {self.model_path}")
                 # Model download will happen on first use
 
@@ -645,6 +644,17 @@ class KokoroTTSBackend(LocalTTSBackend):
                 "KokoroTTSBackend: PyTorch backend initialized (model loading deferred)"
             )
 
+        except ImportError as error:
+            raise TTSOperationError(
+                code="dependency_missing",
+                message=(
+                    "Kokoro PyTorch needs 'tldw_chatbook[local_tts]' on Python "
+                    "3.12; select ONNX on Python 3.13+."
+                ),
+                retryable=False,
+                operation_id="kokoro_pytorch",
+                recovery_action="install_kokoro_pytorch",
+            ) from error
         except Exception as e:
             logger.opt(exception=True).error(
                 f"KokoroTTSBackend: Failed to initialize PyTorch backend: {e}"
@@ -667,20 +677,133 @@ class KokoroTTSBackend(LocalTTSBackend):
         if not self.model_loaded:
             await self.initialize()
 
-        if self.use_onnx and self.kokoro_instance:
-            async for chunk in self._generate_onnx_stream(request):
+        stream = (
+            self._generate_onnx_stream(request)
+            if self.use_onnx and self.kokoro_instance
+            else self._generate_pytorch_stream(request)
+        )
+        async with aclosing(stream):
+            async for chunk in stream:
                 yield chunk
-        else:
-            # PyTorch implementation
-            # Check if we have a model loaded
-            if not self.kokoro_model_pt and not self.kokoro_instance:
-                raise RuntimeError(
-                    "No Kokoro model loaded. Please either:\n"
-                    "1. Install kokoro-onnx: pip install kokoro-onnx\n"
-                    "2. Or provide PyTorch model files (.pth) and ensure PyTorch is installed"
+
+    async def _create_onnx_stream(self, text: str, *args, **kwargs):
+        """Join the upstream stream's native executor before releasing its owner.
+
+        kokoro-onnx cancels its producer on generator close, but cancellation
+        cannot stop a batch already running in its default executor. A private
+        loop owns that executor; its shutdown joins the actual worker. The
+        cross-loop handoff waits for consumption without adding native prefetch.
+        """
+        if self._closing:
+            raise RuntimeError("Kokoro backend is closing")
+        runtime = self.kokoro_instance
+        parent_loop = asyncio.get_running_loop()
+        chunks = asyncio.Queue(maxsize=1)
+        stopped = threading.Event()
+        lock = threading.Lock()
+        owner = []
+
+        def stop():
+            stopped.set()
+            with lock:
+                if owner:
+                    loop, producer = owner[0]
+                    loop.call_soon_threadsafe(producer.cancel)
+
+        async def deliver(chunk):
+            await chunks.put(chunk)
+            await chunks.join()
+
+        async def produce():
+            from tldw_chatbook.TTS.kokoro_languages import prepare_onnx_text
+
+            stream_text, stream_options = text, dict(kwargs)
+            if not stream_options.get("is_phonemes"):
+                # Each stream has a native worker. Frontends are shared and may
+                # keep mutable state, so serialize construction and invocation
+                # here, outside the application loop and inference/delivery.
+                with self._onnx_phonemizer_lock:
+                    if stopped.is_set():
+                        return
+                    stream_text, language, phonemes = prepare_onnx_text(
+                        text, stream_options.get("lang", "en-us"), self._onnx_phonemizers
+                    )
+                stream_options["lang"] = language
+                if phonemes:
+                    stream_options["is_phonemes"] = True
+            # A synchronous frontend can finish after Stop was queued on this
+            # worker's loop. Do not let it start an inference call afterward.
+            if stopped.is_set():
+                return
+            async with aclosing(
+                runtime.create_stream(stream_text, *args, **stream_options)
+            ) as stream:
+                async for chunk in stream:
+                    if stopped.is_set():
+                        break
+                    delivery = asyncio.run_coroutine_threadsafe(
+                        deliver(chunk), parent_loop
+                    )
+                    await asyncio.wrap_future(delivery)
+
+        async def run():
+            loop = asyncio.get_running_loop()
+            producer = asyncio.create_task(produce())
+            with lock:
+                owner.append((loop, producer))
+                if stopped.is_set():
+                    producer.cancel()
+            try:
+                await producer
+            except asyncio.CancelledError:
+                if not stopped.is_set():
+                    raise
+            except TTSOperationError:
+                raise
+            except Exception as exc:
+                raise TTSOperationError(
+                    code="generation_failed",
+                    message="Kokoro ONNX generation failed.",
+                    retryable=True,
+                    operation_id="kokoro_onnx",
+                    recovery_action="retry",
+                ) from exc
+            finally:
+                with lock:
+                    owner.clear()
+                # Explicitly join without Runner's finite default timeout.
+                # Only the producer is cancelled; repeated Stop cannot cancel
+                # this executor shutdown and abandon a live native thread.
+                await loop.shutdown_default_executor()
+
+        worker = asyncio.create_task(asyncio.to_thread(lambda: asyncio.run(run())))
+        self._onnx_tasks[worker] = stop
+        receive = None
+        try:
+            while not worker.done() or not chunks.empty():
+                receive = asyncio.create_task(chunks.get())
+                done, _ = await asyncio.wait(
+                    (receive, worker), return_when=asyncio.FIRST_COMPLETED
                 )
-            async for chunk in self._generate_pytorch_stream(request):
-                yield chunk
+                if receive in done:
+                    if self._closing:
+                        raise asyncio.CancelledError
+                    yield receive.result()
+                    chunks.task_done()
+                else:
+                    receive.cancel()
+                    break
+            await join_retained_task(worker)
+            if self._closing:
+                raise asyncio.CancelledError
+        finally:
+            stop()
+            if receive is not None:
+                receive.cancel()
+            try:
+                await join_retained_task(worker)
+            finally:
+                self._onnx_tasks.pop(worker, None)
 
     async def _generate_onnx_stream(
         self, request: OpenAISpeechRequest
@@ -708,15 +831,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                     and len(voice_config["primary_voice"]) > 0
                 ):
                     voice_prefix = voice_config["primary_voice"][0].lower()
-                    lang_map = {
-                        "a": "en-us",  # American English
-                        "b": "en-gb",  # British English
-                        "j": "ja",  # Japanese
-                        "z": "zh",  # Chinese
-                        "e": "es",  # Spanish
-                        "f": "fr",  # French
-                    }
-                    lang = lang_map.get(voice_prefix, "en-us")
+                    lang = KOKORO_VOICE_LANGUAGES.get(voice_prefix, "en-us")
                 else:
                     lang = "en-us"  # Default to American English
 
@@ -745,50 +860,22 @@ class KokoroTTSBackend(LocalTTSBackend):
                     metrics={"format": "pcm"},
                 )
 
-                if voice_config["is_mixed"]:
-                    # Generate mixed voice audio
-                    async for samples, sample_rate in self._generate_mixed_voice(
+                audio_generator = (
+                    self._generate_mixed_voice(
                         text, voice_config, speed=request.speed, lang=lang
-                    ):
-                        token_count += len(samples) // 256  # Approximate token count
-                        samples_processed += len(samples)
-
-                        # Report progress
-                        progress = (
-                            min(0.95, token_count / estimated_total_tokens)
-                            if estimated_total_tokens > 0
-                            else 0.5
-                        )
-                        await self._report_progress(
-                            progress=progress,
-                            processed=token_count,
-                            total=estimated_total_tokens,
-                            status=f"Streaming PCM audio: {samples_processed / sample_rate:.1f}s generated",
-                            metrics={
-                                "sample_rate": sample_rate,
-                                "samples_generated": samples_processed,
-                                "format": "pcm",
-                            },
-                        )
-
-                        # Convert float32 to int16 PCM
-                        int16_samples = np.int16(samples * 32767)
-                        yield int16_samples.tobytes()
-                else:
-                    # Single voice generation
-                    async for (
-                        samples,
-                        sample_rate,
-                    ) in self.kokoro_instance.create_stream(
+                    )
+                    if voice_config["is_mixed"]
+                    else self._create_onnx_stream(
                         text,
                         voice=voice_config["primary_voice"],
                         speed=request.speed,
                         lang=lang,
-                    ):
-                        token_count += len(samples) // 256  # Approximate token count
+                    )
+                )
+                async with aclosing(audio_generator):
+                    async for samples, sample_rate in audio_generator:
+                        token_count += len(samples) // 256
                         samples_processed += len(samples)
-
-                        # Report progress
                         progress = (
                             min(0.95, token_count / estimated_total_tokens)
                             if estimated_total_tokens > 0
@@ -805,8 +892,6 @@ class KokoroTTSBackend(LocalTTSBackend):
                                 "format": "pcm",
                             },
                         )
-
-                        # Convert float32 to int16 PCM
                         int16_samples = np.int16(samples * 32767)
                         yield int16_samples.tobytes()
 
@@ -849,7 +934,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                         max_samples=KOKORO_MAX_ENCODED_AUDIO_SAMPLES,
                     )
                 else:
-                    audio_generator = self.kokoro_instance.create_stream(
+                    audio_generator = self._create_onnx_stream(
                         text,
                         voice=voice_config["primary_voice"],
                         speed=request.speed,
@@ -939,7 +1024,13 @@ class KokoroTTSBackend(LocalTTSBackend):
             logger.opt(exception=True).error(
                 f"KokoroTTSBackend: Error during ONNX generation: {e}"
             )
-            yield f"ERROR: Kokoro generation failed - {str(e)}".encode("utf-8")
+            raise TTSOperationError(
+                code="generation_failed",
+                message="Kokoro ONNX generation failed.",
+                retryable=True,
+                operation_id="kokoro_onnx",
+                recovery_action="retry",
+            ) from e
 
     def _parse_voice_config(self, voice_str: str) -> Dict[str, Any]:
         """Parse voice string for potential mixing configuration or preset"""
@@ -1004,7 +1095,7 @@ class KokoroTTSBackend(LocalTTSBackend):
         """Generate audio with mixed voices"""
         if not voice_config["is_mixed"]:
             # Fallback to single voice
-            stream = self.kokoro_instance.create_stream(
+            stream = self._create_onnx_stream(
                 text, voice=voice_config["primary_voice"], speed=speed, lang=lang
             )
             total_samples = 0
@@ -1021,9 +1112,7 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         for voice, weight in voice_config["voices"]:
             sample_buffer = bytearray()
-            stream = self.kokoro_instance.create_stream(
-                text, voice=voice, speed=speed, lang=lang
-            )
+            stream = self._create_onnx_stream(text, voice=voice, speed=speed, lang=lang)
             async with aclosing(stream):
                 async for samples, sr in stream:
                     sample_rate = sr
@@ -1102,6 +1191,39 @@ class KokoroTTSBackend(LocalTTSBackend):
             logger.error(f"Failed to load PyTorch model: {e}")
             raise
 
+    async def _run_native_work(self, function, *args, on_cancel=None, **kwargs):
+        """Keep native work owned until it really stops, including cancellation."""
+        if self._closing:
+            raise RuntimeError("Kokoro backend is closing")
+        task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+        self._native_tasks[task] = on_cancel
+        try:
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as cancelled:
+                if on_cancel is not None:
+                    on_cancel()
+                try:
+                    await join_retained_task(task)
+                finally:
+                    raise cancelled
+            if self._closing:
+                raise asyncio.CancelledError
+            return task.result()
+        finally:
+            self._native_tasks.pop(task, None)
+
+    async def _run_pytorch_generation(self, function, *args, **kwargs):
+        """Stop between upstream segments while joining the active native call."""
+        stopped = threading.Event()
+        return await self._run_native_work(
+            function,
+            *args,
+            on_cancel=stopped.set,
+            is_cancelled=stopped.is_set,
+            **kwargs,
+        )
+
     async def _download_model_if_needed(self):
         """Download Kokoro model if not present"""
         if not os.path.exists(self.model_path):
@@ -1112,29 +1234,38 @@ class KokoroTTSBackend(LocalTTSBackend):
                 url = "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth?download=true"
                 # task-19560: off the event loop, with timeouts, and atomic --
                 # this is a several-hundred-MB transfer.
-                await asyncio.to_thread(
+                await self._run_native_work(
                     _kokoro_stream_download,
                     url,
                     self.model_path,
                     label="Kokoro PyTorch model",
                 )
-                self._load_pytorch_model()
             except Exception as e:
                 logger.error(f"Failed to download model: {e}")
                 raise ValueError(
                     "Failed to download Kokoro model. Please download manually."
                 )
+        await self._run_native_work(self._load_pytorch_model)
+
+    def _voice_pack_path(self, voice: str) -> str:
+        """Resolve a named pack within its configured directory before any I/O."""
+        filename = f"{validate_filename(voice)}.pt"
+        return str(
+            validate_path(
+                filename, Path(self.voice_dir).expanduser(), redact_paths=True
+            )
+        )
 
     async def _download_voice_if_needed(self, voice: str):
         """Download voice pack if not present"""
-        voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
+        voice_path = self._voice_pack_path(voice)
         if not os.path.exists(voice_path):
             logger.info(f"Downloading voice pack: {voice}")
             try:
                 if not REQUESTS_AVAILABLE:
                     raise ImportError("requests library required for voice download")
                 url = f"https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{voice}.pt?download=true"
-                await asyncio.to_thread(
+                await self._run_native_work(
                     _kokoro_stream_download,
                     url,
                     voice_path,
@@ -1148,13 +1279,12 @@ class KokoroTTSBackend(LocalTTSBackend):
 
     def _load_voice_pack(self, voice: str):
         """Load a voice pack for PyTorch"""
+        voice_path = self._voice_pack_path(voice)
         if self._kokoro_pt_modules and "load_voice" in self._kokoro_pt_modules:
             load_voice = self._kokoro_pt_modules["load_voice"]
-            voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
             return load_voice(voice_path, self.device)
         else:
             # Fallback to direct torch load
-            voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
             if not os.path.exists(voice_path):
                 raise FileNotFoundError(f"Voice pack not found: {voice_path}")
             return self.torch.load(voice_path, weights_only=True).to(self.device)
@@ -1170,14 +1300,17 @@ class KokoroTTSBackend(LocalTTSBackend):
             if not self.kokoro_model_pt:
                 await self._download_model_if_needed()
 
-            # Map voice
-            voice = map_voice_to_kokoro(request.voice)
-
-            # Ensure voice pack is available
-            await self._download_voice_if_needed(voice)
-
-            # Load voice pack
-            voice_pack = self._load_voice_pack(voice)
+            voice_config = self._parse_voice_config(request.voice)
+            voice = voice_config["primary_voice"]
+            voice_tensors = []
+            for name, weight in voice_config["voices"]:
+                await self._download_voice_if_needed(name)
+                pack = await self._run_native_work(self._load_voice_pack, name)
+                voice_tensors.append((pack, weight))
+            if voice_config["is_mixed"]:
+                voice_pack = self._kokoro_pt_modules["mix_voices"](voice_tensors)
+            else:
+                voice_pack = voice_tensors[0][0]
 
             # Detect language from voice or use provided language code
             if (
@@ -1190,15 +1323,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                 # Map voice prefix to espeak language codes
                 if voice and len(voice) > 0:
                     voice_prefix = voice[0].lower()
-                    lang_map = {
-                        "a": "en-us",  # American English
-                        "b": "en-gb",  # British English
-                        "j": "ja",  # Japanese
-                        "z": "zh",  # Chinese
-                        "e": "es",  # Spanish
-                        "f": "fr",  # French
-                    }
-                    lang = lang_map.get(voice_prefix, "en-us")
+                    lang = KOKORO_VOICE_LANGUAGES.get(voice_prefix, "en-us")
                 else:
                     lang = "en-us"
 
@@ -1208,7 +1333,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             # Get generation function from cached modules
             if self._kokoro_pt_modules is None:
                 # Load modules if not already loaded
-                self._load_pytorch_model()
+                await self._run_native_work(self._load_pytorch_model)
             generate = self._kokoro_pt_modules["generate"]
 
             # Generate and stream audio for each chunk
@@ -1245,7 +1370,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                 )
 
                 # Generate audio
-                audio_tensor, phonemes = await asyncio.to_thread(
+                audio_tensor, phonemes = await self._run_pytorch_generation(
                     generate,
                     self.kokoro_model_pt,
                     chunk,
@@ -1351,60 +1476,26 @@ class KokoroTTSBackend(LocalTTSBackend):
             logger.opt(exception=True).error(
                 f"KokoroTTSBackend: PyTorch generation failed: {e}"
             )
-            raise ValueError(f"Kokoro PyTorch generation failed: {str(e)}")
+            raise TTSOperationError(
+                code="generation_failed",
+                message="Kokoro PyTorch generation failed.",
+                retryable=True,
+                operation_id="kokoro_pytorch",
+                recovery_action="retry",
+            ) from e
 
     def _split_text_for_pytorch(self, text: str, max_tokens: int = 150) -> list[str]:
-        """Split text into chunks for PyTorch processing"""
-        if self.tokenizer:
-            # Use NLTK for sentence splitting
-            try:
-                sentences = self.nltk.sent_tokenize(text)
+        """Bound work per call while preserving explicit language boundaries.
 
-                chunks = []
-                current_chunk = []
-                current_length = 0
-
-                for sentence in sentences:
-                    sentence_tokens = self.tokenizer.encode(
-                        sentence, add_special_tokens=False
-                    )
-                    sentence_length = len(sentence_tokens)
-                    chunk_size = max(1, max_tokens)
-
-                    if sentence_length > max_tokens:
-                        if current_chunk:
-                            chunks.append(" ".join(current_chunk))
-                            current_chunk = []
-                            current_length = 0
-
-                        words = sentence.split()
-                        if words:
-                            for i in range(0, len(words), chunk_size):
-                                chunks.append(" ".join(words[i : i + chunk_size]))
-                        else:
-                            chunks.append(sentence)
-                    elif current_length + sentence_length > max_tokens:
-                        if current_chunk:
-                            chunks.append(" ".join(current_chunk))
-                        current_chunk = [sentence]
-                        current_length = sentence_length
-                    else:
-                        current_chunk.append(sentence)
-                        current_length += sentence_length
-
-                if current_chunk:
-                    chunks.append(" ".join(current_chunk))
-
-                return chunks
-            except Exception as e:
-                logger.warning(f"NLTK tokenization failed: {e}, using simple split")
-
-        # Fallback to simple splitting
-        words = text.split()
+        The official pipeline owns phoneme tokenization. This outer word budget
+        allows cancellation and encoded-audio limits between bounded requests.
+        """
         chunks = []
         chunk_size = max(1, max_tokens)
-        for i in range(0, len(words), chunk_size):
-            chunks.append(" ".join(words[i : i + chunk_size]))
+        for paragraph in text.splitlines():
+            words = paragraph.split()
+            for i in range(0, len(words), chunk_size):
+                chunks.append(" ".join(words[i : i + chunk_size]))
         return chunks
 
     async def generate_with_timestamps(
@@ -1443,15 +1534,7 @@ class KokoroTTSBackend(LocalTTSBackend):
         # Map voice prefix to espeak language codes
         if kokoro_voice and len(kokoro_voice) > 0:
             voice_prefix = kokoro_voice[0].lower()
-            lang_map = {
-                "a": "en-us",  # American English
-                "b": "en-gb",  # British English
-                "j": "ja",  # Japanese
-                "z": "zh",  # Chinese
-                "e": "es",  # Spanish
-                "f": "fr",  # French
-            }
-            lang = lang_map.get(voice_prefix, "en-us")
+            lang = KOKORO_VOICE_LANGUAGES.get(voice_prefix, "en-us")
         else:
             lang = "en-us"
 
@@ -1465,11 +1548,13 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         # Generate full audio first
         samples_list = []
-        async for samples, sr in self.kokoro_instance.create_stream(
+        stream = self._create_onnx_stream(
             text, voice=kokoro_voice, speed=speed, lang=lang
-        ):
-            samples_list.append(samples)
-            sample_rate = sr
+        )
+        async with aclosing(stream):
+            async for samples, sr in stream:
+                samples_list.append(samples)
+                sample_rate = sr
 
         if not samples_list:
             return b"", []
@@ -1525,31 +1610,23 @@ class KokoroTTSBackend(LocalTTSBackend):
         # Map voice and load voice pack
         kokoro_voice = map_voice_to_kokoro(voice)
         await self._download_voice_if_needed(kokoro_voice)
-        voice_pack = self._load_voice_pack(kokoro_voice)
+        voice_pack = await self._run_native_work(self._load_voice_pack, kokoro_voice)
 
         # Detect language
         if kokoro_voice and len(kokoro_voice) > 0:
             voice_prefix = kokoro_voice[0].lower()
-            lang_map = {
-                "a": "en-us",  # American English
-                "b": "en-gb",  # British English
-                "j": "ja",  # Japanese
-                "z": "zh",  # Chinese
-                "e": "es",  # Spanish
-                "f": "fr",  # French
-            }
-            lang = lang_map.get(voice_prefix, "en-us")
+            lang = KOKORO_VOICE_LANGUAGES.get(voice_prefix, "en-us")
         else:
             lang = "en-us"
 
         # Get generation function from cached modules
         if self._kokoro_pt_modules is None:
             # Load modules if not already loaded
-            self._load_pytorch_model()
+            await self._run_native_work(self._load_pytorch_model)
         generate = self._kokoro_pt_modules["generate"]
 
         # Generate audio with phonemes
-        audio_tensor, phonemes = await asyncio.to_thread(
+        audio_tensor, phonemes = await self._run_pytorch_generation(
             generate, self.kokoro_model_pt, text, voice_pack, lang=lang, speed=speed
         )
 
@@ -1851,7 +1928,7 @@ class KokoroTTSBackend(LocalTTSBackend):
 
             # Check if kokoro_instance has phoneme support
             if hasattr(self.kokoro_instance, "generate_from_phonemes"):
-                samples = await asyncio.to_thread(
+                samples = await self._run_native_work(
                     self.kokoro_instance.generate_from_phonemes,
                     phonemes,
                     voice=kokoro_voice,
@@ -1867,12 +1944,36 @@ class KokoroTTSBackend(LocalTTSBackend):
                     "This version of kokoro_onnx doesn't support phoneme generation"
                 )
 
-        except Exception as e:
-            logger.error(f"Phoneme generation failed: {e}")
+        except (TTSOperationError, NotImplementedError):
             raise
+        except Exception as exc:
+            raise TTSOperationError(
+                code="generation_failed",
+                message="Kokoro ONNX generation failed.",
+                retryable=True,
+                operation_id="kokoro_onnx",
+                recovery_action="retry",
+            ) from exc
 
     async def close(self):
         """Clean up resources"""
+        self._closing = True
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_resources())
+        await join_retained_task(self._close_task)
+
+    async def _close_resources(self) -> None:
+        """Join native work before releasing its models."""
+        for stop in tuple(self._native_tasks.values()):
+            if stop is not None:
+                stop()
+        for stop in tuple(self._onnx_tasks.values()):
+            stop()
+        pending = tuple(self._native_tasks) + tuple(self._onnx_tasks)
+        if pending:
+            await asyncio.wait(pending)
+
+        self._onnx_phonemizers.clear()
         await super().close()
         # Clean up model instances if needed
         self.kokoro_instance = None

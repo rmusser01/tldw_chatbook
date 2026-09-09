@@ -1,0 +1,64 @@
+{
+  "verified_utc": "2026-09-09T07:05:31.591292+00:00",
+  "copied_file_count": 41,
+  "copied_file_bytes": 533702,
+  "all_copied_hashes_match_originals": true,
+  "patch_checks": [
+    {
+      "label": "forward_exact_base",
+      "command": [
+        "git",
+        "-C",
+        "/private/tmp/tts-macos-burndown/native/portable-patch-base-check",
+        "apply",
+        "--check",
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/Docs/QA/tts-macos-burndown-2026-09-09/native/native-shutdown.patch"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "label": "reverse_reviewed_source",
+      "command": [
+        "git",
+        "-C",
+        "/private/tmp/tts-macos-burndown/native/source",
+        "apply",
+        "--check",
+        "--reverse",
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/Docs/QA/tts-macos-burndown-2026-09-09/native/native-shutdown.patch"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "patch_sha256": "faa692effa31ef5b7836e2b727fda0a9452a19008a8c679686dceda1c1831dac",
+  "native_source_matches_patch_manifest": true,
+  "baseline_failed_cases": 6,
+  "baseline_total_cases": 9,
+  "fixed_passed_cases": 9,
+  "targeted_ctest_passed_cases": 11,
+  "production_source_or_task_status_modified": false,
+  "new_model_or_audio_work": false,
+  "readme_link_targets_verified": 45,
+  "readme_relative_link_count": 22,
+  "all_package_json_parsed": true,
+  "readme_has_no_trailing_whitespace": true,
+  "followup_tasks": [
+    "TASK-32163",
+    "TASK-32164"
+  ],
+  "final_verified_utc": "2026-09-09T07:39:37.927308+00:00",
+  "linux_sanitizer_followup": {
+    "task": "TASK-32164",
+    "cases_passed": 9,
+    "sanitizer_diagnostics": 0,
+    "startup_reached_main": true,
+    "container_removed": true,
+    "source_and_patch_unchanged": true,
+    "receipt": "sanitizer/linux-qualified-02/summary.json"
+  },
+  "linux_sanitizer_launchers_parse": true
+}

@@ -1,0 +1,26 @@
+{
+  "recorded_utc": "2026-09-09T06:22:29.662144+00:00",
+  "source_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown",
+  "source_revision_at_provision": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "base_index_digest": "sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e",
+  "base_arm64_manifest_digest": "sha256:ae8c3b6bb3d02ffffa2bee0bed8c7c99b9478bd042ff4d79a5bbd6eb10398864",
+  "assets": {
+    "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx": {
+      "bytes": 325532387,
+      "sha256": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5"
+    },
+    "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin": {
+      "bytes": 28214398,
+      "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+    }
+  },
+  "task_files": {
+    "Dockerfile": "0c67c8e4adaeffa98b41a37f1f2cc4c88929b9696b273e843aceca7ca4bd8ed6",
+    "requirements.in": "aa21225a855f3892f1cb448364ac876d53880a09b9b66e8435ca1d4a923d34ca",
+    ".dockerignore": "44247e217d39c63b23c13f5ab8d4e1059da7edf4ba138d0f80363e1c793b6d24",
+    "launch.py": "dee9a006d9d369b2f0b6948ffd1f95f65a720b722f68e05d5854f7ddd458273c",
+    "validate_linux_onnx.py": "596d500299e7506387a2aef71cdc9583cb1a92dae6501f17d1d82b20012ff8a6"
+  },
+  "inference_run": false,
+  "physical_playback_qualified": false
+}

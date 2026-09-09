@@ -34,9 +34,13 @@ from ..Canvas.gateway import (
     CanvasSelectionChanged,
     CanvasSourceResponse,
 )
-from ..Canvas.limits import (
-    SUPPORTED_CANVAS_RUNTIME_PROFILE,
-    UnsupportedCanvasRuntimeProfile,
+from ..Canvas.limits import UnsupportedCanvasRuntimeProfile
+from ..Canvas.profiles import (
+    ProfileSnapshot,
+    load_application_profile_snapshot,
+    load_profile_snapshot,
+    resolve_profile,
+    runtime_snapshot_id,
 )
 from ..Canvas.web_auth import (
     CSRF_HEADER_NAME,
@@ -185,13 +189,28 @@ class _ServedCanvasAuthorityProxy:
             raise ServedCanvasUnavailable("canvas_session_unavailable")
         return payload, metadata
 
+    @property
+    def profile_snapshot(self) -> ProfileSnapshot:
+        return self._owner._canvas_profile_snapshot
+
     async def resolve_render_plan(self, scope: CanvasGatewayScope):
         captured = await self._plan_scope(scope)
         _payload, metadata = await self._read(scope)
-        if metadata.get("runtime_profile") != SUPPORTED_CANVAS_RUNTIME_PROFILE:
+        snapshot = self._owner._canvas_profile_snapshot
+        resolved = resolve_profile(
+            snapshot,
+            operation="load",
+            parent_profile=metadata.get("runtime_profile"),
+            has_diagrams=False,
+        )
+        if not resolved.executable:
             raise UnsupportedCanvasRuntimeProfile("unsupported Canvas runtime profile")
         plan = await self._compilation.run_async(
-            lambda: compile_canvas_document(metadata["source"])
+            lambda: compile_canvas_document(
+                metadata["source"],
+                runtime_profile=resolved.profile_id,
+                snapshot=snapshot,
+            )
         )
         if await self._plan_scope(scope) != captured:
             raise ServedCanvasUnavailable("canvas_session_unavailable")
@@ -292,6 +311,7 @@ class _ServedCanvasAuthorityProxy:
         )
 
     async def read_events(self, scope, *, after_event_id):
+        child_id = self._owner._served_browser_children.get(scope.browser_session_id)
         response = await self._request(
             scope,
             "canvas.events.request",
@@ -312,11 +332,20 @@ class _ServedCanvasAuthorityProxy:
                     revision_id=str(value["revision_id"]),
                     metadata=value["metadata"],
                 )
-                if event.canvas_id != scope.canvas_id:
-                    raise ValueError("event scope mismatch")
                 events.append(event)
         except (KeyError, TypeError, ValueError):
             raise ServedCanvasUnavailable("canvas_session_unavailable") from None
+        if any(event.canvas_id != scope.canvas_id for event in events):
+            # Publication may bind the child to a newly created Canvas before
+            # the parent's periodic snapshot observes that selection. Never
+            # deliver mismatched events: reconcile only the same live owner,
+            # then let the gateway classify its independently advanced epoch.
+            await self._owner.served_canvas_state(
+                scope.browser_session_id,
+                expected_scope=scope,
+                expected_child_id=child_id,
+            )
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
         return tuple(events)
 
     async def prepare_bridge(self, scope, request):
@@ -511,6 +540,7 @@ class ChatbookWebServerMixin:
         web_auth_policy: WebAuthPolicy | None = None,
         web_ssl_context: ssl.SSLContext | None = None,
         canvas_policy: CanvasConfigPolicy | None = None,
+        canvas_profile_snapshot: ProfileSnapshot | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -526,8 +556,13 @@ class ChatbookWebServerMixin:
         self._canvas_disabled_latched = not self._canvas_policy.enabled
         self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._served_browser_children: dict[str, str] = {}
+        self._canvas_profile_snapshot = (
+            canvas_profile_snapshot
+            or load_application_profile_snapshot(loader=load_profile_snapshot)
+        )
         self._served_canvas_gateway = CanvasGateway(
-            authority=_ServedCanvasAuthorityProxy(self)
+            authority=_ServedCanvasAuthorityProxy(self),
+            profile_snapshot=self._canvas_profile_snapshot,
         )
         self._served_canvas_launches: dict[str, tuple[CanvasGatewayScope, object]] = {}
 
@@ -823,7 +858,9 @@ class ChatbookWebServerMixin:
         """Start the private loopback control broker before children spawn."""
 
         if self._canvas_enabled():
-            self._canvas_control_broker = CanvasControlBroker()
+            self._canvas_control_broker = CanvasControlBroker(
+                runtime_snapshot_id=runtime_snapshot_id(self._canvas_profile_snapshot)
+            )
             await self._canvas_control_broker.start()
             self._canvas_policy_watch_task = asyncio.create_task(
                 self._watch_canvas_policy(),
@@ -952,7 +989,13 @@ class ChatbookWebServerMixin:
                 browser_session_id
             )
 
-    async def served_canvas_state(self, browser_session_id: str) -> dict[str, object]:
+    async def served_canvas_state(
+        self,
+        browser_session_id: str,
+        *,
+        expected_scope: CanvasGatewayScope | None = None,
+        expected_child_id: str | None = None,
+    ) -> dict[str, object]:
         """Return only the Canvas state owned by one exact authenticated child."""
 
         if not self._canvas_enabled():
@@ -961,6 +1004,14 @@ class ChatbookWebServerMixin:
         child_id = self._served_browser_children.get(browser_session_id)
         broker = getattr(self, "_canvas_control_broker", None)
         if child_id is None or broker is None:
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        captured_launch = self._served_canvas_launches.get(browser_session_id)
+        if expected_scope is not None and (
+            child_id != expected_child_id
+            or captured_launch is None
+            or captured_launch[0] != expected_scope
+            or not self._served_canvas_gateway.has_shell_binding(browser_session_id)
+        ):
             raise ServedCanvasUnavailable("canvas_session_unavailable")
 
         fixture_reader = getattr(broker, "browser_state", None)
@@ -1002,6 +1053,16 @@ class ChatbookWebServerMixin:
             raise ServedCanvasUnavailable("canvas_session_unavailable") from None
 
         if not isinstance(state, dict):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        if expected_scope is not None and (
+            self._served_browser_children.get(browser_session_id) != expected_child_id
+            or self._canvas_control_broker is not broker
+            or self._served_canvas_launches.get(browser_session_id)
+            is not captured_launch
+            or not self._served_canvas_gateway.has_shell_binding(browser_session_id)
+            or state.get("conversation_session_id")
+            != expected_scope.conversation_session_id
+        ):
             raise ServedCanvasUnavailable("canvas_session_unavailable")
         status = state.get("status")
         if status not in {"ready", "terminal_only", "disconnected", "reconnecting"}:
@@ -1262,6 +1323,8 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
         def _build_environment(self, width: int = 80, height: int = 24):
             environment = super()._build_environment(width, height)
             environment.update(self._canvas_control_environment)
+            # Launch identity survives disabled or unavailable Canvas transport.
+            environment["CHATBOOK_SERVED_CHILD"] = "1"
             return environment
 
         async def start(self, width: int, height: int) -> None:

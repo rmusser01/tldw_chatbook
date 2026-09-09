@@ -513,7 +513,7 @@ from ...Library.library_shell_state import (
 from ...Widgets.Library import (
     LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     LibraryMediaCanvas,
-    LibraryMediaReaderShell,
+    LibraryBrowseReaderShell,
     LibraryMediaTrashCanvas,
     LibraryMediaViewer,
     MediaShellResized,
@@ -1357,7 +1357,7 @@ class LibraryMediaController:
         self,
         request: _LibraryMediaReturnSettlement,
         receipt: _LibraryMediaReturnReceipt,
-        tree: tuple[LibraryMediaReaderShell, Vertical, LibraryMediaRowScroll],
+        tree: tuple[LibraryBrowseReaderShell, Vertical, LibraryMediaRowScroll],
     ) -> bool:
         """Compare one immutable request with every non-geometry fence."""
         shell, items_host, owner = tree
@@ -3296,7 +3296,7 @@ class LibraryMediaController:
             return False
         try:
             shell = self.query_one(
-                "#library-media-reader-shell", LibraryMediaReaderShell
+                ".library-media-route", LibraryBrowseReaderShell
             )
         except (NoMatches, QueryError):
             return False
@@ -3608,6 +3608,7 @@ class LibraryMediaController:
             self._selected_media_id = media_state.selected_id
         return LibraryMediaCanvas(
             media_state,
+            actions=self,
             **self._library_media_canvas_presentation(),
             id="library-media-canvas",
         )
@@ -4133,8 +4134,8 @@ class LibraryMediaController:
         collapses a pane (wave 4 PR B) and the reading position is gone.
         Measured before this seam, at 235x52 and 100x30 alike: a Reader
         recompose from the content or the Find input landed on
-        ``library-media-items-grip``; a receipt repaint or leaving select
-        mode from a row landed on ``library-media-library-grip``.
+        ``library-browse-items-grip``; a receipt repaint or leaving select
+        mode from a row landed on ``library-browse-library-grip``.
 
         An explicit target always WINS -- this only acts when nothing else
         claimed focus:

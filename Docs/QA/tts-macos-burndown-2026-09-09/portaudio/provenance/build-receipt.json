@@ -1,0 +1,52 @@
+{
+  "source_commit": "1240f06f0227ae3d0b4967f41012221c3d7cb6cf",
+  "upstream_pr": "https://github.com/PortAudio/portaudio/pull/1175",
+  "steps": [
+    {
+      "command": [
+        "cmake",
+        "-S",
+        "/private/tmp/tts-macos-burndown/portaudio/source",
+        "-B",
+        "/private/tmp/tts-macos-burndown/portaudio/build",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DPA_BUILD_SHARED_LIBS=ON",
+        "-DPA_BUILD_TESTS=OFF",
+        "-DPA_BUILD_EXAMPLES=OFF",
+        "-DCMAKE_INSTALL_PREFIX=/private/tmp/tts-macos-burndown/portaudio/prefix"
+      ],
+      "exit_code": 0,
+      "seconds": 1.5023276805877686,
+      "log": "/private/tmp/tts-macos-burndown/portaudio/build-0.log"
+    },
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "/private/tmp/tts-macos-burndown/portaudio/build",
+        "--parallel",
+        "4"
+      ],
+      "exit_code": 0,
+      "seconds": 0.683631181716919,
+      "log": "/private/tmp/tts-macos-burndown/portaudio/build-1.log"
+    },
+    {
+      "command": [
+        "cmake",
+        "--install",
+        "/private/tmp/tts-macos-burndown/portaudio/build"
+      ],
+      "exit_code": 0,
+      "seconds": 0.012811899185180664,
+      "log": "/private/tmp/tts-macos-burndown/portaudio/build-2.log"
+    }
+  ],
+  "library": {
+    "path": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.2.dylib",
+    "sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+    "bytes": 121784
+  },
+  "patch_sha256": "455c144307169628d633149bee938425d081b341a2cf198905f7ae994bc3d953"
+}

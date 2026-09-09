@@ -3,9 +3,10 @@ id: TASK-31880
 title: >-
   Library honesty-accessibility row-toggle patcher test is RED and blocks the
   only real-row coverage of the row-toggle path
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-06 18:12'
+updated_date: '2026-09-08 23:43'
 labels:
   - library
   - tests
@@ -21,11 +22,30 @@ Tests/UI/test_library_honesty_accessibility.py::test_row_toggle_patcher_rebuilds
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Tests/UI/test_library_honesty_accessibility.py::test_row_toggle_patcher_rebuilds_marker_label_both_directions passes
-- [ ] #2 The verdict states whether the marker label or the assertion was wrong, with the evidence that decided it
-- [ ] #3 The row-toggle marker-label behaviour the test pins is confirmed unchanged for a passing run (the fix does not make the test vacuous)
-- [ ] #4 recipe backlog/docs/library-decomposition-recipe.md section 7's entry for this test is removed once it is green
+- [x] #1 Tests/UI/test_library_honesty_accessibility.py::test_row_toggle_patcher_rebuilds_marker_label_both_directions passes
+- [x] #2 The verdict states whether the marker label or the assertion was wrong, with the evidence that decided it
+- [x] #3 The row-toggle marker-label behaviour the test pins is confirmed unchanged for a passing run (the fix does not make the test vacuous)
+- [x] #4 recipe backlog/docs/library-decomposition-recipe.md section 7's entry for this test is removed once it is green
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce in isolation and read the exact assertion.
+2. Read the media bulk-action label construction
+   (`library_media_canvas._bulk_action_button`) and the patcher
+   (`canvas_sync._patch_library_disabled_marker_label`).
+3. Date the divergence with git history (`git log -S` on both the canvas
+   and the test) to decide LABEL vs ASSERTION.
+4. Probe the live harness to confirm what the button actually carries, and
+   whether the in-place path or the recompose fallback runs.
+5. Fix whichever side the evidence convicts; keep the pinned behaviour
+   intact.
+6. Mutation-test the row-toggle marker patcher to prove non-vacuity;
+   restore and re-green.
+7. Remove the recipe §7 entry, noting the closure; run the file, the
+   canvas-sync guards, and `./scripts/preflight.sh`.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
@@ -47,4 +67,62 @@ and the true repo-wide maximum is 31860 — the exact "never trust the CLI's
 auto-assignment" failure `backlog/docs/lessons-backlog-hygiene.md` records.
 Renumbered to 31880 (MAX+20) before anything referenced the old id; no
 inbound reference existed to move.
+
+## Closure (2026-09-08) — verdict, evidence, fix
+
+**VERDICT: the ASSERTION was wrong, not the label.** The fix is test-side
+only; no file under `tldw_chatbook/` changed.
+
+**Evidence.** (1) `library_media_canvas.py:554-619` passes the literal base
+`"Export"` (also `"Review"`/`"Delete"`) and stashes it as
+`_library_disabled_marker_base`, with a docstring naming task-30043 and the
+reason: at the items pane's ~40-col width the full labels chopped and a
+disabled action "collapsed to a bare '○'". (2) `git show
+e34b11b23^:…library_media_canvas.py` has `"Export selected"`; the same file
+AT `e34b11b23` (2026-09-03, task-30043) has `"Export"` — and that commit
+did not touch this test, whose assertions date from `a1a58308e`
+(2026-08-10, task-4023 review M-1). So the test was correct until
+2026-09-03 and stale after. (3) A live Pilot probe printed
+`canvas.compact = False` at 80x24 with base `'Export'` — media's bulk
+labels have no width-responsive spelling at all (unlike notes'), so nothing
+truncates at runtime; the width story is why task-30043 chose the short
+word.
+
+**A second staleness sat behind the first assertion.** With only the
+spelling corrected the test still failed: `_apply_library_row_toggle`'s
+media leg calls `screen._library_media_analyze_reason()` (added 2026-09-04
+by task-28007) and the duck-typed screen stand-in `_SelectModeApp` never
+had it, so the dispatcher's blanket `except Exception` swallowed the
+`AttributeError` and rerouted EVERY toggle here onto
+`screen.refresh(recompose=True)`. Confirmed by instrumenting
+`canvas_sync.logger.debug` in a probe: 2 fallbacks, 2 toggles; the host app
+recomposed and the test's button references went stale. So this test had
+been silently non-covering since 2026-09-04, on top of being red since
+2026-09-03.
+
+**Changes** (`Tests/UI/test_library_honesty_accessibility.py`):
+`_SelectModeApp` gains `_library_media_analyze_reason() -> ""` (the same
+stub the screen/controller double in `test_library_selection_updates.py`
+uses); assertions updated to `○ Export` / `○ Delete` disabled and
+`LIBRARY_ACTION_LABEL_PAD + "Export"/"Delete"` enabled (the marker-width
+reservation from task-31635/task-31959); a widget-IDENTITY guard added
+after each toggle so a future silent fallback fails loudly instead of
+degrading; docstring records the verdict.
+
+**Non-vacuity (AC#3).** Mutations in `canvas_sync.py`, each restored after:
+dropping `_patch_library_disabled_marker_label(export_button)` → RED
+`assert '○ Export' == '  Export'` (the patcher reason); dropping the
+delete-button patch → RED `assert '○ Delete' == '  Delete'`; forcing the
+fallback (bad analyze selector) → RED on the identity guard. Restored:
+green, `git status` clean of product files.
+
+**Runs.** Target test 1 passed in isolation. `test_library_honesty_
+accessibility.py` + `test_library_selection_updates.py`: 6 failed / 33
+passed after vs 7 failed / 32 passed with the change stashed — the delta is
+exactly this test; the other six are pre-existing reds byte-identical on
+both sides. `./scripts/preflight.sh`: all checks passed.
+
+**Docs.** Recipe §7's entry removed with a closure note carrying the
+verdict (AC#4); §22 lesson 6, §23 and §25's phase-C handoff item 3 stamped
+closed. Full write-up: `.superpowers/sdd/phase-c/task-31880-report.md`.
 <!-- SECTION:NOTES:END -->

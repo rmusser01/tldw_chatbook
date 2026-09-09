@@ -249,10 +249,12 @@ LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT = 100
 # ``compose_content`` -- the basis for the one-probe-per-recompose negative
 # cache in ``_library_adaptive_reader_shell_active``.
 _LIBRARY_READER_SHELL_SELECTOR = (
-    "#library-media-reader-shell, "
+    # Phase C: Media and Notes now share ONE resident shell
+    # (``#library-browse-reader-shell``), so this union lists five ids for
+    # six routes.
+    "#library-browse-reader-shell, "
     "#library-collections-reader-shell, "
     "#library-conversations-reader-shell, "
-    "#library-notes-reader-shell, "
     "#library-prompts-reader-shell, "
     "#library-skills-reader-shell"
 )
@@ -269,6 +271,12 @@ LIBRARY_CANVAS_KIND_NOTES = "notes"
 LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS = frozenset(
     {LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE}
 )
+
+#: The rail rows that land on the Database-Notes route. Named (phase-C task
+#: 2.5) because the rail-switch handler has to ask "is this press LEAVING
+#: Notes?" before it decides whether repainting the Notes canvas is work
+#: anybody will ever see.
+LIBRARY_NOTES_RAIL_ROWS = frozenset({LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE})
 
 
 # PR-3 Task 4: the retrieval outcomes phase two runs on. `ready` is the

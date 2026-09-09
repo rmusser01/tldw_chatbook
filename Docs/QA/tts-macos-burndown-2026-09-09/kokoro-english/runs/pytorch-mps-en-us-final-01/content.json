@@ -1,0 +1,346 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/harness/pytorch-mps-en-us-final-01/evidence.json",
+  "evidence_sha256": "ccbf8b4ddc8c706181ff28f4fe95dc4c32fbc68522b0307fcd366a9184adfac7",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 9,
+  "clips": [
+    {
+      "transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        54,
+        91
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "speech-lab",
+      "audio_sha256": "26d1488ee3a295d3f2e486dfb7053ab98ca9fa670f2cd0a29c4c8777f15cf5a2",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.5,
+          "text": " Silver Compass opens this reply."
+        },
+        {
+          "start": 2.5,
+          "end": 5.5,
+          "text": " The middle sentence describes a quiet orchard."
+        },
+        {
+          "start": 5.5,
+          "end": 8.5,
+          "text": " This complete reply ends with amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        54,
+        91
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-warmup",
+      "audio_sha256": "674229919c950202ce259b914ca76e1b9e77147603b54107e05c49d92d2adab7",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.5,
+          "text": " Silver Compass opens this reply."
+        },
+        {
+          "start": 2.5,
+          "end": 5.5,
+          "text": " The middle sentence describes a quiet orchard."
+        },
+        {
+          "start": 5.5,
+          "end": 8.5,
+          "text": " This complete reply ends with amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        54,
+        91
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-successor",
+      "audio_sha256": "a21d1c0f35bbc28737474600e9745e25f7a7023ada5978888f82f826d30c5675",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.5,
+          "text": " Silver Compass opens this reply."
+        },
+        {
+          "start": 2.5,
+          "end": 5.5,
+          "text": " The middle sentence describes a quiet orchard."
+        },
+        {
+          "start": 5.5,
+          "end": 8.5,
+          "text": " This complete reply ends with amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        54,
+        91
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-repeat-01",
+      "audio_sha256": "605d8c9f0fe0409fa39e5a9bc30d31deede8e8a472612871d124fd355569fcc1",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.5,
+          "text": " Silver Compass opens this reply."
+        },
+        {
+          "start": 2.5,
+          "end": 5.5,
+          "text": " The middle sentence describes a quiet orchard."
+        },
+        {
+          "start": 5.5,
+          "end": 8.5,
+          "text": " This complete reply ends with amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        54,
+        91
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-repeat-02",
+      "audio_sha256": "f770277b3cc62e977551f289c264fbfada42095765b9680a03444a842ba6d046",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.5,
+          "text": " Silver Compass opens this reply."
+        },
+        {
+          "start": 2.5,
+          "end": 5.5,
+          "text": " The middle sentence describes a quiet orchard."
+        },
+        {
+          "start": 5.5,
+          "end": 8.5,
+          "text": " This complete reply ends with amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        54,
+        91
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-repeat-03",
+      "audio_sha256": "c618a0ceb8458b54121ad0e15c82519dd2d56474ef9d3e9ed74ad868bf175c5a",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.5,
+          "text": " Silver Compass opens this reply."
+        },
+        {
+          "start": 2.5,
+          "end": 5.5,
+          "text": " The middle sentence describes a quiet orchard."
+        },
+        {
+          "start": 5.5,
+          "end": 8.5,
+          "text": " This complete reply ends with amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        54,
+        91
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-repeat-04",
+      "audio_sha256": "bdd95320ec13351d3ece1a9f57ea515dcad3ec5abd8f008e120ba546082ec650",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.5,
+          "text": " Silver Compass opens this reply."
+        },
+        {
+          "start": 2.5,
+          "end": 5.5,
+          "text": " The middle sentence describes a quiet orchard."
+        },
+        {
+          "start": 5.5,
+          "end": 8.5,
+          "text": " This complete reply ends with amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        54,
+        91
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-repeat-05",
+      "audio_sha256": "23fbecbfc253ea661ca13e4b07a1cc9d47fdf937f719ba70a65a82e0a41dee30",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.5,
+          "text": " Silver Compass opens this reply."
+        },
+        {
+          "start": 2.5,
+          "end": 5.5,
+          "text": " The middle sentence describes a quiet orchard."
+        },
+        {
+          "start": 5.5,
+          "end": 8.5,
+          "text": " This complete reply ends with amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        54,
+        91
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-repeat-06",
+      "audio_sha256": "a72b64daec8fc3a50bf943270c15d02ae691a4aefea1fbf2ee1ffc074713e2eb",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.5,
+          "text": " Silver Compass opens this reply."
+        },
+        {
+          "start": 2.5,
+          "end": 5.5,
+          "text": " The middle sentence describes a quiet orchard."
+        },
+        {
+          "start": 5.5,
+          "end": 8.5,
+          "text": " This complete reply ends with amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    }
+  ],
+  "status": "content_passed"
+}

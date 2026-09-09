@@ -20443,7 +20443,7 @@ class ChatScreen(BaseAppScreen):
                 source_message_id=message.id,
                 origin_message_id=message.persisted_message_id or message.id,
                 source_turn_id=canvas_block_origin_turn_id(
-                    message, reference.block_index
+                    message, reference.block_index, language=reference.language
                 ),
                 block_index=reference.block_index,
                 block_identity=reference.identity,
@@ -20493,11 +20493,8 @@ class ChatScreen(BaseAppScreen):
         authority = self._console_canvas_authority()
         served_client = getattr(self.app_instance, "served_canvas_control", None)
         served_handler = getattr(self.app_instance, "served_canvas_handler", None)
-        browser_id = (
-            served_client.child_id
-            if served_client is not None and served_handler is not None
-            else f"browser-{session_id}"
-        )
+        served_available = served_client is not None and served_handler is not None
+        browser_id = served_client.child_id if served_available else f"browser-{session_id}"
         scope = authority.gateway_scope(
             session_id=session_id,
             browser_session_id=browser_id,
@@ -20505,8 +20502,9 @@ class ChatScreen(BaseAppScreen):
             revision_id=revision_id,
             follow_latest=follow_latest,
         )
-        if served_client is not None and served_handler is not None:
-            served_handler.bind(authority, scope)
+        if served_available or getattr(self.app_instance, "_served_canvas_mode", False):
+            if served_available:
+                served_handler.bind(authority, scope)
             self._canvas_last_open_request = (
                 session_id,
                 canvas_id,
@@ -20518,8 +20516,8 @@ class ChatScreen(BaseAppScreen):
             return CanvasGatewayLaunch(
                 clean_url="/canvas/",
                 browser_url="/canvas/",
-                opened=True,
-                error_code=None,
+                opened=served_available,
+                error_code=None if served_available else "served_canvas_unavailable",
             )
         gateway = self._console_runtime().ensure_canvas_gateway(authority=authority)
         if gateway is None:
