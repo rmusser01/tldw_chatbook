@@ -1,0 +1,52 @@
+{
+  "maintained_python_files": 23,
+  "baseline_diagnostics": 162,
+  "current_inherited_diagnostics": 154,
+  "new_diagnostics": 0,
+  "raw_algorithm_false_positives": [
+    {
+      "path": "tldw_chatbook/TTS/backends/kokoro.py",
+      "findings": [
+        {
+          "code": "UP035",
+          "message": "`typing.List` is deprecated, use `list` instead",
+          "source_line": "from typing import Any, Dict, List, Optional, Tuple",
+          "count": 1
+        },
+        {
+          "code": "UP035",
+          "message": "`typing.Tuple` is deprecated, use `tuple` instead",
+          "source_line": "from typing import Any, Dict, List, Optional, Tuple",
+          "count": 1
+        },
+        {
+          "code": "UP035",
+          "message": "`typing.Dict` is deprecated, use `dict` instead",
+          "source_line": "from typing import Any, Dict, List, Optional, Tuple",
+          "count": 1
+        },
+        {
+          "code": "RUF059",
+          "message": "Unpacked variable `phonemes` is never used",
+          "source_line": "audio_tensor, phonemes = await self._run_pytorch_generation(",
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "explanation": "Four Kokoro findings persist on edited lines: three typing aliases on the revised import line (baseline line 18/current 22) and unused phonemes after the changed generation helper (baseline 1245/current 1373). Baseline diagnostic messages and source inspection confirm inherited debt. Two unchanged Studio test findings also remain. Frozen QA Python source snapshots are retained byte-for-byte as evidence, not maintained executable product/tool/test sources.",
+  "excluded_frozen_qa_snapshots": [
+    {
+      "path": "Docs/QA/tts-macos-burndown-2026-09-09/linux-arm/environment/check_tmpfs_library.py",
+      "diagnostics": 2
+    },
+    {
+      "path": "Docs/QA/tts-macos-burndown-2026-09-09/linux-arm/provenance/final-launch.py",
+      "diagnostics": 3
+    },
+    {
+      "path": "Docs/QA/tts-macos-burndown-2026-09-09/linux-arm/provenance/validate_linux_onnx.py",
+      "diagnostics": 5
+    }
+  ]
+}

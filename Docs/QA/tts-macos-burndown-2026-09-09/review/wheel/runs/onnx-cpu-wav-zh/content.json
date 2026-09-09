@@ -1,0 +1,105 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-wav-zh/evidence.json",
+  "evidence_sha256": "11243ddb9041751d162e49ad1c7fae823e4017a2bba7f93adcd922d347b07b9c",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+  "model_files": {
+    ".cache/huggingface/.gitignore": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+    ".cache/huggingface/CACHEDIR.TAG": "f6572428f6d5e1575e73a1502895a8731f10757dfbb634909c6e154b849af91d",
+    ".cache/huggingface/download/config.json.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".cache/huggingface/download/config.json.metadata": "a5d998737bfe2b0e3720420f06c2ea711472825872fec041981f1e7e9b13bf1f",
+    ".cache/huggingface/download/model.bin.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".cache/huggingface/download/model.bin.metadata": "f553377cd4b61d243eb20da9659f12fb636492c37ef70978199a3b6d955945b9",
+    ".cache/huggingface/download/tokenizer.json.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".cache/huggingface/download/tokenizer.json.metadata": "9ac3d8779385e5f69080a0b4566c0d6672143460e69f29c3baed80786b64834f",
+    ".cache/huggingface/download/vocabulary.txt.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".cache/huggingface/download/vocabulary.txt.metadata": "5592e32cdad946be797011a244888042a7bab1448773071be3739f944e4d8929",
+    ".cache/huggingface/trees/08e178d48790749d25932bbc082711ddcfdfbc4f.json": "f3ba946b63c74c1d66bb0efda7d1a0cfd58be3bd24672d89f827fcde69d8159b",
+    "config.json": "3622a2ddc41ec0e0fd4e68c13c6830f03b90c38d89aaad184de02c8c642cf807",
+    "model.bin": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 2,
+  "clips": [
+    {
+      "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+      "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+      "anchors": [
+        "银色的指南针",
+        "安静的果园",
+        "金色的日出"
+      ],
+      "anchor_positions": [
+        -1,
+        -1,
+        27
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "speech-lab",
+      "audio_sha256": "9c41b30fb009a350cf4c493cab688db5fe14d43d1788675aa39ce6663de97cac",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.84,
+          "text": "銀色的指南針開啟這段回答"
+        },
+        {
+          "start": 2.84,
+          "end": 5.28,
+          "text": "中間是一座安靜的果園"
+        },
+        {
+          "start": 5.28,
+          "end": 8.0,
+          "text": "這段回答以金色的日出結束"
+        }
+      ],
+      "detected_language": "zh"
+    },
+    {
+      "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+      "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+      "anchors": [
+        "银色的指南针",
+        "安静的果园",
+        "金色的日出"
+      ],
+      "anchor_positions": [
+        -1,
+        -1,
+        27
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "console-warmup",
+      "audio_sha256": "9c41b30fb009a350cf4c493cab688db5fe14d43d1788675aa39ce6663de97cac",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.84,
+          "text": "銀色的指南針開啟這段回答"
+        },
+        {
+          "start": 2.84,
+          "end": 5.28,
+          "text": "中間是一座安靜的果園"
+        },
+        {
+          "start": 5.28,
+          "end": 8.0,
+          "text": "這段回答以金色的日出結束"
+        }
+      ],
+      "detected_language": "zh"
+    }
+  ],
+  "status": "content_review_required"
+}

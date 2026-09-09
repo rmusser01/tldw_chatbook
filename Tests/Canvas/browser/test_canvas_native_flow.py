@@ -170,6 +170,342 @@ def _scope(revision_id: str) -> CanvasGatewayScope:
     )
 
 
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "revision,state", [("revision-1", "ready"), ("runtime-failure", "failed")]
+)
+async def test_pin_replaces_revoked_pending_renderer(revision, state):
+    gateway = CanvasGateway(authority=_NativeFlowAuthority())
+    try:
+        launch = await gateway.open_shell(_scope(revision))
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium)
+            )
+            page = await browser.new_page()
+            await page.add_init_script("""(() => {
+              const Original = MessageChannel;
+              window.__heldStatuses = [];
+              window.__oldBridgeRequests = [];
+              window.__actionRequests = 0;
+              const originalFetch = fetch;
+              window.fetch = (...args) => {
+                if (String(args[0]).endsWith('/api/actions')) window.__actionRequests++;
+                return originalFetch(...args);
+              };
+              window.MessageChannel = class extends Original {
+                constructor() { super(); const port = this.port1;
+                  Object.defineProperty(port, 'onmessage', {set(handler) {
+                    port.addEventListener('message', event => {
+                      if (event.data?.type === 'canvas:status') {
+                        window.__heldStatuses.push(() => handler(event));
+                        window.__oldBridgeRequests.push(() => handler({data: {
+                          type: 'canvas:bridge-request', nonce: event.data.nonce,
+                          request_id: 'old-request', kind: 'submit', value: 'old draft'
+                        }}));
+                      } else handler(event);
+                    });
+                  }});
+                }
+              };
+            })();""")
+            await page.goto(launch.browser_url)
+            await page.wait_for_function("() => window.__heldStatuses.length === 1")
+            await expect(page.locator("#preview-state")).to_have_text("Preview pending")
+            navigation_pending = asyncio.Event()
+            release_navigation = asyncio.Event()
+
+            async def hold_pin_response(route):
+                response = await route.fetch()
+                navigation_pending.set()
+                await release_navigation.wait()
+                await route.fulfill(response=response)
+
+            await page.route("**/api/navigate", hold_pin_response)
+            await page.locator("#pin-button").click()
+            await asyncio.wait_for(navigation_pending.wait(), 5)
+            await page.evaluate("window.__heldStatuses[0]()")
+            await page.evaluate("window.__oldBridgeRequests[0]()")
+            await expect(page.locator("#preview-state")).to_have_text("Preview pending")
+            release_navigation.set()
+            await expect(page.get_by_text("Pinned", exact=True)).to_be_visible()
+            await page.wait_for_function(
+                "() => window.__heldStatuses.length === 2", timeout=5000
+            )
+            await page.evaluate("window.__heldStatuses[0]()")
+            await page.evaluate("window.__oldBridgeRequests[0]()")
+            await expect(page.locator("#preview-state")).to_have_text("Preview pending")
+            assert await page.evaluate("window.__actionRequests") == 0
+            await page.evaluate("window.__heldStatuses[1]()")
+            await expect(page.locator("#preview-state")).to_have_text(
+                f"Preview {state}"
+            )
+            await browser.close()
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_mermaid_failure_is_identified_and_offers_explicit_repair(
+    candidate_snapshot,
+):
+    source = (
+        '<pre data-canvas-diagram="mermaid">sequenceDiagram\n'
+        "SECRET_SOURCE_SENTINEL->>B: Secret label</pre>"
+    )
+
+    class CandidateAuthority(_NativeFlowAuthority):
+        async def resolve_render_plan(self, scope):
+            return compile_canvas_document(source, runtime_profile="canvas-v2-mermaid-1",
+                                           snapshot=candidate_snapshot)
+
+        async def read_source(self, scope):
+            return CanvasSourceResponse(source, sha256_utf8(source), "canvas-v2-mermaid-1")
+
+    gateway = CanvasGateway(authority=CandidateAuthority(), profile_snapshot=candidate_snapshot)
+    try:
+        launch = await gateway.open_shell(_scope("revision-1"))
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium))
+            page = await browser.new_page()
+            await page.add_init_script("""(() => {
+              const Original = window.MessageChannel;
+              window.__statusReceivers = [];
+              window.MessageChannel = class extends Original {
+                constructor() { super(); const port = this.port1;
+                  port.addEventListener('message', event => {
+                    if (event.data?.type === 'canvas:status') window.__statusReceivers.push(
+                      {handler: port.onmessage, nonce: event.data.nonce});
+                  });
+                }
+              };
+            })();""")
+            await page.goto(launch.browser_url)
+            await expect(page.locator("#preview-state")).to_have_text("Preview failed")
+            await expect(page.locator("#loading-state")).to_contain_text("Diagram 1")
+            assert "SECRET_SOURCE_SENTINEL" not in await page.locator("#loading-state").inner_text()
+            await expect(page.locator("#repair-button")).to_be_visible()
+            await page.locator("#reload-button").click()
+            await expect(page.locator("#preview-state")).to_have_text("Preview failed")
+            await page.evaluate("""() => {
+              const old = window.__statusReceivers[0];
+              old.handler({data: {type: 'canvas:status', nonce: old.nonce, state: 'ready'}});
+            }""")
+            await expect(page.locator("#preview-state")).to_have_text("Preview failed")
+            await expect(page.locator("#canvas-preview")).to_be_hidden()
+            screenshots = os.environ.get("TLDW_CANVAS_SCREENSHOT_DIR")
+            if screenshots:
+                for width, label in ((1100, "wide"), (390, "narrow")):
+                    await page.set_viewport_size({"width": width, "height": 760})
+                    assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                    repair_box = await page.locator("#repair-button").bounding_box()
+                    assert repair_box and repair_box["x"] + repair_box["width"] <= width
+                    suffix = os.environ.get("TLDW_CANVAS_SCREENSHOT_SUFFIX", "")
+                    await page.screenshot(path=str(Path(screenshots) / f"task7-failure-{label}{suffix}.png"))
+                print(f"Task7 browser: Chromium {browser.version}; screenshots: {screenshots}")
+            await page.locator("#source-button").click()
+            await expect(page.locator("#source-view")).to_have_value(source)
+            await browser.close()
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_candidate_native_shell_initializes_private_runtime_and_disables_to_source(
+    candidate_snapshot, monkeypatch
+):
+    source = '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]</pre>'
+
+    class CandidateAuthority(_NativeFlowAuthority):
+        async def resolve_render_plan(self, scope):
+            return compile_canvas_document(
+                source,
+                runtime_profile="canvas-v2-mermaid-1",
+                snapshot=candidate_snapshot,
+            )
+
+        async def read_source(self, scope):
+            return CanvasSourceResponse(
+                source, sha256_utf8(source), "canvas-v2-mermaid-1"
+            )
+
+    gateway = CanvasGateway(
+        authority=CandidateAuthority(), profile_snapshot=candidate_snapshot
+    )
+    try:
+        launch = await gateway.open_shell(_scope("revision-1"))
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium)
+            )
+            page = await browser.new_page()
+            await page.goto(launch.browser_url)
+            await expect(
+                page.frame_locator("#canvas-preview").locator("svg")
+            ).to_be_visible()
+            revoked = replace(
+                candidate_snapshot,
+                profiles=tuple(
+                    replace(row, executable=False, reason="revoked")
+                    for row in candidate_snapshot.profiles
+                ),
+            )
+            monkeypatch.setattr(
+                "tldw_chatbook.Canvas.gateway.load_profile_snapshot", lambda: revoked
+            )
+            await page.reload()
+            # Whole-page refresh intentionally needs a fresh one-use opening;
+            # reopening still uses the running host's original snapshot.
+            reopened = await gateway.open_shell(_scope("revision-1"))
+            await page.goto(reopened.browser_url)
+            await expect(
+                page.frame_locator("#canvas-preview").locator("svg")
+            ).to_be_visible()
+            await page.locator("#scripts-disabled-button").evaluate(
+                "element => element.click()"
+            )
+            await expect(page.locator("#source-view")).to_have_value(source)
+            assert (
+                await page.locator("#canvas-preview").get_attribute("src")
+                == "about:blank"
+            )
+            await browser.close()
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize("availability", ["revoked", "missing", "unknown"])
+async def test_restarted_native_policy_preserves_inert_source_without_worker(
+    candidate_snapshot, availability
+):
+    profile = "future-profile" if availability == "unknown" else "canvas-v2-mermaid-1"
+    source = '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]</pre>'
+    snapshot = replace(
+        candidate_snapshot,
+        profiles=tuple(
+            replace(row, executable=False, reason="revoked")
+            if availability == "revoked" and row.profile_id == profile
+            else row
+            for row in candidate_snapshot.profiles
+            if availability != "missing" or row.profile_id != profile
+        ),
+        _runtime_assets=tuple(
+            asset
+            for asset in candidate_snapshot._runtime_assets
+            if availability != "missing" or asset.profile_id != profile
+        ),
+    )
+
+    class CandidateAuthority(_NativeFlowAuthority):
+        async def resolve_render_plan(self, scope):
+            if scope.revision_id == "revision-2":
+                return await super().resolve_render_plan(scope)
+            return compile_canvas_document(
+                source, runtime_profile=profile, snapshot=candidate_snapshot
+            )
+
+        async def read_source(self, scope):
+            if scope.revision_id == "revision-2":
+                return await super().read_source(scope)
+            return CanvasSourceResponse(source, sha256_utf8(source), profile)
+
+    gateway = CanvasGateway(authority=CandidateAuthority(), profile_snapshot=snapshot)
+    try:
+        launch = await gateway.open_shell(_scope("revision-1"))
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium)
+            )
+            page = await browser.new_page()
+            workers = []
+            page.on("worker", lambda worker: workers.append(worker.url))
+            await page.goto(launch.browser_url)
+            await expect(page.locator("#source-view")).to_have_value(source)
+            assert (
+                await page.locator("#canvas-preview").get_attribute("src")
+                == "about:blank"
+            )
+            assert workers == []
+            gateway.change_selection(
+                browser_session_id="browser-native-flow",
+                scope=replace(_scope("revision-2"), canvas_id="canvas-new"),
+            )
+            preview = page.frame_locator("#canvas-preview")
+            await expect(preview.locator("h1")).to_have_text("revision-2")
+            await expect(page.locator("#source-panel")).to_be_hidden()
+            await expect(page.locator("#canvas-preview")).to_be_visible()
+            assert not await page.locator("#canvas-preview").evaluate(
+                "element => Boolean(element.closest('[inert]'))"
+            )
+            await browser.close()
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_selection", [False, True])
+@pytest.mark.parametrize("delayed_source", [False, True])
+async def test_old_plan_failure_cannot_blank_new_selection(same_selection, delayed_source):
+    authority = _NativeFlowAuthority()
+    gateway = CanvasGateway(authority=authority)
+    release = asyncio.Event()
+    entered = asyncio.Event()
+    try:
+        launch = await gateway.open_shell(_scope("revision-1"))
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium)
+            )
+            page = await browser.new_page()
+            await page.goto(launch.browser_url)
+            preview = page.frame_locator("#canvas-preview")
+            await expect(preview.locator("h1")).to_have_text("revision-1")
+
+            async def delayed_plan(route):
+                if not failed[0]:
+                    failed[0] = True
+                    if not delayed_source:
+                        entered.set()
+                        await release.wait()
+                    await route.fulfill(status=503, json={"error": "plan_unavailable"})
+                else:
+                    await route.continue_()
+
+            async def delayed_source_response(route):
+                entered.set()
+                await release.wait()
+                await route.fulfill(status=200, body="<h1>old recovery source</h1>")
+
+            failed = [False]
+            await page.route("**/api/plan", delayed_plan)
+            if delayed_source:
+                await page.route("**/api/source", delayed_source_response)
+            await page.locator("#reload-button").click()
+            await asyncio.wait_for(entered.wait(), 5)
+            if same_selection:
+                await page.locator("#reload-button").click()
+                await expect(page.locator("#loading-state")).to_be_hidden()
+            else:
+                authority.publish("revision-2", sequence=2)
+            revision = "revision-1" if same_selection else "revision-2"
+            await expect(preview.locator("h1")).to_have_text(revision)
+            release.set()
+            await page.wait_for_timeout(200)
+            await expect(preview.locator("h1")).to_have_text(revision)
+            await expect(page.locator("#source-panel")).to_be_hidden()
+            await browser.close()
+    finally:
+        release.set()
+        await gateway.aclose()
+
+
 def _chromium_executable(browser_type: object) -> str:
     configured = os.environ.get("TLDW_CANVAS_CHROMIUM_EXECUTABLE")
     if configured and Path(configured).is_file():
@@ -813,6 +1149,7 @@ async def test_real_tool_publication_keeps_same_revision_pin_until_follow() -> N
 @pytest.mark.asyncio
 async def test_imported_archive_reopens_exact_branch_after_source_purge(
     tmp_path: Path,
+    candidate_snapshot,
 ) -> None:
     """Prove an imported branch remains runnable after the source DB is gone."""
 
@@ -846,7 +1183,7 @@ async def test_imported_archive_reopens_exact_branch_after_source_purge(
     try:
         conversation = database.get_conversation_by_name("Canvas archive graph")[0]
         conversation_id = str(conversation["id"])
-        repository = CanvasService(database)
+        repository = CanvasService(database, profile_snapshot=candidate_snapshot)
         active_message_ids: list[str] = []
         message_id = str(conversation["active_leaf_message_id"])
         while message_id:
@@ -894,8 +1231,12 @@ async def test_imported_archive_reopens_exact_branch_after_source_purge(
             revision_id=canvas.revision_id,
             follow_latest=False,
         )
-        gateway = CanvasGateway(authority=authority)
+        gateway = CanvasGateway(
+            authority=authority, profile_snapshot=candidate_snapshot
+        )
         launch = await gateway.open_shell(browser_scope)
+        plan = await authority.resolve_render_plan(browser_scope)
+        assert plan.runtime_profile == "canvas-v2-mermaid-1"
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(
                 headless=True,
@@ -903,9 +1244,10 @@ async def test_imported_archive_reopens_exact_branch_after_source_purge(
             )
             page = await browser.new_page()
             await page.goto(launch.browser_url)
+            await expect(page.locator("#loading-state")).to_be_hidden()
             await expect(
-                page.frame_locator("#canvas-preview").locator("main")
-            ).to_have_text("right 🌿")
+                page.frame_locator("#canvas-preview").locator("svg")
+            ).to_contain_text("Right")
             await expect(page.get_by_text("Revision 3", exact=True)).to_be_visible()
             await expect(page.get_by_text("Pinned", exact=True)).to_be_visible()
             await browser.close()
@@ -1273,6 +1615,9 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         )
         await page.goto(launch.browser_url)
         frame = page.frame_locator("#canvas-preview")
+        await expect(page.locator("#preview-state")).to_have_text("Preview ready")
+        await page.locator("#pin-button").click()
+        await expect(page.get_by_text("Pinned", exact=True)).to_be_visible()
         await frame.get_by_role("button", name="Submit text").click()
         dialog = page.get_by_role("dialog", name="Send result to chat")
         await dialog.wait_for()

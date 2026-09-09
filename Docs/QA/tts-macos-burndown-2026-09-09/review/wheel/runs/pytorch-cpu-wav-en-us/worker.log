@@ -1,0 +1,57 @@
+2026-09-09 07:35:04.081 | WARNING  | tldw_chatbook.Utils.path_validation:validate_path_simple:466 - Path resolution changed during validation
+/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/joblib/_multiprocessing_helpers.py:44: UserWarning: [Errno 28] No space left on device.  joblib will operate in serial mode
+  warnings.warn("%s.  joblib will operate in serial mode" % (e,))
+[32m07:35:10[0m | [36m          config:1841[0m | [1m    INFO[0m | [1mDetermined ACTUAL_PROJECT_ROOT for general paths: /private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook[0m
+[32m07:35:10[0m | [36m          config:1844[0m | [1m    INFO[0m | [1mDetermined APP_COMPONENT_ROOT for config files: /private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook[0m
+[32m07:35:10[0m | [36m          config:6027[0m | [1m    INFO[0m | [1mAttempting to load CLI config from: /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us/profile/config.toml[0m
+[32m07:35:10[0m | [36m          config:6043[0m | [1m    INFO[0m | [1mSuccessfully loaded and merged CLI config from /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us/profile/config.toml[0m
+[32m07:35:10[0m | [36m           higgs:41[0m | [33m[1m WARNING[0m | [33m[1mtorchaudio not available. Voice cloning features will be limited.[0m
+[32m07:35:10[0m | [36m           higgs:50[0m | [33m[1m WARNING[0m | [33m[1mlibrosa not available. Advanced audio analysis features will be limited.[0m
+[32m07:35:10[0m | [36m    TTS_Backends:155[0m | [1m    INFO[0m | [1mTTSBackendManager: Creating backend for ID: local_kokoro_default_pytorch[0m
+[32m07:35:10[0m | [36m          kokoro:1727[0m | [1m    INFO[0m | [1mSaved 1 voice blends[0m
+[32m07:35:10[0m | [36m          kokoro:1840[0m | [1m    INFO[0m | [1mSaved voice blend 'professional_female' with 2 voices[0m
+[32m07:35:10[0m | [36m          kokoro:1727[0m | [1m    INFO[0m | [1mSaved 2 voice blends[0m
+[32m07:35:10[0m | [36m          kokoro:1840[0m | [1m    INFO[0m | [1mSaved voice blend 'professional_male' with 2 voices[0m
+[32m07:35:10[0m | [36m          kokoro:1727[0m | [1m    INFO[0m | [1mSaved 3 voice blends[0m
+[32m07:35:10[0m | [36m          kokoro:1840[0m | [1m    INFO[0m | [1mSaved voice blend 'warm_storyteller' with 2 voices[0m
+[32m07:35:10[0m | [36m          kokoro:1727[0m | [1m    INFO[0m | [1mSaved 4 voice blends[0m
+[32m07:35:10[0m | [36m          kokoro:1840[0m | [1m    INFO[0m | [1mSaved voice blend 'dynamic_narrator' with 3 voices[0m
+[32m07:35:10[0m | [36m          kokoro:1727[0m | [1m    INFO[0m | [1mSaved 5 voice blends[0m
+[32m07:35:10[0m | [36m          kokoro:1840[0m | [1m    INFO[0m | [1mSaved voice blend 'english_blend' with 3 voices[0m
+[32m07:35:10[0m | [36m          kokoro:1727[0m | [1m    INFO[0m | [1mSaved 6 voice blends[0m
+[32m07:35:10[0m | [36m          kokoro:1840[0m | [1m    INFO[0m | [1mSaved voice blend 'male_chorus' with 4 voices[0m
+[32m07:35:10[0m | [36m          kokoro:1727[0m | [1m    INFO[0m | [1mSaved 7 voice blends[0m
+[32m07:35:10[0m | [36m          kokoro:1840[0m | [1m    INFO[0m | [1mSaved voice blend 'soft_whisper' with 2 voices[0m
+[32m07:35:10[0m | [36m          kokoro:1727[0m | [1m    INFO[0m | [1mSaved 8 voice blends[0m
+[32m07:35:10[0m | [36m          kokoro:1840[0m | [1m    INFO[0m | [1mSaved voice blend 'energetic' with 2 voices[0m
+[32m07:35:10[0m | [36m          kokoro:1790[0m | [1m    INFO[0m | [1mCreated 8 default voice blends[0m
+[32m07:35:10[0m | [36m    TTS_Backends:179[0m | [1m    INFO[0m | [1mTTSBackendManager: Initializing backend: local_kokoro_default_pytorch[0m
+[32m07:35:10[0m | [36m          kokoro:369[0m | [1m    INFO[0m | [1mKokoroTTSBackend: Initializing (ONNX: False, Device: cpu)[0m
+/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/torch/nn/modules/rnn.py:1011: UserWarning: dropout option adds dropout after all but last recurrent layer, so non-zero dropout expects num_layers greater than 1, but got dropout=0.2 and num_layers=1
+  super().__init__("LSTM", *args, **kwargs)
+/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/torch/nn/utils/weight_norm.py:145: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+[32m07:35:10[0m | [36m          kokoro:1189[0m | [1m    INFO[0m | [1mLoaded Kokoro PyTorch model from /private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth[0m
+[32m07:35:10[0m | [36m          kokoro:643[0m | [1m    INFO[0m | [1mKokoroTTSBackend: PyTorch backend initialized (model loading deferred)[0m
+/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+[32m07:35:12[0m | [36m          kokoro:1450[0m | [1m    INFO[0m | [1mKokoroTTSBackend PyTorch: Generated 8.97s of audio in 1.79s (5.0x realtime, first chunk: 1.792s)[0m
+[32m07:35:12[0m | [36m     stts_events:1188[0m | [33m[1m WARNING[0m | [33m[1mPlayground result is not profile-save eligible (provider=kokoro).[0m
+[32m07:35:12[0m | [36mspeech_playback_mixin:819[0m | [1m    INFO[0m | [1mAudio player initialized on first use[0m
+[32m07:35:12[0m | [36mspeech_playback_mixin:751[0m | [1m    INFO[0m | [1mAttempting to play audio file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/stts_playground_lse8z2fl.wav[0m
+[32m07:35:13[0m | [36m    audio_player:249[0m | [1m    INFO[0m | [1mStarted playback of stts_playground_lse8z2fl.wav using afplay[0m
+[32m07:35:23[0m | [36m          kokoro:1450[0m | [1m    INFO[0m | [1mKokoroTTSBackend PyTorch: Generated 8.97s of audio in 0.93s (9.7x realtime, first chunk: 0.927s)[0m
+[32m07:35:32[0m | [36m             app:14265[0m | [1m    INFO[0m | [1mTTS complete for message 55058dd2-76ad-4dee-909b-d6c264675af2[0m
+[32m07:35:33[0m | [36m      tts_events:3443[0m | [1m    INFO[0m | [1mTTS playback action: stop for message 09637180-4af6-4723-a5df-f91067c1696f[0m
+[32m07:35:35[0m | [36m      tts_events:1699[0m | [1m    INFO[0m | [1mTTS generation cancelled[0m
+[32m07:35:35[0m | [36m      tts_events:3799[0m | [1m    INFO[0m | [1mStopped playback for message 09637180-4af6-4723-a5df-f91067c1696f[0m
+[32m07:35:36[0m | [36m          kokoro:1450[0m | [1m    INFO[0m | [1mKokoroTTSBackend PyTorch: Generated 8.97s of audio in 0.84s (10.7x realtime, first chunk: 0.841s)[0m
+[32m07:35:45[0m | [36m             app:14265[0m | [1m    INFO[0m | [1mTTS complete for message bdcc5743-3a4d-4d5f-9a54-c79087760f79[0m
+[32m07:35:45[0m | [36m    audio_player:454[0m | [1m    INFO[0m | [1mPlayback stopped/cleaned up - all state reset[0m
+[32m07:35:45[0m | [36m    TTS_Backends:351[0m | [1m    INFO[0m | [1mTTSBackendManager: Closing all backends.[0m
+[32m07:35:45[0m | [36m    TTS_Backends:354[0m | [1m    INFO[0m | [1mClosing backend: local_kokoro_default_pytorch[0m
+[32m07:35:45[0m | [36m          kokoro:1985[0m | [1m    INFO[0m | [1mKokoroTTSBackend: Final performance stats - Avg: 16.0 tokens/s, Total: 3 generations in 3.6s[0m
+PHASE speech-lab
+PHASE console-warmup
+PHASE console-cancel
+PHASE console-successor

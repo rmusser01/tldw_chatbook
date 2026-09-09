@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "upstream_runner": "scripts/validate_live_tts.py",
+  "derived_runner_note": "Task-local provider specialization; exact production mounted Lab and Console lifecycle, no synthesis/playback replacements.",
+  "status": "failed",
+  "pid": 30858,
+  "started_utc": "2026-09-09T07:59:38.390034+00:00",
+  "phases": [],
+  "arguments": {
+    "provider": "higgs",
+    "format": "wav",
+    "port": 17851,
+    "phase_timeout": 600.0,
+    "cleanup_timeout": 300.0,
+    "run_timeout": 1800.0,
+    "output": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-01",
+    "expected_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+    "scenarios": [
+      "playback",
+      "cancel"
+    ],
+    "repeats": 1,
+    "play_audio": true,
+    "worker": true,
+    "voice": "professional_female",
+    "model": "higgs-audio-v2",
+    "language": "en",
+    "speed": 1.0,
+    "device": "cpu",
+    "text_file": null,
+    "cancel_text_file": null
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/higgs/venv/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "portaudio_candidate_gate": {
+    "sounddevice_requested_name": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.dylib",
+    "actual_function_image": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.19.8.dylib",
+    "actual_sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+    "portaudio_version": [
+      1246976,
+      "PortAudio V19.7.0-devel, revision unknown"
+    ],
+    "expected_prefix": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib",
+    "expected_sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+    "stream_opened": false,
+    "model_loaded": false,
+    "verified": true
+  },
+  "imported_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+  "runner_sha256": "b0f1083a45084b220bee913a94dc96cd78b006c799176237a1312e33a401a922",
+  "assets": {
+    "/private/tmp/tts-macos-burndown/higgs/asset-manifest.json": "c3a78105a29217005ec6201d3b0340e3fd5e8cca732041f9a72a11a5c318184d"
+  },
+  "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "versions": {
+    "tldw_chatbook": null,
+    "textual": "8.2.8",
+    "numpy": "1.26.4",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": null,
+    "kokoro-onnx": null,
+    "torch": "2.6.0",
+    "onnxruntime": null,
+    "misaki": null,
+    "spacy": null,
+    "en-core-web-sm": null
+  },
+  "failure": {
+    "type": "PortAudioError",
+    "message": "Error querying device -1",
+    "traceback": "Traceback (most recent call last):\n  File \"/private/tmp/tts-macos-burndown/higgs/qualify_providers.py\", line 1252, in main\n    asyncio.run(run_live(args, evidence))\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/private/tmp/tts-macos-burndown/higgs/qualify_providers.py\", line 531, in run_live\n    evidence[\"output_device\"] = dict(sd.query_devices(kind=\"output\"))\n                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/tts-macos-burndown/higgs/venv/lib/python3.12/site-packages/sounddevice.py\", line 578, in query_devices\n    raise PortAudioError(f'Error querying device {device}')\nsounddevice.PortAudioError: Error querying device -1\n"
+  },
+  "ended_utc": "2026-09-09T07:59:42.505788+00:00",
+  "_packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-01/evidence.json",
+    "original_sha256": "68431b86267d77f9e7043e98c94c9b58d668f1f2ce6d7dfcf143b9dd520a34e8",
+    "source_maps": {
+      "source_hashes": {
+        "path": "../../../../kokoro-english/provenance/source-hashes.json",
+        "shared_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+        "overrides": {
+          "TTS/backends/kokoro.py": "005551e99e56ef4dff82d66a4509f6e57b8af8e196cf3d19281313fab9a5c32d",
+          "TTS/kokoro_languages.py": "9ad7320ffeb1fd072fa2cf2749f3058320d911e815ca803c44c45f741cde469a",
+          "TTS/kokoro_pytorch.py": "552351f21b962b0c7739d8a839a5072382cf1b28d24bb29214f670dda36bac17"
+        },
+        "removed": []
+      }
+    }
+  }
+}

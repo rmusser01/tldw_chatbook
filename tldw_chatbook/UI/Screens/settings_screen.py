@@ -14894,7 +14894,7 @@ class SettingsScreen(BaseAppScreen):
                 (
                     "Purpose",
                     "Sets the shared Library rail and width mode. Automatic width "
-                    "follows 3:13 within 24–34 cells; custom width accepts 24–48 "
+                    "adds five cells to 3:13, within 29–39 cells; custom width accepts 24–48 "
                     "and may shrink temporarily to preserve 40 content cells. "
                     "Adaptive collapse remains session-only. Destination Items "
                     "preferences are saved under library.<destination>_reader.",
@@ -19408,7 +19408,7 @@ class SettingsScreen(BaseAppScreen):
                         disabled=not custom_widths,
                     )
                 yield Static(
-                    "Automatic: 3:13, bounded to 24–34 cells. Custom: preferred "
+                    "Automatic: 3:13 plus five, bounded to 29–39 cells. Custom: preferred "
                     "24–48 cells; it may shrink temporarily to keep 40 content "
                     "cells. Adaptive readers may collapse panes. In ordinary "
                     "views below 64 columns, use ‹ Library (< Library in ASCII) "

@@ -303,12 +303,13 @@ editing and deeper visual preview." **Global visual defaults** holds **Theme**,
 and scrolling** holds **Animations** and **Smooth scrolling**, each a button
 whose label is its state (Enabled / Disabled). **Shared Library rail**
 remembers whether the rail and destination Items panes are open. **Automatic
-width** follows the 3:13 Library-to-canvas proportion, bounded to 24–34 cells.
+width** follows the 3:13 Library-to-canvas proportion plus five cells, bounded to 29–39 cells
+when space allows.
 **Custom width** enables explicit preferences (Library 24–48, Items 32–72);
 ordinary layouts may temporarily shrink the rail to preserve 40 content cells,
 and adaptive readers may collapse or prioritize panes. **Reset layout** restores
-both panes open, automatic width, a 31-cell dormant Library preference, and
-40-cell Items preferences. Below 64 columns, ordinary routes show either the
+both panes open, automatic width, a 36-cell dormant Library preference, and
+50-cell Items preferences. Below 64 columns, ordinary routes show either the
 rail or canvas and provide **‹ Library** (or **< Library** with ASCII glyphs)
 to return. Responsive compression, collapse, resizing, and mode changes are
 temporary and never saved.

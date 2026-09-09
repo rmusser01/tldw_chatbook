@@ -1,0 +1,111 @@
+{
+  "scope": "Read-only inspection of the pinned actual runtime source; no imports, model construction, inference, or code mutation.",
+  "source_revision": "05a145bb490501b534563bf51bf2f7aa2326b271",
+  "transformers_version": "4.46.3",
+  "files": {
+    "serve_engine": {
+      "path": "/private/tmp/tts-macos-burndown/higgs/source/boson_multimodal/serve/serve_engine.py",
+      "sha256": "712c594ae1cbb9aafede4d99a54920287764afc77ae4aba32d4430d0c19e0885"
+    },
+    "model": {
+      "path": "/private/tmp/tts-macos-burndown/higgs/source/boson_multimodal/model/higgs_audio/modeling_higgs_audio.py",
+      "sha256": "c086fe4d8ce6d9a42558e64a5e5a322c986bb752c272fef5beb35f74a598f49d"
+    },
+    "transformers_generate": {
+      "path": "/private/tmp/tts-macos-burndown/higgs/venv/lib/python3.12/site-packages/transformers/generation/utils.py",
+      "sha256": "24e719be0942a06f1956cadd469a100a455012ea6f808cca894a3e94edb06bf3"
+    }
+  },
+  "contracts": [
+    {
+      "file": "serve_engine",
+      "class": "HiggsAudioServeEngine",
+      "method": "generate",
+      "line": 341,
+      "end_line": 426,
+      "arguments": [
+        "self",
+        "chat_ml_sample",
+        "max_new_tokens",
+        "temperature",
+        "top_k",
+        "top_p",
+        "stop_strings",
+        "force_audio_gen",
+        "ras_win_len",
+        "ras_win_max_num_repeat",
+        "seed"
+      ],
+      "var_keyword": null
+    },
+    {
+      "file": "model",
+      "class": "HiggsAudioModel",
+      "method": "generate",
+      "line": 1933,
+      "end_line": 2023,
+      "arguments": [
+        "self",
+        "input_ids",
+        "audio_features",
+        "audio_feature_attention_mask",
+        "audio_in_ids",
+        "audio_in_ids_start",
+        "audio_out_ids",
+        "audio_out_ids_start",
+        "past_key_values",
+        "audio_out_bos_token_id",
+        "audio_eos_token_id",
+        "past_key_values_buckets",
+        "seed"
+      ],
+      "var_keyword": "kwargs"
+    },
+    {
+      "file": "model",
+      "class": "HiggsAudioModel",
+      "method": "_sample",
+      "line": 1624,
+      "end_line": 1930,
+      "arguments": [
+        "self",
+        "input_ids",
+        "logits_processor",
+        "stopping_criteria",
+        "generation_config",
+        "synced_gpus",
+        "streamer",
+        "past_key_values_buckets"
+      ],
+      "var_keyword": "model_kwargs"
+    }
+  ],
+  "findings": [
+    {
+      "boundary": "selected serve engine",
+      "result": "No per-request stop event or stopping_criteria argument and no **kwargs; stop_strings is the only exposed stop selector. Calls model.generate with an explicit fixed keyword set.",
+      "lines": "341-395"
+    },
+    {
+      "boundary": "underlying model",
+      "result": "Accepts **kwargs and forwards them to Transformers GenerationMixin.generate, whose documented stopping_criteria parameter is passed to the custom Higgs _sample.",
+      "lines": "model1933-1960,2008-2022; Transformers1868-1924,2119-2121,2215-2219"
+    },
+    {
+      "boundary": "decoder loop",
+      "result": "Custom _sample calls stopping_criteria(input_ids_full, scores) after each actual forward/token update; when true the next normal CPU loop iteration does not run. It cannot interrupt an in-flight forward.",
+      "lines": "model1734-1737,1782,1908-1909"
+    },
+    {
+      "boundary": "upstream helper",
+      "result": "AsyncStoppingCriteria(threading.Event) exists and checks is_set(), but no use of that class exists in the selected serve_engine file.",
+      "lines": "153-170"
+    },
+    {
+      "boundary": "early termination output",
+      "result": "Cancellation before an audio segment exists can leave outputs[1] empty; serve_engine sets waveform None yet still unconditionally indexes outputs[1][0]. Partial delay-pattern audio also enters decode before return. A cancellation implementation must qualify the serve-engine unwind, not merely pass a criterion into the underlying model.",
+      "lines": "model1715,1846-1850; serve398-412"
+    }
+  ],
+  "recommendation": "A supported per-step criterion exists at model level, but the pinned serving API does not expose it. Assess a version-bounded request-owned bridge or upstream API extension with regression coverage and one bounded real run; do not mutate process-global generation defaults or treat current 96.4s joined Stop as responsive cancellation."
+}

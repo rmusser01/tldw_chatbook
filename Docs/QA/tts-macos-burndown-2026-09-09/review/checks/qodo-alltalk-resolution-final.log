@@ -1,0 +1,12 @@
+........................................................................ [ 88%]
+.........                                                                [100%]
+=============================== warnings summary ===============================
+../../../../../../../private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14
+  /private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+81 passed, 1 warning in 2.98s

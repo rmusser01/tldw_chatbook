@@ -1,0 +1,39 @@
+{
+  "build_id": "5cdfdfcf09ed257bce900fa94472cc9ff79eb58506ec86e0a55ce0cd2d7e95d8",
+  "default_diagram_profile": "canvas-v2-mermaid-1",
+  "policy_id": "cd4f0cdd756732e686b05031ce12c6bd086473cc72ff2f9d58340d8528b40f15",
+  "profiles": [
+    {
+      "executable": true,
+      "library": {
+        "bytes": 0,
+        "files": {}
+      },
+      "manifest": "runtime-manifest.json",
+      "manifest_sha256": "19d9122e6f23f20c92279dfd2bd0353e7261fb8a56fef7bb88cba6655e3da62e",
+      "profile_id": "canvas-v1",
+      "reason": null
+    },
+    {
+      "executable": true,
+      "library": {
+        "bytes": 175569,
+        "files": {
+          "MERMAID_THIRD_PARTY_LICENSES.txt": {
+            "bytes": 3226,
+            "sha256": "257167adcdcc8ec7235943ff2edab23a16aa2437454ceacc4d4525583938d21e"
+          },
+          "mermaid-subset.json": {
+            "bytes": 172343,
+            "sha256": "f4c64ebced845d61c82232b229ab623011feeb94574344bd813bf0048cba6b5d"
+          }
+        }
+      },
+      "manifest": "mermaid-runtime-manifest.json",
+      "manifest_sha256": "17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466",
+      "profile_id": "canvas-v2-mermaid-1",
+      "reason": null
+    }
+  ],
+  "schema_version": 1
+}

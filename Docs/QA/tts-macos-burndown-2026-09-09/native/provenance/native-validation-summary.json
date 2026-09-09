@@ -1,0 +1,245 @@
+{
+  "task": "TASK-32147",
+  "completed_utc": "2026-09-09T06:48:26.302137+00:00",
+  "status": "native_shutdown_recovery_and_content_passed",
+  "runs": [
+    {
+      "device": "cpu",
+      "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/evidence.json",
+      "runtime_status": "runtime_passed_content_transcription_pending",
+      "native_pid": 83819,
+      "native_exit": 0,
+      "shutdown_seconds": 7.398251291830093,
+      "sample_path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-4.txt",
+      "sample_sha256": "7560280c8e654efb9781e1c62ee3ad4ace4c8874cf66ef4e727e082908199cc4",
+      "sample_to_signal_seconds": 0.03140591597184539,
+      "server_exits": {
+        "83819": 0,
+        "84059": 0
+      },
+      "success_source": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/artifacts/02-fresh-server-successor-playback-source.wav",
+        "sha256": "545bc8dcd1b1813ce5046a19d6dfa55409aa3db7ff118472318d16a925db2bb6",
+        "frames": 277425,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.290816326530612,
+        "rms": 0.046756355883023154,
+        "peak": 0.372711181640625
+      },
+      "success_device": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/artifacts/02-fresh-server-successor-playback-device-0.wav",
+        "sha256": "8986a25971922508f4d24c86e632c7d17f58dd14b14d81658c7af30708b9e7f9",
+        "frames": 277830,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.3,
+        "rms": 0.046722264477919585,
+        "peak": 0.372711181640625
+      },
+      "source_revision": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "relevant_source_file_count": 98,
+      "relevant_source_changes": [],
+      "checkout_patch_changed": false,
+      "binary_sha256": "8dbc2c8b9d87fe1d4f55002b3a6d55db4d508cba33e11048085d2dcf06f18760",
+      "binary_uuid": "UUID: F855480F-080A-3240-BBE9-163F0176B5E3 (arm64) /private/tmp/tts-macos-burndown/native/build-cpu/bin/audiocpp_server",
+      "model_sha256": "b312b57797d40ac5c09d915893dbdbaf6405b7dc043f544776c5c95712dff88c",
+      "model_spec_sha256": "5b794553c086b111b741b6a2a9d91c7cd09da862b346b8b2b48d36d94b36fcc6",
+      "resource_cleanup_verified": true
+    },
+    {
+      "device": "metal",
+      "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/evidence.json",
+      "runtime_status": "runtime_passed_content_transcription_pending",
+      "native_pid": 91269,
+      "native_exit": 0,
+      "shutdown_seconds": 3.525829541031271,
+      "sample_path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/01-owned-sigterm-during-native-compute-sample-3.txt",
+      "sample_sha256": "48df926b42a3d53f46cc1de115aab260e312a67c206828e7d8b4fd5525e42e03",
+      "sample_to_signal_seconds": 0.022506500128656626,
+      "server_exits": {
+        "91269": 0,
+        "91327": 0
+      },
+      "success_source": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/artifacts/02-fresh-server-successor-playback-source.wav",
+        "sha256": "532d14e8c0540059f637dd1e00bd48414eb680d405aa7500ebe2416d81dc34be",
+        "frames": 277302,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.288027210884354,
+        "rms": 0.04678040111863575,
+        "peak": 0.375244140625
+      },
+      "success_device": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/artifacts/02-fresh-server-successor-playback-device-0.wav",
+        "sha256": "885183ce28aed80c93d22aac505699f7684ab2ad2f9bedccd75bf12efe78be34",
+        "frames": 277830,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.3,
+        "rms": 0.04673592824275234,
+        "peak": 0.375244140625
+      },
+      "source_revision": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "relevant_source_file_count": 98,
+      "relevant_source_changes": [],
+      "checkout_patch_changed": false,
+      "binary_sha256": "3e613916d94f2dbf28ca88566b71a5a6c9d195936e9ec5e7fe0660053de4b68a",
+      "binary_uuid": "UUID: 31B07DCA-31AA-3075-A54A-CCA82DD6A3B7 (arm64) /private/tmp/tts-macos-burndown/native/build-metal/bin/audiocpp_server",
+      "model_sha256": "b312b57797d40ac5c09d915893dbdbaf6405b7dc043f544776c5c95712dff88c",
+      "model_spec_sha256": "5b794553c086b111b741b6a2a9d91c7cd09da862b346b8b2b48d36d94b36fcc6",
+      "resource_cleanup_verified": true
+    }
+  ],
+  "content": [
+    {
+      "id": "cpu-source-0",
+      "raw_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "raw_exact": true,
+      "all_anchors": true,
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 6.0,
+          "text": " The recovered server speaks this complete reply. It finishes with the words amber sunrise."
+        }
+      ],
+      "audio_sha256": "545bc8dcd1b1813ce5046a19d6dfa55409aa3db7ff118472318d16a925db2bb6",
+      "lexical_differences": []
+    },
+    {
+      "id": "cpu-device-0",
+      "raw_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "raw_exact": true,
+      "all_anchors": true,
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 6.0,
+          "text": " The recovered server speaks this complete reply. It finishes with the words amber sunrise."
+        }
+      ],
+      "audio_sha256": "8986a25971922508f4d24c86e632c7d17f58dd14b14d81658c7af30708b9e7f9",
+      "lexical_differences": []
+    },
+    {
+      "id": "metal-source-0",
+      "raw_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "raw_exact": true,
+      "all_anchors": true,
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 6.0,
+          "text": " The recovered server speaks this complete reply. It finishes with the words amber sunrise."
+        }
+      ],
+      "audio_sha256": "532d14e8c0540059f637dd1e00bd48414eb680d405aa7500ebe2416d81dc34be",
+      "lexical_differences": []
+    },
+    {
+      "id": "metal-device-0",
+      "raw_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "raw_exact": true,
+      "all_anchors": true,
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 6.0,
+          "text": " The recovered server speaks this complete reply. It finishes with the words amber sunrise."
+        }
+      ],
+      "audio_sha256": "885183ce28aed80c93d22aac505699f7684ab2ad2f9bedccd75bf12efe78be34",
+      "lexical_differences": []
+    }
+  ],
+  "observation_misses": [
+    {
+      "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-01/evidence.json",
+      "reason": "No sampled native computation before the bounded barrier expired",
+      "test_sigterm_sent": false,
+      "server_exits": {
+        "85304": 0
+      },
+      "cleanup_joined": true,
+      "classification": "observation miss, not evidence of native runtime failure"
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-02/evidence.json",
+      "reason": "The real POST already received a response or terminated",
+      "test_sigterm_sent": false,
+      "server_exits": {
+        "87342": 0
+      },
+      "cleanup_joined": true,
+      "classification": "observation miss, not evidence of native runtime failure"
+    }
+  ],
+  "ownership_release": {
+    "checked_utc": "2026-09-09T06:45:37.716914+00:00",
+    "checked_pids": [
+      81227,
+      83728,
+      83819,
+      84059,
+      85245,
+      85304,
+      87222,
+      87342,
+      91254,
+      91269,
+      91327,
+      92291
+    ],
+    "remaining_exact_pids": [],
+    "asr_exited_zero": true,
+    "all_application_owners_released": true,
+    "slot_released": true
+  },
+  "native_patch_sha256": "faa692effa31ef5b7836e2b727fda0a9452a19008a8c679686dceda1c1831dac",
+  "approved_chatbook_runtime_baseline_changed": false,
+  "updated_utc": "2026-09-09T07:02:14.298266+00:00",
+  "sanitizer": {
+    "status": "unqualified_startup_blocked_before_main",
+    "original_sandbox_case_timeouts": 9,
+    "unsandboxed_startup_probes": 1,
+    "transport_cases_repeated": 0,
+    "receipt": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized-unsandboxed/results.json",
+    "receipt_sha256": "445a11b4423410a9825c33c278327fc9f85f27234d937408122c12c5c2916393",
+    "sample_sha256": "3ac692c5bc7f28a32041133dac778ec4c46db8c7e78c1ca987f2c3a7cc2c653b",
+    "startup_timeout_seconds": 5,
+    "elapsed_including_sample_and_cleanup_seconds": 6.118974083,
+    "owned_pid": 96587,
+    "forced_cleanup": "Exact owned child SIGKILL then join after startup timeout",
+    "remaining_owned_pids": [],
+    "diagnosis": "The sample shows sanitizer initialization re-entering through a malloc call while the same main thread is still initializing ASan, then waiting on its spin mutex. This supports a sanitizer-runtime initialization blocker; it does not qualify transport behavior or identify a proven OS/toolchain defect.",
+    "prerequisite": "A compatible Apple Clang sanitizer runtime must finish initialization and reach main on macOS 26.5.2 (25F84), arm64, before ASan/UBSan transport qualification is possible. This existing Apple clang 17.0.0 (clang-1700.0.13.5) binary did not meet that prerequisite outside the sandbox.",
+    "native_source_unchanged": true,
+    "models_initialized": 0,
+    "playback_started": false,
+    "linux_arm": {
+      "status": "compiler_prerequisite_unavailable",
+      "image": "sha256:c758cd09229cf4e17bb799063d5213f784b37d74ea8e2e312c9b438ac3fec08b",
+      "container_name": "tts32147-sanitizer-20260909070024-985",
+      "receipt": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-01/results.json",
+      "receipt_sha256": "2ab0ae48b313b7e7a0a49a618e9a64508c8ca0895e538b3a1a97e2c5a7b497dd",
+      "controller": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-01/controller.json",
+      "controller_sha256": "11a3c2f2cf229be4b7935aa872b6bd6486167259b32f1208a7d4aff1738866a5",
+      "missing_compilers": [
+        "cc",
+        "c++"
+      ],
+      "compiler_provisioned": false,
+      "transport_cases_run": 0,
+      "expected_cases": 9,
+      "elapsed_seconds": 0.33830899999999997,
+      "container_removed": true,
+      "source_and_patch_unchanged": true,
+      "source_input_count": 507,
+      "models_initialized": 0,
+      "playback_started": false
+    },
+    "followup_recommendation": "/private/tmp/tts-macos-burndown/native/macos-sanitizer-followup.md"
+  }
+}

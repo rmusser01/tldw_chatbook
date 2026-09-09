@@ -1,0 +1,35 @@
+[
+  {
+    "task": 32148,
+    "checked_ac": [
+      6,
+      7
+    ],
+    "status": "Done",
+    "output": "Updated task TASK-32148"
+  },
+  {
+    "task": 32149,
+    "checked_ac": [
+      6
+    ],
+    "status": "Done",
+    "output": "Updated task TASK-32149"
+  },
+  {
+    "task": 32152,
+    "checked_ac": [
+      7
+    ],
+    "status": "Done",
+    "output": "Updated task TASK-32152"
+  },
+  {
+    "task": 32159,
+    "checked_ac": [
+      5
+    ],
+    "status": "Done",
+    "output": "Updated task TASK-32159"
+  }
+]

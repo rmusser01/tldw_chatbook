@@ -13941,9 +13941,9 @@ CodingWindow {
 }
 
 .watchlists-read-mode .watchlists-region-items {
-    width: 40fr;
-    min-width: 32;
-    max-width: 40;
+    width: 50fr;
+    min-width: 42;
+    max-width: 50;
     height: 100%;
     overflow: hidden;
 }
@@ -13991,7 +13991,7 @@ CodingWindow {
 }
 
 .watchlists-has-expanded-side-pane.watchlists-read-mode .watchlists-region-items {
-    min-width: 32;
+    min-width: 42;
 }
 
 #watchlists-content-pane {
