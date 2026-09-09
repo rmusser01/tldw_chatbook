@@ -25463,6 +25463,18 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_import_add_source(self, event: LibraryNoteImportCanvas.AddSourceRequested) -> None:
         return self._notes_controller.handle_library_note_import_add_source(event)
 
+    @on(LibraryNoteImportCanvas.ChangeSourceRequested)
+    def handle_library_note_import_change_source(self, event: LibraryNoteImportCanvas.ChangeSourceRequested) -> None:
+        return self._notes_controller.handle_library_note_import_change_source(event)
+
+    @on(LibraryNoteImportCanvas.ClearSourceRequested)
+    def handle_library_note_import_clear_source(self, event: LibraryNoteImportCanvas.ClearSourceRequested) -> None:
+        return self._notes_controller.handle_library_note_import_clear_source(event)
+
+    @on(LibraryNoteImportCanvas.GroupActionRequested)
+    def handle_library_note_import_group_action(self, event: LibraryNoteImportCanvas.GroupActionRequested) -> None:
+        return self._notes_controller.handle_library_note_import_group_action(event)
+
     @on(LibraryNoteImportCanvas.DestinationChanged)
     def handle_library_note_import_destination(self, event: LibraryNoteImportCanvas.DestinationChanged) -> None:
         return self._notes_controller.handle_library_note_import_destination(event)

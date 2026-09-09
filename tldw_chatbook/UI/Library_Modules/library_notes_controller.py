@@ -4656,6 +4656,31 @@ class LibraryNotesController:
     ) -> None:
         event.stop()
         self._push_library_note_import_picker()
+    @on(LibraryNoteImportCanvas.ChangeSourceRequested)
+    def handle_library_note_import_change_source(
+        self, event: LibraryNoteImportCanvas.ChangeSourceRequested
+    ) -> None:
+        """Drop the current selection, then reopen the picker (task-32134)."""
+        event.stop()
+        self._library_note_import_controller.clear_selection()
+        self._push_library_note_import_picker()
+    @on(LibraryNoteImportCanvas.ClearSourceRequested)
+    def handle_library_note_import_clear_source(
+        self, event: LibraryNoteImportCanvas.ClearSourceRequested
+    ) -> None:
+        event.stop()
+        self._library_note_import_controller.clear_selection()
+    @on(LibraryNoteImportCanvas.GroupActionRequested)
+    def handle_library_note_import_group_action(
+        self, event: LibraryNoteImportCanvas.GroupActionRequested
+    ) -> None:
+        event.stop()
+        try:
+            self._library_note_import_controller.set_group_action(
+                event.classification, event.action
+            )
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
     @on(LibraryNoteImportCanvas.DestinationChanged)
     def handle_library_note_import_destination(
         self, event: LibraryNoteImportCanvas.DestinationChanged

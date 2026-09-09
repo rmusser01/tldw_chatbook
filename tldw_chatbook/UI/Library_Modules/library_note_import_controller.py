@@ -20,6 +20,7 @@ from tldw_chatbook.Library.library_note_import_state import (
     begin_checking,
     begin_importing,
     begin_retry,
+    clear_selection,
     initial_note_import_snapshot,
     project_library_note_import_snapshot,
     request_import_cancellation,
@@ -160,6 +161,37 @@ class LibraryNoteImportController:
         )
         self._error_message = ""
         self.publish()
+
+    def clear_selection(self) -> None:
+        """Drop the current selection without leaving the import workflow."""
+        self._state = clear_selection(self._state)
+        self._existing_top_level_names = ()
+        self._error_message = ""
+        self.publish()
+
+    def set_group_action(self, classification: str, action: str) -> None:
+        """Apply one action to every rendered review item of one class.
+
+        Only the items on the page whose group header was pressed change, so
+        the header's count is exactly what the bulk action settles.
+        """
+        plan = self._require_review_plan()
+        selected = ImportAction(action)
+        for rendered in self._state.page.items:
+            if (
+                rendered.classification.value != classification
+                or rendered.selected_action is selected
+                or selected not in rendered.allowed_actions
+            ):
+                continue
+            plan = self._apply_override(
+                plan,
+                rendered.item_id,
+                selected,
+                replace_content=False,
+                add_membership=selected is ImportAction.CREATE_NEW,
+            )
+        self._replace_review_plan(plan)
 
     def set_destination(self, value: str) -> None:
         """Retain exact destination input and its mutation-free validation."""

@@ -177,3 +177,73 @@ async def test_receipt_discloses_every_skipped_path_and_reason() -> None:
         assert "61 notes created" in _plain(
             app.query_one("#note-import-receipt-detail", Static)
         )
+
+
+# --- task-32134 -----------------------------------------------------------
+
+
+async def test_a_chosen_folder_can_be_changed_or_cleared() -> None:
+    """A wrong folder is recoverable without leaving Import once."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="select",
+            selected_names=("vault",),
+            selection_kind="folder",
+            status_line="1 folder selected.",
+            can_check=True,
+            check_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        # A folder import is exclusive, so Add another file stays absent.
+        assert not app.query("#note-import-add-source")
+        app.query_one("#note-import-change-source", Button).press()
+        app.query_one("#note-import-clear-source", Button).press()
+        await pilot.pause()
+
+    assert isinstance(app.messages[0], LibraryNoteImportCanvas.ChangeSourceRequested)
+    assert isinstance(app.messages[1], LibraryNoteImportCanvas.ClearSourceRequested)
+
+
+async def test_selected_files_keep_add_another_file_beside_change_and_clear() -> None:
+    """File selections keep their documented Add another file control."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="destination",
+            selected_names=("draft.md",),
+            selection_kind="files",
+            status_line="1 file selected.",
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#note-import-add-source", Button)
+        assert app.query_one("#note-import-change-source", Button)
+        assert app.query_one("#note-import-clear-source", Button)
+
+
+async def test_notes_list_offers_last_import_while_a_session_receipt_exists() -> None:
+    """The list surfaces the retained receipt after Back to Notes (32134)."""
+    class _ListHost(ConsolidatedCSSApp):
+        CSS_PATH = TldwCli.CSS_PATH
+
+        def compose(self) -> ComposeResult:
+            yield LibraryNotesCanvas(
+                list_state=LibraryNotesListState(
+                    rows=(),
+                    header_copy="Notes (0)",
+                    status_copy="",
+                    empty_copy="No notes yet. Create one to see it here.",
+                ),
+                mode="list",
+                import_receipt_available=True,
+                id="library-notes-canvas",
+            )
+
+    app = _ListHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#library-notes-import-receipt", Button)
