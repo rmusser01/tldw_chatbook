@@ -70,18 +70,11 @@ class _PendingDirectory:
 
     path: Path
     candidates: tuple[str, ...]
-    stamps: tuple[
-        tuple[str, tuple[int, ...], tuple[int, ...]], ...
-    ]
+    stamps: tuple[tuple[str, tuple[int, ...], tuple[int, ...]], ...]
 
 
 class LibrarySkillImportCoordinator:
-    """Own one non-cancellable import across replaceable Library screens.
-
-    ``app_instance`` is the stable service owner for the coordinator's
-    lifetime. No screen or widget is retained: settlement looks up the current
-    routed screen through the mounted runtime app passed to :meth:`run`.
-    """
+    """Keep the app owner, not Screens; settle against the current runtime app."""
 
     def __init__(self, app_instance: Any) -> None:
         self._app_instance = app_instance
@@ -89,9 +82,6 @@ class LibrarySkillImportCoordinator:
         self._pending_package: RemoteSkillPackage | _PendingDirectory | None = None
         self._accepted_input = ""
         self._selected_candidate = ""
-        # task-32055: the accepted operation, retained only so an explicit
-        # user Cancel has something to stop. Outer (incidental) cancellation
-        # is still absorbed by ``_await_terminal_operation``.
         self._operation: asyncio.Task[None] | None = None
         self._cancel_requested = False
 
@@ -222,20 +212,13 @@ class LibrarySkillImportCoordinator:
         """Run the accepted mutation and publish one authoritative receipt."""
         del raw_path
         operation = asyncio.create_task(
-            self._run_and_settle(
-                self._accepted_input, runtime_app=runtime_app
-            )
+            self._run_and_settle(self._accepted_input, runtime_app=runtime_app)
         )
         self._operation = operation
         await self._await_terminal_operation(operation, runtime_app=runtime_app)
 
     def cancel_running_import(self) -> bool:
-        """Stop waiting on the accepted import (task-32055).
-
-        The import itself runs on a worker thread that cannot be
-        interrupted, so this abandons the *wait*, not necessarily the
-        write -- which is why the receipt it settles tells the user to
-        check the skills list rather than claiming nothing happened.
+        """Cancel the wait, not the write in its worker thread.
 
         Returns:
             True when an in-flight import was actually abandoned.
@@ -264,9 +247,7 @@ class LibrarySkillImportCoordinator:
                     continue
                 if operation.cancelled():
                     self._settle(
-                        _LibrarySkillImportOutcome(
-                            "Could not import that skill."
-                        ),
+                        _LibrarySkillImportOutcome("Could not import that skill."),
                         runtime_app=runtime_app,
                     )
                     return
@@ -283,9 +264,7 @@ class LibrarySkillImportCoordinator:
         ):
             return
         operation = asyncio.create_task(
-            self._run_candidate_and_settle(
-                package, candidate, runtime_app=runtime_app
-            )
+            self._run_candidate_and_settle(package, candidate, runtime_app=runtime_app)
         )
         self._operation = operation
         await self._await_terminal_operation(operation, runtime_app=runtime_app)
@@ -358,9 +337,7 @@ class LibrarySkillImportCoordinator:
         if fatal_error is not None:
             raise fatal_error
 
-    def _settle(
-        self, outcome: _LibrarySkillImportOutcome, *, runtime_app: Any
-    ) -> None:
+    def _settle(self, outcome: _LibrarySkillImportOutcome, *, runtime_app: Any) -> None:
         """Publish the one terminal snapshot before the operation task ends."""
         self._pending_package = outcome.pending_package
         self._selected_candidate = ""
@@ -405,9 +382,7 @@ class LibrarySkillImportCoordinator:
                 "Rejected Library skills import path; exception_type={}.",
                 type(exc).__name__,
             )
-            return _LibrarySkillImportOutcome(
-                "Could not find that file or folder."
-            )
+            return _LibrarySkillImportOutcome("Could not find that file or folder.")
 
         service = getattr(self._app_instance, "skills_scope_service", None)
         import_file = getattr(service, "import_skill_file", None)
@@ -420,15 +395,11 @@ class LibrarySkillImportCoordinator:
                 inspect_skill_directory, validated_path
             )
             if inspection.kind is SkillPackageKind.MULTI_SKILL_REPOSITORY:
-                pending = self._pending_directory(
-                    validated_path, inspection.candidates
-                )
+                pending = self._pending_directory(validated_path, inspection.candidates)
                 if pending is None:
                     return _LibrarySkillImportOutcome(
                         "That package is malformed or unsupported.",
-                        package_kind=(
-                            SkillPackageKind.MALFORMED_OR_UNSUPPORTED.value
-                        ),
+                        package_kind=(SkillPackageKind.MALFORMED_OR_UNSUPPORTED.value),
                     )
                 return _LibrarySkillImportOutcome(
                     "Choose one skill to import.",
@@ -450,9 +421,7 @@ class LibrarySkillImportCoordinator:
             return await self._import_file(validated_path, import_file)
 
         if self._find_skill_md(skill_dir) is None:
-            return _LibrarySkillImportOutcome(
-                "No SKILL.md found in that folder."
-            )
+            return _LibrarySkillImportOutcome("No SKILL.md found in that folder.")
 
         skill_name = skill_dir.name
         try:
@@ -582,9 +551,7 @@ class LibrarySkillImportCoordinator:
                 inspection.message,
                 recovery_actions=inspection.recovery_actions,
                 package_kind=inspection.kind.value,
-                retryable=(
-                    inspection.kind is SkillPackageKind.FETCH_OR_AUTH_FAILURE
-                ),
+                retryable=(inspection.kind is SkillPackageKind.FETCH_OR_AUTH_FAILURE),
             )
         try:
             result = await self._call_service(
@@ -593,9 +560,7 @@ class LibrarySkillImportCoordinator:
                 scope_service=service,
             )
         except Exception as exc:
-            return self._failure(
-                self._safe_name(package.suggested_name), exc
-            )
+            return self._failure(self._safe_name(package.suggested_name), exc)
         if not isinstance(result, dict):
             return _LibrarySkillImportOutcome(
                 "Could not import that skill.", retryable=True
@@ -645,8 +610,7 @@ class LibrarySkillImportCoordinator:
             (
                 child
                 for child in children
-                if child.is_file()
-                and child.name.lower() == _SKILL_MD_FILENAME.lower()
+                if child.is_file() and child.name.lower() == _SKILL_MD_FILENAME.lower()
             ),
             None,
         )
@@ -658,8 +622,8 @@ class LibrarySkillImportCoordinator:
             info = os.lstat(path)
         except OSError:
             return None
-        expected = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(
-            info.st_mode
+        expected = (
+            stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
         )
         if not expected or stat.S_ISLNK(info.st_mode):
             return None
@@ -730,10 +694,10 @@ class LibrarySkillImportCoordinator:
         expected = next(
             (stamp for stamp in package.stamps if stamp[0] == candidate), None
         )
-        if expected is None or (
-            current_directory_stamp,
-            current_body_stamp,
-        ) != expected[1:]:
+        if (
+            expected is None
+            or (current_directory_stamp, current_body_stamp) != expected[1:]
+        ):
             return None
         return resolved
 
@@ -748,12 +712,7 @@ class LibrarySkillImportCoordinator:
         return ""
 
     def _cancelled_outcome(self) -> _LibrarySkillImportOutcome:
-        """Receipt for a cancelled import, honest about what it can promise.
-
-        task-32055: an explicit Cancel stops the wait, but the import runs
-        on a worker thread that cannot be interrupted, so it may still have
-        landed. Say that instead of claiming nothing happened.
-        """
+        """Build an honest receipt: a cancelled wait may still have written."""
         if not self._cancel_requested:
             return _LibrarySkillImportOutcome("Could not import that skill.")
         self._cancel_requested = False

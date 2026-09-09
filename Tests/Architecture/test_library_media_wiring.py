@@ -437,19 +437,25 @@ _MEDIA_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: at the controller PR, exactly as every prior series' own wiring test
 #: carried it between its task 2 and task 3.
 #:
-#: **30 of the 140** (original 22 plus TASK-31932 steps 68/70), from an ``ast`` census (never a call-shaped
+#: **36 of the 140** (original 22 plus TASK-31932 steps 68/70/73), from an ``ast`` census (never a call-shaped
 #: regex -- a bare callable passed as an argument is an ``ast.Attribute``
 #: too, and the prompts series lost three names to exactly that blind spot)
 #: over ``tldw_chatbook/`` + every ``Tests/`` root + ``Docs/`` + ``scripts/``
 #: + ``Helper_Scripts/``, excluding only the controller module, each name's
 #: own delegator body, and this file's own literal pin tuple above. The
-#: other 110 KEEP: **53 unconditionally** per the recipe §4 whitelist (48
+#: other 104 KEEP: **53 unconditionally** per the recipe §4 whitelist (48
 #: ``@on`` + 5 ``action_*``; media owns ZERO ``on_<message>``
 #: name-dispatched handlers, so that whitelist's third member is inert
-#: here) and **57 with a genuine external caller**. Prune fraction
-#: 30/140 = 21.43%.
+#: here) and **51 with a genuine external caller**. Prune fraction
+#: 36/140 = 25.71%.
 _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        "_library_media_exact_return_candidate",
+        "_library_media_semantic_row_is_current",
+        "_library_media_request_matches_current_authority",
+        "_library_media_live_focus_is_allowed",
+        "_settle_library_media_return_from_geometry",
+        "_expire_library_media_return_settlement",
         "_adopt_library_media_row_owner",
         "_focus_library_media_page_control",
         "_request_library_media_filter",
