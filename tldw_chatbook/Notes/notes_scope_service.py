@@ -1930,6 +1930,40 @@ class NotesScopeService:
             )
         raise ValueError("Workspace notes require a selected workspace context.")
 
+    async def list_note_backlinks(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: str,
+        user_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List the notes whose body links to ``note_id`` (task-32145).
+
+        Args:
+            scope: The note scope to read; only ``ScopeType.LOCAL_NOTE``
+                carries the ``note://`` link form the Obsidian importer
+                writes, so every other scope answers with no backlinks
+                rather than raising into a caller that only wants to fill
+                one Info panel.
+            note_id: The linked-to note.
+            user_id: The local user whose database to read.
+            limit: Maximum rows to return.
+
+        Returns:
+            ``{"id", "title"}`` rows for the linking notes, ordered by title.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            return []
+        return await asyncio.to_thread(
+            self.local_notes_service.get_notes_linking_to,
+            self._require_user_id(user_id),
+            note_id,
+            limit,
+        )
+
     async def count_notes(
         self,
         *,

@@ -126,6 +126,31 @@ def compose_note_row_label(
     return " · ".join(part for part in (title, folder_label, age_label) if part)
 
 
+#: Backlink rows Info renders at most (task-32145). The loader asks for one
+#: more than this so an over-cap result can say "50+" rather than claim an
+#: exact 50 that is not the real number.
+LIBRARY_NOTE_BACKLINK_DISPLAY_CAP = 50
+
+
+def library_note_backlink_header(backlinks: tuple[tuple[str, str], ...]) -> str:
+    """The "Linked from" heading for one note's inbound links.
+
+    Args:
+        backlinks: ``(note_id, title)`` rows, possibly one over the display
+            cap (see ``LIBRARY_NOTE_BACKLINK_DISPLAY_CAP``).
+
+    Returns:
+        The heading, which names the count and, when there are none, says
+        so in words rather than leaving a bare ``(0)`` to be read as a
+        failed load.
+    """
+    if not backlinks:
+        return "Linked from (0) — no notes link here yet"
+    if len(backlinks) > LIBRARY_NOTE_BACKLINK_DISPLAY_CAP:
+        return f"Linked from ({LIBRARY_NOTE_BACKLINK_DISPLAY_CAP}+)"
+    return f"Linked from ({len(backlinks)})"
+
+
 def _library_note_back_label(compact: bool) -> str:
     """The single Back wording (task-32139), sized by ``compact``.
 
@@ -236,6 +261,8 @@ class LibraryNotePresentationState:
     bulk_read_only: bool = False
     bulk_included: bool = False
     status_channels: NotesStatusChannels | None = None
+    #: ``(note_id, title)`` for each note linking to this one (task-32145).
+    backlinks: tuple[tuple[str, str], ...] = ()
 
 
 class _LibraryNotesTreePagerButton(Button):
@@ -371,6 +398,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._tree_pager_focus_id: str | None = None
         self._tree_pager_focus_guard: Callable[[], bool] | None = None
         self._tree_pager_focus_generation = 0
+        #: Which backlink rows the mounted Info panel currently holds, so a
+        #: sync only remounts them when the set actually changed (task-32145).
+        self._rendered_backlinks: tuple[tuple[str, str], ...] = ()
         self._tree_focus_intent_generation: Callable[[], int] | None = None
         self.styles.width = "1fr"
         self.styles.min_width = 40
@@ -1437,6 +1467,34 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
 
     @staticmethod
+    def _backlink_buttons(
+        backlinks: tuple[tuple[str, str], ...],
+    ) -> list[Button]:
+        """Build one activatable row per inbound link (task-32145).
+
+        The single renderer for both paths -- compose, and the remount in
+        ``apply_session_state`` for backlinks that arrive after the editor
+        is already on screen (their loader runs after the note opens, and a
+        recompose is deferred while the reader is typing).
+
+        Args:
+            backlinks: ``(note_id, title)`` rows, possibly one over the cap.
+
+        Returns:
+            Row buttons carrying their own ``note_id``, capped for display.
+        """
+        buttons: list[Button] = []
+        for note_id, title in backlinks[:LIBRARY_NOTE_BACKLINK_DISPLAY_CAP]:
+            button = library_row_button(
+                escape_markup(ellipsize_note_title_cells(title, 60) or "Untitled"),
+                classes="library-canvas-action library-note-backlink",
+                compact=True,
+            )
+            button.note_id = note_id
+            buttons.append(button)
+        return buttons
+
+    @staticmethod
     def _set_tree_row_metadata(button: Button, row: LibraryNotesTreeRow) -> None:
         """Attach stable domain identities without encoding them in DOM ids."""
         button.tree_kind = row.kind
@@ -1615,6 +1673,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id="library-note-context-keywords",
                 )
             yield Static(metadata_line, id="library-note-context-meta", markup=False)
+            backlinks = (
+                presentation_state.backlinks if presentation_state is not None else ()
+            )
+            self._rendered_backlinks = tuple(backlinks)
+            yield Static(
+                library_note_backlink_header(self._rendered_backlinks),
+                id="library-note-context-backlinks-title",
+                markup=False,
+            )
+            backlink_rows = Vertical(id="library-note-context-backlinks")
+            # Auto height or the empty container claims the whole Info
+            # scroll region and pushes Reuse & Export off the pane.
+            backlink_rows.styles.height = "auto"
+            with backlink_rows:
+                yield from self._backlink_buttons(self._rendered_backlinks)
             yield Static("Reuse & Export", classes="destination-section", markup=False)
             legacy_use_in_console = Button(
                 "Use in Console",
@@ -1989,6 +2062,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != state.metadata_line:
                 widget.update(state.metadata_line)
+        # task-32145: backlinks are loaded by their own worker AFTER the note
+        # opens, so they land on an editor that is already composed -- and a
+        # recompose is deferred for as long as the reader owns a field
+        # (task-32062). Reconciling them here is what makes them appear at
+        # all: switching Edit -> Info is a `display` flip on this same
+        # composition, not a rebuild.
+        backlinks = tuple(state.backlinks)
+        if backlinks != self._rendered_backlinks:
+            self._rendered_backlinks = backlinks
+            container = self.query_one("#library-note-context-backlinks", Vertical)
+            container.remove_children()
+            rows = self._backlink_buttons(backlinks)
+            if rows:
+                container.mount_all(rows)
+        backlink_title = self.query_one(
+            "#library-note-context-backlinks-title", Static
+        )
+        backlink_copy = library_note_backlink_header(backlinks)
+        if self._static_text(backlink_title) != backlink_copy:
+            backlink_title.update(backlink_copy)
         for selector in (
             "#library-note-transfer-status",
             "#library-note-context-transfer-status",
