@@ -2776,3 +2776,31 @@ review/checks still precede normal protected merge.
 The final complete Canvas controller file additionally passes **47 tests,
 2 warnings in 3.79s**, not just the earlier six settlement-focused controls.
 `/private/tmp/pr2427-qodo107-canvas-complete.log`.
+# September 9 continuation: diagnostic contracts and new dev integration
+
+On published `b96516d897`, Qodo finding 3967831406 treated native Console
+chat/submission UUIDs as authentication sessions. Independent caller tracing
+confirmed UUIDv4 chat and submission generators, distinct from web authentication
+tokens. TASK-31932 step 9 and ADR-029's September 8 amendment explicitly retain
+these correlation IDs. Reply 3967946906 records that evidence; the thread is
+resolved without changing the approved runtime contract. UUID validation is not
+anonymization, and this conclusion depends on caller provenance.
+
+The accompanying complete diagnostic run found an unrelated inherited oracle
+conflict: the persona/workspace boundary test required zero runtime arguments,
+while TASK-25705 and the architecture guard require exact reviewed type/count/
+tool-name metadata. Both existed on the accepted dev base. The test now retains
+all eleven constant templates and uses the canonical exact-field guard, including
+unique presence and no exception/stack capture. Five new negative controls reject
+raw exception/rule/workspace values and missing/duplicate calls. No production,
+inventory, privacy policy or size cap changed.
+
+RED: 1 failed, 15 passed in the original settings/boundary run.
+GREEN: all three complete boundary, architecture-inventory and settings files,
+91 passed, 8 warnings in 152.65s; `/private/tmp/pr2427-diag-contract.log`.
+Independent review, scoped Ruff and whitespace checks pass. Whole-file formatter
+differences in the architecture file are pre-existing and outside this change.
+
+Fresh dev is now `fa313e901e4462baae44977f41d15ef660fd379c` (Library phase-C
+residency, PR #2546). Integration and affected-owner qualification remain pending;
+the earlier green Library run is not evidence for these newly changed owners.

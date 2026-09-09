@@ -1050,6 +1050,43 @@ def _run_metadata_guard(
     test_reviewed_diagnostic_changes_are_metadata_only()
 
 
+@pytest.mark.parametrize("private_value", ["str(exc)", "rule", "workspace_id"])
+def test_metadata_guard_rejects_positional_private_values(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, private_value: str
+) -> None:
+    """Reject private payload expressions even with a fixed diagnostic template.
+
+    Args:
+        monkeypatch: Redirect the guard to its isolated source fixture.
+        tmp_path: Own the synthetic diagnostic source.
+        private_value: Private expression that must not become reviewed metadata.
+    """
+    source = (
+        "from loguru import logger\n"
+        f"logger.warning('reviewed diagnostic: {{}}', {private_value})\n"
+    )
+    with pytest.raises(AssertionError, match="fields.*expected"):
+        _run_metadata_guard(monkeypatch, tmp_path, source)
+
+
+@pytest.mark.parametrize("copies", [0, 2])
+def test_metadata_guard_rejects_missing_or_duplicate_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, copies: int
+) -> None:
+    """Require exactly one occurrence of each reviewed diagnostic.
+
+    Args:
+        monkeypatch: Redirect the guard to its isolated source fixture.
+        tmp_path: Own the synthetic diagnostic source.
+        copies: Missing or duplicate count that must fail the guard.
+    """
+    source = "from loguru import logger\n" + (
+        "logger.warning('reviewed diagnostic')\n" * copies
+    )
+    with pytest.raises(AssertionError, match="expected one diagnostic"):
+        _run_metadata_guard(monkeypatch, tmp_path, source)
+
+
 def test_metadata_guard_rejects_dynamic_exception_capture(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
