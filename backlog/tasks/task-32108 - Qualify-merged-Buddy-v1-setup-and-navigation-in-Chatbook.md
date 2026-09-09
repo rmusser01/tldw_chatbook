@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-09-09 05:35'
+updated_date: '2026-09-09 05:41'
 labels: []
 dependencies: []
 priority: high
@@ -39,4 +39,6 @@ Qualified unchanged merged source5655c4820733d24754f872c21cc6196d83bf1504 under 
 Root reconciliation: source-bound evidence and explicit coverage limits are recorded, so AC3 is verified. Native Terminal selection was explicitly rejected by Computer Use policy; native Chrome separately lacks Computer Use permissions. No workaround was attempted. The permitted in-app browser qualified the separate server fresh WebUI journey, which does not replace native Textual evidence. Keep the task In Progress and remaining native acceptance open. ADR-139 continues to govern the unchanged production implementation.
 
 Rebased qualification commit onto updated dev 2e3389e694e93592a1c66e5c3416bf29a1057d6c after TTS recovery changes landed. Refreshed two rendered profile journeys plus eleven guarded-speech cases:13 passed,3 warnings in39.04s; exact command/source hashes/log retained in after-rebase-verification.json. Prior177-test evidence stays attributed to its original snapshot, with repeated cases not counted twice. Normalized whitespace-only lines in four retained SVG copies, retaining both raw/export and repository hashes; raw exports remain in scratch storage. No production change and no native/audio completion claim.
+
+Published draft PR https://github.com/rmusser01/tldw_chatbook/pull/2536 against dev. Production remains unchanged; refreshed automated evidence is included and native qualification remains open. No merge performed.
 <!-- SECTION:NOTES:END -->
