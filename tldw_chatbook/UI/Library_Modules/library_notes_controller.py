@@ -4811,7 +4811,11 @@ class LibraryNotesController:
     def handle_library_note_import_obsidian_mode(
         self, event: LibraryNoteImportCanvas.ObsidianModeToggled
     ) -> None:
-        """Re-run the read-only check with the requested vault-reading mode."""
+        """Re-run the read-only check with the requested vault-reading mode.
+
+        Args:
+            event: The canvas toggle carrying the requested `enabled` mode.
+        """
         event.stop()
         try:
             self._library_note_import_controller.set_obsidian_mode(event.enabled)
