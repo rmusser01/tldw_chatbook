@@ -467,6 +467,15 @@ files also need an existing-or-new destination path such as
 `Research / Interviews`. The destination is only a proposal during checking;
 no folder or note is created yet.
 
+The folder picker's **Folder path** field can be typed into directly: press
+**Enter** to browse into the typed path, or click **Select folder** to use it
+immediately without pressing Enter first — either way, whatever the field
+currently holds is what gets picked, not merely the directory being browsed.
+An invalid path shows an inline reason and leaves the dialog open. Once a
+folder is picked, the confirmation line shows its full path (elided in the
+middle for long paths, keeping the folder name itself visible), not just its
+name.
+
 Choose **Check selection** to build a read-only review. Review groups explain
 whether each source is new, an unchanged or changed repeat, an uncertain
 match, unsupported, or failed. You can skip an item, create a new note, or,
@@ -509,7 +518,9 @@ receipt afterward.
    cutover release.
 2. In the notes list, click **Add from files…** and choose **Keep a folder
    synced**.
-3. Choose a local folder, direction, and local destination. Server sync remains
+3. Click **Choose folder…**; type into the **Folder path** field and either
+   press Enter (browses into it) or click **Select folder** (uses it right
+   away). Choose a direction and local destination. Server sync remains
    unavailable until its separate capability is installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
    deletion-like effects.
@@ -698,6 +709,17 @@ New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
 rows with a visible cursor, the footer's "enter create note" follows the
 focused control, and Tab no longer leaves the Library screen for the
 navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*
+
+*Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
+Import once and Keep-synced folder pickers used to commit the directory
+being browsed and silently ignore a typed-but-unsubmitted path when
+**Select folder** was pressed. Both now resolve the **Folder path** field
+first — Enter still browses into it, and Select/Select folder use it
+immediately, with an inline error and the dialog left open for an invalid
+path. The confirmation line shows the full picked path, not just its
+basename. Pinned in `Tests/UI/test_file_open_select_folder.py`,
+`Tests/UI/test_select_directory_typed_path.py`,
+`Tests/UI/test_enhanced_select_directory.py`.)*
 
 *Verified against fix/library-notes-file-notes — 2026-09-09 (task-32136:
 Folder files is a mode of Notes — at wide sizes the Library rail and the
