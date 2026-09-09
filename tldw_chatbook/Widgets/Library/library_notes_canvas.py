@@ -82,11 +82,19 @@ def notes_sort_is_blocked(*, tree_projection: object, filter_value: str) -> bool
     return bool(tree_projection is not None and filter_value.strip())
 
 #: Columns the list pane needs before the browse and transfer toolbars share
-#: one row. Their widest composition -- New, Select, Add from files…, Export,
-#: Manage sync folders, Last import, plus both toolbars' own padding -- is 97
-#: cells, so under this width the merged row clips its last action off the
+#: one row. Under this width the merged row clips its last action off the
 #: pane, which is worse than the third row it saves (task-32127, review 1).
-_TOOLBAR_MERGE_MIN_WIDTH = 100
+#: Their widest composition is New (7), Sort (16), Select (10), Add from
+#: files… (19), Export (10), Manage sync folders (23), Last import (15),
+#: plus both toolbars' own padding -- 109 cells, measured button by button
+#: rather than estimated. task-32172 raised this from 100: Sort left the
+#: folder tree in task-32128 and this figure was re-derived without it (97),
+#: so putting Sort back pushed the widest frame 16 cells wider and "Last
+#: import" fell off the pane at every width from 100 to 108. Pinned at the
+#: threshold itself by test_notes_toolbar_fits_at_the_exact_width_it_starts_
+#: merging, since the widths pinned either side of it (137, 62, 38) all miss
+#: that band.
+_TOOLBAR_MERGE_MIN_WIDTH = 109
 
 #: Columns a single action group needs to stay on one row. The transfer group
 #: (Add from files…, Export, Last import) is 47 cells and the folder actions
