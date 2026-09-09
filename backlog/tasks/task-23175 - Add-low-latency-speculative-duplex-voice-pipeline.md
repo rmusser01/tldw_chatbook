@@ -735,6 +735,20 @@ pending at this local checkpoint. Keep this
 task In Progress and release criteria unchecked; the user requires the PR remain
 OPEN and UNMERGED pending a later merge decision.
 
+## PR #2504 follow-up — first automatic native CI
+
+All six original review threads are resolved; non-native automatic checks pass.
+Run `34297893189` exposed four further native packaging boundaries, corrected
+through `3d0f1878c9`: command-local LF during temporary patch reversal, a third
+hash-pinned direct memory-header patch, safe empty wheel-directory handling, and
+the exact upstream CPU implementation omitted by the header-only GN target.
+The reviewed source closure is 316 files with every original pristine entry
+unchanged, as recorded in ADR-098. Focused RED/GREEN file-only provenance and
+synthetic-archive checks, scoped lint and version validation pass; normal hosted
+CI still must establish final platform build/import success. No local native or
+live audio work, full sweep, release qualification or merge was performed.
+Task remains In Progress; broader release criteria remain unchecked.
+
 ## Renumbering provenance
 
 This task was initially created as `TASK-23113`. It was renumbered before its first

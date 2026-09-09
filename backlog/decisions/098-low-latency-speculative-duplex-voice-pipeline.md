@@ -88,7 +88,7 @@ file-descriptor protection with a small session-owned spawn worker.
    roots plus the 14 exact `AudioFrame` transitive file exceptions recorded in the
    governing design; it does not broadly allow all of `api`. After adding the exact
    support implementations required at native link time, the verified source and link
-   closure is 315 files. Abseil is sourced from the exact Chromium `src/third_party`
+   closure is 316 files. Abseil is sourced from the exact Chromium `src/third_party`
    DEPS pin
    `ac875ae5393d0516243cfd5d078cd4b098388f6b`. Both revisions are provenance-checked,
    The imported upstream patch series begins empty. The first declared integration
@@ -97,7 +97,19 @@ file-descriptor protection with a small session-owned spawn worker.
    the deterministic vendoring manifest. A second pinned patch adds the direct
    `<stddef.h>` include required by the clock-drift header's global `size_t`.
    A third pinned patch adds `<memory>` for the reverb-model header's `std::unique_ptr`.
-   These preserve the same upstream revision and 315-file pristine closure.
+   These patches preserve the same upstream revision and original 315 pristine
+   entries. The 2026-09-08 hosted Intel wheel import exposed a missing support
+   implementation: the selected `cpu_features_api` GN target supplies only the
+   header, leaving `WebRtc_GetCPUInfo` unresolved. The exact upstream
+   `system_wrappers/source/cpu_features.cc` is therefore selected through the
+   existing explicit compile-source allowlist. Its pinned Git blob is
+   `ebcb48c15fb20ddeda6c5844e097d7b2835cbd81`, with SHA-256
+   `e4bac0600ca4a36436431db0e1377886c98a5362eb2a403a40c83dc53b85f643`.
+   This adds one unmodified source under existing approved roots, not the broader
+   `system_wrappers` target. Every old pristine entry remains byte-identical;
+   the 316-entry pristine manifest is independently anchored to
+   `596ddbb3291fc5fd432376ef4bdfee6fed67bd999709638d68436f2b1ef041a4`.
+   Existing upstream/Abseil revisions, patch pins and legal metadata do not change.
    No synthetic probabilistic confidence is
    treated as native evidence.
 

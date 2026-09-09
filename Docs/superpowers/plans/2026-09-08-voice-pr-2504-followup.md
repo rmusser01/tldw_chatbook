@@ -68,6 +68,44 @@ The constructor audit also required lazy creation behind the existing gateway re
    migration path and a required-scope regression after demonstrating RED; do not
    change its SQL or broaden inventory roots. Recheck only the affected file-level
    inventory guard, then obtain the same reviewer's focused fix verification.
+7. Automatic Windows CI at `e44bad71fb` passes checkout hashes but rejects
+   `api/audio/echo_control.h` during reverse-pristine verification. Diagnose the
+   temporary patch stage with file-only Git operations, including inherited
+   line-ending configuration. Demonstrate a focused failure before correcting
+   only the patch-operation boundary and its regression if proven. Preserve all
+   pinned bytes and strict raw-byte hashing; never normalize hashes or accept
+   changed pristine content. Hosted CI, not local native execution, proves the fix.
+8. The same automatic run reaches a later GCC error in
+   `reverb_model_estimator.h`: `std::unique_ptr` is used without `<memory>`.
+   Add the direct include as a third independently pinned patch, retaining the
+   first two patch hashes and the unchanged pristine closure. Update only its
+   declared patch metadata, affected current hashes, exact inventory, and
+   file-only regressions/documentation. Reuse the verified reverse-to-pristine
+   staging procedure; no local compilation, integrity exception or runtime
+   behavior change. Review this correction with the Windows residual before
+   another normal PR CI run from the pushed fix.
+9. Hosted macOS ARM builds and installed tests pass for all three Python versions;
+   the subsequent archive checker rejects legitimate trailing-slash directory
+   records produced by wheel repair. Add synthetic-archive RED/GREEN coverage and
+   accept only benign normalized directory metadata while retaining malformed
+   path, duplicate-member, license/provenance and shared-library rejection. No
+   local wheel build or extension load is needed. Diagnose the separate Intel
+   unresolved CPU-feature symbol from pinned upstream sources before planning
+   any source-closure correction.
+10. The Intel diagnosis confirms the exact pinned upstream
+    `system_wrappers/source/cpu_features.cc` is absent; its selected API target
+    supplies only declarations. Add this one implementation to the existing
+    explicit compile-source allowlist, not the broad GN umbrella target. Verify
+    its official Git blob `ebcb48c15fb20ddeda6c5844e097d7b2835cbd81` and SHA-256
+    `e4bac0600ca4a36436431db0e1377886c98a5362eb2a403a40c83dc53b85f643` before import.
+    Preserve every old 315-entry pristine line and all three patches; update the
+    exact closure to 316 and independently reviewed pristine-manifest anchor to
+    `596ddbb3291fc5fd432376ef4bdfee6fed67bd999709638d68436f2b1ef041a4`. Regenerate
+    only the affected metadata/current manifest through the verified staged
+    transition, add exact source inventory/regression coverage and update current
+    source-closure documentation. Existing ADR-098 records this omitted-support-
+    source repair before implementation; no new runtime boundary or dependency
+    version is chosen. No local native build/load or release qualification.
 
 ## Final root-owned handoff
 
@@ -131,3 +169,28 @@ a new clean committed digest at publication.
 The final reviewer's focused re-review approved `4eca1a38a6` and closed the sole
 P2 with no remaining findings. No tests were repeated for review. The publication
 step now updates the existing PR and observes automatic CI; no merge is authorized.
+
+## First automatic CI follow-up — 2026-09-08
+
+Published `e44bad71fb` left all six original review threads resolved and auto-merge
+disabled. All non-native automatic checks passed. Native run `34297893189`
+exposed four later boundaries: temporary patch reversal inherited Windows global
+autocrlf; GCC required a direct reverb-model `<memory>` include; repaired macOS
+ARM wheels carried legitimate directory records; Intel imports lacked the pinned
+CPU feature implementation. Hosted ARM builds and installed tests passed for all
+three Python versions before archive validation failed; this is not whole-job or
+release qualification evidence.
+
+The four minimal corrections are committed through `3d0f1878c9` with focused
+RED/GREEN evidence: seven inherited-line-ending cases, 19 three-patch provenance
+cases, 34 synthetic-wheel directory/security cases and 22 final CPU-closure,
+tamper, inventory and synthetic-sdist cases. These overlapping cohorts are not
+summed. Scoped lint/format, full file-only vendor validation and exact version lock
+pass. The CPU addition preserves every original 315 pristine entry and all three
+patch hashes; ADR-098 records the reviewed 316-file anchor. Build identity and
+all-platform hard-off qualification bytes remain unchanged.
+
+No local native build/load, installed-wheel execution, app/audio, provider/model,
+physical test, soak or full suite ran. A focused combined review, latest-dev
+refresh and another normal automatic PR run must validate the resulting update;
+hosted linkage/platform success is not yet claimed. The PR stays unmerged.
