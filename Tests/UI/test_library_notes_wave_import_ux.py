@@ -247,3 +247,114 @@ async def test_notes_list_offers_last_import_while_a_session_receipt_exists() ->
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert app.query_one("#library-notes-import-receipt", Button)
+
+
+# --- task-32135 -----------------------------------------------------------
+
+
+async def test_review_rows_are_one_line_with_their_controls_adjacent() -> None:
+    """Path, action and destination share one row with Skip/Create."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 1 item before import.",
+            preview_items=(_item(1),),
+            can_import=True,
+            import_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        row = app.query_one(".note-import-row", Horizontal)
+        text = _plain(row.query_one(".note-import-row-text", Static))
+        assert "vault/Archive/note-1.md" in text
+        assert "create 1 new note" in text
+        assert "vault / Archive" in text
+        assert row.query_one("#note-import-action-item-1-skip", Button)
+        assert row.query_one("#note-import-action-item-1-create", Button)
+        assert row.size.height == 1
+
+
+async def test_each_review_group_offers_skip_all_and_create_all() -> None:
+    """A 71-item review can be settled per action class, not row by row."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 3 items before import.",
+            preview_items=(
+                _item(1),
+                _item(2),
+                _item(
+                    3,
+                    classification="unsupported",
+                    action="skip",
+                    reason="This file type is not supported.",
+                    effect_summary="Content: no change.",
+                    membership_summary="Folder placement: no change.",
+                ),
+            ),
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        headings = [
+            _plain(heading)
+            for heading in app.query(".note-import-group-heading").results(Static)
+        ]
+        assert "New (2)" in headings
+        assert "Unsupported (1)" in headings
+        app.query_one("#note-import-group-new-skip", Button).press()
+        await pilot.pause()
+        # An unsupported group cannot create anything, so it offers Skip only.
+        assert not app.query("#note-import-group-unsupported-create")
+        assert app.query_one("#note-import-group-new-create", Button)
+
+    message = app.messages[-1]
+    assert isinstance(message, LibraryNoteImportCanvas.GroupActionRequested)
+    assert (message.classification, message.action) == ("new", "skip")
+
+
+async def test_review_shows_at_least_fifteen_rows_at_235x52() -> None:
+    """A full review page fits on one screen at the wide terminal size."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 25 items before import.",
+            preview_items=tuple(_item(index) for index in range(1, 26)),
+            can_import=True,
+            import_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        visible = app.screen._compositor.visible_widgets
+        rows = [row for row in app.query(".note-import-row") if row in visible]
+        assert len(rows) >= 15
+
+
+async def test_review_reserves_an_options_slot_above_the_groups() -> None:
+    """Task 5's Obsidian toggle has a named home above the grouped rows."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 1 item before import.",
+            preview_items=(_item(1),),
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        body = app.query_one("#note-import-body")
+        ids = [child.id for child in body.children]
+        assert "notes-import-review-options" in ids
+        first_heading = next(
+            child
+            for child in body.children
+            if child.has_class("note-import-group-row")
+        )
+        assert ids.index("notes-import-review-options") < body.children.index(
+            first_heading
+        )
