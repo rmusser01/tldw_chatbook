@@ -31,8 +31,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 from loguru import logger as loguru_logger
-from rich.markup import escape as escape_markup
-from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -3749,45 +3747,16 @@ class LibraryScreen(BaseAppScreen):
     def _library_route_shortcuts_for_current_state(
         self,
     ) -> tuple[tuple[str, str], ...]:
-        """The per-mode shortcut set for whichever Library surface is live.
+        """Select truthful shortcuts for the live Library surface.
 
-        Shared by ``_register_footer_shortcuts`` (the footer) and
-        ``action_show_workbench_help`` (F1) -- task-2858 review (Important
-        #1): before this extraction, F1 only listed check_action-filtered
-        ``BINDINGS`` entries, but `/`, the landing's `i`/`n` hub
-        accelerators, and F6 are ``on_key``/app-global wiring, never
-        ``Binding``s, so F1 never learned about them and rendered an empty
-        panel on the landing (and every other on_key-only surface). Both
-        call sites now read the exact same selection, so the footer and F1
-        can never disagree about what is genuinely active.
-
-        # task-420: the "u"/evidence actions hard-gate on the Search/RAG
-        # row, so advertising them screen-wide made them dead shortcuts
-        # everywhere else -- they register only where they work,
-        # re-registered on every rail-row switch AND on navigation-context
-        # deep links (F-012: `_apply_navigation_context_state` can land on
-        # the Search canvas without a rail-row press). task-2237 (R2):
-        # three honest contexts -- the landing advertises its full
-        # keyboard story (`/`, hub accelerators, F6), other canvases get
-        # the keys that work there, never a dead key. task-2850: Files
-        # mode is a fourth context -- its Escape binding only works there
-        # (see ``check_action``), so it is the only state that advertises
-        # "esc". task-2856: two more contexts -- a detail/viewer surface
-        # (media viewer, note/prompt editor) advertises "esc back to list";
-        # a list canvas showing its plain list advertises "esc focus rail".
-        # Review round 3: a SEVENTH context -- the media viewer's edit/
-        # delete-confirm/analysis-edit sub-states are still
-        # ``_library_media_view == "viewer"`` but Escape there only steps
-        # back one level (see ``action_library_media_viewer_back``), not to
-        # the list, so it gets its own honest hint instead of inheriting
-        # the plain viewer's "back to list" (see
-        # ``_library_media_viewer_substate_active``). task-3020: two more
-        # contexts -- the skill editor advertises its own "ctrl+s"/"esc"
-        # (AC4, previously fell through to the bare general set since its
-        # view is "editor", not "list"); an ARMED bulk-delete confirmation
-        # on the Media list advertises "esc cancel delete" instead of the
-        # plain list's "esc focus rail" (AC2 parity/honesty -- the list is
-        # still genuinely showing, just with its toolbar swapped out).
+        Footer and F1 share this set, including on_key/app-global commands absent
+        from Bindings (task-2858). Refresh it on rail changes and navigation-context
+        deep links. Landing, ordinary canvases, Files, list and viewer/editor
+        surfaces advertise only their working commands. Search/RAG alone exposes
+        evidence actions. Viewer edit/delete/analysis subviews advertise Escape's
+        single-level exit, not Back to list; armed bulk delete advertises Cancel.
+        Skills retain their own save/exit shortcuts. This selection describes
+        behavior; footer width compaction must not alter F1 discoverability.
         """
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
             return self.LIBRARY_SHORTCUTS
@@ -6060,9 +6029,6 @@ class LibraryScreen(BaseAppScreen):
             destination_preferences("prompts_reader"),
             destination_preferences("skills_reader"),
         )
-
-    def _library_notes_work_session_reader_width(self) -> int | None:
-        return self._notes_controller._library_notes_work_session_reader_width()
 
     def _dispatch_library_notes_work_session(self, event: NotesWorkSessionEvent, *, reader_width: int | None=None, sync_layout: bool=True) -> bool:
         return self._notes_controller._dispatch_library_notes_work_session(event, reader_width=reader_width, sync_layout=sync_layout)
@@ -10717,39 +10683,6 @@ class LibraryScreen(BaseAppScreen):
             view["skills"] = (None, skills_entry[1])
         return view
 
-    @staticmethod
-    def _decorative_rail_counts_for_comparison(
-        records: Mapping[str, tuple[Any, ...]],
-    ) -> tuple[Any, Any]:
-        """Return the two decorative rail counts folded into ``records``
-        (Prompts, Skills) as a comparable tuple -- the counterpart half of
-        ``_structural_records_for_comparison``'s masking. ``study_counts``
-        is the third decorative field but lives outside ``records``
-        entirely, so callers compare it separately.
-
-        Args:
-            records: A ``_local_source_records``-shaped snapshot.
-
-        Returns:
-            ``(prompts_count, skills_count)``, each ``None`` when the
-            corresponding entry is absent or malformed (mirrors
-            ``_build_library_shell_input``'s own extraction of these two
-            fields for the rail).
-        """
-        prompts_entry = records.get("prompts")
-        prompts_count = (
-            prompts_entry[0]
-            if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
-            else None
-        )
-        skills_entry = records.get("skills")
-        skills_count = (
-            skills_entry[0]
-            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
-            else None
-        )
-        return (prompts_count, skills_count)
-
     def _library_entry_route_key(self) -> tuple[object, ...]:
         """Return the state fields that select the mounted Library owner."""
         return (
@@ -12240,18 +12173,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_user_id(self) -> str:
         return self._notes_controller._library_notes_user_id()
 
-    @staticmethod
-    def _safe_sync_scope_text(value: Any, *, max_length: int = 200) -> str | None:
-        """Return a validated Sync scope value or None when unsafe/empty."""
-
-        text = sanitize_string(str(value or ""), max_length=max_length).strip()
-        text = " ".join(text.split())
-        if not text:
-            return None
-        if validate_text_input(text, max_length=max_length, allow_html=False):
-            return text
-        return None
-
     @classmethod
     def _source_optional_title(
         cls, source_type: str, record: Mapping[str, Any]
@@ -12687,11 +12608,6 @@ class LibraryScreen(BaseAppScreen):
         return (
             f"{label} (showing up to {LIBRARY_SOURCE_PAGE_SIZES[source_type]}): {count}"
         )
-
-    def _hub_source_count_label(self, source_type: str, label: str) -> str:
-        count = self._local_source_counts[source_type]
-        suffix = "" if self._local_source_total_known[source_type] else "+"
-        return f"{label}: {count}{suffix}"
 
     def _source_sample_titles(self, source_type: str) -> list[str]:
         return [
@@ -13478,15 +13394,6 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
         return self._library_workspace_depth_state_cache
-
-    def _library_workspace_scope_label(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> Text:
-        """Return the left-rail workspace scope copy for the active Library mode."""
-        return Text.from_markup(
-            f"Active workspace: {escape_markup(workspace_depth_state.workspace_name)}"
-        )
 
     def _source_study_context(self) -> StudyScopeContext | None:
         if not self._has_source_study_context():
@@ -17872,9 +17779,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_note_work_pane_kwargs(self) -> dict[str, Any]:
         return self._notes_controller._library_note_work_pane_kwargs()
 
-    def _library_prompt_basic_unavailable_reason(self, state: PromptEditorState, *, conflict: bool=False) -> str:
-        return self._prompts_controller._library_prompt_basic_unavailable_reason(state, conflict=conflict)
-
     def _library_prompts_list_canvas_kwargs(self) -> dict[str, Any]:
         return self._prompts_controller._library_prompts_list_canvas_kwargs()
 
@@ -18312,9 +18216,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _schedule_library_media_image_preview(self, *, request_generation: int, canonical_id: str, backing_id: int | str, detail: Mapping[str, Any], force: bool=False) -> None:
         return self._media_controller._schedule_library_media_image_preview(request_generation=request_generation, canonical_id=canonical_id, backing_id=backing_id, detail=detail, force=force)
-
-    def _cache_library_media_preview(self, canonical_id: str, image: Any) -> None:
-        return self._media_controller._cache_library_media_preview(canonical_id, image)
 
     async def _fetch_library_media_reading_progress(
         self, media_id: str
@@ -19044,44 +18945,15 @@ class LibraryScreen(BaseAppScreen):
         item_count: int | None = None,
         size_bytes: int | None = None,
     ) -> None:
-        """UI-thread completion: notify, clear running/error, update the form.
+        """Publish export completion while fencing stale UI mutation.
 
-        See ``_build_library_export_success_message`` for how the
-        notification text itself (path + creator detail + auto-included
-        count) is assembled.
-
-        ``registry_recorded=False`` (the zip succeeded but the
-        ``create_chatbook`` registry step failed -- see
-        ``_run_library_export_via_service``) fires a SECOND, warning-
-        severity notification: without it the export silently never
-        appears under Artifacts/Home and the user has no way to know why.
-        It fires alongside the primary notification, BEFORE the staleness
-        guard, deliberately: both report persistent facts about what
-        actually happened on disk/in the registry, independent of which
-        canvas the user is now looking at -- and the warning matters MOST
-        for a superseded run, since a user who already navigated away
-        would otherwise never learn the artifact is missing from
-        Artifacts.
-
-        ``run_id`` is compared against the live ``_export_state.run_id``
-        BEFORE any state/DOM mutation: an export genuinely finished, so the
-        notifications always fire, but a run the user has since navigated
-        away from (see ``_export_state.run_id``'s docstring, ``LibraryExportState``)
-        must not stomp ``_export_state.running``/``.error``/``.status`` or the
-        canvas DOM out from under whatever the user is now looking at.
-
-        The task-2858 AC#3 (LIB-12) receipt fields
-        (``_export_state.last_path``/``.last_at``) are set here too,
-        BEFORE the staleness guard, for the identical reason the
-        notifications above are unconditional: the zip genuinely landed on
-        disk regardless of which run/canvas is currently displayed. The
-        canvas DOM patch that renders the new receipt text still only
-        happens for the live run (inside
-        ``_update_library_export_canvas_after_run``, guarded below) -- a
-        superseded run's receipt becomes visible the next time this
-        screen's export state is rebuilt (e.g. the next canvas entry or
-        the next completed run), never retroactively rewriting what the
-        user is looking at right now.
+        Notify real disk success and any registry-recording warning, and record
+        last_path/last_at, before checking run_id: those persistent facts remain
+        true after navigation. Message construction is centralized in
+        _build_library_export_success_message. Only the live run may clear
+        running/error, change status or patch the canvas. A superseded receipt
+        appears on the next state rebuild, never by rewriting unrelated live UI
+        (task-2858 AC3).
         """
         notify_message = self._build_library_export_success_message(
             path, dependency_info, message
@@ -22098,47 +21970,16 @@ class LibraryScreen(BaseAppScreen):
         return self._media_controller.action_library_media_bulk_delete_cancel()
 
     async def _delete_library_media_selection(self, media_ids: tuple[str, ...]) -> None:
-        """Soft-delete every selected Library media item (task-2853 AC3).
+        """Soft-delete the caller's captured Media selection (task-2853 AC3).
 
-        Reuses the exact seam ``_delete_library_media_item`` uses for the
-        single-item viewer delete --
-        ``media_reading_scope_service.delete_media_item(mode="local",
-        media_id=...)``, which for the local backend moves the item to
-        trash via ``MediaDatabase.mark_as_trash`` (the app's existing
-        soft-deletion pattern -- never raw SQL). Looped per id (mirroring
-        ``LocalMediaReadingService.empty_media_trash``'s own per-item
-        try/except loop) since the reading-scope service exposes no batch
-        delete: one bad id can never abort the rest of the batch.
-
-        On any success, the deleted ids are dropped from
-        ``_local_source_records["media"]`` (list updates in place) and
-        ``_local_source_counts["media"]`` is decremented by the number
-        actually deleted (rail counts update in place, AC3). The
-        selection is reconciled against the surviving records, so a
-        failed id stays checked (visible to retry) while a succeeded id
-        drops out automatically. A full success exits select mode
-        entirely -- the action the toolbar was armed for is done; any
-        failure keeps select mode active and surfaces a quiet warning
-        naming the failure count, mirroring
-        ``_notify_library_media_delete_warning``'s single-item wording.
-
-        task-4022 AC2: on any success, ``_library_media_delete_receipt_ids``
-        is set to the succeeded subset, which the canvas renders as a
-        "✓ deleted · N items" row with Undo/Dismiss
-        (``handle_library_media_bulk_delete_undo`` /
-        ``_undo_library_media_bulk_delete``) -- the confirm copy's promise
-        that the action is reversible now has an actual affordance behind
-        it, at the point of action, instead of silence.
-
-        task-3020 AC1: ``_library_media_bulk_delete_in_flight`` (set
-        synchronously by the caller before this coroutine was even
-        scheduled) is cleared in a ``finally`` so a legitimate NEXT bulk
-        delete is never left permanently blocked by this run, whether it
-        succeeds, partially fails, or raises.
+        Use the same local service as single-item delete, never raw SQL. Each id
+        fails independently. Successful ids leave cached records/counts and become
+        the Undo/Dismiss receipt (task-4022); failed ids remain selected for retry.
+        Full success exits select mode, while partial failure reports its count.
+        Always clear the caller-claimed in-flight flag in finally (task-3020).
 
         Args:
-            media_ids: The exact ids to delete, read by the caller BEFORE
-                any recompose could change the live selection.
+            media_ids: Exact ids captured before a recompose can change selection.
         """
         succeeded: list[str] = []
         # task-31220: set once the outcome is known -- non-empty only when a
@@ -24508,46 +24349,14 @@ class LibraryScreen(BaseAppScreen):
         return True
 
     def action_show_workbench_help(self) -> None:
-        """F1 help: the live per-mode footer set plus any ``check_action``-
-        gated ``BINDINGS`` extras (task-2858 AC#2/LIB-09; review Important
-        #1).
+        """Show live footer shortcuts plus check_action-gated Binding extras.
 
-        Without this override, ``app.py``'s generic fallback
-        (``App._show_generic_screen_help``, used by any screen that
-        declares no ``action_show_workbench_help`` of its own) flattens
-        this screen's raw ``BINDINGS`` list unconditionally -- it never
-        consults ``check_action`` at all, so it kept advertising the
-        skill editor's Ctrl+S/Escape, the four other context-gated
-        Escape bindings, and the Search/RAG-only ``u``/Enter/``o``
-        evidence-card keys on every OTHER Library surface too. This
-        reproduced exactly the original finding: F1 on the Media canvas
-        was titled "LibraryScreen Shortcuts" and listed "ctrl+s: Save
-        skill"/"escape: Back to skills list" while browsing media, where
-        neither key does anything.
-
-        Filtering ``BINDINGS`` through ``check_action`` alone was not
-        enough, though: the keys the footer actually teaches on most
-        Library surfaces (``/`` focus-search, the landing's ``i``/``n``
-        hub accelerators, F6 pane-cycle -- ``LIBRARY_LANDING_SHORTCUTS``
-        and its five siblings) are ``on_key``/app-global wiring, never
-        ``Binding``s, so they never reached this filter and F1 rendered
-        an EMPTY panel (title + Close button only) on the landing and
-        every other on_key-only surface. This now starts from
-        ``_library_footer_shortcuts_for_current_state`` -- the exact
-        per-mode set ``_register_footer_shortcuts`` selects for the
-        footer, so F1 and the footer can never disagree -- and appends
-        whatever ``check_action``-gated ``BINDINGS`` extras are active
-        right now, mirroring the keep/drop rule Textual's own
-        ``Screen.active_bindings`` uses for footer/key resolution.
-        Deliberately NOT run through ``AppFooterStatus``'s reserved-
-        global-key filter (the footer drops F6 there because the global
-        hint cluster already covers it, and further compacts that
-        cluster below F6 at narrow widths -- LIB-18): F1 is the
-        discoverability fallback for exactly that narrow-width case, so
-        it must show F6 even where the footer currently cannot
-        (``SettingsScreen.action_show_workbench_help`` reads its own
-        per-category shortcuts the same direct way, bypassing the footer
-        widget entirely).
+        Both sources are necessary: generic help leaks inactive editor/evidence
+        bindings, while Bindings alone omit on_key/app-global shortcuts and leave
+        landing help empty (task-2858/LIB-09). Use the same current-state selection
+        as the footer. Do not apply the footer widget's reserved-global filter:
+        F1 must retain F6 as the discoverability fallback when narrow footer
+        chrome cannot display it (LIB-18).
         """
         from ..Workbench.help import (  # noqa: PLC0415 -- lazy: only needed on F1; keeps the help panel off the module import path
             WorkbenchHelpPanel,
@@ -29320,46 +29129,24 @@ class LibraryScreen(BaseAppScreen):
         create_token: str | None = None,
         blank: bool = False,
     ) -> LibraryNoteCreateOutcome:
-        """Create a new local note from the in-canvas Create view and open it.
+        """Create a local note from Blank/template input and open its typed session.
 
-        Shared by the Blank note button and every template row: both
-        resolve their title/content synchronously (see
-        ``_library_note_template_fields``) and hand off to this single
-        creation seam. Validates the lossless draft through the same typed
-        boundary used by editor Save, then calls ``save_note`` with
-        ``note_id=None`` (the create path) offloaded via
-        ``_run_library_service_call``. Invalid input remains visible in
-        Create and is never silently truncated or transformed.
-
-        On success, switches straight into the editor for the newly
-        created note: selects the Browse > Notes rail row, refreshes the
-        local source snapshot (so the new note appears in both the notes
-        list and the rail's count -- the same full-refresh the initial
-        mount load uses, since there is no existing "append one record"
-        mutation path for notes to reuse). The coordinator must first return
-        a typed loaded session for the new identity.
-
-        A missing/failed save leaves the create view in place with a quiet
-        warning notice, mirroring ``_notify_library_media_edit_warning``.
+        Validate the lossless draft through the editor Save boundary; invalid
+        input stays visible, never truncated. Offload save_note(note_id=None)
+        through the service seam. Success refreshes source rows/counts and admits
+        the loaded coordinator session before opening the editor. Missing/failed
+        save leaves Create visible with a warning.
 
         Args:
-            title: The note's exact resolved title.
-            content: The note's exact resolved body.
-            keywords: Exact resolved template keywords, if any.
-            create_token: Preclaimed monotonic token for a UI activation.
-            blank: Whether this is the "Blank note" creation path (as
-                opposed to a template row, which already carries real
-                content the user likely wants kept even unedited). LIB-14:
-                the row still commits immediately either way (this seam has
-                no create-on-first-edit branch -- see the AC#5 decision in
-                ``_flush_library_note_save``/``_gc_pending_blank_note``),
-                but a blank-note row that is never touched is armed for
-                quiet deletion on exit instead of surviving as a permanent
-                literal "Untitled" row.
+            title: Exact resolved title.
+            content: Exact resolved body.
+            keywords: Exact template keywords, if any.
+            create_token: Preclaimed monotonic activation token.
+            blank: Commit immediately, but arm untouched Blank notes for quiet
+                deletion on exit (LIB-14); templates retain their real content.
 
         Returns:
-            Typed distinction between pre-commit failure, committed recovery,
-            and a successfully opened editor session.
+            Typed pre-commit failure, committed recovery, or opened editor session.
         """
         origin_row = self._library_selected_row_id
         origin_view = self._notes_state.view
@@ -31180,38 +30967,13 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _delete_library_media_item(self, media_id: str) -> None:
-        """Trash the selected Library media item, then return to the list view.
+        """Trash one Media item and return to the list (ADR-055).
 
-        Guards against a missing ``delete_media_item`` service or a failed
-        write by logging the failure and surfacing a quiet notice; either
-        way the pending confirmation is dismissed afterwards so a failed
-        delete never strands the viewer in the confirm state.
-
-        On success, the deleted item is dropped from the cached
-        ``_local_source_records["media"]`` snapshot (matched via
-        ``_source_record_id``, the same id-key precedence ``_study_source_items``
-        uses) so the list view reflects the trash immediately, without
-        waiting on a full snapshot re-fetch, and the canvas returns to its
-        list view. task-3020 AC5: ``_local_source_counts["media"]`` is
-        also decremented in place here, exactly like
-        ``_delete_library_media_selection``'s bulk path already does --
-        this single-item path never had that update, so the rail's
-        "Media N" count stayed stale after a single-item delete even
-        though the exact same recompose repaints it correctly after a
-        bulk one.
-
-        task-14901 (ADR-055): on success,
-        ``_library_media_delete_receipt_ids`` is set to the one deleted
-        id -- the list the viewer exits back to renders it as a
-        "✓ deleted · 1 item" receipt with the SAME Undo/Dismiss
-        affordances the bulk delete's receipt uses
-        (``handle_library_media_bulk_delete_undo`` /
-        ``_undo_library_media_bulk_delete``); single delete is one-item
-        bulk, not a second reversibility story. The shared
-        ``_library_media_bulk_delete_in_flight`` flag (claimed by the
-        confirm handler before this coroutine was scheduled) is cleared
-        in a ``finally``, mirroring ``_delete_library_media_selection``,
-        so a failure can never leave delete/Undo permanently blocked.
+        Missing service or failed write reports a quiet failure and dismisses
+        confirmation. Success removes the cached record using _source_record_id,
+        decrements the rail count, and records the same one-item Undo/Dismiss
+        receipt used by bulk deletion. Always clear the caller-claimed shared
+        in-flight flag in finally so delete and Undo remain available.
 
         Args:
             media_id: The Library media item id to delete.
@@ -31369,43 +31131,21 @@ class LibraryScreen(BaseAppScreen):
         canonical_id: str = "",
         force_raw: bool = False,
     ):
-        """Memoized ``build_library_media_viewer_state`` per detail arrival.
+        """Memoize immutable viewer state per detail arrival (task-22208).
 
-        task-22208: the raw builder performs at least one O(document) string
-        copy per call, and it used to run 2+ times per viewer sync (display
-        state + the console-representation clause of the unchanged compare)
-        on EVERY interaction -- traversal step, mode switch, More toggle,
-        Escape. This memo bounds that to once per (detail arrival x build
-        parameters), and because a no-change sync gets back the SAME state
-        object, the sync's unchanged test can short-circuit on identity
-        before ever falling back to the structural (content-memcmp) compare.
-
-        Memo key and invalidation:
-        * the detail OBJECT, by identity -- the detail is only replaced
-          wholesale by ``_refresh_library_media_detail``'s settle (a fresh
-          dict per fetch) or cleared to None, never mutated in place, so a
-          new arrival (including an edit's refetch) always misses and
-          rebuilds; a None detail memoizes the empty state the same way;
-        * ``arrival_note`` / ``backend`` / ``canonical_id`` / ``force_raw``
-          -- the remaining builder inputs; the per-detail entry dict is
-          reset whenever the detail identity changes, so it holds at most
-          the couple of parameter combinations live for one arrival.
-
-        Known consequence, accepted by design: the "Updated: <age>" relative
-        label freezes for the lifetime of one detail arrival (the raw
-        builder stamps it from ``now`` per call). Recomputing it per sync is
-        what the memo exists to stop -- and under the task-21116 compare a
-        ticked-over age label would otherwise force a FULL document
-        recompose just to repaint one metadata line.
+        The key uses detail identity plus all builder parameters; a new wholesale
+        detail mapping clears the per-arrival entries. None memoizes empty state.
+        This bounds O(document) copies and lets unchanged sync short-circuit by
+        identity. Detail must not mutate in place. The relative Updated age
+        intentionally stays fixed until the next arrival, avoiding full document
+        recomposition merely to repaint elapsed time.
 
         Args:
-            detail: The loaded detail mapping, or None for the empty state.
-            arrival_note: One-shot context line (see the raw builder).
-            backend: Provenance backend displayed by Reader Info.
-            canonical_id: Stable backend-qualified id override.
-            force_raw: Force ``is_markdown`` False (external/server details
-                render raw); folded into the memo so the replace also
-                happens once per arrival.
+            detail: Loaded detail mapping, or None.
+            arrival_note: One-shot context line.
+            backend: Reader Info provenance backend.
+            canonical_id: Backend-qualified identity override.
+            force_raw: Render external/server detail without Markdown.
 
         Returns:
             The memoized immutable viewer state.
@@ -33801,42 +33541,14 @@ class LibraryScreen(BaseAppScreen):
         return self._rag_search_controller._sync_library_rag_scope_toggle_and_run_gate_widgets()
 
     async def _mirror_library_rag_scope_recovery(self) -> None:
-        """Remove/mount the scope region's recovery block for a snapshot-
-        driven change in `library_rag_scope_shows_recovery`.
+        """Mirror the current scope-recovery block under the panel refresh lock.
 
-        Scheduled via `run_worker(..., exclusive=True, group=...)` from
-        `_sync_library_rag_scope_toggle_and_run_gate_widgets` rather than
-        run inline, because that caller is itself synchronous (RAG-27's
-        no-`await` constraint) and has no coroutine of its own in which to
-        `await widget.remove()` / `await container.mount(...)`.
-
-        Takes `_rag_search_state.panel_refresh_lock` -- the SAME lock
-        `_refresh_search_rag_panel_state_widgets` holds for its own
-        remove/mount of this exact block -- rather than firing the
-        remove/mount unawaited from the sync method above. Both approaches
-        keep the sync method itself yield-free, but only the lock actually
-        prevents the hazard the lock was introduced for (PR-3 Task 4): an
-        unawaited `Widget.remove()`/`mount()` still schedules its real
-        DOM work for a later message-pump tick regardless of whether the
-        caller awaits it, so a full refresh already mid-sequence (between
-        its own `await remove()` and `await mount()`, inside the lock)
-        could have this method's un-coordinated remove/mount of the SAME
-        fixed ids (`#library-rag-scope-recovery`,
-        `#library-rag-open-import-export`) land in the gap -- `mount()`
-        validates ids against currently-attached children synchronously,
-        so that collision raises `DuplicateIds`, not just a visual
-        glitch. Routing through the lock instead means this method simply
-        waits its turn.
-
-        The panel state is (re)built fresh here, inside the lock -- not
-        passed in from the scheduling call -- for the same reason
-        `_refresh_search_rag_panel_state_widgets` does that: by the time
-        this worker actually runs (after any in-flight full refresh
-        releases the lock), a newer snapshot may already be current.
-        Being `exclusive=True` in its own group means a fast run of scope
-        flips only ever mirrors the LAST one -- consistent with rendering
-        whatever is true when this actually executes rather than
-        whatever was true when it was scheduled.
+        The synchronous toggle/gate updater schedules this exclusive worker to
+        remain yield-free (RAG-27). Sharing panel_refresh_lock with full panel
+        refresh serializes removal/mount of the same fixed ids; merely leaving
+        those operations unawaited can collide mid-refresh and raise DuplicateIds.
+        Rebuild panel state inside the lock so the last queued scope flip renders
+        the current snapshot, not stale scheduling-time state (PR-3 Task 4).
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
             "#library-search-rag-panel"

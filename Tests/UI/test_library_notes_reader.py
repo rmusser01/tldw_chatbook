@@ -1464,7 +1464,7 @@ async def test_wide_editor_deep_link_keeps_reader_navigation_and_local_back() ->
                 f"view={screen._notes_state.view!r}, "
                 f"source={screen._notes_state.source!r}, "
                 f"snapshot={screen._library_note_session.snapshot is not None!r}, "
-                f"reader_width={screen._library_notes_work_session_reader_width()!r}"
+                f"reader_width={screen._notes_controller._library_notes_work_session_reader_width()!r}"
             ),
         )
 

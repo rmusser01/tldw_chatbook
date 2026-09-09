@@ -1533,3 +1533,34 @@ prior extraction savings with new savings or remove the newly accepted keyboard
 behavior. A bounded follow-on controller-boundary reduction requires an explicit
 plan/approval before implementation. Existing native evidence is historical
 until the final source is requalified; no merge-ready claim is made here.
+
+Step 68 resolved the apparent design blocker without a new owner: the complete
+reference census identified exactly three obsolete compatibility forwarders
+whose few test/evidence callers can use their existing Media/Prompts/Notes
+controllers directly. Together with four genuinely unused helpers, this is
+mechanical cleanup within the approved reconciliation scope, not an additional
+controller design. Controller-callable pins remain; explicit Screen-absence
+pins now cover the removed forwarders. Independent review approves exact
+scope/callers and docstring contract retention; its stale-census-comment finding
+is corrected (Media23, Prompts56, Notes27). No new approval is needed for an
+owner extraction because none was introduced.
+
+Final measurements are **31868 lines / 1229 methods** for LibraryScreen
+(line ceiling tightened from31901), and **5274 / 5276 lines** for NotesController
+(the pre-increment ceiling is preserved, not the incoming5283 increase).
+AST normalization proves only the exact seven removals, their two newly unused
+imports and documentation changed (`/private/tmp/pr2427-wave9-ast-proof.log`).
+Fresh complete ownership/size guards pass **92** cases (1.69 s), startup/import/
+CSS/size gates pass **76** (26.58 s), and all six preflight checks pass. Scoped
+changed-test/Notes lint and undefined-name checks pass; the Screen retains
+its same **47 pre-existing Ruff findings**, with no new finding (the two newly
+unused imports were removed). These are not reported as a clean whole-Screen
+lint run.
+
+Two final-source runs are active at this checkpoint: the **530-case** complete
+affected owner/Media-preview/Notes-reader/Prompts/keyboard cohort at
+`/private/tmp/pr2427-wave9-owner-green.log`, and the **851-case** complete Library
+shell at `/private/tmp/pr2427-wave9-shell-native.l37Yp9/pytest.log`. Its native
+report is `native.jsonl` in the same directory; require final exit_code0 and
+empty sqlite_paths. Runtime source is frozen until these finish. Final-head
+Qodo review and GitHub checks remain mandatory before a normal merge.

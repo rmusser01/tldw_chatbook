@@ -676,7 +676,7 @@ def test_library_prompt_forced_advanced_does_not_change_remembered_basic():
     }
     screen._prompts_state.block_state = editor_state.block_editor_state
 
-    reason = screen._library_prompt_basic_unavailable_reason(editor_state)
+    reason = screen._prompts_controller._library_prompt_basic_unavailable_reason(editor_state)
 
     assert reason == "Recipes require Advanced view."
     assert screen._prompts_state.editor_mode == "basic"

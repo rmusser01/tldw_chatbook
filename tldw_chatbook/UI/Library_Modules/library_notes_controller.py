@@ -2056,14 +2056,9 @@ class LibraryNotesController:
     ) -> None:
         """Restore portable Notes focus + scroll after a canvas-scoped sync.
 
-        task-15457 review round 1. The whole-screen seam does this through
-        ``_rehydrate_library_notes_after_recompose``; a canvas-scoped sync
-        never reaches ``LibraryScreen.refresh``, so it needs its own entry
-        into the same restore. No ``_LibraryNotesRestoreGuard`` is passed:
-        the guard exists to invalidate a DEFERRED restore that a newer
-        navigation intent has superseded, and this one runs synchronously
-        from the canvas's own ``recompose``, against the state that was
-        captured moments earlier in the same handler.
+        Task-15457: unlike whole-screen rehydration, canvas sync never reaches
+        LibraryScreen.refresh. Restore synchronously from the canvas recompose
+        using the same-handler identity; no deferred-restore guard is needed.
 
         Args:
             identity: The portable identity captured before the sync.
@@ -2071,11 +2066,8 @@ class LibraryNotesController:
         Returns:
             None.
         """
-        # task-32052 AC#1: never replay an identity captured on a DIFFERENT
-        # surface. ``_sync_library_canvas``'s own skip only watches the WORK
-        # pane's mode, so a list -> create switch slipped through and the
-        # navigator identity was replayed over the create canvas (Ctrl+N
-        # landed on a notes-tree row, not Blank note).
+        # task-32052: canvas sync's work-pane-only gate misses list -> create.
+        # Reject the old navigator identity so Ctrl+N stays on Blank note.
         if identity.region and identity.region != self._library_notes_focus_region():
             return
         # Focus FIRST and synchronously: the callback runs from the canvas's
