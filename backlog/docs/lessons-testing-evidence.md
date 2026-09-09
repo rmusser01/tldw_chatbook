@@ -12873,3 +12873,24 @@ Guarded trusted snapshot reconciliation plus deterministic unchanged/disconnect/
 cross-session/rebind controls established the fix. Separately, a preview DOM
 assertion alone missed an old source dialog leaving the workbench inert; assert
 modal retirement and actual interaction availability after source-only recovery.
+
+## A strict runtime loader can prevent the recovery UI from starting (TASK-31941)
+
+The final Mermaid review found that correct missing/tampered asset rejection
+escaped through native Console, served-parent and actual served-child startup.
+Existing loader rejection tests and source-only browser tests passed: the latter
+started from an already verified snapshot with execution revoked. Neither proved
+the application could start after a damaged installation. New tests with four
+copied-package damages produced twelve expected startup failures while all four
+strict-loader controls passed. Application-owned inert snapshots then permitted
+source/history/download access with execution still refused; seventeen focused
+checks covered recovery, unchanged revisions, typed mutation refusal, both
+directions of healthy/unavailable handshake mismatch, and no live reactivation
+after repairing package files.
+
+When the contract promises source-only recovery, test the actual application's
+ownership boundary after verification fails, not just the rejecting loader or an
+already-started gateway. Matched unavailable parent/child states still need their
+authenticated inert-data channel; omitting the control client also blocks recovery.
+Do not solve availability by salvaging unverified catalog metadata or substituting
+an executable runtime.

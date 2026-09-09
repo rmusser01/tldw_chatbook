@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib.resources import files
 from typing import Any, Literal
@@ -358,6 +359,34 @@ def load_profile_snapshot() -> ProfileSnapshot:
         raise ValueError("Canvas runtime profile catalog is unavailable") from exc
 
 
+_UNAVAILABLE_PROFILE_SNAPSHOT = ProfileSnapshot(
+    build_id=hashlib.sha256(
+        b"chatbook-canvas-runtime-build-unavailable-v1"
+    ).hexdigest(),
+    policy_id=hashlib.sha256(
+        b"chatbook-canvas-runtime-policy-unavailable-v1"
+    ).hexdigest(),
+    profiles=(),
+    default_diagram_profile=None,
+)
+
+
+def load_application_profile_snapshot(
+    *, loader: Callable[[], ProfileSnapshot] | None = None
+) -> ProfileSnapshot:
+    """Capture verified profiles or one inert process-owned failure identity.
+
+    Application owners use the empty failure snapshot to finish ordinary startup
+    and retain stored source access.  Direct profile consumers keep using
+    :func:`load_profile_snapshot`, whose strict integrity rejection is unchanged.
+    """
+
+    try:
+        return (loader or load_profile_snapshot)()
+    except ValueError:
+        return _UNAVAILABLE_PROFILE_SNAPSHOT
+
+
 def resolve_profile(
     snapshot: ProfileSnapshot,
     *,
@@ -437,6 +466,7 @@ __all__ = [
     "ProfileRecord",
     "ProfileResolution",
     "ProfileSnapshot",
+    "load_application_profile_snapshot",
     "load_profile_snapshot",
     "resolve_profile",
     "runtime_assets_for",

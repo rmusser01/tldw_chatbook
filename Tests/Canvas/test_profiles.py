@@ -407,3 +407,24 @@ def test_oversized_catalog_is_read_only_to_runtime_manifest_ceiling(
         ValueError, match="Canvas runtime profile catalog is unavailable"
     ):
         load_profile_snapshot()
+
+
+@pytest.mark.parametrize(
+    "package_damage",
+    [
+        "missing-v2-library",
+        "tampered-v2-worker",
+        "missing-catalog",
+        "malformed-catalog",
+    ],
+)
+def test_strict_loader_rejects_damaged_v2_closure_or_catalog(
+    damage_canvas_package, package_damage
+) -> None:
+    """Application recovery must not weaken exact packaged-byte verification."""
+    damage_canvas_package(package_damage)
+
+    with pytest.raises(
+        ValueError, match="Canvas runtime profile catalog is unavailable"
+    ):
+        load_profile_snapshot()

@@ -92,6 +92,102 @@ def test_app_constructs_served_control_only_for_present_spawn_environment(
         assert app.served_canvas_control.child_id == "child-a"
 
 
+@pytest.mark.parametrize(
+    "package_damage",
+    [
+        "missing-v2-library",
+        "tampered-v2-worker",
+        "missing-catalog",
+        "malformed-catalog",
+    ],
+)
+def test_served_child_keeps_control_without_native_fallback_when_profiles_fail(
+    monkeypatch: pytest.MonkeyPatch,
+    damage_canvas_package,
+    package_damage: str,
+) -> None:
+    """A matched unavailable child still serves inert history to its parent."""
+    from tldw_chatbook.Canvas.profiles import runtime_snapshot_id
+
+    for key, value in CONTROL_ENV.items():
+        monkeypatch.setenv(key, value)
+    damage_canvas_package(package_damage)
+
+    app = _build_test_app()
+    try:
+        assert app.served_canvas_handler is not None
+        assert app.served_canvas_control is not None
+        assert app.served_canvas_control.child_id == "child-a"
+        assert app.served_canvas_control._runtime_snapshot_id == runtime_snapshot_id(
+            app._canvas_profile_snapshot
+        )
+
+        store = app.console_runtime.ensure_chat_store()
+        assert store is not None
+        assert app.console_runtime.canvas_controller is not None
+        assert (
+            app.console_runtime.canvas_controller.profile_snapshot
+            is app._canvas_profile_snapshot
+        )
+        assert app.console_runtime.ensure_canvas_gateway(authority=object()) is None
+    finally:
+        asyncio.run(app.console_runtime.dispose())
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_unavailable_child_retains_snapshot_and_healthy_parent_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    candidate_snapshot,
+    damage_canvas_package,
+) -> None:
+    """Repairing package files cannot upgrade a live child or cross its fence."""
+    from tldw_chatbook.Canvas.control_protocol import (
+        CanvasControlBroker,
+        ControlProtocolError,
+    )
+    from tldw_chatbook.Canvas.profiles import (
+        load_profile_snapshot,
+        runtime_snapshot_id,
+    )
+
+    static = damage_canvas_package("malformed-catalog")
+    healthy_identity = runtime_snapshot_id(candidate_snapshot)
+    broker = CanvasControlBroker(runtime_snapshot_id=healthy_identity)
+    await broker.start()
+    launch = broker.issue_child("child-repaired-package")
+    for key in CONTROL_ENV:
+        monkeypatch.setenv(key, launch.environment[key])
+
+    app = _build_test_app()
+    client = app.served_canvas_control
+    unavailable = app._canvas_profile_snapshot
+    try:
+        assert client is not None
+        unavailable_identity = runtime_snapshot_id(unavailable)
+        assert unavailable_identity != healthy_identity
+        assert unavailable.profiles == ()
+
+        packaged_catalog = (
+            REPO_ROOT / "tldw_chatbook" / "Canvas" / "static" / "profile-catalog.json"
+        )
+        static.joinpath("profile-catalog.json").write_bytes(
+            packaged_catalog.read_bytes()
+        )
+        repaired = load_profile_snapshot()
+        assert runtime_snapshot_id(repaired) == healthy_identity
+        assert app._canvas_profile_snapshot is unavailable
+        assert runtime_snapshot_id(app._canvas_profile_snapshot) == unavailable_identity
+
+        with pytest.raises(ControlProtocolError, match="runtime_snapshot_mismatch"):
+            await client.start()
+        assert app._canvas_profile_snapshot is unavailable
+    finally:
+        await client.aclose()
+        await broker.aclose()
+        await app.console_runtime.dispose()
+
+
 def test_native_app_does_not_import_served_control_transport(tmp_path: Path) -> None:
     environment = _isolated_environment(tmp_path)
     for key in CONTROL_ENV:

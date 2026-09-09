@@ -1981,6 +1981,229 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.parametrize(
+    "package_damage",
+    [
+        "missing-v2-library",
+        "tampered-v2-worker",
+        "missing-catalog",
+        "malformed-catalog",
+    ],
+)
+async def test_unavailable_served_parent_keeps_authenticated_source_lineage_export_only(
+    tmp_path: Path,
+    unused_tcp_port: int,
+    candidate_snapshot,
+    damage_canvas_package,
+    package_damage: str,
+) -> None:
+    """A damaged install retains child-owned history but no executable bytes."""
+    source = (
+        '<!doctype html><pre data-canvas-diagram="mermaid">'
+        "flowchart TD\nA[Stored] --> B[History]</pre>"
+    )
+
+    class StoredHistoryAuthority(_MountedAuthority):
+        async def read_source(self, _scope):
+            return CanvasSourceResponse(
+                source, sha256_utf8(source), "canvas-v2-mermaid-1"
+            )
+
+        async def describe_selection(self, scope):
+            return CanvasGatewayProjection(
+                scope=scope,
+                options=(
+                    CanvasGatewayOption(scope.canvas_id, scope.revision_id, "Current"),
+                ),
+                title="Current",
+                sequence=2,
+                parent_revision_id="revision-old",
+                source_bytes=len(source.encode("utf-8")),
+                content_sha256=sha256_utf8(source),
+                origin_message_id="message-stored",
+                origin_turn_id="turn-stored",
+                temporary=False,
+                following=False,
+            )
+
+    damage_canvas_package(package_damage)
+    server = _server(tmp_path, port=unused_tcp_port)
+    app = await _browser_app(server)
+    unavailable = server._canvas_profile_snapshot
+    assert unavailable.profiles == ()
+    assert unavailable.default_diagram_profile is None
+    assert server._served_canvas_gateway.profile_snapshot is unavailable
+    assert server._served_canvas_gateway.start_count == 0
+
+    broker = CanvasControlBroker(runtime_snapshot_id=runtime_snapshot_id(unavailable))
+    child = None
+    mismatch = None
+    client = TestClient(TestServer(app))
+    await broker.start()
+    server._canvas_control_broker = broker
+    await client.start_server()
+    try:
+        grant = server._web_auth.authenticate_local(client_ip="127.0.0.1")
+        browser = server._web_auth.authenticate_request(
+            RequestFacts(
+                method="GET",
+                path="/",
+                peer_ip="127.0.0.1",
+                scheme="http",
+                host=f"127.0.0.1:{unused_tcp_port}",
+                cookie_value=grant.cookie_value,
+            )
+        )
+        handler = ServedCanvasControlHandler()
+        handler.bind(
+            StoredHistoryAuthority(),
+            CanvasGatewayScope(
+                browser_session_id=browser.session_id,
+                conversation_session_id="conversation-stored",
+                canvas_id="canvas-stored",
+                revision_id="revision-current",
+            ),
+        )
+        launch = broker.issue_child("child-unavailable")
+        child = CanvasControlClient(
+            launch.environment,
+            runtime_snapshot_id=runtime_snapshot_id(unavailable),
+            handler=handler.handle,
+        )
+        await child.start()
+        await broker.wait_connected("child-unavailable", timeout=1)
+
+        mismatch_launch = broker.issue_child("child-healthy")
+        mismatch = CanvasControlClient(
+            mismatch_launch.environment,
+            runtime_snapshot_id=runtime_snapshot_id(candidate_snapshot),
+        )
+        with pytest.raises(ControlProtocolError, match="runtime_snapshot_mismatch"):
+            await mismatch.start()
+
+        server.bind_served_browser(browser.session_id, "child-unavailable")
+        served_state = await server.served_canvas_state(browser.session_id)
+        shell_url = urlsplit(str(served_state["url"]))
+        shell_base = shell_url.path.rstrip("/")
+        outer_cookie = f"{SESSION_COOKIE_NAME}={grant.cookie_value}"
+        mutation_headers = {
+            "Host": f"127.0.0.1:{unused_tcp_port}",
+            "Cookie": outer_cookie,
+            "Origin": f"http://127.0.0.1:{unused_tcp_port}",
+            "Content-Type": "application/json",
+        }
+        boot = await client.post(
+            f"{shell_base}/api/boot",
+            headers=mutation_headers,
+            data=json.dumps({"bootstrap": parse_qs(shell_url.fragment)["boot"][0]}),
+        )
+        assert boot.status == 200
+        boot_body = await boot.json()
+        canvas_cookie = _response_cookie(boot, "canvas_session")
+        inner_headers = {
+            "Host": f"127.0.0.1:{unused_tcp_port}",
+            "Cookie": f"{outer_cookie}; canvas_session={canvas_cookie}",
+        }
+
+        state = await client.get(f"{shell_base}/api/state", headers=inner_headers)
+        assert state.status == 200
+        state_body = await state.json()
+        assert [item["revision_id"] for item in state_body["options"]] == [
+            "revision-current"
+        ]
+        assert state_body["metadata"]["sequence"] == 2
+        assert state_body["metadata"]["parent_revision_id"] == "revision-old"
+
+        async def action_capability(action: str) -> str:
+            response = await client.post(
+                f"{shell_base}/api/actions",
+                headers={
+                    **mutation_headers,
+                    "Cookie": inner_headers["Cookie"],
+                    "X-Canvas-CSRF": boot_body["csrf"],
+                },
+                data=json.dumps({"action": action}),
+            )
+            assert response.status == 200
+            return (await response.json())["capability"]
+
+        source_capability = await action_capability("source_read")
+        source_response = await client.get(
+            f"{shell_base}/api/source",
+            headers={
+                **inner_headers,
+                "Authorization": f"CanvasCapability {source_capability}",
+            },
+        )
+        assert source_response.status == 200
+        assert await source_response.text() == source
+
+        export_capability = await action_capability("source_download")
+        exported = await client.get(
+            f"{shell_base}/api/source-download",
+            headers={
+                **inner_headers,
+                "Authorization": f"CanvasCapability {export_capability}",
+            },
+        )
+        assert exported.status == 200
+        assert await exported.text() == source
+        assert exported.headers["Content-Disposition"].startswith("attachment;")
+
+        frame = await client.post(
+            f"{shell_base}/api/frame",
+            headers={
+                **mutation_headers,
+                "Cookie": inner_headers["Cookie"],
+                "X-Canvas-CSRF": boot_body["csrf"],
+            },
+            data="{}",
+        )
+        assert frame.status == 200
+        frame_cookie = _response_cookie(frame, "canvas_frame")
+        plan_cookie = _response_cookie(frame, "canvas_plan")
+        renderer = await client.get(
+            f"{shell_base}/render",
+            headers={
+                **inner_headers,
+                "Cookie": f"{inner_headers['Cookie']}; canvas_frame={frame_cookie}",
+                "Sec-Fetch-Dest": "iframe",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+        assert renderer.status == 503
+        assert await renderer.json() == {"error": "runtime_unavailable"}
+        plan = await client.get(
+            f"{shell_base}/api/plan",
+            headers={
+                **inner_headers,
+                "Cookie": f"{inner_headers['Cookie']}; canvas_plan={plan_cookie}",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+        assert plan.status == 503
+        assert await plan.json() == {"error": "plan_unavailable"}
+
+        runtime_asset = await client.get(
+            "/static/chatbook-canvas/canvas_runtime_worker_v2.js",
+            headers={
+                "Host": f"127.0.0.1:{unused_tcp_port}",
+                "Cookie": outer_cookie,
+            },
+        )
+        assert runtime_asset.status == 404
+        assert server._served_canvas_gateway.start_count == 0
+    finally:
+        if mismatch is not None:
+            await mismatch.aclose()
+        if child is not None:
+            await child.aclose()
+        await client.close()
+        await broker.aclose()
+        await server._served_canvas_gateway.aclose()
+
+
 @pytest.mark.parametrize("diagrams", [False, True, "failed"])
 async def test_mounted_production_authority_renders_and_settles_submit(
     tmp_path: Path, unused_tcp_port: int, candidate_snapshot, diagrams

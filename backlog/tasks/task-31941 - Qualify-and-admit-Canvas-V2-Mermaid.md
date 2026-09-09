@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:15'
-updated_date: '2026-09-09 04:18'
+updated_date: '2026-09-09 05:28'
 labels:
   - canvas
   - v2
@@ -44,6 +44,7 @@ Reason: Qualification and admission of the exact approved immutable profile unde
 3. Run targeted Canvas native/served/browser/lifecycle/archive/static checks, inspect required visual fixtures, record exact scope and limits in Docs/Canvas/V2_VERIFICATION.md.
 4. Only after required gates pass, observe production-admission RED then freeze/admit exact candidate and rerun final targeted checks; otherwise keep candidate disabled and report failing design gate.
 5. Update docs and backlog evidence, commit and obtain independent task review; whole-branch review follows.
+6. Address final review I1 under existing ADR124 item6: preserve ordinary startup and authenticated source-only recovery when the complete packaged snapshot is unavailable, retain strict integrity rejection and parent/child fencing, observe targeted regression RED/GREEN, then obtain one scoped fix review. Existing warning cleanup stays separately scoped.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -65,4 +66,8 @@ The SQLite prerequisite is now Done with reviewed acceptance closeout at Docs/su
 ### Fresh qualification — 2026-09-08
 
 2026-09-08 continuation: fresh five-file Chromium candidate gate passed 176 tests with 2 optional engine skips (475.87s). Complete Canvas candidate/admitted selections, including the 19 CI workflow contracts, both passed 1383 tests with 2 optional Firefox/WebKit skips (661.78s/767.12s); admitted run had only the existing RequestsDependencyWarning. Required actual-child create/update, confirmed unsent repair, parent/all-child restart revocation, two-browser isolation, Chatbook archives, twice-rebuilt offline assets and wheel/sdist closure passed. Two packaged admission assertions were observed RED before the four-field catalog-only change and GREEN afterward. Exact V2 manifest and all executable/library/V1 bytes and limits remain unchanged; admitted policy is cd4f0cdd756732e686b05031ce12c6bd086473cc72ff2f9d58340d8528b40f15. Two touched test files pass Ruff/format after baseline-proven mechanical lint cleanup. Root inspected all 16 useful candidate screenshots and recorded bounded resource measurements and coverage limitations in Docs/Canvas/V2_VERIFICATION.md. Evidence: /private/tmp/mermaid-qualification.lga1Y7, including complete invocations/logs/JUnit and phase snapshots. ADR124/ADR121 still govern; no new ADR. Earlier failed admission remains failed historical evidence. AC2 is now evidenced, but task remains In Progress pending independent task/whole-branch review and final closeout. No PR/push/rebase/merge or evidence cleanup.
+
+Final whole-branch review identified I1: an unavailable packaged profile snapshot propagates through parent, child and native Console startup, preventing ADR124 source-only recovery. The strict loader is correct; application-owner recovery needs a bounded correction before closeout. Task remains In Progress. Prior passing qualification and admitted immutable bytes remain recorded; no PR or merge.
+
+Final review I1 correction implemented under ADR124 item6: the strict profile loader is unchanged; native Console, served-parent and served-child owners retain one inert source-free snapshot on packaged integrity failure. This preserves ordinary startup and authenticated source/history/download while denying HTML mutations and all runtime delivery, with matched unavailable control state and healthy/unavailable mismatch rejection. Fresh frozen covering gate: 1400 passed, 2 optional engine skips, 1 existing warning, 712.32s, exit0. Final test-only picker/lineage fixture correction passed all 17 focused cases, 6.07s, exit0; product bytes remained identical to the covering gate. New/small files and changed legacy logical ranges pass scoped static checks with zero new diagnostics over the recorded baseline. Evidence /private/tmp/mermaid-recovery.MikmXD; recovery compatibility docs and testing lesson updated. Independent scoped fix review remains before Done. No PR, push, merge or cleanup.
 <!-- SECTION:NOTES:END -->

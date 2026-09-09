@@ -1,6 +1,8 @@
 """Focused fixtures for Canvas runtime-profile tests."""
 
+import shutil
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +11,38 @@ from tldw_chatbook.Canvas.profiles import (
     ProfileSnapshot,
     load_profile_snapshot,
 )
+
+_STATIC = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Canvas" / "static"
+
+
+@pytest.fixture
+def damage_canvas_package(tmp_path, monkeypatch):
+    """Install one copied, deliberately damaged Canvas package closure."""
+
+    def damage(kind: str) -> Path:
+        from tldw_chatbook.Canvas import profiles, runtime_assets
+
+        package_root = tmp_path / f"damaged-{kind}" / "Canvas"
+        shutil.copytree(_STATIC, package_root / "static")
+        monkeypatch.setattr(profiles, "files", lambda _package: package_root)
+        monkeypatch.setattr(runtime_assets, "files", lambda _package: package_root)
+        static = package_root / "static"
+        if kind == "missing-v2-library":
+            static.joinpath("mermaid-subset.json").unlink()
+        elif kind == "tampered-v2-worker":
+            worker = static / "canvas_runtime_worker_v2.js"
+            worker.write_bytes(worker.read_bytes() + b"\n/* tampered */\n")
+        elif kind == "missing-catalog":
+            static.joinpath("profile-catalog.json").unlink()
+        elif kind == "malformed-catalog":
+            static.joinpath("profile-catalog.json").write_text(
+                '{"schema_version": 1,', encoding="utf-8"
+            )
+        else:
+            raise ValueError(f"unknown package damage: {kind}")
+        return static
+
+    return damage
 
 
 @pytest.fixture

@@ -28,7 +28,60 @@ generated-code privilege changed. Unknown/revoked profiles remain source-only.
 | Admission assertions against disabled catalog | 2 expected failures, 1 warning, 0.88s |
 | Same assertions after exact catalog admission | 2 passed, 1 warning, 0.73s |
 | Complete admitted selection plus CI workflow contracts | 1383 passed, 2 optional browser skips, 1 warning, 767.12s |
+| Focused unavailable-package owner recovery | 17 passed, 1 warning, 6.74s |
+| Post-I1 complete selected Canvas covering gate | 1400 passed, 2 optional browser skips, 1 warning, 712.32s |
+| Final fixture-fidelity owner selection | 17 passed, 1 warning, 6.07s |
 | Touched-file Ruff, formatter and whitespace checks | Passed |
+
+### Final-review unavailable-package recovery
+
+The I1 correction preserves strict package verification while moving bounded
+recovery to the three application owners. Four independently exercised package
+failures—missing V2 library, tampered V2 worker, missing catalog, and malformed
+catalog—now produce one source-free inert application snapshot. Native Console,
+the served parent, and the actual served-child initializer complete ordinary
+startup without making a damaged profile executable. Stored source, revision
+history, and authenticated served source download remain available. Creation,
+update, render plans, renderer and runtime assets remain refused, and served mode
+does not substitute a native listener.
+
+The first owner-focused RED produced 12 startup failures at the strict loader
+while all four strict-loader rejection controls passed. The corrected focused
+selection passed all 17 cases with the existing Requests compatibility warning.
+It additionally proves that matched unavailable parent/child snapshots retain an
+authenticated control channel, healthy/unavailable mismatches in either direction
+are rejected, and restoring a package file does not mutate a child snapshot that
+already owns the unavailable state. The strict loader itself still raises for
+every damaged closure/catalog case. The native real-SQLite case reads both old and
+current revisions. The served-parent case proves authenticated current-source and
+source-download access plus predecessor-lineage metadata; its in-process control
+client does not claim an actual spawned child or historical-revision retrieval.
+
+Scoped Ruff, formatter and whitespace checks pass with no diagnostic added over
+the 481-finding legacy owner baseline; `static-corrected-invocation.json` and
+`static-corrected.log` are the passing records. Exact invocation receipts, logs,
+JUnit records and the frozen source/test diff are under
+`/private/tmp/mermaid-recovery.MikmXD`. The frozen post-I1 covering gate completed
+with actual process exit 0: 1400 passed, 2 optional Firefox/WebKit skips, zero
+failures/errors, and the existing Requests warning in 712.32s. It ran the complete
+selected Canvas consumers and CI workflow contracts, including actual-child
+normal/interleaved V1/V2 flows, restart, confirmed unsent repair, zero-egress and
+adversarial cases, both distribution closures, and all 17 recovery cases. See
+`canvas-covering-invocation.json`, `canvas-covering.log`, and
+`canvas-covering.xml`.
+
+Post-gate self-review found that the served fixture had represented two revisions
+of one Canvas as two selector options, although production exposes one reachable
+head per Canvas and carries revision lineage in metadata/navigation. The fixture
+was corrected to one current option with explicit sequence and parent-revision
+metadata. Its first corrected batch exposed a test-only mistaken top-level wire
+lookup (4 failed, 13 passed); the assertions were moved to the serializer's
+`metadata` object. The final focused owner selection then passed all 17 cases with
+the existing warning in 6.07s, and the complete scoped static command passed
+again. See `fixture-corrected-*`, `fixture-wire-green-*`, and
+`fixture-wire-static.log`. Root verified that every product diff byte is identical
+to the 1400-case covering run; no unchanged broader gate was rerun solely for this
+fixture correction. Independent scoped re-review remains pending.
 
 Root followed every pytest invocation through process exit. Both integrated JUnit
 records contain 1385 cases, zero errors/failures and only missing Firefox/WebKit

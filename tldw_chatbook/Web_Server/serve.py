@@ -37,6 +37,7 @@ from ..Canvas.gateway import (
 from ..Canvas.limits import UnsupportedCanvasRuntimeProfile
 from ..Canvas.profiles import (
     ProfileSnapshot,
+    load_application_profile_snapshot,
     load_profile_snapshot,
     resolve_profile,
     runtime_snapshot_id,
@@ -556,7 +557,8 @@ class ChatbookWebServerMixin:
         self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._served_browser_children: dict[str, str] = {}
         self._canvas_profile_snapshot = (
-            canvas_profile_snapshot or load_profile_snapshot()
+            canvas_profile_snapshot
+            or load_application_profile_snapshot(loader=load_profile_snapshot)
         )
         self._served_canvas_gateway = CanvasGateway(
             authority=_ServedCanvasAuthorityProxy(self),

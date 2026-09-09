@@ -62,7 +62,24 @@ the exact parent identity. If a required diagram default is unavailable, selecti
 returns the bounded `profile-unavailable` refusal and does not fall back to V1.
 
 `load_profile_snapshot()` verifies the complete packaged inputs once for the
-process owner. Callers retain that frozen snapshot and pass it to the pure
+process owner and remains strict: any invalid catalog or damaged profile closure
+raises `Canvas runtime profile catalog is unavailable`. Application owners catch
+that bounded result through `load_application_profile_snapshot()` and retain one
+immutable inert failure snapshot. That snapshot contains no profile records,
+diagram default, runtime assets, or metadata recovered from the invalid catalog;
+its fixed source-free identity exists only to keep a served parent and child on the
+same fail-closed authority state.
+
+The inert snapshot lets ordinary native Console, served-parent, and served-child
+startup finish. An exactly matched served child keeps its authenticated control
+channel so existing stored source, branch history, and source download remain
+available. New HTML creation or update, render-plan delivery, renderer loading,
+and runtime-asset delivery remain unavailable; served mode does not open a native
+Canvas listener as a fallback. A healthy/unavailable parent-child mismatch in
+either direction fails authentication. Repairing packaged files cannot mutate an
+already owned failure snapshot or re-enable that process.
+
+Callers retain their captured frozen snapshot and pass it to the pure
 `resolve_profile()` function. Updating packaged catalog, policy, manifest, or asset
 files cannot mutate an owned snapshot; applying an update requires restarting the
 native process or the served parent and all children. A browser refresh is not a

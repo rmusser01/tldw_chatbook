@@ -909,9 +909,11 @@ class ConsoleRuntime:
         """Share one lazy process owner with an early served-child handshake."""
         snapshot = self._canvas_profile_snapshot
         if snapshot is None:
-            from tldw_chatbook.Canvas.profiles import load_profile_snapshot
+            from tldw_chatbook.Canvas.profiles import (
+                load_application_profile_snapshot,
+            )
 
-            snapshot = load_profile_snapshot()
+            snapshot = load_application_profile_snapshot()
             self._canvas_profile_snapshot = snapshot
         return snapshot
 

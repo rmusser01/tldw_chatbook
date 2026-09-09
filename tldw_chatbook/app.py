@@ -7712,9 +7712,12 @@ class TldwCli(
                 ControlProtocolError,
             )
             from .Canvas.gateway import ServedCanvasControlHandler
-            from .Canvas.profiles import load_profile_snapshot, runtime_snapshot_id
+            from .Canvas.profiles import (
+                load_application_profile_snapshot,
+                runtime_snapshot_id,
+            )
 
-            self._canvas_profile_snapshot = load_profile_snapshot()
+            self._canvas_profile_snapshot = load_application_profile_snapshot()
             self.served_canvas_handler = ServedCanvasControlHandler()
             try:
                 self.served_canvas_control = CanvasControlClient.from_environment(
