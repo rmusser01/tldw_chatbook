@@ -1,10 +1,12 @@
 ---
 id: TASK-32136
 title: >-
-  Library Notes Folder files is a mode of Notes: keep the rail and the source strip, and offer the configured sync folder — user decision 2026-09-09
-status: To Do
+  Library Notes Folder files is a mode of Notes: keep the rail and the source
+  strip, and offer the configured sync folder — user decision 2026-09-09
+status: In Progress
 assignee: []
 created_date: '2026-09-08 21:39'
+updated_date: '2026-09-09 05:49'
 labels:
   - library
   - notes
@@ -24,8 +26,17 @@ The user decided Folder files is a mode of Notes, not a separate screen. Today s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 At wide sizes the Library rail and the source strip stay visible inside Folder files
-- [ ] #2 The empty state explains in one line what Folder files does and offers the configured sync folder when one is set
-- [ ] #3 The file-notes guide's layout tour matches
-- [ ] #4 Covered by a compose test at 235x52
+- [x] #1 At wide sizes the Library rail and the source strip stay visible inside Folder files
+- [x] #2 The empty state explains in one line what Folder files does and offers the configured sync folder when one is set
+- [x] #3 The file-notes guide's layout tour matches
+- [x] #4 Covered by a compose test at 235x52
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Failing compose test at 235x52: Folder files keeps the rail and the Library notes | Folder files strip.
+2. Stop treating wide Folder files as a focused task that collapses the source strip (compose + _sync_library_notes_source_controls).
+3. Empty state: one-line explanation plus a Use <folder> button for [notes] sync_directory.
+4. Docs layout tour + stamps.
+<!-- SECTION:PLAN:END -->

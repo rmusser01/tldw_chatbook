@@ -13395,8 +13395,11 @@ class LibraryScreen(BaseAppScreen):
                 in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
                 and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
             )
+            # task-32136: wide Folder files is a MODE of Notes, not a task
+            # that replaces it -- both switches stay (compact is unchanged).
             wide_focused_task = (
                 not adaptive_database_notes
+                and not self._file_notes_active()
                 and not self._notes_state.compact
                 and self._library_notes_focused_task_active()
             )

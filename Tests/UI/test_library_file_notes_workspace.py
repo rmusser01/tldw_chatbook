@@ -2364,7 +2364,7 @@ async def test_folder_files_emits_only_admitted_work_session_events(
         stale_started = threading.Event()
         release_stale_root = threading.Event()
 
-        def delayed_root_scan(candidate: FileNotesService):
+        def delayed_root_scan(candidate: FileNotesService, **kwargs):
             if candidate.root_key == str(stale_root.resolve()):
                 stale_started.set()
                 assert release_stale_root.wait(5)
@@ -3447,9 +3447,13 @@ async def test_files_mode_uses_focused_canvas_and_keeps_shell_mounted(
             f"stage={screen._notes_state.stage!r}"
         )
         if size[0] >= 120:
+            # task-32136 (user decision 2026-09-09): Folder files is a MODE
+            # of Notes, so at wide sizes the strip keeps both switches
+            # instead of collapsing to the "‹ Library / Notes" cue.
+            assert screen.query_one("#library-notes-source-files", Button).display
+            assert screen.query_one("#library-notes-source-database", Button).display
             task_return = screen.query_one("#library-notes-task-return", Button)
-            assert task_return.display
-            assert str(task_return.label) == "‹ Library / Notes"
+            assert task_return.display is False
         else:
             task_returns = screen.query("#library-notes-task-return")
             assert not task_returns or task_returns.first().display is False
@@ -3574,8 +3578,13 @@ async def test_source_exit_cancels_path_task_admitted_after_shared_save(
 
 
 @pytest.mark.asyncio
-async def test_wide_files_task_return_reuses_the_existing_leave_guard() -> None:
-    """The wide cue cannot bypass the Files flush/conflict admission seam."""
+async def test_wide_files_source_switch_reuses_the_existing_leave_guard() -> None:
+    """The wide way back cannot bypass the Files flush/conflict admission seam.
+
+    task-32136 (user decision 2026-09-09): at wide sizes that control is the
+    strip's **Library notes** switch, not the ``‹ Library / Notes`` cue --
+    both handlers route to the same ``_return_to_library_database_notes``.
+    """
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
     async with _production_workspace_context(workspace, size=(170, 48)) as pilot:
@@ -3583,7 +3592,7 @@ async def test_wide_files_task_return_reuses_the_existing_leave_guard() -> None:
         blocked_flush = AsyncMock(return_value=False)
         screen._flush_active_file_notes = blocked_flush
 
-        screen.query_one("#library-notes-task-return", Button).press()
+        screen.query_one("#library-notes-source-database", Button).press()
         await pilot.pause()
 
         blocked_flush.assert_awaited_once_with()
@@ -3592,7 +3601,7 @@ async def test_wide_files_task_return_reuses_the_existing_leave_guard() -> None:
 
         blocked_flush.reset_mock()
         blocked_flush.return_value = True
-        screen.query_one("#library-notes-task-return", Button).press()
+        screen.query_one("#library-notes-source-database", Button).press()
         await _wait_until(
             pilot,
             lambda: screen._notes_state.source == "database",
@@ -3617,7 +3626,7 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
     release_scan = threading.Event()
     original_scan = FileNotesService.scan
 
-    def delayed_scan(service: FileNotesService):
+    def delayed_scan(service: FileNotesService, **kwargs):
         scan_started.set()
         assert release_scan.wait(timeout=5)
         return original_scan(service)
@@ -3860,7 +3869,7 @@ async def test_root_transition_retains_and_freezes_old_document_until_scan_finis
     scan_started = threading.Event()
     release_scan = threading.Event()
 
-    def delayed_scan(service):
+    def delayed_scan(service, **kwargs):
         if service.root == new_root.resolve():
             scan_started.set()
             release_scan.wait(5)
@@ -4056,7 +4065,7 @@ async def test_overlapping_root_persistence_only_winner_updates_config_and_owner
     real_scan = FileNotesService.scan
     persisted_roots: list[str] = []
 
-    def delayed_scan(service: FileNotesService):
+    def delayed_scan(service: FileNotesService, **kwargs):
         if service.root == slow_root:
             slow_scan_started.set()
             assert release_slow_scan.wait(timeout=5)
@@ -4691,7 +4700,7 @@ async def test_stale_candidate_scan_keeps_old_owner_log_and_service(
     release_candidate_scan = threading.Event()
     real_scan = FileNotesService.scan
 
-    def delayed_candidate_scan(service: FileNotesService):
+    def delayed_candidate_scan(service: FileNotesService, **kwargs):
         if service.root == new_root.resolve():
             candidate_scan_started.set()
             assert release_candidate_scan.wait(timeout=5)
@@ -6625,17 +6634,20 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
             )
             await pilot.press("enter")
         else:
-            # TASK-19602: in wide focused-task mode the source strip's
-            # buttons are hidden by design (1bda754fa) -- the keyboard way
-            # back is the task-return control.
-            assert database.display is False
-            assert files.display is False
-            task_return = screen.query_one("#library-notes-task-return", Button)
+            # task-32136 (user decision 2026-09-09) supersedes TASK-19602's
+            # hidden wide strip: Folder files is a MODE of Notes, so both
+            # switches stay and the keyboard way back is Library notes.
+            assert database.display is True
+            assert files.display is True
+            assert (
+                screen.query_one("#library-notes-task-return", Button).display
+                is False
+            )
             for _ in range(240):
-                if task_return.has_focus:
+                if database.has_focus:
                     break
                 await pilot.press("tab")
-            assert task_return.has_focus
+            assert database.has_focus
             await pilot.press("enter")
         await _wait_until(
             pilot,
@@ -6741,10 +6753,17 @@ async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
                     is False
                 )
             else:
+                # task-32136: wide Folder files keeps the strip's switches
+                # instead of collapsing to the back cue.
                 assert rail.display is False
-                task_return = screen.query_one("#library-notes-task-return", Button)
-                assert task_return.display is True
-                assert str(task_return.label) == "‹ Library / Notes"
+                assert (
+                    screen.query_one("#library-notes-task-return", Button).display
+                    is False
+                )
+                assert screen.query_one(
+                    "#library-notes-source-database", Button
+                ).display
+                assert screen.query_one("#library-notes-source-files", Button).display
 
     await workspace.shutdown()
 
