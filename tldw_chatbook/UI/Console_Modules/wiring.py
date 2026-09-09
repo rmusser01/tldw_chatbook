@@ -728,7 +728,12 @@ class _DeferredConsoleTerminalController:
 
 
 def build_console_commands_controller(screen: Any) -> None:
-    """Wire command policy to named runtime and composer services."""
+    """Wire command policy to named runtime and composer services.
+
+    Args:
+        screen: Console screen receiving ``_commands``; supplies late-bound
+            runtime, composer, sibling-controller and presentation services.
+    """
     screen._commands = ConsoleCommandsController(
         app_instance_accessor=lambda: screen.app_instance,
         _academic_research_enabled=lambda: getattr(
@@ -826,7 +831,12 @@ def build_console_commands_controller(screen: Any) -> None:
 
 
 def build_console_provider_selection_controller(screen: Any) -> None:
-    """Wire provider policy with current app, session and presentation services."""
+    """Wire provider policy with current app, session and presentation services.
+
+    Args:
+        screen: Console screen receiving ``_provider_selection``; supplies
+            late-bound app, session, workspace and presentation dependencies.
+    """
     screen._provider_selection = ConsoleProviderSelectionController(
         app_instance_accessor=lambda: screen.app_instance,
         _active_session_settings=lambda: (
@@ -879,7 +889,13 @@ def build_console_provider_selection_controller(screen: Any) -> None:
 
 
 def build_console_settings_controllers(screen: Any) -> None:
-    """Wire the settings workflow and its app-lifetime durability services."""
+    """Wire the settings workflow and its app-lifetime durability services.
+
+    Args:
+        screen: Console screen receiving ``_settings_navigation`` and
+            ``_settings_durability``; supplies late-bound app, session,
+            sibling-controller and presentation dependencies.
+    """
     screen._settings_navigation = ConsoleSettingsNavigationController(
         app_instance_accessor=lambda: screen.app_instance,
         _build_console_provider_selection_for_settings=lambda *args, **kwargs: (
@@ -990,7 +1006,12 @@ def build_console_settings_controllers(screen: Any) -> None:
 
 
 def build_console_submission_controller(screen: Any) -> None:
-    """Wire named composer submission dependencies without capturing siblings."""
+    """Wire named composer submission dependencies without capturing siblings.
+
+    Args:
+        screen: Console screen receiving ``_submission``; supplies late-bound
+            composer, session, sibling-controller and worker dependencies.
+    """
     screen._submission = ConsoleSubmissionController(
         app_instance_accessor=lambda: screen.app_instance,
         _current_console_conversation_id=lambda: (
@@ -1160,9 +1181,10 @@ def build_console_controllers(
         screen: The Console screen (`ChatScreen`) to wire. Mutated in place;
             taken as a parameter rather than imported so this module has no
             import cycle with `Screens/chat_screen.py`.
-
-    Returns:
-        None. The controllers are reachable as attributes of `screen`.
+        rag_source_types_accessor: Read the current Library RAG source scope
+            when a controller needs it, rather than capturing its initial value.
+        rag_top_k_accessor: Read the current Library RAG result limit when
+            needed by the retrieval and session controllers.
     """
     build_console_submission_controller(screen)
 

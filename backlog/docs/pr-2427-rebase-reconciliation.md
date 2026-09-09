@@ -2457,3 +2457,54 @@ This qualifies the entire Library shell, all four race controls and the complete
 note-session coordinator file. Fresh live dev still equals `a36fc6133c`;
 published `538c36b992` has green required checks and CLEAN merge state, but the
 new runtime repair still requires publication and exact-head review/checks.
+
+Published the qualified repair as
+`b84605f81d596c5b36f4b6b0266f4d8bd47d0dab`; verification evidence is issue
+comment 5599703742 and its Qodo request is 5599703992. Qodo completed that exact
+head with five findings, comments 3966908478/3966908484/3966908490/3966908496/
+3966908502. The native result remains valid; the new review findings require
+their own bounded fixes and publication before final merge.
+
+### Steps 92/93: final-head callable contracts and provenance census
+
+The unchanged strict Console route/callsite census file reproduced **3 failed,
+7 passed in 7.04s** because stored source lines drifted during the rebase.
+Seventeen integer-only updates refresh all eleven changed route markers and six
+gateway-call locations, including retry, actor routes, fallback and excluded
+Settings generation. No route identity, capture policy, predicate, actor-chain
+requirement or assertion changed. The complete strict file then passed 10 tests;
+both complete provenance files pass **53 tests, 5 warnings in 10.15s**
+(`/private/tmp/pr2427-qodo-provenance-full.log`). Independent review verified
+every pin and the unchanged bidirectional AST/ownership checks.
+
+Controller builders now document their screen/dependency contracts. Both lazy
+evaluation hooks use the accurate built-in `type` return annotation and concise
+Google-style contracts, with no new imports. Their normalized executable ASTs
+are unchanged apart from documentation and the intended annotation. Six complete
+wiring/import/architecture files pass **128 tests, 3 warnings in 30.69s**
+(`pr2427-qodo-wiring-docs.lPPMa0/final-pytest.log` in the per-user temp directory).
+
+Settings inspection found the undocumented adapters were thirteen shadowed
+duplicates: later effective definitions already had their public contracts.
+An exact-one-definition regression failed first (1 failed in 0.79s); only the
+earlier duplicate set was removed, preserving the effective functions verbatim.
+The intervening top-level statements were only three unrelated function
+definitions, so no caller captured the removed functions. Duplicate type-only
+imports were consolidated without changing their symbol set or runtime imports.
+The full effective runtime AST proof and scoped Ruff pass; thirteen existing
+F811 redefinition findings disappear. Proof:
+`/private/tmp/pr2427-step93-settings-ast-proof.log`. No new Settings size limit
+was invented or existing cap raised.
+
+Independent review clears these contract/duplicate changes. The complete
+eight-file Settings/import/startup group finished **248 passed, 6 warnings in
+224.08s**, exit 0 (session 66025 closed,
+`/private/tmp/pr2427-step93-settings-green.log`). Fresh derived preflight also
+passes (`/private/tmp/pr2427-step92-final-preflight.log`, session 27603 closed).
+The test result includes a session descriptor warning: start 12, end 274, growth
+262 above its 200 threshold. This is not yet attributed and is not a proven
+SQLite leak; no cleanup success is claimed for this Settings cohort. Step 94
+starts native attribution with no forced GC, connection monkeypatches or host
+cleanup. The five verified review fixes may be checkpointed for exact-head
+review while attribution runs, but merge remains pending resource investigation
+and final review/CI. No complete-repository sweep is claimed.

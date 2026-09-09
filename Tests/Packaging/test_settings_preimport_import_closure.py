@@ -1,11 +1,41 @@
 """Keep category-specific Settings services outside screen pre-import."""
 
+import ast
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+
+def test_settings_profile_adapters_have_exactly_one_definition() -> None:
+    """Keep one patchable lazy definition for each Settings profile adapter."""
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/UI/Screens/settings_screen.py"
+    )
+    names = {
+        "activate_profile",
+        "active_profile_info",
+        "clone_profile_as",
+        "delete_user_profile",
+        "fetch_index_status",
+        "get_profile_defaults",
+        "index_change_pending",
+        "is_first_run_state",
+        "list_profiles_grouped",
+        "load_rag_defaults_from_active_profile",
+        "rename_user_profile",
+        "save_rag_defaults_to_active_profile",
+        "soft_config_warnings",
+    }
+    definitions = [
+        node.name
+        for node in ast.parse(source.read_text()).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    assert {name: definitions.count(name) for name in names} == dict.fromkeys(names, 1)
 
 
 @pytest.mark.parametrize(
