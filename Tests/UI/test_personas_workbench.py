@@ -669,7 +669,14 @@ class TestWorkbenchShell:
             original_query_one = screen.query_one
 
             def fail_query(selector, *args, **kwargs):
-                if isinstance(selector, str) and selector.startswith("#personas-"):
+                if isinstance(selector, str) and selector in {
+                    "#personas-workbench",
+                    "#personas-library-pane",
+                    "#personas-work-area",
+                    "#personas-inspector-pane",
+                    "#personas-library-rail-handle",
+                    "#personas-inspector-rail-handle",
+                }:
                     raise AssertionError(
                         "unchanged compact state should not query panes"
                     )

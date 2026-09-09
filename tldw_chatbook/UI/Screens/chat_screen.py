@@ -9293,6 +9293,7 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
 
+        # A queued refresh may run after this exact tray has been detached.
         if _console_screen_is_torn_down(self) or not workspace_context.is_attached:
             return
         state = self._workspace._build_console_workspace_context_state()

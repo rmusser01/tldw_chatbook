@@ -700,8 +700,12 @@ class ConsoleSessionSurface(Vertical):
 
             removed_count = len(tab_strip.children)
             mounted_count = (len(sessions) * 2) + 2
-            for child in list(tab_strip.children):
-                await child.remove()
+            await tab_strip.remove_children()
+            # Removal yields to app shutdown; is_mounted remains true even
+            # after Textual detaches a widget. Do not rebuild a retired strip.
+            if not tab_strip.is_attached:
+                return
+            tabs = []
             for session in sessions:
                 is_active = session.id == active_session_id
                 marker = self._resolve_tab_marker(
@@ -709,7 +713,7 @@ class ConsoleSessionSurface(Vertical):
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
                 )
-                await tab_strip.mount(
+                tabs.append(
                     self._build_session_tab_button(
                         session,
                         active=is_active,
@@ -717,9 +721,11 @@ class ConsoleSessionSurface(Vertical):
                         queued_count=(queue_counts or {}).get(session.id, 0),
                     )
                 )
-                await tab_strip.mount(self._build_close_tab_button(session))
-            await tab_strip.mount(self._build_new_tab_button())
-            await tab_strip.mount(self._build_new_temporary_tab_button())
+                tabs.append(self._build_close_tab_button(session))
+            tabs.extend(
+                (self._build_new_tab_button(), self._build_new_temporary_tab_button())
+            )
+            await tab_strip.mount(*tabs)
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
         # TASK-28028: mounted/removed tabs change what is hidden past each
         # edge even when scroll_x does not move; refresh the ‹ › hints once

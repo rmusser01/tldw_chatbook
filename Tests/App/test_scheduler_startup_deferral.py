@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import nullcontext
 
 import pytest
 
@@ -77,13 +76,22 @@ def test_real_scheduler_waits_for_readiness_on_a_slow_mount(tmp_path, monkeypatc
 async def test_pre_ready_exit_does_not_start_the_scheduler(monkeypatch, stop_reason):
     """A late or failed setup cannot start work after quit or shutdown begins."""
     from Tests.UI.app_factory import _build_test_app
+    from loguru import logger
 
     app = _build_test_app()
     real_setup = type(app)._post_mount_setup
     setup_returned = asyncio.Event()
+    setup_errors = []
+    error_sink = None
 
     async def exit_before_setup(self):
+        nonlocal error_sink
         if stop_reason == "setup_failure":
+            # Logging is configured during mount; observe the existing
+            # no-splash error boundary only after that configuration.
+            error_sink = logger.add(
+                setup_errors.append, level="ERROR", format="{message}"
+            )
             setup_returned.set()
             raise RuntimeError("injected pre-ready setup failure")
         if stop_reason == "shutdown":
@@ -95,15 +103,19 @@ async def test_pre_ready_exit_does_not_start_the_scheduler(monkeypatch, stop_rea
         self.exit()
 
     monkeypatch.setattr(type(app), "_post_mount_setup", exit_before_setup)
-    expected_error = (
-        pytest.raises(RuntimeError, match="injected pre-ready setup failure")
-        if stop_reason == "setup_failure"
-        else nullcontext()
-    )
-    with expected_error:
+    try:
         async with app.run_test(size=(120, 40)):
             await asyncio.wait_for(setup_returned.wait(), timeout=20.0)
+    finally:
+        if error_sink is not None:
+            logger.remove(error_sink)
 
+    if stop_reason == "setup_failure":
+        assert any(
+            "No-splash post-mount setup failed: injected pre-ready setup failure"
+            in message
+            for message in setup_errors
+        )
     assert not app._ui_ready
     assert getattr(app, "scheduler_worker", None) is None
     assert not app.scheduler_loop.running
