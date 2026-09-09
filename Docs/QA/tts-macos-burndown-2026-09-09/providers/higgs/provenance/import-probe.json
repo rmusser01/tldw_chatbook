@@ -1,0 +1,13 @@
+{
+  "phase": "imports_and_signature_bind_only",
+  "torch": "2.6.0",
+  "cuda_available": false,
+  "serve_engine_signature": "(model_name_or_path: str, audio_tokenizer_name_or_path: str, tokenizer_name_or_path: Optional[str] = None, device: str = 'cuda', torch_dtype: Union[torch.dtype, str] = 'auto', kv_cache_lengths: List[int] = [1024, 4096, 8192])",
+  "audio_tokenizer_signature": "(n_filters: int = 32, D: int = 128, target_bandwidths: Sequence[Union[int, float]] = [1, 1.5, 2, 4, 6], ratios: Sequence[int] = [8, 5, 4, 2], sample_rate: int = 16000, bins: int = 1024, n_q: int = 8, codebook_dim: int = None, normalize: bool = False, causal: bool = False, semantic_techer: str = 'hubert_base_general', last_layer_semantic: bool = True, merge_mode: str = 'concat', downsample_mode: str = 'step_down', semantic_mode: str = 'classic', vq_scale: int = 1, semantic_sample_rate: int = None, device: str = 'cuda')",
+  "chatbook_current_kwargs_bind": true,
+  "accepts_dtype": false,
+  "accepts_torch_dtype": true,
+  "tokenizer_legacy_config_binds": true,
+  "constructors_called": false,
+  "models_loaded": false
+}

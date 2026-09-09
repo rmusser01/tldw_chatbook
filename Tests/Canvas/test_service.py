@@ -80,6 +80,213 @@ def _html(text: str) -> str:
     )
 
 
+def test_durable_candidate_upgrade_removal_and_rename(db, candidate_snapshot):
+    service = CanvasService(db, profile_snapshot=candidate_snapshot)
+    conversation = _conversation(db)
+    message = _message(db, conversation, "canvas owner")
+    scope = _scope(conversation, message)
+    first = service.create_canvas(scope, title="Flow", source="<p>start</p>")
+    upgraded = service.update_canvas(
+        scope,
+        first.revision.canvas_id,
+        expected_parent_revision_id=first.revision.revision_id,
+        source='<pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre>',
+    )
+    assert upgraded.revision.runtime_profile == "canvas-v2-mermaid-1"
+    removed = service.update_canvas(
+        scope,
+        first.revision.canvas_id,
+        expected_parent_revision_id=upgraded.revision.revision_id,
+        source="<p>end</p>",
+    )
+    renamed = service.rename_canvas(
+        scope,
+        first.revision.canvas_id,
+        expected_parent_revision_id=removed.revision.revision_id,
+        title="End",
+    )
+    assert renamed.revision.runtime_profile == "canvas-v2-mermaid-1"
+    assert service.read_canvas(scope, first.revision.canvas_id).source == "<p>end</p>"
+    historical = replace(
+        scope,
+        selected_canvas_id=first.revision.canvas_id,
+        selected_revision_id=first.revision.revision_id,
+    )
+    branch = service.update_canvas(
+        historical,
+        first.revision.canvas_id,
+        expected_parent_revision_id=first.revision.revision_id,
+        source="<p>old branch</p>",
+    )
+    assert branch.revision.runtime_profile == "canvas-v1"
+    assert branch.revision.parent_revision_id == first.revision.revision_id
+
+
+def test_controller_import_preparation_sanitizes_service_compiler_failure(db):
+    from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+
+    def broken(source):
+        raise RuntimeError(source)
+
+    conversation = _conversation(db)
+    message = _message(db, conversation, "owner")
+    service = CanvasService(db, compiler=broken)
+    controller = ConsoleCanvasController(durable_service=service)
+    with pytest.raises(CanvasServiceError) as error:
+        controller.interactive_create_canvas(
+            _scope(conversation, message),
+            origin_message_id=message,
+            title="Private",
+            html="COMPILER_SOURCE_SENTINEL",
+            temporary=False,
+        )
+    assert error.value.code == "document_incompatible"
+    assert "COMPILER_SOURCE_SENTINEL" not in str(error.value)
+    assert error.value.__context__ is None
+    assert service.list_canvases(_scope(conversation, message)) == ()
+
+
+@pytest.mark.parametrize("different_policy", [False, True])
+def test_controller_rejects_distinct_service_snapshot_at_construction(
+    db, candidate_snapshot, different_policy
+):
+    from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+
+    other = replace(
+        candidate_snapshot,
+        **({"policy_id": "0" * 64} if different_policy else {}),
+    )
+    assert other is not candidate_snapshot
+    assert (other != candidate_snapshot) == different_policy
+    service = CanvasService(db, profile_snapshot=candidate_snapshot)
+    with pytest.raises(ValueError, match="canvas_profile_snapshot_mismatch"):
+        ConsoleCanvasController(durable_service=service, profile_snapshot=other)
+    assert service.profile_snapshot is candidate_snapshot
+
+
+def test_controller_shared_explicit_snapshot_supports_durable_import_handoff(
+    db, candidate_snapshot
+):
+    from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+
+    service = CanvasService(db, profile_snapshot=candidate_snapshot)
+    controller = ConsoleCanvasController(
+        durable_service=service, profile_snapshot=candidate_snapshot
+    )
+    conversation = _conversation(db)
+    message = _message(db, conversation, "owner")
+    scope = _scope(conversation, message)
+    created = controller.interactive_create_canvas(
+        scope,
+        origin_message_id=message,
+        title="Shared snapshot",
+        html='<pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre>',
+        temporary=False,
+    )
+    changed = controller.interactive_update_canvas(
+        scope,
+        origin_message_id=message,
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        html="<p>Removed</p>",
+        temporary=False,
+    )
+    assert changed.revision.runtime_profile == "canvas-v2-mermaid-1"
+    assert (
+        service.read_canvas(scope, changed.revision.canvas_id).source
+        == "<p>Removed</p>"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "profile", ["canvas-v1", "canvas-v2-mermaid-1", "canvas-v2-mermaid-2", "canvas-v99"]
+)
+async def test_inert_profile_storage_rename_read_and_update_refusal(
+    db, candidate_snapshot, profile
+):
+    from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
+    from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+
+    snapshot = replace(
+        candidate_snapshot,
+        profiles=tuple(
+            replace(row, executable=False, reason="revoked")
+            if row.profile_id == profile
+            else row
+            for row in candidate_snapshot.profiles
+        ),
+    )
+    conversation = _conversation(db)
+    message = _message(db, conversation, "source owner")
+    scope = _scope(conversation, message)
+    repository = CanvasRepository(db)
+    original = repository.create_canvas(
+        conversation,
+        title="Unavailable",
+        source="<p>private inert</p>",
+        runtime_profile=profile,
+        actor_kind="user_import",
+        origin_message_id=message,
+        origin_turn_id="import",
+    )
+    service = CanvasService(db, repository=repository, profile_snapshot=snapshot)
+    controller = ConsoleCanvasController(durable_service=service)
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _: scope, canvas_controller=controller
+    )
+    renamed = controller.interactive_rename_canvas(
+        scope,
+        origin_message_id=message,
+        canvas_id=original.revision.canvas_id,
+        expected_parent_revision_id=original.revision.revision_id,
+        title="Renamed inert",
+        temporary=False,
+    )
+    assert renamed.revision.runtime_profile == profile
+    selected = authority.gateway_scope(
+        session_id=scope.session_id,
+        browser_session_id="inert-browser",
+        canvas_id=renamed.revision.canvas_id,
+        revision_id=renamed.revision.revision_id,
+    )
+    assert authority.read_source(selected).source == "<p>private inert</p>"
+    with pytest.raises(ValueError, match="unsupported Canvas runtime profile"):
+        await authority.resolve_render_plan(selected)
+    with pytest.raises(CanvasServiceError) as error:
+        service.update_canvas(
+            scope,
+            renamed.revision.canvas_id,
+            expected_parent_revision_id=renamed.revision.revision_id,
+            source="<p>replacement</p>",
+        )
+    assert error.value.code == "document_incompatible"
+    assert len(repository.list_revision_metadata(conversation)) == 2
+    from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+
+    coordinator = controller.register_run(
+        scope, assistant_message_id=message, temporary=False
+    )
+    provider = CanvasToolProvider(coordinator, scope=scope)
+    with use_run_id(scope.run_id), use_tool_call_id("read-inert"):
+        read_result = provider.invoke(
+            "canvas:canvas_read", {"canvas_id": renamed.revision.canvas_id}
+        )
+    assert read_result.ok
+    with use_run_id(scope.run_id), use_tool_call_id("update-inert"):
+        update_result = provider.invoke(
+            "canvas:canvas_update",
+            {
+                "canvas_id": renamed.revision.canvas_id,
+                "expected_parent_revision_id": renamed.revision.revision_id,
+                "html": "<p>replacement</p>",
+            },
+        )
+    assert not update_result.ok
+    assert controller.run_revision_count(scope.run_id) == 0
+
+
 @pytest.mark.parametrize("mismatch", ["source", "profile"])
 def test_prepared_import_rejects_mismatched_plan_without_write(db, mismatch):
     conversation = _conversation(db)

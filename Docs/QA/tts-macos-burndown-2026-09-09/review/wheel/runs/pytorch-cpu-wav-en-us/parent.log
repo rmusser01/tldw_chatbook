@@ -1,0 +1,3 @@
+2026-09-09 07:35:03.969 | WARNING  | tldw_chatbook.Utils.path_validation:validate_path_simple:466 - Path resolution changed during validation
+Live worker 31965; log: /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us/worker.log
+Evidence: /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/pytorch-cpu-wav-en-us/evidence.json

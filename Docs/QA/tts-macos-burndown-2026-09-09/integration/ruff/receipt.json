@@ -1,0 +1,185 @@
+{
+  "head": "1edcbb1aee9bacfd7573c53f70b22d51b27f6300",
+  "origin_dev": "a36fc6133c69f77b8b14596a59918de34261f8ef",
+  "ruff": "ruff 0.16.6",
+  "scope": "Changed existing production/UI and test Python files. Added modules and already-qualified legacy_catalogs.py excluded per root request. Baseline/current content are linted under the same current-worktree resolved configuration and path.",
+  "counts": {
+    "baseline": 160,
+    "current": 152,
+    "unmatched_current": 0,
+    "new": 0,
+    "inherited_current": 152,
+    "resolved_baseline": 8
+  },
+  "files": [
+    {
+      "path": "Tests/TTS/test_kokoro_pytorch_runtime.py",
+      "baseline": 0,
+      "current": 0,
+      "new": 0,
+      "resolved": 0,
+      "current_sha256": "e462e94934cb02b5940f3eae600ce6bc69456e00a46c9259049b11316a77095c",
+      "baseline_sha256": "60b4ec44e780b05e0e8ce24408debb229eaeaf2af4a1aecee800fdcaaf48629d"
+    },
+    {
+      "path": "Tests/TTS/test_kokoro_validation.py",
+      "baseline": 3,
+      "current": 2,
+      "new": 0,
+      "resolved": 1,
+      "current_sha256": "19b1cf87b17721fdcd95e58dd0745d6eeb3fdd7760ba97ad8006fafc2bfb3b40",
+      "baseline_sha256": "74db81fcc766d3b8589fad43b14bd7b6c96f8f8055682f3c399d5c50f3853dc7"
+    },
+    {
+      "path": "Tests/TTS/test_legacy_bridge.py",
+      "baseline": 2,
+      "current": 2,
+      "new": 0,
+      "resolved": 0,
+      "current_sha256": "b343e44509c338bbbe9e40a5394a1e0955fa6d66fefe294717612e69b0c1f4d2",
+      "baseline_sha256": "d21630ad8f9fbdff234171d98884c191e3994a1e5849c1ef59f697f085af59e4"
+    },
+    {
+      "path": "Tests/UI/test_speech_playground_pane_lifecycle.py",
+      "baseline": 2,
+      "current": 2,
+      "new": 0,
+      "resolved": 0,
+      "current_sha256": "616559314c178cc887c9d1cd7297618c2e905ff624274ede0b0e45e47f77355a",
+      "baseline_sha256": "48bc9dbbac9e5dfdc59866f4cd5a06c9ea2f385529993349769b2176a50f7cbf"
+    },
+    {
+      "path": "tldw_chatbook/TTS/backends/alltalk.py",
+      "baseline": 11,
+      "current": 10,
+      "new": 0,
+      "resolved": 1,
+      "current_sha256": "22145b1f5f1677c702fe7107bb57085d0430398560f94f4fc013bf0db6e212fa",
+      "baseline_sha256": "f6697f4e7195c90bc0cd4d5f8d3fd88b54b2c98cda997483623eadef9494782f"
+    },
+    {
+      "path": "tldw_chatbook/TTS/backends/higgs.py",
+      "baseline": 44,
+      "current": 44,
+      "new": 0,
+      "resolved": 0,
+      "current_sha256": "17140350923971f27fee1e72dc52aa8a1524ec6ca604446fac9d29e3f2abd352",
+      "baseline_sha256": "a25bea9694ef07611ae7f5be91574f897d9b273eacd792abf4c6c9779e1914ac"
+    },
+    {
+      "path": "tldw_chatbook/TTS/backends/kokoro.py",
+      "baseline": 52,
+      "current": 46,
+      "new": 0,
+      "resolved": 6,
+      "current_sha256": "77f1dd6c0deb3985e1bd931726954c3bec9242266cff50f391c4016f25ac5dec",
+      "baseline_sha256": "d47cec3cffc99e20d084f406b878cb5a3b301dad8559ba8aa8866f0c69682d30"
+    },
+    {
+      "path": "tldw_chatbook/TTS/kokoro_pytorch.py",
+      "baseline": 0,
+      "current": 0,
+      "new": 0,
+      "resolved": 0,
+      "current_sha256": "4dbe256bbf020dcc0e1a3092e1d6e5e31de599bcaff279dc5daf3bccc1ec4743",
+      "baseline_sha256": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e"
+    },
+    {
+      "path": "tldw_chatbook/UI/Speech/speech_playground_model.py",
+      "baseline": 0,
+      "current": 0,
+      "new": 0,
+      "resolved": 0,
+      "current_sha256": "e8a25ccb43c862fed90a935b0f5822ecbc084d9d72f5eb91bbef8eb931e8ad54",
+      "baseline_sha256": "5402c6ae3058ce0cb16a58b4d9e31e3acea3b9e4384afbf6692f4bd40ac65b5e"
+    },
+    {
+      "path": "tldw_chatbook/UI/Speech/speech_playground_pane.py",
+      "baseline": 17,
+      "current": 17,
+      "new": 0,
+      "resolved": 0,
+      "current_sha256": "76daddbbc43b0e3d1be0ad9e9367ae9f0581e30dba361dee234507bd79e5252d",
+      "baseline_sha256": "1c6a130a3edde05221d17d30fc5eb7fa151d3fe0aa131540cd7ac83e3fbb715c"
+    },
+    {
+      "path": "tldw_chatbook/UI/Speech/speech_settings_mixin.py",
+      "baseline": 29,
+      "current": 29,
+      "new": 0,
+      "resolved": 0,
+      "current_sha256": "2750f2abe5df76ca8d74ff7dd784447b141d1f651021397096f828cfe7d83cd8",
+      "baseline_sha256": "cbd45a236b9a3049dab1ecacac12c4e984ca6853448f27f08b2331e8969c1158"
+    },
+    {
+      "path": "tldw_chatbook/UI/Speech/speech_settings_model.py",
+      "baseline": 0,
+      "current": 0,
+      "new": 0,
+      "resolved": 0,
+      "current_sha256": "f4ae57e78c1e88aa01f0d99f922be3dbf6fab16f712d1cfe7cc1693e341aa4b1",
+      "baseline_sha256": "10cf8447c7a68b499b5c9116e0a11521008a3b29049898a827a89d3611a44f7c"
+    }
+  ],
+  "rule_counts": {
+    "baseline": {
+      "ASYNC230": 1,
+      "B009": 2,
+      "B023": 1,
+      "BLE001": 51,
+      "DTZ005": 2,
+      "I001": 10,
+      "PIE790": 1,
+      "RUF010": 4,
+      "RUF012": 1,
+      "RUF059": 2,
+      "RUF100": 1,
+      "S110": 4,
+      "SIM103": 1,
+      "TC005": 1,
+      "TRY002": 1,
+      "TRY004": 2,
+      "UP006": 43,
+      "UP012": 1,
+      "UP017": 5,
+      "UP035": 10,
+      "UP037": 1,
+      "UP045": 15
+    },
+    "current": {
+      "ASYNC230": 1,
+      "B009": 2,
+      "B023": 1,
+      "BLE001": 49,
+      "DTZ005": 2,
+      "I001": 7,
+      "PIE790": 1,
+      "RUF010": 3,
+      "RUF012": 1,
+      "RUF059": 2,
+      "RUF100": 1,
+      "S110": 4,
+      "SIM103": 1,
+      "TC005": 1,
+      "TRY002": 1,
+      "TRY004": 2,
+      "UP006": 43,
+      "UP017": 5,
+      "UP035": 9,
+      "UP037": 1,
+      "UP045": 15
+    }
+  },
+  "root_announced_concurrent_edits": {
+    "paths": [
+      "tldw_chatbook/TTS/backends/kokoro.py",
+      "tldw_chatbook/TTS/kokoro_pytorch.py",
+      "Tests/UI/test_speech_playground_pane_lifecycle.py"
+    ],
+    "captured_in_current_snapshot": true,
+    "working_tree_patch_sha256": "3a14f4ad1b7fee7cb2058b0e4fa788d66165ac53defd2ee85b37835263a76875",
+    "meaning": "Two runtime missing-dependency messages now name Python3.12; the stale AllTalk fresh-default test now expects alloy. Captured separately from changes already committed at audit HEAD."
+  },
+  "all_snapshot_hashes_still_match": true,
+  "audit_json_sha256": "8dc2b1cdd9d0d0cb2a2a3c0b08c9821b45dce6d4bc843f573b5bbe736da305c7"
+}

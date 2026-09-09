@@ -1,0 +1,380 @@
+{
+  "started_utc": "2026-09-09T07:54:20.690239+00:00",
+  "pid": 28566,
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/higgs/venv/bin/python",
+  "source_before": {
+    "tldw_chatbook/Audio/streaming_sink.py": "e8015d3521eb46a236fbf472abda8b4b32ce76482a045f18ca08b75b45650365",
+    "tldw_chatbook/Audio/__init__.py": "15b0839936a8e9702419c6b60f036c66db867da3f8a0901c215e282ffd5dd5ae",
+    "tldw_chatbook/Utils/optional_deps.py": "fd240308eff63f8cc6611b0275bb3feb9d3c1565ff33ed1bacf83da54b8e7d03",
+    "tldw_chatbook/config.py": "3711d7a4ad92abc2dedc8c06fc1b9cfdee1b21c910d2e2494b1e6fcb0d900784",
+    "tldw_chatbook/Utils/paths.py": "bd4d83b4f65d0882ed4c030beb972c71879c7fcf0e88bcd152dafe683ce4b0ec"
+  },
+  "phases": [
+    {
+      "id": "1-drain-first",
+      "mode": "drain",
+      "input_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-01/audio/console-warmup.wav",
+      "input_sha256": "43cdbf8f3d4d449c99513a7f3247dc88b95b9a223420b80a4cc6cb5646305cd4",
+      "pcm_sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659",
+      "sample_rate": 24000,
+      "channels": 1,
+      "source_frames": 117120,
+      "started_at": 2176565.006728125,
+      "events": [
+        {
+          "event": "SinkStarted",
+          "at": 2176565.056776791
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2176570.0345185
+        }
+      ],
+      "api_calls": [
+        {
+          "operation": "abort",
+          "enter_at": 2176569.916748708,
+          "exit_at": 2176570.0311405
+        },
+        {
+          "operation": "close",
+          "enter_at": 2176570.032100375,
+          "exit_at": 2176570.033670958
+        }
+      ],
+      "callbacks": 244,
+      "device_frames": 117120,
+      "audible_frames": 113414,
+      "fed_at": 2176565.048877041,
+      "close_requested_at": 2176565.048877333,
+      "settle_passed": true,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "drained",
+      "completed_at": 2176570.034649958,
+      "device_pcm_sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659",
+      "source_found_in_callback_pcm": true,
+      "status": "passed"
+    },
+    {
+      "id": "1-stop-second",
+      "mode": "stop",
+      "input_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-02/audio/console-warmup.wav",
+      "input_sha256": "9b7f62bcf0390eeb4fa659e38f4f7f633217417d82f1a16463f258fcb648a46a",
+      "pcm_sha256": "5dab2440fc4ca22d08e9c1836b33e3ce487d73590b4d9514171175ffc243d63e",
+      "sample_rate": 24000,
+      "channels": 1,
+      "source_frames": 293760,
+      "started_at": 2176570.037828333,
+      "events": [
+        {
+          "event": "SinkStarted",
+          "at": 2176570.05422325
+        },
+        {
+          "event": "SinkStopped",
+          "at": 2176570.6728545
+        }
+      ],
+      "api_calls": [
+        {
+          "operation": "abort",
+          "enter_at": 2176570.556973458,
+          "exit_at": 2176570.669583125
+        },
+        {
+          "operation": "close",
+          "enter_at": 2176570.670578666,
+          "exit_at": 2176570.672003416
+        }
+      ],
+      "callbacks": 26,
+      "device_frames": 12480,
+      "audible_frames": 12399,
+      "fed_at": 2176570.044769166,
+      "buffered_seconds_at_stop": 11.72,
+      "stop_requested_at": 2176570.55606875,
+      "stop_returned_at": 2176570.672860041,
+      "settle_passed": true,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "stopped",
+      "completed_at": 2176570.67417275,
+      "device_pcm_sha256": "94fc3308b891d4827264ae6f8212ea20d1cd79e710b75b24236e5a3900ac4da8",
+      "source_found_in_callback_pcm": false,
+      "status": "passed"
+    },
+    {
+      "id": "1-successor-drain-second",
+      "mode": "drain",
+      "input_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-02/audio/console-warmup.wav",
+      "input_sha256": "9b7f62bcf0390eeb4fa659e38f4f7f633217417d82f1a16463f258fcb648a46a",
+      "pcm_sha256": "f5c1831290c1e8a76df973fd3b3b4d68ca87180668121c48420ee3e7f4d93b46",
+      "sample_rate": 24000,
+      "channels": 1,
+      "source_frames": 97920,
+      "started_at": 2176570.675616625,
+      "events": [
+        {
+          "event": "SinkStarted",
+          "at": 2176570.692060125
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2176574.868702625
+        }
+      ],
+      "api_calls": [
+        {
+          "operation": "abort",
+          "enter_at": 2176574.75209725,
+          "exit_at": 2176574.865907833
+        },
+        {
+          "operation": "close",
+          "enter_at": 2176574.866778375,
+          "exit_at": 2176574.868126583
+        }
+      ],
+      "callbacks": 204,
+      "device_frames": 97920,
+      "audible_frames": 95518,
+      "fed_at": 2176570.682926333,
+      "close_requested_at": 2176570.682927625,
+      "settle_passed": true,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "drained",
+      "completed_at": 2176574.8687565,
+      "device_pcm_sha256": "f5c1831290c1e8a76df973fd3b3b4d68ca87180668121c48420ee3e7f4d93b46",
+      "source_found_in_callback_pcm": true,
+      "status": "passed"
+    },
+    {
+      "id": "2-drain-first",
+      "mode": "drain",
+      "input_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-01/audio/console-warmup.wav",
+      "input_sha256": "43cdbf8f3d4d449c99513a7f3247dc88b95b9a223420b80a4cc6cb5646305cd4",
+      "pcm_sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659",
+      "sample_rate": 24000,
+      "channels": 1,
+      "source_frames": 117120,
+      "started_at": 2176574.870627875,
+      "events": [
+        {
+          "event": "SinkStarted",
+          "at": 2176574.886815125
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2176579.866052708
+        }
+      ],
+      "api_calls": [
+        {
+          "operation": "abort",
+          "enter_at": 2176579.746852833,
+          "exit_at": 2176579.862958083
+        },
+        {
+          "operation": "close",
+          "enter_at": 2176579.863936916,
+          "exit_at": 2176579.865266791
+        }
+      ],
+      "callbacks": 244,
+      "device_frames": 117120,
+      "audible_frames": 113414,
+      "fed_at": 2176574.877733291,
+      "close_requested_at": 2176574.877734,
+      "settle_passed": true,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "drained",
+      "completed_at": 2176579.86610175,
+      "device_pcm_sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659",
+      "source_found_in_callback_pcm": true,
+      "status": "passed"
+    },
+    {
+      "id": "2-stop-second",
+      "mode": "stop",
+      "input_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-02/audio/console-warmup.wav",
+      "input_sha256": "9b7f62bcf0390eeb4fa659e38f4f7f633217417d82f1a16463f258fcb648a46a",
+      "pcm_sha256": "5dab2440fc4ca22d08e9c1836b33e3ce487d73590b4d9514171175ffc243d63e",
+      "sample_rate": 24000,
+      "channels": 1,
+      "source_frames": 293760,
+      "started_at": 2176579.867478041,
+      "events": [
+        {
+          "event": "SinkStarted",
+          "at": 2176579.884318583
+        },
+        {
+          "event": "SinkStopped",
+          "at": 2176580.498607708
+        }
+      ],
+      "api_calls": [
+        {
+          "operation": "abort",
+          "enter_at": 2176580.388378041,
+          "exit_at": 2176580.495527666
+        },
+        {
+          "operation": "close",
+          "enter_at": 2176580.496286208,
+          "exit_at": 2176580.497671541
+        }
+      ],
+      "callbacks": 26,
+      "device_frames": 12480,
+      "audible_frames": 12399,
+      "fed_at": 2176579.875045125,
+      "buffered_seconds_at_stop": 11.72,
+      "stop_requested_at": 2176580.387602833,
+      "stop_returned_at": 2176580.498612291,
+      "settle_passed": true,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "stopped",
+      "completed_at": 2176580.499899791,
+      "device_pcm_sha256": "94fc3308b891d4827264ae6f8212ea20d1cd79e710b75b24236e5a3900ac4da8",
+      "source_found_in_callback_pcm": false,
+      "status": "passed"
+    },
+    {
+      "id": "2-successor-drain-second",
+      "mode": "drain",
+      "input_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-02/audio/console-warmup.wav",
+      "input_sha256": "9b7f62bcf0390eeb4fa659e38f4f7f633217417d82f1a16463f258fcb648a46a",
+      "pcm_sha256": "f5c1831290c1e8a76df973fd3b3b4d68ca87180668121c48420ee3e7f4d93b46",
+      "sample_rate": 24000,
+      "channels": 1,
+      "source_frames": 97920,
+      "started_at": 2176580.501031041,
+      "events": [
+        {
+          "event": "SinkStarted",
+          "at": 2176580.516063833
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2176584.691185833
+        }
+      ],
+      "api_calls": [
+        {
+          "operation": "abort",
+          "enter_at": 2176584.576069875,
+          "exit_at": 2176584.688082041
+        },
+        {
+          "operation": "close",
+          "enter_at": 2176584.689026333,
+          "exit_at": 2176584.690204083
+        }
+      ],
+      "callbacks": 204,
+      "device_frames": 97920,
+      "audible_frames": 95518,
+      "fed_at": 2176580.506553166,
+      "close_requested_at": 2176580.5065535,
+      "settle_passed": true,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "drained",
+      "completed_at": 2176584.691266625,
+      "device_pcm_sha256": "f5c1831290c1e8a76df973fd3b3b4d68ca87180668121c48420ee3e7f4d93b46",
+      "source_found_in_callback_pcm": true,
+      "status": "passed"
+    }
+  ],
+  "models_initialized": 0,
+  "profile_isolation": {
+    "paths": {
+      "config": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/config/config.toml",
+      "data": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/data/portaudio_controls",
+      "chachanotes_db": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/db/chachanotes.db",
+      "tts_profiles_db": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/data/portaudio_controls/tldw_chatbook_tts_profiles.db",
+      "chat_dictionaries": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/data/portaudio_controls/chat_dicts",
+      "prompts_db": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/db/prompts.db",
+      "media_db": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/db/media.db"
+    },
+    "config_sha256": "768758cc23d9b45502502d50df7bd690a3a0ae4868673271553f15c0809ad203",
+    "forbidden_imports": [],
+    "default_profile_audit_guard": "active through worker exit",
+    "denied_accesses": []
+  },
+  "source_commit": "1240f06f0227ae3d0b4967f41012221c3d7cb6cf",
+  "library_build_receipt_sha256": "3386734bf6750d941ffea298d887d234abdc3dbb0ca2704e21b410c46c89171c",
+  "upstream_status": "Isolated unmerged PR candidate; no shipped/default-library claim.",
+  "library": {
+    "sounddevice_requested_name": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.dylib",
+    "dladdr_loaded_path": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.19.8.dylib",
+    "sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+    "portaudio_version": [
+      1246976,
+      "PortAudio V19.7.0-devel, revision unknown"
+    ]
+  },
+  "versions": {
+    "sounddevice": "0.5.6",
+    "numpy": "1.26.4"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "sounddevice_source_sha256": "d77bf40ba945491538dd6a93b5fb8f45d051c10689f0e10c0b928ef89f172891",
+  "source_after": {
+    "tldw_chatbook/Audio/streaming_sink.py": "e8015d3521eb46a236fbf472abda8b4b32ce76482a045f18ca08b75b45650365",
+    "tldw_chatbook/Audio/__init__.py": "15b0839936a8e9702419c6b60f036c66db867da3f8a0901c215e282ffd5dd5ae",
+    "tldw_chatbook/Utils/optional_deps.py": "fd240308eff63f8cc6611b0275bb3feb9d3c1565ff33ed1bacf83da54b8e7d03",
+    "tldw_chatbook/config.py": "3711d7a4ad92abc2dedc8c06fc1b9cfdee1b21c910d2e2494b1e6fcb0d900784",
+    "tldw_chatbook/Utils/paths.py": "bd4d83b4f65d0882ed4c030beb972c71879c7fcf0e88bcd152dafe683ce4b0ec"
+  },
+  "library_sha256_after": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+  "status": "passed",
+  "ended_utc": "2026-09-09T07:54:40.383746+00:00"
+}

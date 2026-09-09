@@ -16,6 +16,7 @@ from textual.app import App, ComposeResult
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Vertical
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Checkbox,
@@ -5319,6 +5320,72 @@ async def test_test_tool_preview_escape_revokes_nonce_through_mounted_binding():
 
         assert nonce in app.unified_mcp_service.revoked_nonces
         assert not list(app.query("#mcp-inspector-test-panel"))
+
+
+@pytest.mark.asyncio
+async def test_test_tool_preview_escape_defers_repaint_until_raw_editor_is_removed(
+    monkeypatch,
+):
+    app = ToolTestApp()
+    detach_states = []
+    timer_outcomes = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        nonce = await _open_fetch_test_preview(app, pilot)
+        inspector = app.query_one(MCPInspector)
+        editor = inspector.query_one("#mcp-schema-raw", TextArea)
+        screen = app.screen
+        editor.scroll_visible(animate=False)
+        editor.focus()
+        await pilot.pause()
+        assert editor in screen._compositor.visible_widgets
+        assert editor.has_focus
+
+        original_exit = Widget._message_loop_exit
+
+        async def repaint_after_editor_detach(widget):
+            await original_exit(widget)
+            if widget is editor:
+                detach_states.append(
+                    (
+                        widget.is_attached,
+                        bool(widget._component_styles),
+                        widget in screen._compositor.visible_widgets,
+                        inspector._test_preview,
+                    )
+                )
+                # Reproduce a pending full Screen timer repaint after Textual
+                # clears child styles, before the ancestor removal can reflow.
+                try:
+                    # A normal editor refresh also invalidates cached Rich
+                    # styles, which can otherwise mask the missing components.
+                    editor.refresh()
+                    screen.refresh()
+                    screen._dirty_widgets.add(screen)
+                    screen._compositor._dirty_regions.add(
+                        screen._compositor.size.region
+                    )
+                    screen._on_timer_update()
+                except Exception as error:  # noqa: BLE001 - asserted after teardown
+                    # Let teardown finish, then fail explicitly on the observed
+                    # timer error rather than losing it in a prune task.
+                    timer_outcomes.append(error)
+                else:
+                    timer_outcomes.append(None)
+
+        monkeypatch.setattr(Widget, "_message_loop_exit", repaint_after_editor_detach)
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert detach_states == [(False, False, True, None)]
+        assert timer_outcomes == [None]
+        assert nonce in app.unified_mcp_service.revoked_nonces
+        assert not list(app.query("#mcp-inspector-test-panel"))
+        # A subsequent normal repaint must discard the detached editor, rather
+        # than leaving a stale compositor entry behind after suppressing a tick.
+        screen.refresh()
+        await pilot.pause()
+        assert editor not in screen._compositor.visible_widgets
 
 
 @pytest.mark.asyncio

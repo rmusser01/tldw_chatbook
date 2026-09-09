@@ -1,0 +1,27 @@
+Test project /private/tmp/tts-macos-burndown/native/build-cpu
+      Start 23: http_live_body_test
+ 1/11 Test #23: http_live_body_test ...................   Passed    0.70 sec
+      Start 24: http_shutdown_active-handler
+ 2/11 Test #24: http_shutdown_active-handler ..........   Passed    0.90 sec
+      Start 25: http_shutdown_stream-callback
+ 3/11 Test #25: http_shutdown_stream-callback .........   Passed    0.61 sec
+      Start 26: http_shutdown_accept-loop-exception
+ 4/11 Test #26: http_shutdown_accept-loop-exception ...   Passed    0.61 sec
+      Start 27: http_shutdown_idle-client
+ 5/11 Test #27: http_shutdown_idle-client .............   Passed    0.26 sec
+      Start 28: http_shutdown_partial-header
+ 6/11 Test #28: http_shutdown_partial-header ..........   Passed    0.26 sec
+      Start 29: http_shutdown_partial-body
+ 7/11 Test #29: http_shutdown_partial-body ............   Passed    0.51 sec
+      Start 30: http_shutdown_idle
+ 8/11 Test #30: http_shutdown_idle ....................   Passed    0.26 sec
+      Start 31: http_shutdown_completed-request
+ 9/11 Test #31: http_shutdown_completed-request .......   Passed    0.26 sec
+      Start 32: http_shutdown_handler-exception
+10/11 Test #32: http_shutdown_handler-exception .......   Passed    0.26 sec
+      Start 52: server_busy_guard_test
+11/11 Test #52: server_busy_guard_test ................   Passed    1.89 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =   6.52 sec

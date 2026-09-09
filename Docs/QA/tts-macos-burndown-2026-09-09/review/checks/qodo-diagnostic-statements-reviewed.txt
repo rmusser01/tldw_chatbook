@@ -1,0 +1,32 @@
+tldw_chatbook/TTS/backends/alltalk.py: 18 -> 15 diagnostic call(s)
+  moved/re-indented only: 1   removed: 3   added: 0
+
+= moved or re-indented -- statement text is unchanged, NO review needed:
+  = warning 5ffb22038712dae4 -> 27b14c2c75533690  (line 117 -> 121)
+
+- REMOVED -- these statements no longer exist:
+  - warning 5ffb22038712dae4 (was line 317)
+      | logger.warning(
+      |     "AllTalk voices request rejected "
+      |     f"(status={response.status_code})"
+      | )
+  - warning 1d2090e61ca5eac4 (was line 312)
+      | logger.warning(
+      |     f"Unexpected voices response format: {type(voices)}"
+      | )
+  - error 0d07ff3492ba7d27 (was line 323)
+      | logger.error("AllTalk voice discovery failed (provider=alltalk)")
+
+tldw_chatbook/TTS/backends/higgs.py: 92 -> 93 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + debug 0136a90fae3618ed (now line 334)
+      | logger.debug("HiggsAudioServeEngine supports torch_dtype parameter")
+
+tldw_chatbook/TTS/backends/kokoro.py: 63 -> 62 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 0
+
+- REMOVED -- these statements no longer exist:
+  - error 55b54c45e899ea59 (was line 1818)
+      | logger.error(f"Phoneme generation failed: {e}")

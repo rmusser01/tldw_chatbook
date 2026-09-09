@@ -1,0 +1,25 @@
+..............--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.                                                         [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+Tests/UI/test_buddy_v1_qualification_capture.py::test_buddy_v1_rendered_profile_journey[fresh]
+Tests/UI/test_buddy_v1_qualification_capture.py::test_buddy_v1_rendered_profile_journey[upgrade]
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/buddy-console-management/tldw_chatbook/DB/Client_Media_DB_v2.py:4430: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+17.66s call     Tests/UI/test_buddy_v1_qualification_capture.py::test_buddy_v1_rendered_profile_journey[fresh]
+15.52s call     Tests/UI/test_buddy_v1_qualification_capture.py::test_buddy_v1_rendered_profile_journey[upgrade]
+1.18s setup    Tests/UI/test_buddy_v1_qualification_capture.py::test_capture_output_rejects_escape[absolute]
+
+(22 durations < 1s hidden.)
+16 passed, 3 warnings in 37.13s

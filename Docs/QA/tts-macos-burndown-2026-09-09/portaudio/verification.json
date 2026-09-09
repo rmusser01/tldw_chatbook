@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "byte_identical_copies": 16,
+  "copy_sha256_verified": true,
+  "local_readme_links_checked": 27,
+  "corrected_controls_passed": 6,
+  "all_phase_resources_zero": true,
+  "owned_child_exit_zero_and_absent": true,
+  "actual_library_path_and_hash_verified": true,
+  "all_four_drains_callback_pcm_equals_source": true,
+  "both_stops_queued_and_audible": true,
+  "profile_isolation_and_import_only_check_passed": true,
+  "original_isolation_limited_run_and_launcher_retained": true,
+  "relevant_source_before_after_identical": true,
+  "no_audio_models_binaries_or_private_profile_contents_copied": true
+}

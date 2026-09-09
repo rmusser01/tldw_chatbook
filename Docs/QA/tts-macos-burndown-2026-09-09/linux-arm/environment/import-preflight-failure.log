@@ -1,0 +1,10 @@
+onnxruntime cpuid_info warning: Unknown CPU vendor. cpuinfo_vendor value: 0
+Traceback (most recent call last):
+  File "/probe/validate_linux_onnx.py", line 242, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/probe/validate_linux_onnx.py", line 85, in main
+    assert not credential_names, "Credential-bearing environment names must not be passed into the probe"
+           ^^^^^^^^^^^^^^^^^^^^
+AssertionError: Credential-bearing environment names must not be passed into the probe
+LAUNCH_RECORD /private/tmp/tts-macos-burndown/linux/linux-import-preflight-launch.json

@@ -31,9 +31,15 @@ from .library_ingest_canvas import (
     LibraryIngestQueuePanel,
 )
 from .library_media_canvas import LibraryMediaCanvas
-from .library_media_reader_shell import (
-    LibraryMediaPaneGrip,
-    LibraryMediaReaderShell,
+from .library_browse_reader_shell import (
+    LIBRARY_BROWSE_READER_SHELL_ID,
+    LIBRARY_BROWSE_ROUTE_MEDIA,
+    LIBRARY_BROWSE_ROUTE_NOTES,
+    LIBRARY_MEDIA_ROUTE_CLASS,
+    LIBRARY_MEDIA_ROUTE_SELECTOR,
+    LIBRARY_NOTES_ROUTE_CLASS,
+    LIBRARY_NOTES_ROUTE_SELECTOR,
+    LibraryBrowseReaderShell,
     MediaShellResized,
     PaneToggleRequested,
 )
@@ -133,8 +139,14 @@ __all__ = [
     "LibraryIngestPreflightSummary",
     "LibraryIngestQueuePanel",
     "LibraryMediaCanvas",
-    "LibraryMediaPaneGrip",
-    "LibraryMediaReaderShell",
+    "LIBRARY_BROWSE_READER_SHELL_ID",
+    "LIBRARY_BROWSE_ROUTE_MEDIA",
+    "LIBRARY_BROWSE_ROUTE_NOTES",
+    "LIBRARY_MEDIA_ROUTE_CLASS",
+    "LIBRARY_MEDIA_ROUTE_SELECTOR",
+    "LIBRARY_NOTES_ROUTE_CLASS",
+    "LIBRARY_NOTES_ROUTE_SELECTOR",
+    "LibraryBrowseReaderShell",
     "MediaShellResized",
     "LibraryMediaTrashCanvas",
     "LibraryMediaViewer",

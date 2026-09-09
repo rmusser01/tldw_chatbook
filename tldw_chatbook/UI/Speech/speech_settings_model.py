@@ -28,6 +28,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from tldw_chatbook.TTS.legacy_catalogs import LEGACY_DEFAULT_VOICES
+
 PROVIDER_SETTINGS: dict[str, tuple[str, ...]] = {   'defaults': (   'default-format-select',
                     'default-model-select',
                     'default-provider-select',
@@ -323,7 +325,7 @@ SETTING_CONFIG_SOURCES: dict[str, tuple[str, str, object]] = {   'alltalk-url-in
                              'http://127.0.0.1:7851'),
     'alltalk-voice-input': (   'app_tts',
                                'ALLTALK_TTS_VOICE_DEFAULT',
-                               'female_01.wav'),
+                               LEGACY_DEFAULT_VOICES['alltalk']),
     'chatterbox-candidates-input': (   'app_tts',
                                        'CHATTERBOX_NUM_CANDIDATES',
                                        '1'),
