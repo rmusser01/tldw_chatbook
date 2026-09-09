@@ -25169,8 +25169,12 @@ class LibraryScreen(BaseAppScreen):
     def _notify_library_note_import_failure(self) -> None:
         return self._notes_controller._notify_library_note_import_failure()
 
-    def _push_library_note_import_picker(self) -> None:
-        """Select one file at a time or the current folder through FileOpen."""
+    def _push_library_note_import_picker(self, *, replace: bool = False) -> None:
+        """Select one file at a time or the current folder through FileOpen.
+
+        ``replace`` swaps the existing selection for the picked path, and only
+        when the picker returns one -- Cancel keeps what was already chosen.
+        """
 
         async def import_callback(selected_path: Path | None) -> None:
             if selected_path is None:
@@ -25179,6 +25183,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_note_import_controller.accept_selected_path(
                     selected_path,
                     is_folder=selected_path.is_dir(),
+                    replace=replace,
                 )
             except (OSError, TypeError, ValueError):
                 self._notify_library_note_import_failure()
@@ -25305,6 +25310,18 @@ class LibraryScreen(BaseAppScreen):
     @on(LibraryNoteImportCanvas.AddSourceRequested)
     def handle_library_note_import_add_source(self, event: LibraryNoteImportCanvas.AddSourceRequested) -> None:
         return self._notes_controller.handle_library_note_import_add_source(event)
+
+    @on(LibraryNoteImportCanvas.ChangeSourceRequested)
+    def handle_library_note_import_change_source(self, event: LibraryNoteImportCanvas.ChangeSourceRequested) -> None:
+        return self._notes_controller.handle_library_note_import_change_source(event)
+
+    @on(LibraryNoteImportCanvas.ClearSourceRequested)
+    def handle_library_note_import_clear_source(self, event: LibraryNoteImportCanvas.ClearSourceRequested) -> None:
+        return self._notes_controller.handle_library_note_import_clear_source(event)
+
+    @on(LibraryNoteImportCanvas.GroupActionRequested)
+    def handle_library_note_import_group_action(self, event: LibraryNoteImportCanvas.GroupActionRequested) -> None:
+        return self._notes_controller.handle_library_note_import_group_action(event)
 
     @on(LibraryNoteImportCanvas.DestinationChanged)
     def handle_library_note_import_destination(self, event: LibraryNoteImportCanvas.DestinationChanged) -> None:

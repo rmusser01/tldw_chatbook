@@ -39,6 +39,7 @@ from tldw_chatbook.Notes.note_import_planner import (
     ImportSelectionError,
     discover_import_sources,
 )
+from tldw_chatbook.Library.library_note_import_state import _effect_summary
 
 
 def _source() -> ImportSource:
@@ -2667,8 +2668,9 @@ def test_plain_sources_reject_empty_or_whitespace_only_content(
     batch = _parse_selection([source], destination=("Imported",))
 
     assert batch.parsed == ()
-    assert batch.issues[0].classification is ImportClassification.FAILED
-    assert batch.issues[0].reason_code == "invalid_content"
+    # task-32130: still refused, but reported as empty rather than failed.
+    assert batch.issues[0].classification is ImportClassification.EMPTY
+    assert batch.issues[0].reason_code == "empty_source"
 
 
 def _classification_plan(
@@ -5254,3 +5256,132 @@ def test_note_import_public_functions_use_google_style_docstrings(
     assert "Args:" in documentation
     assert "Returns:" in documentation
     assert "Raises:" in documentation
+
+
+# --- task-32130: honest import copy -------------------------------------
+
+
+@pytest.mark.parametrize("extension", [".txt", ".md", ".markdown", ".json", ".yaml"])
+@pytest.mark.parametrize("content", ["", " \n\t "])
+def test_empty_sources_report_empty_rather_than_failed(
+    tmp_path: Path,
+    extension: str,
+    content: str,
+) -> None:
+    """An empty file is empty, not an unsafe import."""
+    source = tmp_path / f"note{extension}"
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    assert batch.parsed == ()
+    issue = batch.issues[0]
+    assert issue.classification is ImportClassification.EMPTY
+    assert issue.reason_code == "empty_source"
+    assert issue.user_message == "Empty file — nothing to import."
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("app.json", '{"legacyEditor": false, "livePreview": true}'),
+        ("core-plugins.json", '["file-explorer", "global-search"]'),
+        ("appearance.yaml", "theme: obsidian\naccentColor: ''\n"),
+    ],
+)
+def test_configuration_documents_are_skipped_with_their_own_reason(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    """A well-formed document that holds no note is skipped, not failed."""
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    issue = batch.issues[0]
+    assert issue.classification is ImportClassification.SKIPPED
+    assert issue.reason_code == "not_a_note"
+    assert issue.user_message == "Not a note file (app configuration)."
+
+    plan = _classification_plan(batch)
+
+    assert plan.items[0].classification is ImportClassification.SKIPPED
+    assert plan.items[0].reason == "Not a note file (app configuration)."
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("empty.json", "[]"),
+        ("empty.yaml", "[]\n"),
+        ("headers-only.csv", "title,content\n"),
+    ],
+)
+def test_a_structured_document_with_no_notes_is_skipped_not_failed(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    """A well-formed but note-free document is nothing to fix (review of 32130)."""
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    issue = batch.issues[0]
+    assert issue.classification is ImportClassification.SKIPPED
+    assert issue.reason_code == "empty_structured_source"
+    assert issue.user_message == "This source does not contain any notes."
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("mixed.json", '[{"content": "Body"}, "file-explorer"]'),
+        ("mixed.json", '[{"content": "Body"}, {"livePreview": true}]'),
+        ("mixed.yaml", "- content: Body\n- theme: obsidian\n"),
+    ],
+)
+def test_a_document_mixing_notes_with_other_records_is_not_called_config(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    """A damaged export must not be presented as harmless configuration."""
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    issue = batch.issues[0]
+    assert issue.classification is ImportClassification.FAILED
+    assert issue.reason_code == "invalid_content"
+    assert issue.user_message == "This source could not be parsed as notes."
+
+
+def test_issue_items_keep_the_parser_reason_instead_of_one_generic_sentence(
+    tmp_path: Path,
+) -> None:
+    """A malformed source keeps its specific parse reason in the review."""
+    source = tmp_path / "notes.json"
+    source.write_text("{malformed", encoding="utf-8")
+
+    plan = _classification_plan(_parse_selection([source], destination=("Imported",)))
+
+    assert plan.items[0].classification is ImportClassification.FAILED
+    assert plan.items[0].reason == "This source could not be parsed as notes."
+
+
+def test_two_row_csv_plans_two_new_notes(tmp_path: Path) -> None:
+    """The review states how many notes a structured source will create."""
+    source = tmp_path / "notes.csv"
+    source.write_text(
+        "title,content,tags\nCSV note one,hello,csv\nCSV note two,second,csv\n",
+        encoding="utf-8",
+    )
+
+    plan = _classification_plan(_parse_selection([source], destination=("Imported",)))
+
+    assert _effect_summary(plan.items[0]) == "Content: create 2 new notes."

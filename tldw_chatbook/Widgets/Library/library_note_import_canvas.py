@@ -7,9 +7,9 @@ from typing import Any
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Collapsible, Input, Static
 
 from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportItemSnapshot,
@@ -27,8 +27,14 @@ _CLASSIFICATION_LABELS = {
     "changed_repeat": "Changed repeat",
     "uncertain_match": "Uncertain match",
     "unsupported": "Unsupported",
+    "skipped": "Skipped",
+    "empty": "Empty",
     "failed": "Failed",
 }
+
+# Classifications that carry no payload: their row states the reason instead
+# of an effect, and their group offers no Create all (task-32130/32135).
+_NON_IMPORTABLE = frozenset({"unsupported", "skipped", "empty", "failed"})
 
 
 def _choice_label(*, selected: bool, text: str) -> str:
@@ -109,7 +115,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     LibraryNoteImportCanvas .note-import-group-heading {
         text-style: bold;
-        margin-top: 1;
+        width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     LibraryNoteImportCanvas .note-import-item-name {
@@ -124,10 +132,74 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         color: $ds-status-error-readable;
         text-style: bold;
     }
+
+    /* task-32135: one review row is one line -- path, effect and destination
+       beside the controls that change them. */
+    /* An empty container defaults to 1fr and would push every group to the
+       bottom of the body until the toggle lands in it. */
+    LibraryNoteImportCanvas #notes-import-review-options {
+        height: auto;
+    }
+
+    LibraryNoteImportCanvas .note-import-row {
+        height: 1;
+        width: 1fr;
+    }
+
+    LibraryNoteImportCanvas .note-import-group-row {
+        height: 1;
+        width: 1fr;
+        margin-top: 1;
+    }
+
+    LibraryNoteImportCanvas .note-import-row-text {
+        width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    LibraryNoteImportCanvas .note-import-row-destination {
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    LibraryNoteImportCanvas .note-import-row-action {
+        width: auto;
+        min-width: 6;
+        margin-left: 1;
+    }
+
+    LibraryNoteImportCanvas .note-import-skipped-row {
+        height: auto;
+        color: $text-muted;
+    }
     """
 
     class AddSourceRequested(Message):
         """Request one more physical file selection."""
+
+    class ChangeSourceRequested(Message):
+        """Request replacing the current selection with a new picker result."""
+
+    class ClearSourceRequested(Message):
+        """Request dropping the current selection without leaving the flow."""
+
+    class GroupActionRequested(Message):
+        """Report one Skip all / Create all over a rendered review group."""
+
+        def __init__(self, classification: str, action: str) -> None:
+            """Carry one group bulk action to the owning controller.
+
+            Args:
+                classification: The ``ImportClassification`` value naming the
+                    pressed group's heading.
+                action: The ``ImportAction`` value to apply to that group.
+                    The controller validates both and refuses an unknown one.
+            """
+            super().__init__()
+            self.classification = classification
+            self.action = action
 
     class DestinationChanged(Message):
         """Report the proposed, not-yet-created Notes destination."""
@@ -193,9 +265,22 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             super().__init__()
             self.delta = delta
 
-    def __init__(self, snapshot: LibraryNoteImportSnapshot, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        snapshot: LibraryNoteImportSnapshot,
+        *,
+        compact: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.snapshot = snapshot
+        # A compact shell clips the one-line row, so it repeats the
+        # destination underneath (review of task-32135).
+        # ponytail: read at compose time only. A resize across the compact
+        # threshold mid-review leaves the second line stale until the next
+        # recompose -- recomposing on the flag instead unmounted the
+        # destination and collision inputs while the user was typing in them.
+        self.compact = compact
         self._destination_value = snapshot.destination
         self._collision_name = (
             snapshot.collision_rename_input or snapshot.collision_name
@@ -411,6 +496,23 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 classes="library-canvas-action",
                 compact=True,
             )
+        if count:
+            # task-32134: a wrong source used to be unreachable -- the phase
+            # offered only Check selection and Back to Notes.
+            yield Button(
+                "Change selection",
+                id="note-import-change-source",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Choose a different file or folder and replace this selection.",
+            )
+            yield Button(
+                "Clear",
+                id="note-import-clear-source",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Drop this selection and start choosing again.",
+            )
         if state.selection_kind == "files":
             yield Static(
                 "Notes destination",
@@ -472,6 +574,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 markup=False,
             )
 
+        # Named slot the Obsidian-import toggle mounts into (task-32129).
+        yield Vertical(id="notes-import-review-options")
+
         order = tuple(_CLASSIFICATION_LABELS)
         sorted_items = sorted(
             state.preview_items,
@@ -486,11 +591,34 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             key=lambda item: item.classification,
         ):
             items = tuple(grouped)
-            yield Static(
-                f"{_CLASSIFICATION_LABELS[classification]} ({len(items)})",
-                classes="note-import-group-heading",
-                markup=False,
-            )
+            with Horizontal(classes="note-import-group-row ds-toolbar"):
+                yield Static(
+                    f"{_CLASSIFICATION_LABELS[classification]} ({len(items)})",
+                    classes="note-import-group-heading",
+                    markup=False,
+                )
+                # task-32135: settling 71 rows one at a time is not review.
+                yield Button(
+                    "Skip all",
+                    id=f"note-import-group-{classification}-skip",
+                    name=f"{classification}:skip",
+                    classes=(
+                        "library-canvas-action note-import-row-action "
+                        "note-import-group-action"
+                    ),
+                    compact=True,
+                )
+                if classification not in _NON_IMPORTABLE:
+                    yield Button(
+                        "Create all",
+                        id=f"note-import-group-{classification}-create",
+                        name=f"{classification}:create_new",
+                        classes=(
+                            "library-canvas-action note-import-row-action "
+                            "note-import-group-action"
+                        ),
+                        compact=True,
+                    )
             for item in items:
                 yield from self._compose_review_item(item, dom_tokens[item.item_id])
 
@@ -517,98 +645,142 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             )
             yield next_button
 
+    @staticmethod
+    def _review_row_summary(item: LibraryNoteImportItemSnapshot) -> str:
+        """Return one line: path, what happens, and where it lands."""
+        parts = (
+            (item.name, item.reason)
+            if item.classification in _NON_IMPORTABLE
+            else (item.name, item.effect_summary, item.membership_summary)
+        )
+        return " · ".join(part.rstrip(" .") for part in parts if part)
+
     def _compose_review_item(
         self,
         item: LibraryNoteImportItemSnapshot,
         dom_token: str,
     ) -> ComposeResult:
-        yield Static(
-            item.name,
-            classes="note-import-item-name",
-            markup=False,
-        )
-        if item.reason:
-            yield Static(
-                item.reason,
-                classes="note-import-quiet",
+        # task-32135: this was five stacked lines per item, with the controls
+        # right-aligned about 130 columns from the path they governed.
+        with Horizontal(classes="note-import-row"):
+            summary = Static(
+                self._review_row_summary(item),
+                classes="note-import-row-text",
                 markup=False,
             )
-        for detail in (
-            item.target_label,
-            item.effect_summary,
-            item.membership_summary,
-            item.content_diff,
+            # A narrow terminal clips the line to the path, so the whole
+            # sentence stays reachable on hover and, in the compact layout,
+            # on a second line below (review of task-32135).
+            summary.tooltip = self._review_row_summary(item)
+            yield summary
+            yield Button(
+                _choice_label(selected=item.action == "skip", text="Skip"),
+                id=f"note-import-action-{dom_token}-skip",
+                name=f"{item.item_id}:skip",
+                classes=(
+                    "library-canvas-action note-import-row-action "
+                    "note-import-item-action"
+                ),
+                compact=True,
+            )
+            if item.classification not in _NON_IMPORTABLE:
+                yield Button(
+                    _choice_label(
+                        selected=item.action == "create_new", text="Create new"
+                    ),
+                    id=f"note-import-action-{dom_token}-create",
+                    name=f"{item.item_id}:create_new",
+                    classes=(
+                        "library-canvas-action note-import-row-action "
+                        "note-import-item-action"
+                    ),
+                    compact=True,
+                )
+            if item.can_update or item.uncertain:
+                update = Button(
+                    _choice_label(
+                        selected=item.action == "update_existing",
+                        text="Update existing",
+                    ),
+                    id=f"note-import-action-{dom_token}-update",
+                    name=f"{item.item_id}:update_existing",
+                    classes=(
+                        "library-canvas-action note-import-row-action "
+                        "note-import-item-action"
+                    ),
+                    compact=True,
+                    disabled=not item.can_update,
+                )
+                update.tooltip = (
+                    "Update the confirmed existing note."
+                    if item.can_update
+                    else "Confirm the match before updating."
+                )
+                yield update
+        # The follow-on choices go on their own line. Five controls plus a path
+        # need about 120 columns; below that the trailing ones used to render
+        # entirely outside the body and could not be clicked (review of 32135).
+        if (item.uncertain and not item.confirmed) or item.action == "update_existing":
+            with Horizontal(classes="note-import-row"):
+                if item.uncertain and not item.confirmed:
+                    yield Button(
+                        "Confirm this match",
+                        id=f"note-import-confirm-{dom_token}",
+                        name=item.item_id,
+                        classes=(
+                            "library-canvas-action note-import-row-action "
+                            "note-import-confirm-match"
+                        ),
+                        compact=True,
+                    )
+                if item.action == "update_existing":
+                    yield Button(
+                        _choice_label(
+                            selected=item.replace_content,
+                            text="Replace note content",
+                        ),
+                        id=f"note-import-replace-{dom_token}",
+                        name=f"{item.item_id}:replace_content",
+                        classes=(
+                            "library-canvas-action note-import-row-action "
+                            "note-import-item-choice"
+                        ),
+                        compact=True,
+                    )
+                    yield Button(
+                        _choice_label(
+                            selected=item.add_membership,
+                            text="Add folder placement",
+                        ),
+                        id=f"note-import-membership-{dom_token}",
+                        name=f"{item.item_id}:add_membership",
+                        classes=(
+                            "library-canvas-action note-import-row-action "
+                            "note-import-item-choice"
+                        ),
+                        compact=True,
+                    )
+        if (
+            self.compact
+            and item.classification not in _NON_IMPORTABLE
+            and item.membership_summary
         ):
+            # Only the compact shell needs it: at full width the row already
+            # ends in the destination.
+            yield Static(
+                item.membership_summary,
+                classes="note-import-row-destination note-import-quiet",
+                markup=False,
+            )
+        # Only a matched item carries these, so the bulk of a review stays
+        # exactly one line per source.
+        for detail in (item.target_label, item.content_diff):
             if detail:
                 yield Static(
                     detail,
                     classes="note-import-quiet",
                     markup=False,
                 )
-
-        yield Button(
-            _choice_label(selected=item.action == "skip", text="Skip"),
-            id=f"note-import-action-{dom_token}-skip",
-            name=f"{item.item_id}:skip",
-            classes="library-canvas-action note-import-item-action",
-            compact=True,
-        )
-        if item.classification not in {"unsupported", "failed"}:
-            yield Button(
-                _choice_label(selected=item.action == "create_new", text="Create new"),
-                id=f"note-import-action-{dom_token}-create",
-                name=f"{item.item_id}:create_new",
-                classes="library-canvas-action note-import-item-action",
-                compact=True,
-            )
-        if item.can_update or item.uncertain:
-            update = Button(
-                _choice_label(
-                    selected=item.action == "update_existing",
-                    text="Update existing",
-                ),
-                id=f"note-import-action-{dom_token}-update",
-                name=f"{item.item_id}:update_existing",
-                classes="library-canvas-action note-import-item-action",
-                compact=True,
-                disabled=not item.can_update,
-            )
-            update.tooltip = (
-                "Update the confirmed existing note."
-                if item.can_update
-                else "Confirm the match before updating."
-            )
-            yield update
-
-        if item.uncertain and not item.confirmed:
-            yield Button(
-                "Confirm this match",
-                id=f"note-import-confirm-{dom_token}",
-                name=item.item_id,
-                classes="library-canvas-action note-import-confirm-match",
-                compact=True,
-            )
-        if item.action == "update_existing":
-            yield Button(
-                _choice_label(
-                    selected=item.replace_content,
-                    text="Replace note content",
-                ),
-                id=f"note-import-replace-{dom_token}",
-                name=f"{item.item_id}:replace_content",
-                classes="library-canvas-action note-import-item-choice",
-                compact=True,
-            )
-            yield Button(
-                _choice_label(
-                    selected=item.add_membership,
-                    text="Add folder placement",
-                ),
-                id=f"note-import-membership-{dom_token}",
-                name=f"{item.item_id}:add_membership",
-                classes="library-canvas-action note-import-item-choice",
-                compact=True,
-            )
 
     def _compose_importing(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         detail = f" · {state.progress_detail}" if state.progress_detail else ""
@@ -630,6 +802,29 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             classes="note-import-quiet",
             markup=False,
         )
+        if not state.skipped_count:
+            return
+        # task-32130: the counts named no file, so nothing explained which
+        # sources were left behind or why.
+        with Collapsible(
+            title=f"Skipped ({state.skipped_count})",
+            id="note-import-skipped",
+            collapsed=True,
+        ):
+            for index, (path, reason) in enumerate(state.skipped_items):
+                yield Static(
+                    f"{path} · {reason}",
+                    id=f"note-import-skipped-{index}",
+                    classes="note-import-skipped-row",
+                    markup=False,
+                )
+            listed = len(state.skipped_items)
+            if listed < state.skipped_count:
+                yield Static(
+                    f"Showing the first {listed} of {state.skipped_count}.",
+                    classes="note-import-skipped-row",
+                    markup=False,
+                )
 
     @on(Input.Changed, "#note-import-destination")
     def _destination_changed(self, event: Input.Changed) -> None:
@@ -649,6 +844,23 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     def _add_source(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(self.AddSourceRequested())
+
+    @on(Button.Pressed, "#note-import-change-source")
+    def _change_source(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.ChangeSourceRequested())
+
+    @on(Button.Pressed, "#note-import-clear-source")
+    def _clear_source(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.ClearSourceRequested())
+
+    @on(Button.Pressed, ".note-import-group-action")
+    def _choose_group_action(self, event: Button.Pressed) -> None:
+        event.stop()
+        classification, separator, action = (event.button.name or "").rpartition(":")
+        if separator and classification and action:
+            self.post_message(self.GroupActionRequested(classification, action))
 
     @on(Button.Pressed, "#note-import-check")
     def _check(self, event: Button.Pressed) -> None:

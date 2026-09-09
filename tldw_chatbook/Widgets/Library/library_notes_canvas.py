@@ -401,6 +401,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if self.import_snapshot is not None:
                 yield LibraryNoteImportCanvas(
                     self.import_snapshot,
+                    compact=self.compact,
                     id="library-note-import-canvas",
                 )
             yield Button(
@@ -486,6 +487,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if self.mode in {"lasting_add", "lasting_roots"}:
             state = self.lasting_sync_snapshot
             status = "Unavailable" if state is None else state.status_line
+            if state is not None and state.phase == "choose":
+                # task-32125: naming one of the two relationships before the
+                # reader has picked either presumed the answer.
+                return line(
+                    "Add from files",
+                    status,
+                    "Next: Choose Import once or Keep a folder synced.",
+                )
             next_action = (
                 "Use Import once."
                 if state is None or not state.lasting_available
@@ -630,6 +639,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if authority:
                 authority.first(Static).update(self._authority_copy())
             child = import_canvases.first(LibraryNoteImportCanvas)
+            child.compact = compact
             callback = self._post_recompose_callback
             self._post_recompose_callback = None
             child.queue_after_recompose(callback)
