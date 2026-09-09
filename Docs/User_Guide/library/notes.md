@@ -317,6 +317,16 @@ here."
 | **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
 | **Delete** (Info → Danger) | Asks inline first: "Delete this note? Undo will be available in the Notes list." Confirm with "Delete" or back out with "Cancel". A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
+Opening a note shows "Loading note…" only while the note is being read. If a
+read takes longer than about three seconds the editor stops waiting and shows
+"Unable to load note — timed out after 3 s. Press Retry." with a **Retry**
+button; **‹ Notes** takes you back to the list, and opening another note still
+works.
+
+*Verified against fix/library-crit8-notes-loader — 2026-09-08 (task-32050:
+opening a stored note no longer stays on "Loading note…" for ever, and a
+stuck load now reaches a failed state with Retry).*
+
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If the same note was changed
 somewhere else while you were editing, a banner appears: "This note
@@ -368,6 +378,13 @@ pre-fills title, body, and keywords instead; each row shows the template
 name with the title the note will get. Available templates: Brainstorming
 session, Bug report, Code review, Daily journal entry, Meeting notes,
 Project planning, Research notes, Todo list.
+
+Opening this view parks keyboard focus on **Blank note**, so Enter creates
+a note straight away without tabbing to find it; ↑/↓ move between Blank
+note and the template rows, and the focused row carries the same left-edge
+bar the Notes list rows use. The footer's "enter create note" appears only
+while one of those rows genuinely has focus — move to "‹ Notes" and it
+drops, because Enter there goes back rather than creating anything.
 
 ### Add from files and lasting sync
 
@@ -513,8 +530,10 @@ automatic-sync setting.
 | Key | Action |
 |---|---|
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
+| ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
+| Enter (New note view) | Create from the focused row |
 
-That is the only screen-specific key. In particular, Notes does not register
+Those are the only screen-specific keys. In particular, Notes does not register
 **Ctrl+S** and does not replace it with another save shortcut. Use the visible
 Database **Save** button for an immediate save; Folder Files saves
 automatically. Global navigation keys live in the [guide index](../index.md).
@@ -646,3 +665,9 @@ fresh profile: the list pane survives the first note's Escape.)*
 PR #2531: the keyword boxes get the same protection as the title and body — a
 refresh landing while you type keywords no longer rebuilds the editor or
 rewrites the box from an older snapshot.)*
+
+*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32052: the
+New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
+rows with a visible cursor, the footer's "enter create note" follows the
+focused control, and Tab no longer leaves the Library screen for the
+navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*

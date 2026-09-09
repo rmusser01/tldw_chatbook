@@ -233,10 +233,10 @@ class LogsWindow(Container):
             "Something not working? Reproduce the problem, filter to the "
             "lines that matter, then use Copy visible logs — you share "
             "exactly what you can see.\n"
-            "Recognised API-key formats and your account name are removed; "
-            "file names, titles and search terms are not, so read before you "
-            "share. Copy all (redacted) shares timings, loggers and error "
-            "types only.",
+            "Recognized credentials and PII are masked in the view and both "
+            "copy actions. Diagnostic text remains readable. Review logs "
+            "before sharing; automatic recognition cannot identify every "
+            "personal detail.",
             id="logs-empty-state",
         )
         yield RichLog(
@@ -256,8 +256,6 @@ class LogsWindow(Container):
                 variant="primary",
             )
             yield Button(
-                # The label must not promise more than the artifact carries
-                # (TASK-19555): "Copy all" now yields the metadata-only form.
                 "Copy all (redacted)",
                 id="copy-logs-button",
                 classes="logs-action-button",
@@ -640,13 +638,9 @@ class LogsWindow(Container):
             )
             return
         self.app.copy_to_clipboard("\n".join(record.message for record in records))
-        # TASK-19555: this is the deliberate, filtered action, so the payload
-        # stays descriptive -- but the notification names the residual
-        # exposure rather than leaving the user to discover it in a bug report.
         self.app.notify(
-            f"Copied {len(records)} visible log lines. Recognised key formats "
-            "and your account name were removed; file names and search terms "
-            "were not.",
+            f"Copied {len(records)} visible log lines. "
+            "Recognized credentials and PII are masked.",
             title="Clipboard",
             severity="information",
             timeout=6,
@@ -656,12 +650,8 @@ class LogsWindow(Container):
     def _on_copy_all(self) -> None:
         """Copy the redacted session log to the clipboard.
 
-        The app's ``PersistentLogHandler`` fills ``_log_buffer`` with the
-        metadata-only form of each record (TASK-19555): this action exports
-        thousands of lines the user has never read, so it carries timestamps,
-        loggers, levels and exception types, and no message bodies. Sharing
-        actual log text is the job of "Copy visible logs", where the user can
-        see what they are sharing first.
+        The bounded buffer contains the same credential/PII-redacted
+        diagnostic text used by the live view.
         """
         buffer = getattr(self.app_instance, "_log_buffer", None)
         if not buffer:
@@ -674,8 +664,8 @@ class LogsWindow(Container):
             return
         self.app.copy_to_clipboard("\n".join(buffer))
         self.app.notify(
-            f"Copied {len(buffer)} redacted log entries — timings, loggers "
-            "and error types only. Use Copy visible logs to share log text.",
+            f"Copied {len(buffer)} log entries. "
+            "Recognized credentials and PII are masked.",
             title="Clipboard",
             severity="information",
             timeout=6,

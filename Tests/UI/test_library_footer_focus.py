@@ -35,7 +35,15 @@ def _fake(focused) -> SimpleNamespace:
             enabled=False
         ),
         _library_lifecycle=LibraryLifecycle.GRADUATED,
+        # task-32053: the Search/RAG "enter" chip now follows the focused
+        # control, so the filter reads the selected row and the real
+        # (unstubbed) label resolver. This fake is a media-Reader context --
+        # not the Search row -- so that branch is inert here.
+        _library_selected_row_id="browse-media",
         focused=focused,
+    )
+    fake._library_focus_enter_label = MethodType(
+        LibraryScreen._library_focus_enter_label, fake
     )
     fake._library_footer_shortcuts_for_current_state = MethodType(
         LibraryScreen._library_footer_shortcuts_for_current_state, fake
@@ -115,6 +123,9 @@ def test_typing_flip_routes_through_the_notes_aware_dispatcher():
     fake = SimpleNamespace(
         _library_footer_typing_context=False,
         _apply_library_notes_footer_context=lambda: calls.append("dispatch"),
+    )
+    fake._library_focus_enter_label = MethodType(
+        LibraryScreen._library_focus_enter_label, fake
     )
     fake._refresh_footer_typing_context = MethodType(
         LibraryScreen._refresh_footer_typing_context, fake

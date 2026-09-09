@@ -165,8 +165,8 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             primary_key = NotesBranchKey(primary.folder_id, "placements")
             await _wait_for_condition(
                 pilot,
-                lambda: primary_key in screen._library_notes_tree_branches
-                and not screen._library_notes_tree_branches[primary_key].loading
+                lambda: primary_key in screen._notes_state.tree_branches
+                and not screen._notes_state.tree_branches[primary_key].loading
                 and {
                     row.content_kind
                     for row in screen.query(".library-notes-tree-pager")
@@ -186,7 +186,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    len(screen._library_notes_tree_branches[child_key].items) == 25
+                    len(screen._notes_state.tree_branches[child_key].items) == 25
                     and any(
                         row.parent_folder_id == primary.folder_id
                         and row.content_kind == "placements"
@@ -247,7 +247,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             retry.press()
             await _wait_for_condition(
                 pilot,
-                lambda: len(screen._library_notes_tree_branches[primary_key].items) == 40,
+                lambda: len(screen._notes_state.tree_branches[primary_key].items) == 40,
                 message="live Retry continuation did not settle",
             )
 
@@ -257,8 +257,8 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    len(screen._library_notes_tree_branches[primary_key].items) == 20
-                    and screen._library_notes_tree_branches[primary_key].start_offset == 0
+                    len(screen._notes_state.tree_branches[primary_key].items) == 20
+                    and screen._notes_state.tree_branches[primary_key].start_offset == 0
                 ),
                 message="live primary first page did not restore before locate",
             )
@@ -270,7 +270,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 preferred_membership_id=target.membership_id,
                 focus=True,
             )
-            assert screen._library_notes_tree_selected_placement_id == FolderPlacementId.note(
+            assert screen._notes_state.tree_selected_placement_id == FolderPlacementId.note(
                 primary.folder_id, target.note_id, target.membership_id
             )
             await _wait_for_condition(
@@ -280,7 +280,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 message="live located placement did not receive focus",
             )
             assert getattr(screen.focused, "membership_id", None) == target.membership_id
-            assert screen._library_notes_tree_branches[primary_key].start_offset == 20
+            assert screen._notes_state.tree_branches[primary_key].start_offset == 20
             earlier = next(
                 row
                 for row in screen.query(".library-notes-tree-pager")
@@ -300,17 +300,17 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 earlier.region.y
             ].text
             earlier_observation = f"{earlier.range_copy} {earlier.action_copy}"
-            earlier_generation = screen._library_notes_tree_branches[
+            earlier_generation = screen._notes_state.tree_branches[
                 primary_key
             ].generation
             earlier.press()
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_notes_tree_branches[primary_key].generation
+                    screen._notes_state.tree_branches[primary_key].generation
                     > earlier_generation
-                    and not screen._library_notes_tree_branches[primary_key].loading
-                    and screen._library_notes_tree_branches[primary_key].start_offset == 0
+                    and not screen._notes_state.tree_branches[primary_key].loading
+                    and screen._notes_state.tree_branches[primary_key].start_offset == 0
                 ),
                 message="live earlier page did not settle",
             )
@@ -326,7 +326,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 duplicate_id,
                 duplicate_manual.membership_id,
             )
-            assert screen._library_notes_tree_selected_placement_id == duplicate_placement_id
+            assert screen._notes_state.tree_selected_placement_id == duplicate_placement_id
             await _wait_for_condition(
                 pilot,
                 lambda: getattr(screen.focused, "membership_id", None)
@@ -352,7 +352,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 expected_version=children[1].version,
                 user_id="task-18917-live",
             )
-            mutation_generation = screen._library_notes_tree_branches[
+            mutation_generation = screen._notes_state.tree_branches[
                 child_key
             ].generation
             screen._request_library_notes_tree_slice(
@@ -361,13 +361,13 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_notes_tree_branches[child_key].generation
+                    screen._notes_state.tree_branches[child_key].generation
                     > mutation_generation
-                    and not screen._library_notes_tree_branches[child_key].loading
+                    and not screen._notes_state.tree_branches[child_key].loading
                     and any(
                         item.folder_id == children[1].folder_id
                         and item.name == "Child 01 updated by live mutation"
-                        for item in screen._library_notes_tree_branches[child_key].items
+                        for item in screen._notes_state.tree_branches[child_key].items
                     )
                 ),
                 message="live mutation refresh did not settle",
@@ -389,7 +389,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             await _wait_for_condition(
                 pilot,
                 lambda: primary.folder_id
-                not in screen._library_notes_tree_expanded_ids,
+                not in screen._notes_state.tree_expanded_ids,
                 message="live Primary collapse did not settle",
             )
             await _wait_for_condition(
@@ -408,7 +408,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             primary_row.press()
             await _wait_for_condition(
                 pilot,
-                lambda: primary.folder_id in screen._library_notes_tree_expanded_ids,
+                lambda: primary.folder_id in screen._notes_state.tree_expanded_ids,
                 message="live Primary re-expand did not settle",
             )
             await _wait_for_condition(
@@ -428,7 +428,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             await _wait_for_condition(
                 pilot,
                 lambda: primary.folder_id
-                not in screen._library_notes_tree_expanded_ids,
+                not in screen._notes_state.tree_expanded_ids,
                 message="live final Primary collapse did not settle",
             )
 
@@ -441,7 +441,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             deepest_placement_id = FolderPlacementId.note(
                 deepest.folder_id, shadow_id, shadow_deepest.membership_id
             )
-            assert screen._library_notes_tree_selected_placement_id == deepest_placement_id
+            assert screen._notes_state.tree_selected_placement_id == deepest_placement_id
             await _wait_for_condition(
                 pilot,
                 lambda: getattr(screen.focused, "membership_id", None)
@@ -453,7 +453,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 children[0].folder_id,
                 deep.folder_id,
                 deepest.folder_id,
-            } <= screen._library_notes_tree_expanded_ids
+            } <= screen._notes_state.tree_expanded_ids
             deepest_row = screen.focused
             notes_list.scroll_to_widget(
                 deepest_row, animate=False, force=True, immediate=True

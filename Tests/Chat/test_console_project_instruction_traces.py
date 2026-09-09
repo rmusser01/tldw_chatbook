@@ -47,6 +47,9 @@ async def _project_console(
     pii_redaction_enabled=False,
     response_mode="complete",
     tools=False,
+    nested_tools=False,
+    discover_tools=False,
+    cold_after_request=None,
 ):
     """Use real new-session/workspace defaults; replace only provider HTTP."""
     with (
@@ -64,6 +67,14 @@ async def _project_console(
             f"{GUIDANCE}\nExample credential: {CREDENTIAL}\nContact: {CONTACT}"
             f"\nRuntime credential: {RUNTIME_CREDENTIAL}"
         )
+        if nested_tools:
+            for name in ("first", "second"):
+                folder = root / name
+                folder.mkdir()
+                (folder / "AGENTS.md").write_text(
+                    f"NESTED_{name}_GUIDANCE: check the test output."
+                )
+                (folder / "data.txt").write_text(f"{name} project data")
         registry = LocalWorkspaceRegistryService(workspace_db)
         registry.create_workspace(workspace_id="project-trace", name="Project")
         registry.save_runtime_binding(
@@ -96,6 +107,8 @@ async def _project_console(
             assert request.url.path == "/v1/chat/completions"
             payload = json.loads(request.content)
             http_payloads.append(payload)
+            if len(http_payloads) == cold_after_request:
+                restart_factory()
             if payload.get("stream"):
                 body = (
                     ""
@@ -106,11 +119,28 @@ async def _project_console(
                 return httpx.Response(
                     200, text=body, headers={"content-type": "text/event-stream"}
                 )
-            content = (
-                '```tool_call\n{"name": "calculator", "arguments": {"expression": "6*7"}}\n```'
-                if tools and len(http_payloads) == 1
-                else "Fixture reply"
-            )
+            content = "Fixture reply"
+            if tools and len(http_payloads) <= tools:
+                call = {
+                    "name": "calculator",
+                    "arguments": {"expression": f"{5 + len(http_payloads)}*7"},
+                }
+                if nested_tools:
+                    folder = "first" if len(http_payloads) == 1 else "second"
+                    call = {
+                        "name": "fs_read",
+                        "arguments": {"path": f"{folder}/data.txt"},
+                    }
+                if discover_tools:
+                    call = (
+                        {"name": "find_tools", "arguments": {"query": "calculator"}}
+                        if len(http_payloads) == 1
+                        else {
+                            "name": "load_tools",
+                            "arguments": {"ids": ["builtin:calculator"]},
+                        }
+                    )
+                content = "```tool_call\n" + json.dumps(call) + "\n```"
             return httpx.Response(
                 200, json={"choices": [{"message": {"content": content}}]}
             )
@@ -160,6 +190,34 @@ async def _project_console(
                 confirm_project_instruction_dispatch=lambda _notice: "proceed",
             )
             controller.app = SimpleNamespace(workspace_registry_service=registry)
+            if nested_tools:
+                from Tests.Chat.test_console_project_instruction_persistence_boundary import (
+                    _InProcessWorkspaceExecutor,
+                )
+                from tldw_chatbook.Agents.local_tool_provider import (
+                    LocalToolProvider,
+                    _default_specs,
+                )
+                from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+                local = LocalToolProvider(
+                    workspace_root=root,
+                    specs=[
+                        spec
+                        for spec in _default_specs(
+                            root, workspace_executor=_InProcessWorkspaceExecutor(root)
+                        )
+                        if spec.name == "fs_read"
+                    ],
+                    resolve_state=lambda _tool: EffectiveToolState(
+                        state="allow", origin="global_default"
+                    ),
+                )
+                monkeypatch.setattr(
+                    controller,
+                    "_compose_local_provider",
+                    lambda *_args, **_kwargs: (local, lambda _calls: {}),
+                )
             controller.set_next_trace_privacy(
                 session.id,
                 capture_enabled=capture_enabled,
@@ -179,6 +237,9 @@ async def _project_console(
                     reservation_errors=reservation_errors,
                     project_file=root / source_name,
                     restart_factory=restart_factory,
+                    gateway=gateway,
+                    runs=runs,
+                    registry=registry,
                 )
             finally:
                 await gateway.aclose()
@@ -241,6 +302,131 @@ async def test_fresh_project_send_preserves_turn_and_captured_context(
         else:
             assert captures == ()
             assert not calls
+
+
+@pytest.mark.parametrize("tool_rounds", [2, 3])
+async def test_repeated_project_tool_calls_preserve_the_request_history(
+    tmp_path, monkeypatch, tool_rounds
+):
+    async with _project_console(tmp_path, monkeypatch, tools=tool_rounds) as app:
+        result = await app.controller.submit_draft(
+            "Calculate twice", session_id=app.session.id
+        )
+        assert result.accepted
+        assert app.controller.run_state.status.value == "completed", (
+            app.reservation_errors
+        )
+        assert len(app.http_payloads) == tool_rounds + 1
+
+
+async def test_nested_project_context_during_tool_calls_preserves_history(
+    tmp_path, monkeypatch
+):
+    async with _project_console(
+        tmp_path, monkeypatch, tools=2, nested_tools=True
+    ) as app:
+        result = await app.controller.submit_draft(
+            "Read both files", session_id=app.session.id
+        )
+        assert result.accepted
+        assert app.controller.run_state.status.value == "completed", (
+            app.reservation_errors
+        )
+        assert len(app.http_payloads) == 3
+        assert "NESTED_first_GUIDANCE" in json.dumps(app.http_payloads[1])
+        assert "NESTED_second_GUIDANCE" in json.dumps(app.http_payloads[2])
+
+
+@pytest.mark.parametrize("capture_enabled", [False, True])
+@pytest.mark.parametrize("cold_factory", [False, True])
+@pytest.mark.parametrize("project_enabled", [False, True])
+async def test_discovered_tool_schema_changes_preserve_the_captured_run(
+    tmp_path, monkeypatch, capture_enabled, cold_factory, project_enabled
+):
+    from tldw_chatbook.Agents import agent_service
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+    # Select discovery while leaving enough budget to load the chosen schema.
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
+    monkeypatch.setattr(
+        agent_service, "catalog_schema_tokens", lambda *_args, **_kwargs: 10_001
+    )
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        tools=2,
+        discover_tools=True,
+        capture_enabled=capture_enabled,
+        cold_after_request=2 if cold_factory else None,
+    ) as app:
+        if not project_enabled:
+            app.store.set_session_project_instruction_state(
+                app.session.id,
+                replace(
+                    app.session.project_instruction_state,
+                    project_instructions_enabled=False,
+                ),
+            )
+        result = await app.controller.submit_draft(
+            "Find and load the calculator", session_id=app.session.id
+        )
+        assert result.accepted
+        assert app.controller.run_state.status.value == "completed", (
+            app.reservation_errors
+        )
+        assert len(app.http_payloads) == 3
+
+        assert (
+            app.http_payloads[1]["messages"][0] != app.http_payloads[2]["messages"][0]
+        ), app.http_payloads[2]["messages"]
+        reader = ConsoleTraceNativeReader(app.db)
+        user = app.store.get_message(result.user_message_id)
+        original = reader.read_calls(user.persisted_message_id)
+        assert len(original) == (3 if capture_enabled else 0)
+        sanitizer = CredentialSanitizer(known_credentials=(RUNTIME_CREDENTIAL,))
+
+        def wire_rows(captured):
+            return [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key != "_chatbook_ephemeral_origin"
+                }
+                for row in captured.capture.request["messages_payload"]
+            ]
+
+        for captured, sent in zip(original, app.http_payloads, strict=capture_enabled):
+            assert wire_rows(captured) == sanitizer.sanitize(sent["messages"]).value
+            assert RUNTIME_CREDENTIAL not in json.dumps(captured.capture.request)
+            assert CREDENTIAL not in json.dumps(captured.capture.request)
+        for text in ("Next question", "And one more"):
+            if cold_factory:
+                app.restart_factory()
+            if not capture_enabled:
+                app.controller.set_next_trace_privacy(
+                    app.session.id,
+                    capture_enabled=False,
+                    pii_redaction_enabled=False,
+                    expected_policy_revision=app.controller.capture_policy_snapshot(
+                        app.session.id
+                    ).policy_revision,
+                )
+            followup = await app.controller.submit_draft(
+                text, session_id=app.session.id
+            )
+            assert followup.accepted
+            assert app.controller.run_state.status.value == "completed", (
+                app.reservation_errors
+            )
+            assert reader.read_calls(user.persisted_message_id) == original
+            current_user = app.store.get_message(followup.user_message_id)
+            current = reader.read_calls(current_user.persisted_message_id)
+            assert len(current) == (1 if capture_enabled else 0)
+            if current:
+                assert (
+                    wire_rows(current[0])
+                    == sanitizer.sanitize(app.http_payloads[-1]["messages"]).value
+                )
 
 
 @pytest.mark.parametrize("prior_response", ["ordinary", "tools", "fallback"])

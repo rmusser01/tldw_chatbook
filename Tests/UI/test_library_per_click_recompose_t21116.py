@@ -227,7 +227,7 @@ async def test_open_item_by_id_notes_keeps_route_owned_source_strip() -> None:
         await screen._open_library_item_by_id("notes", "n-1")
         await _wait_for_selector(screen, pilot, "#library-notes-canvas")
         await _wait_for_selector(screen, pilot, "#library-notes-source-strip")
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
 
 
 @pytest.mark.asyncio

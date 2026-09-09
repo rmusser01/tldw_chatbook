@@ -102,12 +102,15 @@ than showing a now-absent item. A filter that still has matches moves the
 Reader to its first result instead. Undoing a delete re-adds the row, which
 opens normally again.
 
-*Verified against fix/media-crit7-readerdesync — 2026-09-08 (task-32043:
-app-test pins at 170x48 — opening an item then applying a 0-result filter, and
-bulk-deleting the open item, both leave the Reader on its no-selection
-placeholder; the crit6 empty-reader widening, three-pane ladder, scroll-
-restore and bulk-delete Undo pins stay green. Confirmed in tests, not
-re-verified live.)*
+*Verified against fix/media-crit8-gaps — 2026-09-08 (task-32086: a 0-result
+filter now repaints the MOUNTED Reader placeholder, not just the session —
+task-32043 cleared the state but the canvas-scoped Items sync left the sibling
+viewer painting the filtered-out document (critique #8 caps 07/65). App-test
+pin at 170x48 drives the live auto-follow path (a filter with a hit, then
+narrowing to zero) and asserts the Reader repaints its empty placeholder;
+the task-32043 session pins, bulk-delete, and filter-restore pins stay green.
+Live-verified in tmux at 235x52: filter to a hit, then narrow to zero — the
+Reader falls back to "Select a media item to read it here.".)*
 
 **Row markers.** An item's second row says what it is and how old it is, and
 adds **· analysed** when that item already carries an analysis — so you can
@@ -136,7 +139,11 @@ wide CJK characters, or five flag emoji) to keep the line short — the cut
 counts a flag by the two columns it paints and never leaves half of one, so
 the row frame does not drift. It can still be too long for a narrow Items pane: at the
 pane's narrowest the row clips mid-term at the pane edge, and a row that is
-both analysed and a keyword hit can clip at the default width too.
+both analysed and a keyword hit can clip at the default width too. The
+Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
+full stored keyword but drops a dangling half-flag so that surface's frame
+does not drift either (the edit form still prefills the stored keyword
+verbatim).
 
 *Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
 Skills and Collections opened live at 235x52. Each painted one-cell `‹` grips
@@ -623,7 +630,8 @@ requested load.
 | "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
 | Row press | Selects the row and shows the preview (title, "Messages: N", "Updated: age"). |
-| "Open in Console" | Stages the conversation as **source context** in Console — see below. |
+| "Open in Console" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Stages the conversation as **source context** in Console — see below. |
+| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. One press links it, and "Open in Console" enables in place. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
 
 Empty state: "No conversations yet. Chat in Console and it appears here."
@@ -665,7 +673,9 @@ setting**; it supplies one bundle of **staged context** for the next send.
 3. Press "Add highlight" — it appears in the list with a ● swatch.
 
 ### Stage a conversation as Console context
-1. In **Conversations**, click a row, then "Open in Console" in the preview.
+1. In **Conversations**, click a row, then "Open in Console" in the reader
+   header (beside Read/Info, or press `c`). If it reads "○ Open in Console ·
+   not in this workspace", press "Link to workspace" first.
 2. Console opens with the conversation staged and the prompt "Use this
    conversation as source context for my next question." ready to go — edit
    or replace it, then send.
@@ -784,11 +794,18 @@ Escape's return to the list live at 100x30).*
   collection scopes apply before paging; selections retain captured versions
   across pages, and a failed refresh keeps the last applied rows read-only with
   an exact Retry action. See [Library prompts](prompts.md).
-- **"Open in Console" can refuse with "Copy or link blocked Library
-  sources into the active workspace before using them in Console."** The
-  handoff requires the conversation to be eligible for the active
-  workspace; until your sources are linked into it, staging is blocked
-  (the same gate guards the other "Use in Console" actions).
+- **A conversation outside the active workspace says so on the button.**
+  The handoff requires the conversation to be eligible for the active
+  workspace. When it is not, the reader header reads "○ Open in Console ·
+  not in this workspace" (or "· in another workspace") with the action
+  disabled, and a **"Link to workspace"** button beside it performs the
+  remedy. The `c` accelerator refuses in exactly the same cases, so the key
+  never reaches a refusal the button already explains. A block that linking
+  cannot resolve reads "· blocked for this workspace" and offers no link —
+  hovering the disabled action gives that block's own remedy (with no active
+  workspace: "Select an active workspace before using this item in
+  Console."), never a link button that is not on screen. The same gate
+  guards the other "Use in Console" actions.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent
@@ -916,3 +933,16 @@ including the receipt string above. Added the Analysis tab's
 description (AC#5) — it was previously undocumented. Verified in
 real-screen tests for the choice row's painted text and its scope-change
 invalidation.)*
+
+*Verified against fix/library-crit8-recovery-copy — 2026-09-08 (task-32056:
+"Open in Console" moved from the bottom of the reader into its header beside
+Read/Info and gained the `c` accelerator; a conversation outside the active
+workspace now states that on the disabled action and offers "Link to
+workspace" right beside it, instead of raising a toast naming a workspace
+with nothing on screen to link into.)*
+
+*Verified against fix/library-crit8-recovery-copy — 2026-09-08, fix round 1
+(task-32056: the blocked reason moved out of the button label into a wrapping
+line beneath it, so it no longer truncates in a narrow reader pane; `c` now
+consults the workspace gate the button consults; a block linking cannot
+resolve says so and withholds the link.)*

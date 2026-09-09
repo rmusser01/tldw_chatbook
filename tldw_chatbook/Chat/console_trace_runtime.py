@@ -559,9 +559,23 @@ class ConsoleTraceBoundaryFactory:
                             and preceding_revision.normalized_role == "assistant"
                             else None
                         )
+                        discarded_assistant_id, discarded_followups = (
+                            self.service.discarded_turn_chain(
+                                cursor,
+                                conversation_id=conversation_id,
+                                previous_turn_id=origin.turn_id,
+                                current_turn_id=turn_id,
+                                preceding_descriptors=provenance.messages_payload[
+                                    :active_descriptor_index
+                                ],
+                            )
+                            if assistant_revision_id is None
+                            else (None, ())
+                        )
                         if (
                             assistant_revision_id is not None
                             or source_revision_id is not None
+                            or discarded_assistant_id is not None
                         ):
                             completed_tool_turn = CompletedToolTurnWitness(
                                 origin.call_id,
@@ -569,6 +583,8 @@ class ConsoleTraceBoundaryFactory:
                                 assistant_revision_id,
                                 current_revision_id,
                                 source_revision_id=source_revision_id,
+                                discarded_assistant_message_id=discarded_assistant_id,
+                                discarded_followups=discarded_followups,
                                 project_context_count=(
                                     len(provenance.messages_payload)
                                     - active_descriptor_index

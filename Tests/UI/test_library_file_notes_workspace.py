@@ -282,7 +282,7 @@ async def _production_workspace_context(
             )
             screen = app.screen
             assert isinstance(screen, LibraryScreen)
-            screen._library_file_notes_workspace_factory = lambda: workspace
+            screen._notes_state.file_notes_workspace_factory = lambda: workspace
             await _wait_for_library_shell(screen, pilot)
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             await _wait_until(
@@ -296,7 +296,7 @@ async def _production_workspace_context(
                 lambda: (
                     workspace.initialized
                     and workspace.is_mounted
-                    and screen._library_file_notes_workspace is workspace
+                    and screen._notes_state.file_notes_workspace is workspace
                 ),
                 "production Library did not mount File Notes",
             )
@@ -1063,7 +1063,7 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
             lambda: bool(screen.query("#library-note-body")),
             "Database note did not open",
         )
-        database_id = screen._selected_note_id
+        database_id = screen._notes_state.selected_note_id
         database_editor = screen.query_one("#library-note-body", TextArea)
         _replace_editor_text(
             database_editor,
@@ -1078,7 +1078,7 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         await pilot.pause()
         assert screen.focused is database_editor
         database_draft = database_editor.text
-        database_receipt = screen._library_notes_browse_return_receipt
+        database_receipt = screen._notes_state.browse_return_receipt
 
         screen.query_one("#library-notes-source-files", Button).press()
         await _wait_until(
@@ -1109,12 +1109,12 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         await pilot.pause()
         assert screen.focused is folder_editor
         database_session_state = (
-            screen._library_notes_view,
-            screen._selected_note_id,
+            screen._notes_state.view,
+            screen._notes_state.selected_note_id,
             screen._library_note_detail,
-            screen._library_note_editor_armed,
-            screen._library_note_autosave_state,
-            screen._library_notes_autosave_timer,
+            screen._notes_state.editor_armed,
+            screen._notes_state.autosave_state,
+            screen._notes_state.autosave_timer,
             screen._library_note_session.snapshot,
             database_editor.text,
             database_editor.cursor_location,
@@ -1155,10 +1155,10 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         await pilot.click("#library-notes-task-return")
         await _wait_until(
             pilot,
-            lambda: screen._library_notes_source == "database",
+            lambda: screen._notes_state.source == "database",
             "Database Notes did not return",
         )
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
         assert screen.query_one("#library-note-body", TextArea) is database_editor
         await _wait_until(
             pilot,
@@ -1166,12 +1166,12 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
             "Database Notes did not restore its retained editor focus",
         )
         returned_database_session_state = (
-            screen._library_notes_view,
-            screen._selected_note_id,
+            screen._notes_state.view,
+            screen._notes_state.selected_note_id,
             screen._library_note_detail,
-            screen._library_note_editor_armed,
-            screen._library_note_autosave_state,
-            screen._library_notes_autosave_timer,
+            screen._notes_state.editor_armed,
+            screen._notes_state.autosave_state,
+            screen._notes_state.autosave_timer,
             screen._library_note_session.snapshot,
             database_editor.text,
             database_editor.cursor_location,
@@ -1202,15 +1202,15 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
             database_session_state,
         ):
             assert actual == expected, (field, actual, expected)
-        assert screen._selected_note_id == database_id
+        assert screen._notes_state.selected_note_id == database_id
         assert database_editor.text == database_draft
-        assert screen._library_notes_browse_return_receipt is database_receipt
+        assert screen._notes_state.browse_return_receipt is database_receipt
         assert int(screen.query_one("#library-notes-list").scroll_y) == database_scroll
 
         screen.query_one("#library-notes-source-files", Button).press()
         await _wait_until(
             pilot,
-            lambda: workspace.is_mounted and screen._library_notes_source == "files",
+            lambda: workspace.is_mounted and screen._notes_state.source == "files",
             "Folder Files did not return",
         )
         await _wait_until(
@@ -1505,14 +1505,14 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_editor_armed,
+            lambda: screen._notes_state.editor_armed,
             message="Database editor did not settle before retained editing",
         )
         if size[0] >= 120:
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_notes_work_session_phase
+                    screen._notes_state.work_session_phase
                     is NotesWorkSessionPhase.ACTIVE
                 ),
                 message="Database work-first did not settle before retained editing",
@@ -1554,7 +1554,7 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
             await pilot.press("escape")
         await _wait_until(
             pilot,
-            lambda: screen._library_notes_source == "database",
+            lambda: screen._notes_state.source == "database",
             f"{return_path} did not return to Database Notes",
         )
         await _wait_until(
@@ -1574,7 +1574,7 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
         screen.query_one("#library-notes-source-files", Button).press()
         await _wait_until(
             pilot,
-            lambda: screen._library_notes_source == "files",
+            lambda: screen._notes_state.source == "files",
             "Folder Files did not reopen",
         )
         await _wait_until(
@@ -2457,7 +2457,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         )
 
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
         assert shell.effective_layout.library_open is True
         assert writes == []
@@ -2466,19 +2466,19 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
                 and not shell.effective_layout.library_open
             ),
             message="Folder editable open did not activate work-first layout",
         )
-        assert screen._library_file_notes_reader_preferences.library_open is True
+        assert screen._notes_state.file_notes_reader_preferences.library_open is True
         assert writes == []
 
         shell.library_grip.press()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase
+                screen._notes_state.work_session_phase
                 is NotesWorkSessionPhase.MANUALLY_CANCELLED
                 and shell.effective_layout.library_open
             ),
@@ -2488,7 +2488,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         assert await workspace.open_path("second.md")
         await pilot.pause()
         assert (
-            screen._library_notes_work_session_phase
+            screen._notes_state.work_session_phase
             is NotesWorkSessionPhase.MANUALLY_CANCELLED
         )
 
@@ -2502,7 +2502,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await pilot.pause()
         assert workspace.current_path == "second.md"
         assert (
-            screen._library_notes_work_session_phase
+            screen._notes_state.work_session_phase
             is NotesWorkSessionPhase.MANUALLY_CANCELLED
         )
         assert writes == []
@@ -2511,7 +2511,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase
+                screen._notes_state.work_session_phase
                 is NotesWorkSessionPhase.INACTIVE
             ),
             message="Explicit Folder identity clear did not reset work session",
@@ -2526,7 +2526,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ),
             message="Folder session did not reactivate after an exact clear",
         )
@@ -2536,7 +2536,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase
+                screen._notes_state.work_session_phase
                 is NotesWorkSessionPhase.INACTIVE
             ),
             message="Admitted Folder root change did not reset work session",
@@ -2552,7 +2552,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ),
             message="Folder saved-closed work session did not activate",
         )
@@ -2564,16 +2564,16 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
             message="Folder saved-closed expansion did not persist once",
         )
         assert (
-            screen._library_notes_work_session_phase
+            screen._notes_state.work_session_phase
             is NotesWorkSessionPhase.MANUALLY_CANCELLED
         )
 
         writes.clear()
         await screen._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
-        assert screen._library_notes_source == "database"
+        assert screen._notes_state.source == "database"
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
         assert writes == []
 
@@ -2582,7 +2582,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ),
             message="Created Database note did not start a fresh work session",
         )
@@ -2595,7 +2595,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
             message="Deep link did not leave Notes",
         )
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
         assert writes == []
 
@@ -2638,13 +2638,13 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ),
             message="Database work session did not activate",
         )
-        database_id = screen._selected_note_id
-        database_preferences = screen._library_notes_reader_preferences
-        folder_preferences = screen._library_file_notes_reader_preferences
+        database_id = screen._notes_state.selected_note_id
+        database_preferences = screen._notes_state.reader_preferences
+        folder_preferences = screen._notes_state.file_notes_reader_preferences
 
         screen.query_one("#library-notes-source-files", Button).press()
         await _wait_until(
@@ -2653,14 +2653,14 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             "Folder Files did not mount",
         )
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
         assert await workspace.open_path("file.md")
         folder_editor = workspace.query_one("#file-notes-editor", TextArea)
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ),
             message="Folder work session did not activate",
         )
@@ -2668,37 +2668,37 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
         await pilot.click("#library-notes-task-return")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_source == "database",
+            lambda: screen._notes_state.source == "database",
             message="Database Notes did not return",
         )
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
-        assert screen._selected_note_id == database_id
+        assert screen._notes_state.selected_note_id == database_id
         assert screen.query_one("#library-note-body", TextArea) is database_editor
-        assert screen._library_notes_reader_preferences == database_preferences
-        assert screen._library_file_notes_reader_preferences == folder_preferences
+        assert screen._notes_state.reader_preferences == database_preferences
+        assert screen._notes_state.file_notes_reader_preferences == folder_preferences
 
         screen.query_one("#library-notes-source-files", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_source == "files",
+            lambda: screen._notes_state.source == "files",
             message="Folder Files did not return",
         )
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
         assert workspace.current_path == "file.md"
         assert workspace.query_one("#file-notes-editor", TextArea) is folder_editor
-        assert screen._library_notes_reader_preferences == database_preferences
-        assert screen._library_file_notes_reader_preferences == folder_preferences
+        assert screen._notes_state.reader_preferences == database_preferences
+        assert screen._notes_state.file_notes_reader_preferences == folder_preferences
         assert writes == []
 
         assert await workspace.open_path("file.md")
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ),
             message="Folder work session did not reactivate before Search",
         )
@@ -2708,25 +2708,25 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             lambda: screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH,
             message="Search destination did not open",
         )
-        assert screen._library_notes_source == "files"
+        assert screen._notes_state.source == "files"
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
 
         await screen._open_library_item_by_id("notes", database_id)
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_source == "database"
-                and screen._selected_note_id == database_id
-                and screen._library_notes_work_session_phase
+                screen._notes_state.source == "database"
+                and screen._notes_state.selected_note_id == database_id
+                and screen._notes_state.work_session_phase
                 is NotesWorkSessionPhase.ACTIVE
             ),
             message="Search note open did not establish Database Notes authority",
         )
         assert workspace.current_path == "file.md"
-        assert screen._library_notes_reader_preferences == database_preferences
-        assert screen._library_file_notes_reader_preferences == folder_preferences
+        assert screen._notes_state.reader_preferences == database_preferences
+        assert screen._notes_state.file_notes_reader_preferences == folder_preferences
         assert writes == []
 
     await workspace.shutdown()
@@ -3443,8 +3443,8 @@ async def test_files_mode_uses_focused_canvas_and_keeps_shell_mounted(
         shell = workspace.query_one("#library-file-notes-reader-shell")
         assert rail.display is False, (
             f"size={screen.size!r}, grid={screen.query_one('#library-shell-grid').region!r}, "
-            f"compact={screen._library_notes_compact!r}, "
-            f"stage={screen._library_notes_stage!r}"
+            f"compact={screen._notes_state.compact!r}, "
+            f"stage={screen._notes_state.stage!r}"
         )
         if size[0] >= 120:
             task_return = screen.query_one("#library-notes-task-return", Button)
@@ -3476,12 +3476,12 @@ async def test_escape_in_files_mode_returns_to_database_notes(
     workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
     async with _production_workspace_context(workspace, size=size) as pilot:
         screen = pilot.app.screen
-        assert screen._library_notes_source == "files"
+        assert screen._notes_state.source == "files"
 
         await pilot.press("escape")
         await _wait_until(
             pilot,
-            lambda: screen._library_notes_source == "database",
+            lambda: screen._notes_state.source == "database",
             "Escape did not return Files mode to Database Notes",
         )
         assert screen.query_one("#library-notes-source-database", Button)
@@ -3564,7 +3564,7 @@ async def test_source_exit_cancels_path_task_admitted_after_shared_save(
         await pilot.pause()
 
         assert cancel_results == [False, True]
-        assert screen._library_notes_source == "files"
+        assert screen._notes_state.source == "files"
         assert workspace.display
         assert workspace.path_task == "none"
         assert not workspace.query_one("#file-notes-path-task").display
@@ -3587,7 +3587,7 @@ async def test_wide_files_task_return_reuses_the_existing_leave_guard() -> None:
         await pilot.pause()
 
         blocked_flush.assert_awaited_once_with()
-        assert screen._library_notes_source == "files"
+        assert screen._notes_state.source == "files"
         assert screen.query_one("#library-file-notes-workspace") is workspace
 
         blocked_flush.reset_mock()
@@ -3595,7 +3595,7 @@ async def test_wide_files_task_return_reuses_the_existing_leave_guard() -> None:
         screen.query_one("#library-notes-task-return", Button).press()
         await _wait_until(
             pilot,
-            lambda: screen._library_notes_source == "database",
+            lambda: screen._notes_state.source == "database",
             "Wide task return did not reopen Database Notes after admission.",
         )
         for _ in range(10):
@@ -3700,7 +3700,7 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         await pilot.resize_terminal(100, 30)
         await _wait_until(
             pilot,
-            lambda: screen._library_notes_compact,
+            lambda: screen._notes_state.compact,
             "Notes did not enter the compact presentation.",
         )
 
@@ -3710,27 +3710,27 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
             lambda: workspace.is_mounted,
             "Files workspace did not mount.",
         )
-        browse_receipt = screen._library_notes_browse_return_receipt
+        browse_receipt = screen._notes_state.browse_return_receipt
         assert browse_receipt is not None
-        assert screen._library_notes_browse_return_receipt is browse_receipt
+        assert screen._notes_state.browse_return_receipt is browse_receipt
         await pilot.resize_terminal(170, 24)
         await _wait_until(
             pilot,
-            lambda: not screen._library_notes_compact,
+            lambda: not screen._notes_state.compact,
             "Notes did not return to the wide presentation.",
         )
         screen.query_one("#library-notes-task-return", Button).press()
         await _wait_until(
             pilot,
             lambda: (
-                screen._library_notes_source == "database"
+                screen._notes_state.source == "database"
                 and getattr(screen.focused, "note_id", None) == note_id
             ),
             "Files return did not restore the prior Database note row.",
         )
         await pilot.pause()
 
-        assert screen._library_notes_sort == "title"
+        assert screen._notes_state.sort == "title"
         assert (
             int(screen.query_one("#library-notes-list").scroll_y) == before_list_scroll
         )
@@ -6553,7 +6553,7 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
         await _wait_until(
             pilot,
             lambda: (
-                screen._library_notes_source == "files"
+                screen._notes_state.source == "files"
                 and workspace.initialized
                 and bool(screen.query("#library-file-notes-workspace"))
             ),
@@ -6572,7 +6572,7 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
         assert workspace.region.right <= screen.size.width
         assert workspace.region.bottom <= screen.size.height
         if size == (40, 20):
-            assert screen._library_notes_stage == "notes"
+            assert screen._notes_state.stage == "notes"
             assert rail.display is False
             search = workspace.query_one("#file-notes-search", Input)
             for _ in range(120):
@@ -6592,7 +6592,7 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
         await _wait_until(
             pilot,
             lambda: (
-                screen._library_notes_source == "files"
+                screen._notes_state.source == "files"
                 and bool(screen.query("#library-file-notes-workspace"))
                 and bool(screen.query("#library-notes-source-strip"))
             ),
@@ -6640,7 +6640,7 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
         await _wait_until(
             pilot,
             lambda: (
-                screen._library_notes_source == "database"
+                screen._notes_state.source == "database"
                 and bool(screen.query("#library-notes-canvas"))
             ),
             "Database source did not reopen from the keyboard",
@@ -6709,7 +6709,7 @@ async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
             await pilot.resize_terminal(width, height)
             await _wait_until(
                 pilot,
-                lambda: screen._library_notes_compact is (width < 120),
+                lambda: screen._notes_state.compact is (width < 120),
                 f"Library compact state did not settle at {width}x{height}",
             )
             await _wait_until(
@@ -6734,7 +6734,7 @@ async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
             assert screen.focused.visible
             assert workspace._reader_work_widget in screen.focused.ancestors_with_self
             if width < 120:
-                assert screen._library_notes_stage == "notes"
+                assert screen._notes_state.stage == "notes"
                 assert rail.display is False
                 assert (
                     screen.query_one("#library-notes-task-return", Button).display
@@ -7091,11 +7091,11 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         )
         assert screen.query_one("#library-rail")
         assert screen.query_one("#library-notes-source-strip")
-        assert screen._library_file_notes_workspace is None
+        assert screen._notes_state.file_notes_workspace is None
 
         app.notes_scope_service.get_note_detail = delayed_detail
-        screen._selected_note_id = "db-note-1"
-        screen._library_notes_view = "editor"
+        screen._notes_state.selected_note_id = "db-note-1"
+        screen._notes_state.view = "editor"
         detail_task = asyncio.create_task(
             screen._refresh_library_note_detail("db-note-1")
         )
@@ -7107,7 +7107,7 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         screen.query_one("#library-notes-source-files", Button).press()
         await _wait_until(
             pilot,
-            lambda: screen._library_notes_source == "files",
+            lambda: screen._notes_state.source == "files",
             "Files source handler did not run",
         )
         await _wait_until(
@@ -7136,8 +7136,8 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         await detail_task
         assert screen._library_note_detail is not None
         assert screen._library_note_detail["id"] == "db-note-1"
-        screen._library_notes_view = "list"
-        screen._selected_note_id = None
+        screen._notes_state.view = "list"
+        screen._notes_state.selected_note_id = None
 
         assert await retained.open_path("library.md")
         service = retained._service
@@ -7202,7 +7202,7 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
 
         screen.query_one("#library-notes-source-database", Button).press()
         await pilot.pause()
-        assert screen._library_notes_source == "files"
+        assert screen._notes_state.source == "files"
         assert screen.query_one("#library-file-notes-workspace") is retained
 
         await _show_maintenance_actions(retained, pilot)

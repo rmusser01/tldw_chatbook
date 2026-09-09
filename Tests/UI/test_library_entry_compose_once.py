@@ -822,7 +822,7 @@ def _entry_worker_terminal(case: _EntryWorkerCase, screen: LibraryScreen) -> boo
     if case.name == "skills":
         return screen._skills_state.trust_posture == "ready" and selector_ready
     if case.name in {"notes", "pending-notes"}:
-        return screen._library_note_load_state == "loaded" and selector_ready
+        return screen._notes_state.load_state == "loaded" and selector_ready
     if case.name in {"media", "pending-media"}:
         return screen._media_state.detail is not None and selector_ready
     if case.name == "export":
@@ -1001,7 +1001,7 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
         first_owner = active_screen._library_entry_canvas_owner()
         assert first_owner is not None
         if size == (60, 20):
-            active_screen._library_notes_stage = "notes"
+            active_screen._notes_state.stage = "notes"
             active_screen._set_library_rail_collapsed(True)
             await pilot.pause()
             await pilot.pause()
@@ -2621,7 +2621,7 @@ async def test_uat_warm_landing_fresh_reconcile_retains_frame_and_focus(
             what="warm landing fresh reconciliation",
         )
         if size == (60, 20):
-            revisit._library_notes_stage = "notes"
+            revisit._notes_state.stage = "notes"
             revisit._set_library_rail_collapsed(True)
             await pilot.pause()
             await pilot.pause()

@@ -274,3 +274,64 @@ d0ec95b16f17668af9e32725eed788aeeed1d991
 # removals only -- zero assertion values changed, proven by an AST-level
 # comparison of each file against the same transform applied to its parent.
 5dd2e71cfe2401ad26d8df38c8ec3fa4badad471
+
+# Wave-8 task 1: notes state object + shims (notes series 1/N). 100 of the 105
+# "note"-named LibraryScreen attributes relocated verbatim into
+# LibraryNotesState (3 WIRING prior-extracted coordinator instances and 2
+# shared shell focus fields another subsystem also WRITES stayed); 91
+# __init__ assignments removed outright and 0 becoming constructor arguments
+# (every folded default is a static literal or a pure no-argument factory
+# call); 9 assignments kept at their original positions because they run after
+# the forced-early construction point; 83 comment lines moved byte-for-byte
+# with their fields, verified in both directions; a sentinel-wrapped
+# generated-property shim block over a FOUR-way prefix mapping installed at
+# module end; one bypass-fixture seeding line and the screen size-ratchet
+# re-pin. Zero method bodies touched.
+ec731818132255dbf8b30deb6ba2f9a20ff20ecf
+
+# refactor(library): notes controller + delegators (notes series 2/N)
+# Wave-8 task 2, 2026-09-08 -- pure move, the FINAL controller move of the
+# eight-wave Library decomposition program. 186 of the 285 "note"-named
+# LibraryScreen methods relocated byte-for-byte into LibraryNotesController
+# (UI/Library_Modules/library_notes_controller.py), each replaced on the
+# screen by a one-line delegator; 99 candidates excluded across ten
+# hazard/ownership classes and left full-bodied on the screen. Every moved
+# body is byte-identical to its pre-move source (AST-verified per method, both
+# ends). Also collapses a pre-existing byte-identical DUPLICATE definition of
+# six notes methods that dev shipped twice (7cf89de6c + fd505637f), which is
+# the only reason the method count moves on a pure move. Plus the constructor
+# binding site (103 names), the born-lazy function-local import, the
+# preimport-closure suffix, both size-ratchet re-pins and the relocated
+# production-diagnostic inventory rows. Zero method bodies edited.
+9e13f0207cadb0de5eb7559faa4ada234e3a6f6c
+
+# fix(library): revert one notes mover; retarget two path censuses
+# Wave-8 task 2 fix round 1, 2026-09-08 -- still a pure move.
+# `_restore_library_notes_browse_return_receipt` returns to LibraryScreen
+# byte-for-byte (a `partial(LibraryScreen.<name>, self, ...)` caller the first
+# census's direct-call-argument shape could not see), its now-dead constructor
+# dependency and import are dropped, two hardcoded-file-path censuses are
+# retargeted at the file the code moved to, and both size-ratchet rows are
+# re-pinned. Zero method bodies edited.
+a529dbd3ed0b13502b8d100e3053e0bea5baa119
+
+# Wave-8 task 3, 2026-09-08 -- the notes cleanup, and the LAST cleanup PR of
+# the eight-wave Library decomposition. Mechanical only: 571 screen-side
+# `self._library_note*` receivers retargeted to `self._notes_state.<field>` at
+# `ast` attribute spans, 43 `getattr` receiver fixes, 4 dotted dispatch-dict
+# string values, 1,031 test attribute retargets across 26 files, 11 fixture
+# nestings, the generated shim block deleted, 26 unreferenced delegators
+# pruned, 11 dead imports removed, and both size-ratchet rows re-pinned. No
+# method body was edited; the notes `canvas_sync.py` dotted branch and its
+# dual-receiver guard are the only behaviour-relevant lines, and both are
+# mutation-verified.
+3d670ee38d828424a4371222c03eb03614f6f668
+
+# Wave-8 task 3 fix round 1, 2026-09-08 -- still mechanical. Three
+# `SimpleNamespace` fakes in `test_library_media_trash.py` gain a
+# `_notes_state` seed, because the three MEDIA-named screen methods they drive
+# UNBOUND read the notes focus counter through the cleanup's own
+# `getattr(self._notes_state, ...)` receiver fix. Three seeds, three comment
+# lines, zero assertions touched; plus the wiring test's task-3 docstring
+# paragraph and the recipe's own record of the census hole that hid them.
+9d8244c72ef56b75b337503ba92d6ad90c772303

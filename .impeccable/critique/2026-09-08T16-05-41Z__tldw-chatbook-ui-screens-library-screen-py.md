@@ -4,7 +4,7 @@ total_score: 21
 max_score: 40
 na_heuristics: 
 p0_count: 1
-p1_count: 5
+p1_count: 7
 timestamp: 2026-09-08T16-05-41Z
 slug: tldw-chatbook-ui-screens-library-screen-py
 ---
@@ -58,6 +58,8 @@ The Media subscreen is a genuinely good product surface and the hand-offs into C
 - **[P1] Collections is a different product than the one documented, and visiting it rewrites the rail.** The row opens a "Quick Capture" captures browser (Sort: saved desc, Filter captures, "0–0 of 0"), the local Collections service now rejects every write as "legacy_read_only", and `collections.md` still describes create/rename/delete records. The row shows no count until visited, then sprouts six sub-rows and collapses the Create section, and that collapse persists into the next launch. **Fix:** decide what the row is, rewrite the guide to match, give the row a count from the start, and never mutate another section's disclosure as a side effect of selecting a row. **Suggested command:** /impeccable document.
 
 ## Full issue register
+
+Seven register rows are P1 (rows 2 to 8); the Priority Issues section above groups rows 2, 3 and 4 into the single keyboard-completeness item, so it lists five P1 bullets.
 
 | # | Sev | Where | Issue | Evidence | Fix | Already tracked |
 |---|---|---|---|---|---|---|

@@ -37,7 +37,8 @@ deferred = {
     "tldw_chatbook.UI.Library_Modules.library_" + suffix + "_controller"
     for suffix in (
         "collections", "conversation_reader", "ingest", "media",
-        "note_import", "notes_sync", "prompts", "rag_search", "skills",
+        "note_import", "notes", "notes_sync", "prompts", "rag_search",
+        "skills",
     )
 }
 assert not deferred.intersection(sys.modules), sorted(deferred.intersection(sys.modules))

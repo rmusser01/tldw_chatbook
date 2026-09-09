@@ -216,6 +216,14 @@ class AudioService:
             if audio.channels > 1:
                 audio = audio.set_channels(1)
 
+            if target_format == "pcm":
+                # Raw little-endian PCM16 has no container/muxer named "pcm".
+                return audio.set_sample_width(2).raw_data
+
+            if target_format == "aac":
+                output_params["format"] = "adts"
+                output_params["codec"] = "aac"
+
             # Export to target format
             output_buffer = io.BytesIO()
 

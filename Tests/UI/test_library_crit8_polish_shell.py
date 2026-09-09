@@ -69,7 +69,7 @@ async def test_library_landing_canvas_stays_beside_the_rail_at_compact_widths():
         rail = screen.query_one("#library-rail")
         landing = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
 
-        assert screen._library_notes_compact is True
+        assert screen._notes_state.compact is True
         assert rail.display is True and rail.region.width > 0
         assert landing.region.width > 0, (
             "the compact landing keeps its pane beside the rail"
@@ -244,7 +244,7 @@ async def test_escape_does_not_reopen_a_notes_list_the_user_collapsed():
         screen.query_one("#library-notes-items-grip", Button).press()
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_notes_reader_preferences.items_open is False
+        assert screen._notes_state.reader_preferences.items_open is False
 
         screen.query_one("#library-notes-tree-note-1", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
@@ -253,7 +253,7 @@ async def test_escape_does_not_reopen_a_notes_list_the_user_collapsed():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_notes_reader_preferences.items_open is False
+        assert screen._notes_state.reader_preferences.items_open is False
 
 
 def _new_fresh_profile_app(gates: _LibraryEvidenceGates):

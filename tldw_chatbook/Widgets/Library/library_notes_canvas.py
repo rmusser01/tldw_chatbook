@@ -206,7 +206,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             after. The screen sets this only while the open note is still
             its own pristine "Blank note" (the same condition that also
             arms it for GC-on-exit -- see
-            ``_library_note_pending_blank_gc_id``); it never applies to a
+            ``_notes_state.pending_blank_gc_id``); it never applies to a
             note whose title happens to equal the word "Untitled" by the
             user's own choice.
         compact: Whether compact, 60-column-safe action labels are active.
