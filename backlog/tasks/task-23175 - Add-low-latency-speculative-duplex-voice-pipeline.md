@@ -749,6 +749,27 @@ CI still must establish final platform build/import success. No local native or
 live audio work, full sweep, release qualification or merge was performed.
 Task remains In Progress; broader release criteria remain unchecked.
 
+## PR #2504 follow-up — second automatic CI
+
+Published reviewed rebase `d21e930658` onto dev `8184ba8f6b`; eight targeted
+Library cases plus two unchanged boot budgets passed. All original review threads
+are resolved. All non-native checks and both ARM native wheel jobs passed in
+automatic run `34300791333`; x86 exposed omitted Sinc/Abseil implementations and
+a Windows socket-header collision. ADR-098 and the follow-up plan record the
+minimal six-file source closure and Windows-only definition before implementation.
+Windows commit `69145b6d8f` passes focused file-only RED/GREEN and full provenance
+verification without changing existing source bytes. Final x86 success remains
+pending the reviewed complete repair and subsequent normal CI. Task stays In
+Progress, packaged platforms hard off, PR open and unmerged; no new live audio,
+local native execution, full sweep, release or manual workflow run occurred.
+
+The exact 322-file closure subsequently passed 39 selected file-only cases and
+three additional Abseil/legal guards after the expected RED failures. All old
+316 entries, original 315/CPU checks, patch pins and the new Windows mapping are
+preserved. Full offline verification and scoped lint pass. Independent combined
+review and automatic x86 platform proof remain pending; no qualification or merge
+claim is made from these source/archive checks.
+
 ## Renumbering provenance
 
 This task was initially created as `TASK-23113`. It was renumbered before its first

@@ -88,7 +88,7 @@ file-descriptor protection with a small session-owned spawn worker.
    roots plus the 14 exact `AudioFrame` transitive file exceptions recorded in the
    governing design; it does not broadly allow all of `api`. After adding the exact
    support implementations required at native link time, the verified source and link
-   closure is 316 files. Abseil is sourced from the exact Chromium `src/third_party`
+   closure is 322 files. Abseil is sourced from the exact Chromium `src/third_party`
    DEPS pin
    `ac875ae5393d0516243cfd5d078cd4b098388f6b`. Both revisions are provenance-checked,
    The imported upstream patch series begins empty. The first declared integration
@@ -110,6 +110,25 @@ file-descriptor protection with a small session-owned spawn worker.
    the 316-entry pristine manifest is independently anchored to
    `596ddbb3291fc5fd432376ef4bdfee6fed67bd999709638d68436f2b1ef041a4`.
    Existing upstream/Abseil revisions, patch pins and legal metadata do not change.
+   Subsequent automatic x86 CI exposed two more omitted implementation
+   dependencies: `common_audio/resampler/sinc_resampler_sse.cc` and Abseil
+   `absl/types/bad_optional_access.cc`. Select only those exact sources plus
+   Abseil `absl/base/internal/raw_logging.cc`; quoted includes add only
+   `raw_logging.h`, `atomic_hook.h` and `absl/base/log_severity.h`. Raw logging
+   preserves the existing optional-access handler's no-exceptions branch rather
+   than imposing a new compiler exception mode. The x86-only Sinc implementation
+   is excluded by the existing ARM64 architecture filter. These six unmodified
+   files preserve all old 316 pristine entries and yield the independently
+   checked 322-entry anchor
+   `fc832ca362423a49a79752e139be919c05456356529b8edb56c87d5993e6d156`.
+   The generated Abseil vendored-subset tree changes to
+   `305085097eb6e5f3fe48baa59519a7faaa62eedd`; the complete upstream subtree pin
+   `7f84a7844f32a5a56a02bc7133e943b0932c50b2` remains unchanged. Broad SSE/Abseil
+   umbrella targets, new dependencies, source shims and exception/SIMD policy
+   changes are unnecessary. Windows alone gains `WIN32_LEAN_AND_MEAN` through
+   the existing target-scoped provenance definition mapping, preventing legacy
+   Winsock declarations from colliding with explicit Winsock 2 includes. This
+   configuration correction adds no upstream patch and changes no pristine byte.
    No synthetic probabilistic confidence is
    treated as native evidence.
 

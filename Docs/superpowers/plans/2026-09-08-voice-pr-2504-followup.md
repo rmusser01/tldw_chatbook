@@ -106,6 +106,33 @@ The constructor audit also required lazy creation behind the existing gateway re
     source-closure documentation. Existing ADR-098 records this omitted-support-
     source repair before implementation; no new runtime boundary or dependency
     version is chosen. No local native build/load or release qualification.
+11. Automatic run `34300791333` at rebased `d21e930658` passes the old failure
+    boundaries but exposes later missing resampler/Abseil symbols and Windows
+    socket-header collisions. Complete the read-only pinned-source and Windows
+    include-order diagnoses before implementation. Add only the exact omitted
+    x86 resampler source plus the minimal Abseil optional-access/logging include
+    closure; preserve both upstream exception branches rather than requiring a
+    compiler exception mode. Keep x86-only resampler compilation excluded on
+    ARM64 through the existing architecture filter. Independently verify all new
+    source blobs and hashes, preserve all 316 old pristine entries and three
+    patch pins, and record the reviewed new closure/subset anchors in ADR-098
+    before import. Address the proven Windows include collision with one
+    Windows-only `WIN32_LEAN_AND_MEAN` definition in the existing provenance
+    mapping, not an upstream patch or global compiler setting. Use meaningful
+    file-only RED/GREEN guards for source identity, architecture selection and
+    exact compiler-definition agreement; strict regenerated metadata, legal
+    closure, inventory and tamper checks must remain enforced. One worker owns
+    the combined native changes, followed by focused independent review and
+    another normal automatic PR run. No local CMake/configure/compiler/native
+    load, manual workflow, release qualification or merge is authorized.
+    The completed diagnosis identifies exactly six added paths: Sinc SSE,
+    `bad_optional_access.cc`, `raw_logging.cc`, `raw_logging.h`, `atomic_hook.h`
+    and `log_severity.h`. The independently checked 322-entry pristine anchor is
+    `fc832ca362423a49a79752e139be919c05456356529b8edb56c87d5993e6d156`; generated
+    Abseil subset tree becomes `305085097eb6e5f3fe48baa59519a7faaa62eedd` while
+    the complete upstream subtree pin stays unchanged. Existing old-315 and
+    CPU-addition controls remain, and removing precisely these six additions
+    must recover the old-316 ledger byte-for-byte. No whole GN target import.
 
 ## Final root-owned handoff
 
@@ -194,3 +221,41 @@ No local native build/load, installed-wheel execution, app/audio, provider/model
 physical test, soak or full suite ran. A focused combined review, latest-dev
 refresh and another normal automatic PR run must validate the resulting update;
 hosted linkage/platform success is not yet claimed. The PR stays unmerged.
+
+## Second automatic CI follow-up — 2026-09-08
+
+Rebased all 11 reviewed commits onto dev `8184ba8f6b`, retaining backup
+`codex/voice-pr2504-before-final-ci-rebase`. Only the generated diagnostic-summary
+count conflicted; the official generator confirmed exactly 7686 to 7687 with no
+owner/sink drift, and the rebuilt artifact passes. The focused shared-file
+composition review approved both retained voice and incoming Library changes.
+Eight selected Library cases and two boot guards passed; UI-ready stays 972/973
+and boot CSS stays 803655/804000. Published `d21e930658` to the same PR with
+exact lease protection; every original thread remains resolved and auto-merge off.
+
+Automatic native run `34300791333` passed both ARM platform jobs completely,
+including installed tests and repaired-wheel validation. All non-native automatic
+checks passed, including PR Fast Lane and derived artifacts. The three x86 jobs
+reached later issues: missing Sinc SSE and Abseil optional-access implementations,
+and Windows legacy Winsock headers colliding with explicit Winsock 2. The
+read-only diagnoses established the exact step-11 repair before implementation.
+Windows commit `69145b6d8f` adds one platform-only definition; two file guards
+first failed, then all four selected consistency/scope guards passed. Its staged
+and final full vendor verifiers pass with all 316 existing source entries intact.
+
+ADR-098 records the independently checked six-source/header addition and ARM64
+selection requirement before that repair. Hosted native CI must still verify
+the resulting x86 builds/imports. No physical or release qualification is inferred
+from the successful ARM jobs; signed/unsigned qualification jobs were skipped.
+No local native execution, audio, providers, full sweep or merge was performed.
+
+The six-file repair then reproduced the exact reviewed 322-entry pristine anchor
+and Abseil subset identity. Nine expected source/count/architecture/inventory
+guards failed before implementation; 39 focused provenance, include closure,
+old-ledger preservation, patch roundtrip/tamper, line-ending, platform-mapping,
+inventory and synthetic archive cases passed afterward. Three additional exact
+Abseil/legal guards passed. All 316 old entries, the original 315/CPU control,
+all three patches and the Windows definition remain intact; scoped lint/format
+and the actual full offline verifier pass. These are file-level results, not
+local native execution or final hosted-platform evidence. The complete repair
+requires its focused combined review and automatic CI before handoff.
