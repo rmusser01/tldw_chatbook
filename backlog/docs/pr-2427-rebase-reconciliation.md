@@ -1970,3 +1970,19 @@ Whitespace checks pass. Independent review found no issue in the two production
 guards; final fixture review is being recorded separately. This is not a merge
 claim: fetched dev has advanced to `2e3389e694` (Library crit8 and offline TTS/MCP
 changes), so the next integration/qualification remains necessary.
+
+Final independent fixture review found no blocking issue. Its sole P3 was a
+stale headless-test docstring claiming the retired Leave Console dialog; that
+description now matches ordinary navigation plus explicit exact-owner removal.
+
+Wave-thirteen plan: checkpoint the verified step-75 repairs, then rebase onto
+fetched `2e3389e694` preserving incoming Library crit8, Notes editor/refresh,
+Kokoro runtime, Buddy speech cancellation and MCP teardown behavior. Reconcile
+conflicts at existing owners, retain all ratchets and privacy gates, run complete
+changed offline files and appropriate architecture/import/preflight gates, then
+final-source native Library verification and exact-head review before normal
+merge. No model downloads, real inference/audio/device tests or repo-wide sweep.
+ADR required: no new ADR. ADR path: `backlog/decisions/140-official-kokoro-pytorch-runtime.md`
+for the incoming accepted runtime; existing Library decisions remain authoritative.
+Reason: integration of upstream decisions and routine bounded reconciliation,
+not a new architecture or relaxed cap.
