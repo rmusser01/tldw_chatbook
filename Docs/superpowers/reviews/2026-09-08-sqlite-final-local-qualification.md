@@ -296,3 +296,32 @@ preserves run/job/SHA/artifact identity, raw-evidence retention and CI warnings.
 This satisfies Task14/AC15 only. It does not qualify the unchanged local Mac or
 Python3.12.11, erase the first setup failure, or waive remaining platform,
 optional or static gates. TASK-31942 remains In Progress; Canvas V2 is disabled.
+
+## Remaining qualification reconciliation after Task14
+
+Read-only source-hash verification at `4dee52969b` confirms that all57Python
+files still match the saved static-attribution report exactly. No Ruff, pytest,
+browser, benchmark or CI run was repeated. The new Task14 CI test has its own
+passing scoped static evidence, recorded separately.
+
+- Static results remain nonzero:1373diagnostics, including1360unchanged complete
+  baseline spans. Ten modified import blocks still require scrutiny; two
+  explicit minimum-version guards and one relocated alias are separately
+  attributed, not blanket exemptions. Existing formatter debt is unchanged.
+- Windows coverage remains unverified for
+  `test_windows_profile_migration_destinations_fail_closed_without_residue` and
+  `test_windows_exact_memory_and_read_only_functionality` in
+  `Tests/DB/test_private_sqlite.py`. No native Windows or ACL claim is made.
+- The Python3.11 skip re-derives a historical detector, not the supported3.12
+  floor. The draft-options test is explicitly disabled by its existing slice
+  contract. Neither is authorization to install another local interpreter or
+  enable an unrelated feature. The separately scheduled local-schema `live`
+  case already has passing evidence above.
+
+The next scope decision is static acceptance: a correction-specific
+no-new-static-debt gate would require resolving affected-code findings while
+retaining the documented baseline debt. That would explicitly accept inherited
+nonzero whole-file results, not make them green. Such acceptance is proposed,
+not applied; broad inherited cleanup, gate waiver, Windows CI dispatch and V2
+admission remain unauthorized by this read-only reconciliation. Original final
+ACs remain unchecked and TASK-31942 stays In Progress.
