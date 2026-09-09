@@ -47,13 +47,34 @@ Adds a **Recently deleted (N)** row as the folder tree's last row, opening a Tra
 
 Restore is not a second implementation of recovery: the pressed row is turned back into a `LibraryNoteDeleteReceipt` (a tombstone's own `version` is what `restore_note` expects) and handed to `_undo_library_note_delete` -- the exact seam the delete receipt's Undo commits through -- so the row returns to its folder or Unfiled via the tree reconciler and the rail count moves identically (AC#2). That seam now also reloads the Trash snapshot, so both entry points keep the count truthful from one place.
 
-Layers: `list_deleted_notes` on `CharactersRAGDB` (page + exact total in ONE transaction, `deleted = 1`, `ORDER BY last_modified DESC, id`), through `NotesInteropService` and a local-only `NotesScopeService.list_deleted_notes`; `LibraryNotesTrashRow`/`LibraryNotesTrashState`/`build_library_notes_trash_state` + `LIBRARY_NOTES_TRASH_PAGE_SIZE = 20`; two `LibraryNotesState` fields (`trash`, `trash_loading`); `_compose_trash_opener`/`_compose_trash` on the canvas; open/back/restore handlers, the Escape branch and the `"trash"` focus region on the controller; `Binding("r", …)` with its `check_action` gate, the footer tier and two refresh hooks on the screen; one CSS rule.
+Layers: `list_deleted_notes` on `CharactersRAGDB` (page + exact total in ONE transaction, `deleted = 1`, `ORDER BY last_modified DESC, rowid DESC`), through `NotesInteropService` and a local-only `NotesScopeService.list_deleted_notes`; `LibraryNotesTrashRow`/`LibraryNotesTrashState`/`build_library_notes_trash_state` + `LIBRARY_NOTES_TRASH_PAGE_SIZE = 20`; one `LibraryNotesState` field (`trash`); `_compose_trash_opener`/`_compose_trash` on the canvas; open/back/restore handlers, the Escape branch and the `"trash"` focus region on the controller; `Binding("r", …)` with its `check_action` gate, the footer tier and two refresh hooks on the screen; one CSS rule.
 
 Decisions: the opener is the row list's LAST ROW, not a sibling after it -- live at 235x52 the list is `height: 1fr`, so a sibling docked to the pane foot twelve blank rows adrift from the tree (the detached-affordance shape task-28015 fixed in the Media Trash). Absent at zero rather than disabled. Paged 20 with an honest "Showing the N most recently deleted of TOTAL" line instead of a second paging state machine. No Danger group: ADR-055 keeps destruction behind its own receipt and this surface exists to recover. Escape needed no new binding -- `library_notes_escape` already gates on the Notes workflow.
 
-Reconciled pins, each with the reason at the pin: the notes-state field census 100 -> 102, and the wave-list Undo fake gains a `_refresh_library_notes_trash` stub (the shared seam genuinely gained that step).
+Reconciled pins, each with the reason at the pin: the notes-state field census 100 -> 101, and the wave-list Undo fake gains a `_refresh_library_notes_trash` stub (the shared seam genuinely gained that step).
 
 Tests: new `Tests/UI/test_library_notes_riders_trash.py` (14), three DB cases and two scope-service cases. Failing NAME sets match the `d0ff40842f` baseline exactly (5 in `test_library_notes_canvas.py`, 1 in `test_chachanotes_db.py`, 3 in `test_library_notes_folder_navigator.py`). Live-verified on the power profile at 235x52 and 100x30: delete two, open the Trash, restore with `r` and with the button, count and row both return, Escape goes back, the row disappears at zero (captures 01-09 under SCRATCH/notes-crit/wave2/i-trash/caps/).
+
+Review round (PR #2553, Qodo). Three fixes, each with a test that fails
+without it: (1) `r` now restores ONLY the focused row -- the fallback to the
+first row restored a note the reader never pointed at and contradicted both
+the guide and the footer chip; (2) `_refresh_library_notes_trash` no longer
+drops a request made while a read is in flight -- the `exclusive=True` worker
+group already supersedes the older read, so the guard could only lose the
+refresh a just-committed delete or restore asked for (the `trash_loading`
+field went with it: census 102 -> 101); (3) the tie-break for two deletions
+sharing one millisecond is `rowid DESC`, the same stable secondary key
+`list_library_notes_page` pages by, instead of a random UUID that can repeat
+or skip a row across pages. Also: `logger.opt(exception=True)` on the two
+Trash/restore warnings, and docstrings on the three screen handlers.
+Rebutted: the page-size-constant ask (the DB/service `limit=20` defaults are
+a bound for direct callers; the only production caller passes
+`LIBRARY_NOTES_TRASH_PAGE_SIZE`, and the DB layer must not import a UI-state
+module) and the uncapped-`limit` ask (no paging seam in `ChaChaNotes_DB.py`
+clamps -- `list_library_notes_page` and `search_library_notes` bind what the
+caller asked for -- and a silent clamp returns fewer rows than requested
+without saying so). A persisted deletion-order column for true
+same-millisecond chronology was judged a migration for a cosmetic tie.
 
 Files: `DB/ChaChaNotes_DB.py`, `Notes/Notes_Library.py`, `Notes/notes_scope_service.py`, `Library/library_notes_state.py`, `UI/Library_Modules/library_notes_state.py`, `UI/Library_Modules/library_notes_controller.py`, `UI/Screens/library_screen.py`, `Widgets/Library/library_notes_canvas.py`, `css/components/_agentic_terminal.tcss` (+ regenerated bundle), `Docs/User_Guide/library/notes.md`, and the tests above.
 <!-- SECTION:NOTES:END -->

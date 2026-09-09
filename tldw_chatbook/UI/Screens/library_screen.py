@@ -28341,14 +28341,29 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, '#library-notes-trash-open')
     def handle_library_notes_trash_open(self, event: Button.Pressed) -> None:
+        """Open the Trash view (task-32144).
+
+        Args:
+            event: Press of the "Recently deleted (N)" row.
+        """
         return self._notes_controller.handle_library_notes_trash_open(event)
 
     @on(Button.Pressed, '#library-notes-trash-back')
     def handle_library_notes_trash_back(self, event: Button.Pressed) -> None:
+        """Leave the Trash view for the notes list (task-32144).
+
+        Args:
+            event: Press of the Trash view's Back action.
+        """
         return self._notes_controller.handle_library_notes_trash_back(event)
 
     @on(Button.Pressed, '.library-notes-trash-restore')
     def handle_library_notes_trash_restore(self, event: Button.Pressed) -> None:
+        """Restore one soft-deleted note (task-32144).
+
+        Args:
+            event: Press of one Trash row's Restore button.
+        """
         return self._notes_controller.handle_library_notes_trash_restore(event)
 
     def _leave_library_notes_trash(self) -> None:
@@ -28366,17 +28381,18 @@ class LibraryScreen(BaseAppScreen):
         Presses the row's own button rather than re-entering the handler, so
         there is one implementation of Restore and ``Button.press``'s refusal
         while disabled stays the second guard behind ``check_action`` -- the
-        same shape ``_press_library_media_trash_action`` uses. With focus
-        anywhere else in the view the first row is the honest target: it is
-        the most recent deletion, which is what "r" is reached for.
+        same shape ``_press_library_media_trash_action`` uses.
+
+        Focus IS the target: with focus anywhere else (Back, say) the key does
+        nothing rather than restoring whichever row happens to be first. It
+        used to fall back to the top row, which restored a note the user had
+        not pointed at and contradicted both the guide and the footer chip
+        ("restore note" -- the focused one). Entry into the view focuses the
+        first Restore button, so the key is live the moment the view opens.
         """
         focused = getattr(self, "focused", None)
         if focused is not None and focused.has_class("library-notes-trash-restore"):
             focused.press()
-            return
-        rows = self.query(".library-notes-trash-restore")
-        if rows:
-            rows.first(Button).press()
 
     def _notify_library_note_missing_warning(self) -> None:
         return self._notes_controller._notify_library_note_missing_warning()

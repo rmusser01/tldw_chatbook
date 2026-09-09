@@ -1163,6 +1163,37 @@ class TestListDeletedNotes:
         assert len(page["items"]) == 2
         assert page["total"] == 3
 
+    def test_notes_deleted_in_the_same_millisecond_page_deterministically(
+        self, db_instance: CharactersRAGDB
+    ):
+        """A timestamp tie is broken by rowid, not by a random UUID.
+
+        `last_modified` has millisecond precision, so two deletions can share
+        one. Without a stable secondary key, LIMIT/OFFSET paging over the tie
+        can repeat or skip a row.
+        """
+        # Ids chosen so id-order and creation-order disagree: sorting the tie
+        # by the note id would put the older tombstone first.
+        first = db_instance.add_note("Deleted first", "body", "aaaa-older")
+        second = db_instance.add_note("Deleted second", "body", "zzzz-newer")
+        for note_id in (first, second):
+            record = db_instance.get_note_by_id(note_id)
+            db_instance.soft_delete_note(note_id, expected_version=record["version"])
+        with db_instance.transaction() as conn:
+            conn.execute(
+                "UPDATE notes SET last_modified = '2026-09-09T12:00:00.000Z'"
+                " WHERE deleted = 1"
+            )
+
+        page = db_instance.list_deleted_notes()
+
+        # rowid DESC: the later-created tombstone leads, deterministically.
+        assert [item["id"] for item in page["items"]] == [second, first]
+        assert db_instance.list_deleted_notes(limit=1)["items"][0]["id"] == second
+        assert (
+            db_instance.list_deleted_notes(limit=1, offset=1)["items"][0]["id"] == first
+        )
+
     def test_no_deleted_notes_returns_an_empty_page(
         self, db_instance: CharactersRAGDB
     ):

@@ -5272,10 +5272,14 @@ class LibraryNotesController:
         )
 
     def _refresh_library_notes_trash(self) -> None:
-        """Reload the soft-deleted snapshot the row and the view both read."""
-        if self._library_notes_trash_loading:
-            return
-        self._library_notes_trash_loading = True
+        """Reload the soft-deleted snapshot the row and the view both read.
+
+        Always starts a read. An in-flight one is SUPERSEDED, not a reason to
+        drop this request: `exclusive=True` on the group cancels the running
+        worker, so a read that began before a delete or restore committed can
+        neither finish into the snapshot nor swallow the refresh that mutation
+        asked for.
+        """
         self.run_worker(
             self._load_library_notes_trash(),
             exclusive=True,
@@ -5290,23 +5294,22 @@ class LibraryNotesController:
         because a read failed would claim there is nothing to recover.
         """
         page: Any = None
-        try:
-            service = getattr(self.app_instance, "notes_scope_service", None)
-            list_deleted_notes = getattr(service, "list_deleted_notes", None)
-            if callable(list_deleted_notes):
-                try:
-                    page = await self._run_library_service_call(
-                        list_deleted_notes,
-                        scope="local_note",
-                        user_id=self._library_notes_user_id(),
-                        limit=LIBRARY_NOTES_TRASH_PAGE_SIZE,
-                        isolate_in_worker=True,
-                    )
-                except Exception:
-                    logger.warning("Failed to read the Library notes trash")
-                    page = None
-        finally:
-            self._library_notes_trash_loading = False
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        list_deleted_notes = getattr(service, "list_deleted_notes", None)
+        if callable(list_deleted_notes):
+            try:
+                page = await self._run_library_service_call(
+                    list_deleted_notes,
+                    scope="local_note",
+                    user_id=self._library_notes_user_id(),
+                    limit=LIBRARY_NOTES_TRASH_PAGE_SIZE,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to read the Library notes trash"
+                )
+                page = None
         if not isinstance(page, Mapping):
             return
         total = page.get("total")
@@ -5350,7 +5353,9 @@ class LibraryNotesController:
                         "This deleted note changed elsewhere — refresh and try again."
                     )
                 except Exception:
-                    logger.warning("Failed to restore a Library note")
+                    logger.opt(exception=True).warning(
+                        "Failed to restore a Library note"
+                    )
                     failure_message = "Could not restore this note."
 
             if restored_record is not None:

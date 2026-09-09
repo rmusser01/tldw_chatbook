@@ -188,7 +188,6 @@ def _restore_fake(monkeypatch, service: _RestoreService):
     fake._notes_state.notice = ""
     fake._notes_state.tree_pending_target_placement_id = ""
     fake._notes_state.trash = _trash(_row("n1", "n1"))
-    fake._notes_state.trash_loading = False
     fake._local_source_records = {"notes": ()}
     fake._local_source_counts = {"notes": 0}
     fake._selected_note_id = ""
@@ -295,11 +294,9 @@ def _view_fake(monkeypatch, view: str = "list"):
     fake = SimpleNamespace(
         _library_notes_view=view,
         _library_notes_trash=_trash(_row("n1", "Groceries")),
-        _library_notes_trash_loading=False,
         _notes_state=SimpleNamespace(
             view=view,
             trash=_trash(_row("n1", "Groceries")),
-            trash_loading=False,
         ),
         is_mounted=True,
         _synced=[],
@@ -406,7 +403,39 @@ async def test_r_restores_the_focused_trash_row(monkeypatch) -> None:
         LibraryScreen.action_library_notes_trash_restore(fake)
         assert pressed == ["n2"]
 
+        # Focus elsewhere: the key does nothing rather than restoring a note
+        # the reader never pointed at (PR #2553 review).
         pressed.clear()
         fake.focused = app.query_one("#library-notes-trash-back", Button)
         LibraryScreen.action_library_notes_trash_restore(fake)
-        assert pressed == ["n1"]
+        assert pressed == []
+
+
+def test_a_trash_refresh_is_never_dropped_by_an_in_flight_read() -> None:
+    """A delete's refresh must outlive a read that started before it.
+
+    The read is superseded by the exclusive worker group, so a request made
+    while one is in flight starts a NEW read instead of being discarded
+    (PR #2553 review).
+    """
+    scheduled: list[tuple[object, dict]] = []
+    fake = SimpleNamespace(
+        run_worker=lambda coroutine, **kwargs: scheduled.append((coroutine, kwargs)),
+        _load_library_notes_trash=LibraryNotesController._load_library_notes_trash,
+    )
+    fake._load_library_notes_trash = MethodType(
+        LibraryNotesController._load_library_notes_trash, fake
+    )
+
+    LibraryNotesController._refresh_library_notes_trash(fake)
+    LibraryNotesController._refresh_library_notes_trash(fake)
+
+    try:
+        assert len(scheduled) == 2
+        assert all(
+            kwargs.get("exclusive") and kwargs.get("group") == "library_notes_trash"
+            for _coroutine, kwargs in scheduled
+        )
+    finally:
+        for coroutine, _kwargs in scheduled:
+            coroutine.close()

@@ -468,7 +468,6 @@ class LibraryNotesState:
     # and after every delete/restore. ``None`` means "not read yet", which is
     # what keeps the "Recently deleted (N)" row off a failed read.
     trash: LibraryNotesTrashState | None = None
-    trash_loading: bool = False
     operation_counter: int = 0
     operation: LibraryNotesOperationState | None = None
 

@@ -17251,6 +17251,11 @@ UPDATE db_schema_version
         count the list it opens disagrees with. Ordered by ``last_modified``
         DESC -- ``soft_delete_note`` stamps it -- so the most recent deletion
         (the one a dismissed receipt just stranded) is the first row.
+        ``rowid DESC`` breaks ties, the same stable secondary key
+        ``list_library_notes_page`` pages by: the timestamp has millisecond
+        precision, and paging without a deterministic tiebreak can repeat or
+        skip a row across pages. True deletion chronology inside one
+        millisecond would need a persisted deletion-order column.
 
         Args:
             limit: Maximum rows in the returned page.
@@ -17272,7 +17277,7 @@ UPDATE db_schema_version
             rows = conn.execute(
                 "SELECT id, title, last_modified, version FROM notes"
                 " WHERE deleted = 1"
-                " ORDER BY last_modified DESC, id LIMIT ? OFFSET ?",
+                " ORDER BY last_modified DESC, rowid DESC LIMIT ? OFFSET ?",
                 (page_size, skip),
             ).fetchall()
         return {"items": [dict(row) for row in rows], "total": total}
