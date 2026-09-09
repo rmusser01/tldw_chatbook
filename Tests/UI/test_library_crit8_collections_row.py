@@ -19,11 +19,15 @@ row, each pinned against the real mounted Library shell:
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 from textual.widgets import Button, Static
 
+from tldw_chatbook.UI.Screens import library_screen
 from tldw_chatbook.Library.collections_capture_models import CaptureSaveRequest
 from tldw_chatbook.Library.library_collections_service import (
     LegacyCollectionsReadOnlyError,
@@ -246,16 +250,71 @@ async def test_prefetched_total_is_dropped_when_the_capture_authority_goes_away(
             message="The rail count prefetch never settled.",
         )
 
-        scope.deactivate()
-        await screen._read_library_collections_count()
-        assert screen._library_collections_prefetched_total is None
-
-        # A failing read clears it too, rather than leaving a stale number.
-        screen._library_collections_prefetched_total = 99
-
+        # A failing read clears it, rather than leaving a stale number.
+        # Fix round 2, finding 1: this runs while the authority is still
+        # ACTIVE -- ordered after the ``deactivate()`` case below, the read
+        # returned on "no authority" and never reached ``list_page``, so the
+        # exception branch went unexercised.
         async def failing_list_page(_request):
             raise RuntimeError("controlled count read failure")
 
         scope.list_page = failing_list_page
+        assert scope.active_authority is not None
         await screen._read_library_collections_count()
         assert screen._library_collections_prefetched_total is None
+
+        # A read that never returns is treated the same way: the deadline is
+        # what keeps the snapshot pass bounded when ``list_page`` is an HTTP
+        # round trip with no timeout of its own.
+        screen._library_collections_prefetched_total = 99
+
+        async def hanging_list_page(_request):
+            await asyncio.sleep(60)
+
+        scope.list_page = hanging_list_page
+        with patch.object(
+            library_screen, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
+        ):
+            await screen._read_library_collections_count()
+        assert screen._library_collections_prefetched_total is None
+
+        # Losing the authority clears it too.
+        screen._library_collections_prefetched_total = 99
+        scope.deactivate()
+        await screen._read_library_collections_count()
+        assert screen._library_collections_prefetched_total is None
+
+
+async def test_the_collections_count_read_does_not_stack_its_deadline_on_the_gather() -> None:
+    """Fix round 2, finding 3: the count read runs WITH the source gather.
+
+    Awaited serially ahead of it, a stalled Collections read and a stalled
+    source seam each burned the same 5 s deadline -- ~10 s for a pass whose
+    own timeout copy says it waited 5 s. Here the count read parks until a
+    gathered source call has started: under the old serial ordering the
+    gather had not begun yet, so the whole snapshot would hang.
+    """
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        gather_started = threading.Event()
+        original_list_notes = app.notes_scope_service.list_notes
+
+        def recording_list_notes(*args, **kwargs):
+            gather_started.set()
+            return original_list_notes(*args, **kwargs)
+
+        app.notes_scope_service.list_notes = recording_list_notes
+
+        async def blocked_count() -> None:
+            while not gather_started.is_set():
+                await asyncio.sleep(0.01)
+
+        screen._read_library_collections_count = blocked_count
+        # Generous: this deadline only bounds the FAILING (serial) shape,
+        # which hangs outright -- it is not a timing assertion.
+        await asyncio.wait_for(screen._list_local_source_snapshot(), timeout=20)

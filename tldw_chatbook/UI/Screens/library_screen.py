@@ -9897,7 +9897,10 @@ class LibraryScreen(BaseAppScreen):
         * It runs INSIDE the local-source snapshot pass rather than as its
           own worker, so the count arrives with every other count and the
           screen still reconciles exactly once per snapshot
-          (``Tests/UI/test_library_entry_compose_once.py``).
+          (``Tests/UI/test_library_entry_compose_once.py``) -- started
+          alongside that pass's gather, not ahead of it, so its deadline
+          overlaps the gather's instead of stacking on top (fix round 2,
+          finding 3).
         * Every path that does not produce a fresh total CLEARS the stored
           one. ``CollectionsCaptureScopeService.deactivate()`` nulls the
           active authority on an authority switch or teardown, and a
@@ -11581,7 +11584,14 @@ class LibraryScreen(BaseAppScreen):
         # disagree" complaint this fixes. It carries its own
         # ``asyncio.wait_for`` on the same constant so being outside that
         # gather does not mean being unbounded.
-        await self._read_library_collections_count()
+        #
+        # Fix round 2, finding 3: it runs CONCURRENTLY with that gather
+        # rather than ahead of it. Awaited serially, the two equal deadlines
+        # stacked -- a stalled Collections read plus a stalled source seam
+        # took ~10 s while the resulting message says the pass waited 5 s.
+        # Started here and awaited below, the two deadlines overlap and the
+        # count keeps its independent degradation.
+        count_task = asyncio.ensure_future(self._read_library_collections_count())
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
         conversation_service = getattr(
@@ -11627,6 +11637,7 @@ class LibraryScreen(BaseAppScreen):
         if not all(
             callable(call) for call in (list_notes, list_media, list_conversations)
         ):
+            await count_task
             return (
                 empty_records,
                 empty_counts,
@@ -11783,6 +11794,11 @@ class LibraryScreen(BaseAppScreen):
                 failure_state,
                 empty_study_counts,
             )
+        finally:
+            # The count read is bounded by its own deadline, started with
+            # the gather above, so this settles it without extending the
+            # pass -- on every branch, including the returns above.
+            await count_task
 
         notes_result, media_result, conversation_result, *optional_results = (
             gathered_results

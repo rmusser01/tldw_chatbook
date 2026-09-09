@@ -29,10 +29,14 @@ Press **Ctrl+3** (or click **⌃3 Library** in the nav bar, or **Ctrl+P** →
 "Library"), then in the left rail's **Browse** section click
 **Collections**.
 
-The rail row reads **Collections (N)** — N is the number of captures in the
-currently selected scope, and it is filled in before you ever open the row,
-from the same enumerator the list itself uses (task-32057). At narrow rail
-widths the row abbreviates to **Captures (N)**.
+The rail row reads **Collections (N)**, filled in before you ever open the
+row, from the same enumerator the list itself uses (task-32057). Until you
+open it, N is **every** capture in the active authority — that first read is
+unfiltered, so it answers "how much is in Collections". Once the list has
+loaded a page, N follows that page's scope instead (Favorites shows the
+Favorites total), and is withheld entirely while a page is loading or stale
+rather than falling back to the whole-library number. At narrow rail widths
+the row abbreviates to **Captures (N)**.
 
 Selecting the row mounts six scope sub-rows underneath it — **All
 Captures**, **Saved**, **Reading**, **Read**, **Archived**,
