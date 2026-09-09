@@ -115,3 +115,23 @@ point. Their pre-existing lint/format debt was not blanket-rewritten. CSS build
 completed with only a generated timestamp difference, which was reverted. The
 ChatScreen ratchet remains unchanged and passes after the relevant review-provider
 extraction. No full suite was run.
+
+## Independent review fixes
+
+Commit `e98f6c68aa` addresses cold-restart Resume hydration, tool discovery for
+the selected project binding, the final selected-tools summary, and access to
+older retained goals behind newer tombstones. Resume is owned by the existing
+runtime activation slot; view cancellation cannot orphan hydration or admit work
+after shutdown. Binding discovery rejects stale asynchronous results and retains
+the existing permission boundary. Older/Newer controls read bounded metadata
+pages; selected payload removal preserves accounting.
+
+[Affected regression gate](review-fix-affected.txt): **84 passed**. After
+strengthening fresh-service, activation-identity and Older/Newer assertions,
+[focused followups](review-fix-strengthened.txt): **6 passed, 10 deselected**.
+These scopes overlap, and no production changes followed the 84-test gate.
+[Ruff](review-fix-ruff.txt) and [formatting](review-fix-format.txt) pass for the
+eight changed files. Independent scoped re-review approved all four fixes. It
+identified one nonblocking form-state issue when a binding changes during
+validation; this is carried into the final review and fix wave. The qualification
+report tracks the final disposition.

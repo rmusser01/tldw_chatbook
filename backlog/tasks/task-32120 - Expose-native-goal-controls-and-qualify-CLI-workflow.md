@@ -1,11 +1,11 @@
 ---
 id: TASK-32120
 title: Expose native goal controls and qualify CLI workflow
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:19'
-updated_date: '2026-09-09 08:19'
+updated_date: '2026-09-09 14:46'
 labels:
   - agents
   - console
@@ -26,11 +26,11 @@ Users need to start and inspect autonomous goals in Console and see a real faile
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Real Console controls start, pause, stop, resume and review the exact goal while preserving ordinary drafts and navigation lifetime.
-- [ ] #2 Canonical F9 Settings expose independent goal enablement and finite policy; setup states actual executor authority and verification scope.
-- [ ] #3 A real controller and agent path runs a trusted CLI verifier, corrects an editable fixture and passes the unchanged check across at least two increments.
-- [ ] #4 Controls and evidence remain usable at 80x24 and the ordinary terminal size; displayed actions and footer hints are implemented.
-- [ ] #5 Targeted integration, migration, privacy and diagnostics checks cover the delivered feature; documented live-provider evidence or an explicitly recorded unavailable prerequisite remains honest.
+- [x] #1 Real Console controls start, pause, stop, resume and review the exact goal while preserving ordinary drafts and navigation lifetime.
+- [x] #2 Canonical F9 Settings expose independent goal enablement and finite policy; setup states actual executor authority and verification scope.
+- [x] #3 A real controller and agent path runs a trusted CLI verifier, corrects an editable fixture and passes the unchanged check across at least two increments.
+- [x] #4 Controls and evidence remain usable at 80x24 and the ordinary terminal size; displayed actions and footer hints are implemented.
+- [x] #5 Targeted integration, migration, privacy and diagnostics checks cover the delivered feature; documented live-provider evidence or an explicitly recorded unavailable prerequisite remains honest.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,3 +48,17 @@ Reason: Implements the accepted native goal UX/runtime ownership and private-evi
 6. Run a strictly finite isolated demonstration against the configured local model endpoint with the actual tool/report protocol; save and inspect commands/results/diff/final artifact, recording model or prerequisite limitations honestly without cloud fallback.
 7. Run targeted new UI/integration and affected settings/runtime tests plus applicable migration/private-data/diagnostic/architecture checks. Classify baseline failures with evidence, update scoped inventories and user docs, run scoped lint/format/diff checks, self-review and commit. Root handles independent review and completion bookkeeping.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented Console goal controls under accepted ADR-141 (backlog/decisions/141-native-console-goal-runs.md): immutable setup from canonical owners, app-runtime-owned launch and restart Resume, exact checkpoint/run/evidence controls, bounded Older/Newer history and settled payload removal. Canonical F9 Console behavior saves independent finite [agents] goal policy atomically while preserving ordinary drafts and fleet settings.
+
+The real controller/agent/SQLite/CLI fixture failed its trusted check (exit7), made an authorized fs_edit and passed the unchanged verifier (exit0) across two increments/five model calls. Production-style modal captures and mounted actions cover80x24/160x44. The configured local Qwen endpoint made two bounded attempts but did not call tools or correct the file; malformed/no-progress reports were refused. This is documented negative live evidence, not a successful model demonstration.
+
+Independent Task5 specification and quality review approved implementation dd943d03143 and fix e98f6c68aa after allfour restart/catalog/summary/history findings were addressed. One nonblocking stale-validation form-state finding is carried into the final whole-branch fix wave and remains explicitly tracked in Docs/superpowers/reviews/2026-09-09-goal-runs-qualification.md.
+
+Evidence:98 affected passes/1opt-in live skip,10selected controls passes,6setup passes; fix gate84passes and6strengthened followups. Counts overlap. Scoped Ruff/format and whitespace pass, with no added lint tuples in touched legacy owners. Architecture/privacy/migration gate97passed/3proven pre-goal diagnostic failures/1historical-commit skip; global diagnostics remain red. No full suite. Commands, actual traces, rendered controls, limitations and baseline proofs are retained in Docs/superpowers/qa/native-goals/task5/README.md and the qualification report. Main owners: UI/Console_Modules/goals.py, Console goal widgets/settings helper, Chat/console_goal_runs.py, existing runtime/skill/settings/command owners and targeted Tests/UI,Tests/Chat.
+
+The requested successful live corrected artifact was not obtained from the configured model; the deterministic provider demonstrates the real CLI correction while the actual live failures remain preserved. Whole-branch review/integration reconciliation remains separate from this task-scoped approval. No new ADR beyond ADR-141; applicable implementation decisions and limits are linked in the qualification report.
+<!-- SECTION:NOTES:END -->

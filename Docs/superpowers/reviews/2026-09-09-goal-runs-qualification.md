@@ -1,6 +1,6 @@
 # Native goal runs: implementation qualification
 
-Status: **independent review pending**. All five implementation slices and their targeted qualification are assembled; the four backend slices have independent approval. The Console slice and whole-branch review remain outstanding. The configured local model was exercised and did not complete the task; its observed failure is recorded below.
+Status: **whole-branch review pending**. All five implementation slices have independent specification and quality approval. One nonblocking form-state finding from Console re-review is carried into the final review and fix wave. The configured local model was exercised and did not complete the task; its observed failure is recorded below.
 
 Scope: the goal feature on `codex/native-goal-runs`, relative to preserved prerequisite baseline `77bc58dc171c3dcd2178f4433d19a6ceb59b1e7b`. The original shared checkout was extensively dirty; its prerequisite changes were preserved separately before implementation. Integration must reconcile those owners and the independent Workflows branch before merging.
 
@@ -48,6 +48,8 @@ Mounted tests exercise actual Start, interrupted-setup retry, lifecycle controls
 
 The amended affected gate passed **98 tests**, with one intentional opt-in live skip. Subsequent selected-review/removal/navigation checks passed **10 tests**, and final setup controls passed **6**; these runs overlap. The earlier broad gate's untouched Change Review and Settings cases had passed. Scoped Ruff and formatting passed, and six large incumbent files add no lint diagnostics compared with their baseline.
 
+The Console review then identified missing cold-restart conversation hydration, tool choices frozen from the first project binding, and a stale launch-review summary. A focused root check also found older goals unreachable behind the newest 50 entries, including removed tombstones. Commit `e98f6c68aa` adds runtime-owned Resume hydration, current-binding discovery with stale-result rejection, the frozen submitted selection summary, and bounded Older/Newer history controls. The [affected regression gate](../qa/native-goals/task5/review-fix-affected.txt) passed **84 tests**, followed by **6** strengthened, overlapping checks; eight-file Ruff and formatting passed. Independent re-review approved all four findings. A remaining nonblocking form-state issue can disable tool choices after a project changes during validation; final review will carry it into the fix wave.
+
 The [actual CLI trace](../qa/native-goals/task5/deterministic-cli.json) records the trusted verifier exiting **7**, an authorized `fs_edit`, and the same verifier exiting **0** across two increments and five charged model calls. Root inspected the [final file](../qa/native-goals/task5/fixture.txt), [diff](../qa/native-goals/task5/fixture.diff) and verifier source/hash: the result is exactly `valid\n`, and the check remained unchanged. This uses a deterministic provider with real tools, process execution, controller and SQLite. It is POSIX local-skill qualification; the process retains its existing host authority.
 
 The setup and review modals were rendered using the production CSS bundle at **80×24 and 160×44**, with keyboard focus and fixed action-row access checked. One layout correction moved objective/criteria before long authority details, removed the empty optional source list and clarified wait reasons. Root inspected the four regenerated captures. The 80×24 review capture shows its body scrolled while actions remain visible. The dimmed backdrop retains the fixture's fresh-profile Console setup state, so these captures qualify modal layout, not a complete operational rail walkthrough.
@@ -64,8 +66,8 @@ This gate also emitted existing invalid-escape warnings from `Tools/patch_tool_i
 
 ## Remaining review
 
-- Independent Console-slice specification and quality review, with any required fixes.
 - Whole-branch independent review of all seven original findings and their cross-module contracts.
+- Resolve the remaining Console form-state finding with any final-review fixes.
 - Final Backlog/plan bookkeeping and integration handoff after those gates.
 
 ## Implementation decisions

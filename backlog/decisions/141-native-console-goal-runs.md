@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-09-08
-Implementation status: In progress; task records track delivered behavior
+Implementation status: Five slices approved; whole-branch review and final fixes pending. See the [qualification report](../../Docs/superpowers/reviews/2026-09-09-goal-runs-qualification.md) for evidence and limitations.
 Tasks: TASK-32116 through TASK-32120 track the five-slice implementation.
 Design: [gnhf review and native goal runs](../../Docs/superpowers/specs/2026-09-08-gnhf-inspired-goal-runs-design.md)
 Plan: [First native goal-run milestone](../../Docs/superpowers/plans/2026-09-08-gnhf-inspired-goal-runs.md)
