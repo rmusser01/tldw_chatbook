@@ -210,13 +210,9 @@ _LIBRARY_NOTES_COMPACT_GEOMETRY = {
         "overflow-y": "auto",
         "overflow-x": "hidden",
     },
-    "#library-shell-grid.library-notes-compact #library-note-context-status": {
-        "height": "1",
-        "min-height": "1",
-        "max-height": "1",
-        "text-wrap": "nowrap",
-        "text-overflow": "ellipsis",
-    },
+    # task-32177: #library-note-context-status was a dead duplicate of
+    # #library-note-status (removed, not just hidden) -- its geometry entry
+    # is gone with the widget.
     "#library-shell-grid.library-notes-compact #library-notes-create-heading": {
         "height": "1",
         "min-height": "1",

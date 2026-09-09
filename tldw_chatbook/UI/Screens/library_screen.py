@@ -1897,16 +1897,6 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-shell-grid.library-notes-compact #library-note-context-status {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
     #library-shell-grid.library-notes-compact #library-note-context-region {
         height: 1fr;
         min-height: 0;

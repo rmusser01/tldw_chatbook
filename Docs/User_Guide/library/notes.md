@@ -354,7 +354,8 @@ reusable lessons (empty)".
 Opening a note shows "Loading note…" only while the note is being read. If a
 read takes longer than about three seconds the editor stops waiting and shows
 "Unable to load note — timed out after 3 s. Press Retry." with a **Retry**
-button; **‹ Notes** takes you back to the list, and opening another note still
+button; "‹ Notes" / "‹ Back to list" (the same compact-vs-wide wording as
+Edit/Preview/Info) takes you back to the list, and opening another note still
 works.
 
 **Autosave** runs about two seconds after you stop typing; the meta line
@@ -428,8 +429,9 @@ Opening this view parks keyboard focus on **Blank note**, so Enter creates
 a note straight away without tabbing to find it; ↑/↓ move between Blank
 note and the template rows, and the focused row carries the same left-edge
 bar the Notes list rows use. The footer's "enter create note" appears only
-while one of those rows genuinely has focus — move to "‹ Notes" and it
-drops, because Enter there goes back rather than creating anything.
+while one of those rows genuinely has focus — move to "‹ Notes" / "‹ Back to
+list" (the same compact-vs-wide wording as Edit/Preview/Info) and it drops,
+because Enter there goes back rather than creating anything.
 
 ### Add from files and lasting sync
 
@@ -920,3 +922,9 @@ the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
 Obsidian vault detection is stated as POSIX-only, since the Windows
 discovery adapter never reports a vault (task-32178).)*
+
+*Verified against fix/library-notes-r-editor — 2026-09-09 (task-32177: the
+New-note view's and the note-loading/retry view's own Back buttons had been
+left out of task-32139's back-cue unification and stayed hard-coded
+"‹ Notes" at every width; both now follow the same "‹ Notes" (wide) /
+"‹ Back to list" (compact) rule as Edit, Preview, and Info.)*

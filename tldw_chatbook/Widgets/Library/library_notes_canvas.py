@@ -773,8 +773,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Render the existing note-loading/retry surface inside the canvas."""
         with Vertical(id="library-note-load-state"):
             with Horizontal(id="library-note-load-heading"):
+                # task-32177: this view's Back was left out of task-32139's
+                # unification and stayed hard-coded "‹ Notes" at every width.
                 yield Button(
-                    "‹ Notes",
+                    _library_note_back_label(self.compact),
                     id="library-note-back",
                     classes="library-canvas-action",
                     compact=True,
@@ -1598,11 +1600,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
-        yield Static(
-            status_line,
-            id="library-note-context-status",
-            markup=False,
-        )
         with VerticalScroll(id="library-note-context-region", can_focus=True):
             yield Static("Properties", classes="destination-section", markup=False)
             with Horizontal(id="library-note-context-keywords-row"):
@@ -1978,10 +1975,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         content_copy = channels.content_recovery
         if channels.safe_next_action:
             content_copy = f"{content_copy} Next: {channels.safe_next_action}."
-        for selector in ("#library-note-status", "#library-note-context-status"):
-            widget = self.query_one(selector, Static)
-            if self._static_text(widget) != content_copy:
-                widget.update(content_copy)
+        status_widget = self.query_one("#library-note-status", Static)
+        if self._static_text(status_widget) != content_copy:
+            status_widget.update(content_copy)
         authority_status = self.query_one("#library-note-authority-git-status", Static)
         if self._static_text(authority_status) != channels.authority_git:
             authority_status.update(channels.authority_git)
@@ -2033,11 +2029,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             bulk_status.update(bulk_copy)
         self.query_one("#library-note-editor-region").display = show_editor
         self.query_one("#library-note-preview-region").display = show_preview
-        # task-32142 AC#2: this Static repeats the identical text
-        # ``#library-note-status`` (the header-second-row status, visible
-        # in every mode) already shows -- Info printed "Saved" twice, once
-        # in the header and once again immediately above the panel.
-        self.query_one("#library-note-context-status").display = False
         self.query_one("#library-note-context-region").display = show_context
         self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
         self.query_one("#library-note-preview", Button).set_class(
@@ -2142,8 +2133,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         needs the key and a human label, never the raw title/content.
         """
         with Horizontal(id="library-notes-create-heading"):
+            # task-32177: this view's Back was also left out of task-32139's
+            # unification and stayed hard-coded "‹ Notes" at every width.
             yield Button(
-                "‹ Notes",
+                _library_note_back_label(self.compact),
                 id="library-notes-create-back",
                 classes="library-canvas-action",
                 compact=True,

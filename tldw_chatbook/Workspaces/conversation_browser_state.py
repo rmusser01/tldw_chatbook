@@ -85,7 +85,13 @@ def console_conversation_browser_group_row_limit(body_height: int | None) -> int
     return max(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT, adaptive_rows)
 
 
-def _parse_browser_timestamp(value: str) -> datetime | None:
+def parse_browser_timestamp(value: str) -> datetime | None:
+    """Parse a browser-row timestamp, defaulting a naive value to UTC.
+
+    Public (task-32177): ``Library/library_notes_state.py`` needs this same
+    parse for its own absolute-timestamp label and previously imported the
+    underscore-prefixed name directly out of this module.
+    """
     text = str(value or "").strip()
     if not text:
         return None
@@ -159,7 +165,7 @@ def format_console_relative_age(value: str, *, now: datetime) -> str:
     Returns:
         Compact age label, or an empty string when the value is unparseable.
     """
-    parsed = _parse_browser_timestamp(value)
+    parsed = parse_browser_timestamp(value)
     if parsed is None:
         return ""
     if now.tzinfo is None:
