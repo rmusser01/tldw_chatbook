@@ -1,9 +1,11 @@
 ---
 id: TASK-31504
 title: Personal Context pays repeated hardened connects on every send
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-09-04 19:30'
+updated_date: '2026-09-06 00:18'
 labels:
   - performance
   - personal-context
@@ -11,6 +13,34 @@ labels:
 dependencies: []
 priority: medium
 ---
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes (amend existing decision). ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md. Reason: document operation-scoped autocommit connection reuse and fail-closed negative-cache validity without changing authority. Add failing connection-count, invalidation, closure, thread isolation and authority-race regressions. Reuse one hardened connection per scoped operation while preserving short export snapshots and live fences; retain the Console double-build consistency fence with an owner note. Cache only unchanged absent state using content-free filesystem identity/change metadata and invalidate on setup, replacement, WAL change or errors. Never cache ready authority. Verify targeted Personal Context and agent/Console suites and record measured counts, not speculative latency.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Added lazy, thread-local repository read operations and service/Console scopes. Nested reads reuse one autocommit connection and close it on success or failure; mutations keep their existing transactions. The export transaction and final live manifest, policy, binding, and revocation reads remain intact.
+- Owner note: both Console authorized views remain because the second fences separately read scope identity and authority. Every reused read retains trusted-directory verification plus database identity/owner/mode/link and sidecar privacy checks.
+- Cache only proven absent status using content-free DB/WAL/journal metadata. Setup, failed setup, Start Fresh, storage changes/errors and service replacement invalidate it. SHM ownership remains checked; empty WAL/journal creation/retirement cannot hide committed changes and is normalized to absent. Locked facades retain zero-connect behavior.
+- Measured production composition on real SQLite: configured global **44 → 1** hardened opens; configured workspace **68 → 1**. Unchanged absent composition performs **0** opens after its first read, including WAL mode. These are connection counts, not latency claims.
+- ADR required: yes, amended `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`; no schema/dependency change. Changed repository/service and Console composition; added `Tests/Personal_Context/test_send_performance.py`.
+- Verification: targeted repository, service, context-service, export, durable-owner inventory, agent-provider, Console integration and import-provenance run: **169 passed, 2 existing dependency warnings**. New regressions cover count reduction, negative-cache invalidation (including external WAL-only setup), lifecycle/errors, replacement rejection, nesting, closure and threads. Ruff passes for repository/service/new tests; changed source ranges and new test formatting pass; `git diff --check` passes. Console whole-file lint has the same 27 pre-existing findings as HEAD.
+- Self-review complete. Status/AC finalization awaits independent spec and quality review; no full suite, commit, or publication performed by the implementing subagent.
+
+Independent spec review and code-quality review approved with no findings. Primary independently reran the nine-file targeted set: 169 passed, 2 dependency warnings (6.56s); quality reviewer separately ran 17 new regressions, all passed. Primary Ruff checks for repository/service/new tests, new-test formatting and diff check passed. Pytest emitted cleanup warnings for protected pre-existing garbage directories after exit 0; those unrelated directories were not modified. Implementation plan: Docs/superpowers/plans/2026-09-05-personal-context-send-performance.md. No schema or dependency changes, no full sweep, no PR or merge. Both authorized views remain intentionally per the documented owner note. Legacy unnumbered acceptance criteria were checked in the task source after CLI reported their indexes unavailable; Done status set through CLI.
+
+Publication: opened https://github.com/rmusser01/tldw_chatbook/pull/2439 against dev from reviewed source 0e3bcd1366. Fresh send-performance regression run: 17 passed, exit 0, two existing dependency warnings and pre-existing protected pytest garbage cleanup warnings; diff check passed. No rebase or merge. Current dev has advanced including Console changes; latest-base integration remains a pre-merge step.
+
+PR review round: rebase onto current dev, document public metadata/context-manager return contracts and name the storage identity slice boundary. Verify Qodo path/transaction recommendations against approved ADR-102 before changing authorization semantics. Run targeted Personal Context/Console tests and source checks, review the diff, then publish. Existing ADR-102 governs unchanged behavior; no new ADR required.
+
+Review evidence: rebased onto Chatbook dev 2b4973971e. Added public return contracts and named the identity-field count without changing checks. Retained operation-scoped autocommit per ADR-102: spanning live fences with a read transaction could hide revocation. Retained trusted lexical descriptor walk per private_paths.verify_trusted_directory security contract; path normalization before that walk would follow aliases before authority checks and reject supported root-owned macOS links. Fresh seven-file repository/service/context/export/inventory/Console selection: 151 passed, 2 dependency warnings, exit 0; protected pre-existing pytest cleanup warnings left unchanged. Ruff and changed-range formatting/diff checks passed; whole-file formatter has existing unrelated drift, not bulk-rewritten. Independent scoped review and derived preflight pending.
+
+Independent scoped spec and quality review approved the fixes and path/transaction rationale with no actionable findings. Full derived-artifact preflight passed (stylesheets, path census, diagnostic inventory, task IDs, table allowlist, index pins). All four Qodo items have a fix or evidence-backed disposition; publishing this reviewed round, not merging.
+<!-- SECTION:NOTES:END -->
 
 ## Description (the why)
 
@@ -30,6 +60,6 @@ export-snapshot decrypts per send, scaling with profile size. Evidence:
 
 ## Acceptance Criteria (the what)
 
-- [ ] A send with Personal Context unconfigured/locked performs zero Personal Context DB connects after the first (the locked/absent status is cached with a correct invalidation story for setup/unlock)
-- [ ] A send with a configured profile builds the authorized view once and reuses one connection across the operation (or an owner note records why the double-build consistency check must stay)
-- [ ] Security semantics unchanged: fail-closed behavior and owner checks still hold (existing Personal Context authority tests stay green)
+- [x] A send with Personal Context unconfigured/locked performs zero Personal Context DB connects after the first (the locked/absent status is cached with a correct invalidation story for setup/unlock)
+- [x] A send with a configured profile builds the authorized view once and reuses one connection across the operation (or an owner note records why the double-build consistency check must stay)
+- [x] Security semantics unchanged: fail-closed behavior and owner checks still hold (existing Personal Context authority tests stay green)
