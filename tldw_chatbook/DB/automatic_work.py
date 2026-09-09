@@ -943,13 +943,24 @@ class AutomaticWorkLedger:
                 self._db.goal_runs.reserve_result(conn, goal, attempt_id)
         return self.read_goal_attempt(attempt_id, owner_id=owner_id)
 
-    def accept_goal_iteration(self, attempt_id: str, *, owner_id: str) -> bool:
-        """Only the first committed goal acceptance grants native dispatch."""
+    def accept_goal_iteration(
+        self,
+        attempt_id: str,
+        *,
+        owner_id: str,
+        admission_guard: Callable[[], None] | None = None,
+    ) -> bool:
+        """Accept once; an optional runtime guard may only refuse admission.
+
+        The guard runs synchronously inside the existing acceptance transaction;
+        it must not access the database or perform asynchronous work.
+        """
         return self._accept_attempt(
             attempt_id,
             owner_id=owner_id,
             limits=AutomaticWorkLimits.from_settings("goal_iteration"),
             kind="goal_iteration",
+            admission_guard=admission_guard,
         )
 
     def abort_goal_iteration(self, attempt_id: str, *, owner_id: str) -> bool:
@@ -975,6 +986,7 @@ class AutomaticWorkLedger:
         owner_id: str,
         limits: AutomaticWorkLimits | None,
         kind: str,
+        admission_guard: Callable[[], None] | None = None,
     ) -> bool:
         with self._db.connection() as conn:
             chain_id = self._attempt(conn, attempt_id, owner_id, kind)["chain_id"]
@@ -1012,6 +1024,8 @@ class AutomaticWorkLedger:
             )
             if reservation["state"] != "reserved":
                 raise ValueError("attempt generation is not reserved")
+            if admission_guard is not None:
+                admission_guard()
             now = self._wall_clock()
             conn.execute(
                 "UPDATE automatic_work_reservations SET state='committed', updated_at=? WHERE id=?",

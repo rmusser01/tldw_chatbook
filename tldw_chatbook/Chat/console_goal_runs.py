@@ -108,6 +108,7 @@ class GoalIterationAuthorization:
         return "GoalIterationAuthorization(authority=<redacted>)"
 
     def check_binding(self) -> None:
+        self._coordinator._check_admission_open()
         reason = self._coordinator.service._binding_reason(self.goal.request)
         if reason:
             raise AutomaticWorkRefused(reason)
@@ -584,6 +585,13 @@ class ConsoleGoalCoordinator:
             conversation_id and conversation_id == self._reserved_conversation_id
         )
 
+    def _check_admission_open(self) -> None:
+        """Read the monotonic runtime fence, including from the ledger worker."""
+        if self._closed or self.controller._disposed:
+            raise AutomaticWorkRefused("runtime_unavailable")
+        if self._stop_requested:
+            raise AutomaticWorkRefused("cancelled")
+
     def authorizes(self, authorization: object, session_id: str | None) -> bool:
         return (
             isinstance(authorization, GoalIterationAuthorization)
@@ -619,6 +627,7 @@ class ConsoleGoalCoordinator:
     async def accept(
         self, authorization: GoalIterationAuthorization, session_id: str
     ) -> bool:
+        self._check_admission_open()
         if not self.authorizes(authorization, session_id):
             raise PermissionError("goal authority is no longer live")
         authorization.check_binding()
@@ -629,16 +638,22 @@ class ConsoleGoalCoordinator:
             self.ledger.accept_goal_iteration,
             authorization.attempt_id,
             owner_id=self._owner_id,
+            admission_guard=self._check_admission_open,
         )
         if not accepted:
             raise AutomaticWorkRefused("attempt_not_prepared")
         await asyncio.to_thread(authorization.context.mark_accepted)
         authorization.accepted = True
         authorization.started = time.monotonic()
+        self._check_admission_open()
         return True
 
     async def dispatch_once(self, goal_id: str) -> GoalIterationResult:
         """Cancellation requests Stop and waits for the owning cleanup path."""
+        if self._closed or self.controller._disposed:
+            return GoalIterationResult(
+                goal_id, 0, None, None, None, "runtime_unavailable"
+            )
         if self._dispatching:
             return GoalIterationResult(goal_id, 0, None, None, None, "goal_active")
         self._event_loop = asyncio.get_running_loop()
@@ -668,11 +683,15 @@ class ConsoleGoalCoordinator:
             ConsoleSubmissionOrigin,
         )
 
-        if self.controller._disposed:
+        if self._closed or self.controller._disposed:
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "runtime_unavailable"
             )
         goal = await asyncio.to_thread(self.service.get, goal_id)
+        if self._closed or self.controller._disposed:
+            return GoalIterationResult(
+                goal_id, 0, None, None, None, "runtime_unavailable"
+            )
         if goal.status != "ready" or goal.request is None:
             return GoalIterationResult(goal_id, 0, None, None, None, "goal_not_ready")
         if not _coerce_autowake_enabled(_setting("goal_runs_enabled", False)):
@@ -694,6 +713,10 @@ class ConsoleGoalCoordinator:
                 return GoalIterationResult(
                     goal_id, 0, None, None, None, "goal_not_ready"
                 )
+        if self._closed or self.controller._disposed:
+            return GoalIterationResult(
+                goal_id, 0, None, None, None, "runtime_unavailable"
+            )
         session = next(
             (
                 s
@@ -741,6 +764,7 @@ class ConsoleGoalCoordinator:
             attempt = await asyncio.to_thread(
                 self.ledger.prepare_goal_iteration, goal_id, owner_id=self._owner_id
             )
+            self._check_admission_open()
             authorization = GoalIterationAuthorization(self, goal, attempt, _key=_KEY)
             self._active = authorization
             from tldw_chatbook.Chat.console_project_instructions import (

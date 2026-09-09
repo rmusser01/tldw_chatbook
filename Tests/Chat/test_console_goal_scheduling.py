@@ -770,3 +770,99 @@ async def test_stop_write_failure_still_fences_and_drains_active_owner(
         await controller.shutdown()
         await co.shutdown()
         await gateway_close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "boundary,charged",
+    [
+        ("initial_read", 0),
+        ("prepared", 0),
+        ("provider_resolution", 0),
+        ("before_accept_commit", 0),
+        ("after_accept_commit", 1),
+    ],
+)
+async def test_shutdown_fence_survives_awaited_admission_with_failed_stop(
+    stores, monkeypatch, boundary, charged
+):
+    import sqlite3
+
+    goal, _, _, controller, co, gateway, calls = build_goal_rig(
+        stores, monkeypatch, lambda **kwargs: progress(1)
+    )
+    entered, release = threading.Event(), threading.Event()
+    get = co.service.get
+
+    def wait_at_boundary():
+        entered.set()
+        assert release.wait(5)
+
+    if boundary == "initial_read":
+        first = True
+
+        def blocked_read(goal_id):
+            nonlocal first
+            snapshot = get(goal_id)
+            if first:
+                first = False
+                wait_at_boundary()
+            return snapshot
+
+        monkeypatch.setattr(co.service, "get", blocked_read)
+    elif boundary == "provider_resolution":
+        prepare = gateway.resolve_for_send
+
+        async def blocked_native_preparation(*args, **kwargs):
+            value = await prepare(*args, **kwargs)
+            await asyncio.to_thread(wait_at_boundary)
+            return value
+
+        monkeypatch.setattr(gateway, "resolve_for_send", blocked_native_preparation)
+    else:
+        method = (
+            "prepare_goal_iteration"
+            if boundary == "prepared"
+            else "accept_goal_iteration"
+        )
+        operation = getattr(co.ledger, method)
+
+        def blocked_operation(*args, **kwargs):
+            if boundary == "before_accept_commit":
+                wait_at_boundary()
+            result = operation(*args, **kwargs)
+            if boundary != "before_accept_commit":
+                wait_at_boundary()
+            return result
+
+        monkeypatch.setattr(co.ledger, method, blocked_operation)
+
+    def fail_stop(goal_id):
+        raise sqlite3.OperationalError("injected Stop write failure")
+
+    monkeypatch.setattr(co.service, "stop", fail_stop)
+    runner = co.start(goal.id)
+    shutdown = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 3)
+        shutdown = asyncio.create_task(co.shutdown())
+        await asyncio.sleep(0.03)
+        assert not shutdown.done() and not calls
+        release.set()
+        await asyncio.wait_for(shutdown, 5)
+        assert runner.done()
+        assert not calls, "closed admission must never dispatch a provider operation"
+        saved = get(goal.id)
+        assert saved.accounting.used["generation"] == charged
+        assert saved.accounting.reserved["generation"] == 0
+        assert saved.accounting.used["model_call"] == 0
+        refused = await co.dispatch_once(goal.id)
+        assert refused.reason_code == "runtime_unavailable"
+        assert not calls
+    finally:
+        release.set()
+        await asyncio.gather(
+            runner, *([shutdown] if shutdown else []), return_exceptions=True
+        )
+        await controller.shutdown()
+        await gateway.aclose()
