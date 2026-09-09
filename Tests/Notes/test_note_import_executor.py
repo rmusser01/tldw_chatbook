@@ -79,7 +79,7 @@ _EXECUTION_APPROVAL_ID = "00000000-0000-4000-8000-000000000041"
 
 @pytest.fixture
 def target_harness(
-    tmp_path,
+    tmp_path: Path,
 ) -> Iterator[
     tuple[
         LocalNoteImportTarget,
@@ -90,20 +90,156 @@ def target_harness(
 ]:
     """Return the real local target stack over one temporary database."""
     db = CharactersRAGDB(tmp_path / "target.db", client_id="target-template")
-    service = NotesInteropService(
-        base_db_directory=tmp_path,
-        api_client_id="target-api",
-        global_db_to_use=db,
-    )
-    target_db = service._get_db("target-user")
-    folders = LocalNoteFolderRepository(target_db)
-    target = LocalNoteImportTarget(
-        db=target_db,
-        folder_repository=folders,
-    )
-    yield target, service, folders, target_db
-    service.close_all_user_connections()
-    db.close_connection()
+    service: NotesInteropService | None = None
+    try:
+        service = NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="target-api",
+            global_db_to_use=db,
+        )
+        target_db = service._get_db("target-user")
+        folders = LocalNoteFolderRepository(target_db)
+        target = LocalNoteImportTarget(
+            db=target_db,
+            folder_repository=folders,
+        )
+        yield target, service, folders, target_db
+    finally:
+        try:
+            if service is not None:
+                service.close_all_user_connections()
+        finally:
+            with db.quiesce_connections(timeout_seconds=2.0):
+                pass
+            assert db.registered_connection_count() == 0
+
+
+def test_target_harness_quiesces_database_when_setup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Require setup failure to retire the exact database allocated first.
+
+    Args:
+        tmp_path: Isolated directory for the fixture-owned database.
+        monkeypatch: Scoped patch helper for the forced setup failure.
+    """
+
+    databases: list[CharactersRAGDB] = []
+    original_init = CharactersRAGDB.__init__
+
+    def capture_database(database, *args, **kwargs) -> None:
+        original_init(database, *args, **kwargs)
+        databases.append(database)
+
+    def fail_service_setup(*_args, **_kwargs) -> None:
+        raise RuntimeError("forced target harness setup failure")
+
+    monkeypatch.setattr(CharactersRAGDB, "__init__", capture_database)
+    monkeypatch.setattr(NotesInteropService, "__init__", fail_service_setup)
+    fixture = target_harness.__wrapped__(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="forced target harness setup failure"):
+            next(fixture)
+
+        assert len(databases) == 1
+        assert databases[0].registered_connection_count() == 0
+    finally:
+        fixture.close()
+        for database in databases:
+            with database.quiesce_connections(timeout_seconds=2.0):
+                pass
+
+
+def test_target_harness_quiesces_worker_after_body_failure(
+    tmp_path: Path,
+) -> None:
+    """Retire a worker handle without masking failure or closing a foreign DB.
+
+    Args:
+        tmp_path: Isolated directory for fixture-owned and foreign databases.
+    """
+
+    fixture = target_harness.__wrapped__(tmp_path)
+    owner: CharactersRAGDB | None = None
+    foreign: CharactersRAGDB | None = None
+    try:
+        target, service, _folders, target_db = next(fixture)
+        owner = service.unified_db_template
+        foreign = CharactersRAGDB(tmp_path / "foreign.db", client_id="foreign")
+        foreign_connection = foreign.get_connection()
+        worker_results: Queue[object] = Queue()
+        worker = threading.Thread(
+            target=lambda: worker_results.put(target_db.get_connection())
+        )
+        worker.start()
+        worker.join(timeout=2.0)
+        assert not worker.is_alive()
+        worker_connection = worker_results.get_nowait()
+        assert isinstance(worker_connection, sqlite3.Connection)
+        assert owner.registered_connection_count() > 0
+
+        primary = RuntimeError("forced target harness body failure")
+        with pytest.raises(
+            RuntimeError, match="forced target harness body failure"
+        ) as caught:
+            try:
+                raise primary
+            finally:
+                fixture.close()
+
+        assert caught.value is primary
+        assert owner.registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connection.execute("SELECT 1")
+        assert foreign_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        try:
+            fixture.close()
+        finally:
+            try:
+                if owner is not None:
+                    with owner.quiesce_connections(timeout_seconds=2.0):
+                        pass
+            finally:
+                if foreign is not None:
+                    with foreign.quiesce_connections(timeout_seconds=2.0):
+                        pass
+
+
+def test_target_harness_propagates_quiescence_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Require the actual fixture finalizer to expose cleanup failure.
+
+    Args:
+        tmp_path: Isolated directory for the fixture-owned database.
+        monkeypatch: Scoped patch helper for the forced cleanup failure.
+    """
+
+    fixture = target_harness.__wrapped__(tmp_path)
+    _target, service, _folders, target_db = next(fixture)
+    owner = service.unified_db_template
+    real_quiesce = owner.quiesce_connections
+    marker = RuntimeError("forced target harness cleanup failure")
+
+    def fail_quiescence(*, timeout_seconds: float) -> None:
+        del timeout_seconds
+        raise marker
+
+    monkeypatch.setattr(owner, "quiesce_connections", fail_quiescence)
+    try:
+        with pytest.raises(
+            RuntimeError, match="forced target harness cleanup failure"
+        ) as caught:
+            fixture.close()
+        assert caught.value is marker
+    finally:
+        fixture.close()
+        with real_quiesce(timeout_seconds=2.0):
+            pass
+        assert target_db.registered_connection_count() == 0
 
 
 def _payload(
@@ -1523,7 +1659,9 @@ async def test_execute_async_file_backed_recursive_import_reopens_and_replays_on
         assert first_receipt.state is ImportSessionState.COMPLETED
         assert first_receipt.imported == 1
     finally:
-        first_db.close_connection()
+        with first_db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert first_db.registered_connection_count() == 0
 
     reopened_db = CharactersRAGDB(notes_path, client_id="file-backed-smoke")
     try:
@@ -1592,7 +1730,9 @@ async def test_execute_async_file_backed_recursive_import_reopens_and_replays_on
             == 1
         )
     finally:
-        reopened_db.close_connection()
+        with reopened_db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert reopened_db.registered_connection_count() == 0
 
 
 @pytest.mark.parametrize("crash_boundary", ["folder", "payload", "membership", "item"])

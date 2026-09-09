@@ -411,7 +411,9 @@ async def test_real_file_backed_screen_check_is_read_only_then_import_refreshes(
             assert screen._library_note_import_controller.snapshot.receipt.imported == 1
     finally:
         interop.close_all_user_connections()
-        database.close_connection()
+        with database.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert database.registered_connection_count() == 0
 
 
 async def test_hidden_import_fences_notes_mutations_until_receipt(
@@ -591,7 +593,9 @@ async def test_real_import_then_back_offers_last_import_and_names_the_skips(
             await _wait_for_selector(screen, pilot, "#note-import-skipped")
     finally:
         interop.close_all_user_connections()
-        database.close_connection()
+        with database.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert database.registered_connection_count() == 0
 
 
 

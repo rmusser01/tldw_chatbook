@@ -3418,3 +3418,51 @@ characterization owners pass 58 tests, three warnings, in 14.10s
 (`/private/tmp/pr2427-six-wrappers-regression.log`). All selected functional
 tests pass; the newly attributed executor/import-flow resource qualification,
 final-head publication/review and normal protected merge remain open.
+
+### Exact import database owners and the next dev overlap
+
+Published `0b5ee223067f82625d277c93315218d74859e9d2` with an exact lease from
+`645126abf5`. Qodo's Direct-count finding received reply 3971905593 and its
+verified fixed thread was resolved. Final preflight on this source passes all
+seven checks with 3,734 unique IDs (`/private/tmp/pr2427-import-final-preflight.log`).
+This publication saves the reviewed rebase and wrapper repair; it does not close
+the separately recorded resource or merge gates.
+
+Step 138 fixes only the two real import-flow tests' finalizers. Each private
+database's interop views acquire thread-local connections during planning,
+execution and refresh. Closing only the pytest thread left 26 native SQLite-family
+handles per test. New zero-registry assertions reproduce both failures (11 and 12
+registered connections). Reusing the existing two-second same-file quiescence
+barrier after mounted work exits passes both attributed cases and the complete
+11-case file, with a final inventory of six standard descriptors and zero SQLite
+or lock retention. Full-file result: 11 passed, three warnings, 17.11s; existing
+quiescence/resource fault/foreign-owner controls: 31 passed, three warnings, 6.98s.
+Logs: `/private/tmp/pr2427-import-flow-owner-{red,green,controls,final}.log`.
+Receipt: `$TMPDIR/pr2427-import-flow-owner-final.FJHBJl/fd_identity.jsonl`.
+Independent diff review confirms unchanged functional assertions, interop cleanup
+and exact temporary-file ownership. Ruff, formatting and whitespace pass.
+
+New dev `4d921397b9` (PR 2544 Notes list) arrived after this qualification.
+The read-only integration review identifies a semantic trap as well as textual
+conflicts: the PR already reconciles an undone note exactly once while mutation
+admission is held; incoming code adds a second reconciliation in `finally` after
+release. Step 140 preserves the existing held call, new lifecycle guards and
+layout-before-kwargs behavior together with ADR-141's in-place callback ownership.
+Rebase waits for the executor fixture's complete terminal qualification and a
+saved checkpoint; no pending run is represented as a pass.
+
+Step 139 is now terminal and independently reviewed. The three actual-fixture
+controls initially fail on setup retention, body/worker retention, and missing
+cleanup-error propagation; all three pass after the exact-owner finalizer repair.
+A separate real foreign-path connection remains usable. The four attributed
+executor cases pass natively with no SQLite retention. Independent review caught
+an initially missed first cold-reopen boundary; it was corrected before the final
+frozen qualification, preserving the unrelated similarly named race test.
+The complete executor file passes 140 tests, two environment warnings, in 59.27s,
+exit zero, with exactly six final standard descriptors and no SQLite/regular-file
+retention. Log: `/private/tmp/pr2427-executor-native-complete.log`; receipt:
+`$TMPDIR/pr2427-executor-native-complete.ZNMlSy/fd_identity.jsonl`.
+Source blob `44481d578c2bd29a3703553c8f21a6ea1f0d11f8` stayed unchanged throughout.
+Scoped Ruff and whitespace pass; two inherited whole-file formatting differences
+outside the edited ranges are unchanged. Both resource-repair runs are terminal;
+new dev reconciliation can proceed without altering a running test's sources.
