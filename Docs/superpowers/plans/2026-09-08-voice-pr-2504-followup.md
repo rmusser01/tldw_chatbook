@@ -8,6 +8,39 @@ ADR required: no new ADR
 ADR path: `backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md` (with existing ADR-094 and ADR-097)
 Reason: Behavior-preserving integration, targeted admission/boot defects, and declared portable vendor build corrections within existing contracts.
 
+## Final relevant dev refresh — 2026-09-09
+
+Dev advanced from `5655c4820733d24754f872c21cc6196d83bf1504` to
+`2e3389e694e93592a1c66e5c3416bf29a1057d6c` with PR #2534's official Kokoro
+runtime and exact-owner speech cancellation fixes. This is directly relevant to
+the user's complete-audio/latest-dev integration request. Preserve those incoming
+changes rather than pinning publication before them. The earlier dev checkpoints
+below remain historical evidence, not a claim about this final base.
+
+ADR required: no new ADR
+ADR path: existing ADR-098, ADR-139 and incoming
+`backlog/decisions/140-official-kokoro-pytorch-runtime.md`
+Reason: mechanically compose accepted upstream runtime and lifecycle contracts;
+do not redesign them or repeat their native/model/playback qualification.
+
+1. Review the immutable incoming delta and its shared paths against the completed
+   local fixes. Root reads the new ADR/tasks/testing lessons; an independent
+   source review selects fake-only TTS integration tests before any execution.
+2. Preserve a named backup of the clean reviewed local checkpoint. Rebase onto
+   exact dev `2e3389e6`, retaining every upstream and feature code change. Resolve
+   documentation composition explicitly. For the generated diagnostic inventory,
+   inspect actual statement changes before using the official generator.
+3. Prove incoming/replayed source equivalence, including every shared path, and
+   retain schema 69/70 bytes, voice 71, native pins and hard-off resources. Run the
+   selected fake TTS/route checks and final startup guards without changing any
+   budget. Exclude the new Kokoro runtime test module: collection imports Torch
+   and evaluates native MPS availability.
+4. Complete separate spec and quality reviews of the frozen startup correction,
+   then final source/version/inventory checks. Update the existing PR using an
+   explicit lease against observed published head `ab4bd317470efef88478e297c432759ee6efe9e9`.
+   Preserve the fresh generated PR-description block; observe normal automatic
+   PR CI only. Leave the PR OPEN, UNMERGED, with auto-merge disabled.
+
 ## Global Constraints
 
 - Work only in `.worktrees/speculative-duplex-voice-dev`, branch `codex/speculative-duplex-voice-dev`. Preserve main and the original feature worktree, including all unrelated edits.
