@@ -19373,8 +19373,8 @@ class LibraryScreen(BaseAppScreen):
                 if title_blank and not any(
                     value.strip() for value in (raw_content, raw_keywords_text)
                 ):
-                    await self._gc_pending_blank_note()
-                    return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+                    if await self._gc_pending_blank_note():
+                        return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
         before = self._library_note_session.snapshot
         before_saved_revision = before.saved_revision if before is not None else None
         outcome = await self._library_note_session.flush()
@@ -19418,7 +19418,7 @@ class LibraryScreen(BaseAppScreen):
             self._focus_library_note_validation_field(validation_field)
         return outcome
 
-    async def _gc_pending_blank_note(self) -> None:
+    async def _gc_pending_blank_note(self) -> bool:
         return await self._notes_controller._gc_pending_blank_note()
 
     @on(Button.Pressed, '#library-note-conflict-overwrite')

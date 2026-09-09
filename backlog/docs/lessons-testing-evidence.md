@@ -62,6 +62,22 @@ succeeds before disposal exposed the missing cleanup. For fail-closed behavior,
 establish a successful control and exercise the production sync/async entry;
 an unrelated exception can otherwise satisfy the failure assertion.
 
+## A committed row is not an accepted editor save reply
+
+**PR #2427 / TASK-31932, 2026-09-09.** Holding a real Notes save reply after
+its SQLite commit exposed version 2 in the row while the coordinator still
+held version 1. Blank-note Back bypassed the save barrier, used the stale
+version for cleanup, and could close before a newer authored draft persisted.
+Existing destructive admission plus post-wait eligibility checks fixed that
+ordering. The original test separately edited an unfocused TextArea: a late
+save projection restored its old body before Changed consumed the empty edit.
+Focus and a canonical-draft receipt made the fixture exercise the intended GC.
+
+**What to do.** Distinguish storage commit, accepted save response, canonical
+draft receipt and final navigation. Test their boundaries with controlled real
+operations. Assert whether destructive calls occurred, not merely whether a row
+survived an optimistic-lock rejection; never infer final cleanup from a midpoint.
+
 ## A headless Textual child has a second stdout forwarding path
 
 **PR #2427 / TASK-31932, 2026-09-09.** Fourteen real-app TTS shutdown tests

@@ -3730,77 +3730,75 @@ class LibraryNotesController:
             self._library_note_preview = False
         self._update_library_note_meta_static(content=snapshot.body)
         self._focus_library_note_validation_field(validation_field)
-    async def _gc_pending_blank_note(self) -> None:
-        """Delete this session's now-empty "Blank note" row before it is left behind (LIB-14).
+    async def _gc_pending_blank_note(self) -> bool:
+        """Settle saves and revalidate this session's silent-GC exception.
 
-        "Blank note" still commits its DB row immediately on click (the
-        create-note seam has no create-on-first-edit branch -- see the
-        AC#5 decision recorded on task-2858); this is the smaller-diff
-        alternative the task allows instead: whenever the editor is left
-        with this session's blank note in an effectively-empty final state
-        (title/body/keywords all blank -- see the caller,
-        ``_flush_library_note_save``, which covers both "never touched"
-        and "typed then deleted everything"), the row is quietly removed
-        here rather than surviving as a permanent literal "Untitled" row
-        the user has to find and delete by hand.
+        ADR-055 permits best-effort cleanup only while the canonical draft
+        remains empty and its title retains blank-seed provenance. Admission
+        waits for coalesced saves and fences further edits; its version is the
+        accepted save version, never a freshly fetched external row version.
+        Recheck eligibility after that wait, including explicit Save exemptions.
 
-        Reads ``_library_note_session_blank_id`` (not the narrower,
-        edit-cleared ``_library_note_pending_blank_gc_id``) so this still
-        fires after the note was typed into and then emptied out again --
-        which, unlike the "never touched" case, may well have gone
-        through one or more real autosaves in between (deliberately: see
-        that flag's own docstring on why autosave alone must not exempt a
-        session blank from GC). Each of those autosaves bumps the row's
-        real DB version, so the delete below sends
-        ``self._library_note_version`` (the screen's own up-to-date
-        tracking of it, updated by every successful save) rather than a
-        hardcoded 1 -- an earlier version of this fix hardcoded 1 and the
-        delete silently failed on a version mismatch whenever a
-        mid-session autosave had already bumped the row past v1 (found by
-        the dedicated autosave-then-empty test). Falls back to 1 only for
-        the genuinely-never-saved case, where ``_library_note_version`` is
-        still ``None``. Best-effort: any failure (including a version
-        conflict from a still-possible concurrent EXTERNAL change) is
-        swallowed -- GC must never block the exit it runs inside, and the
-        worst case on failure is the pre-existing behavior (the row
-        survives), not a new regression. On success, patches the same cached
-        Notes rows/count used by visible Delete, Undo, and Create while their
-        one shared mutation interlock is held.
-
-        Also clears ``_library_note_dirty`` unconditionally (review round
-        1 fix): the caller, ``_flush_library_note_save``, is reached via
-        the "typed then deleted everything" path with ``_library_note_
-        dirty`` still ``True`` -- every exit seam (e.g.
-        ``_exit_library_note_editor_guarded``) vetoes on that flag, so
-        without clearing it here a successful GC would still leave the
-        editor stuck open. Cleared regardless of whether the delete call
-        itself succeeds, matching "GC must never block the exit it runs
-        inside": on the rare failure path the row survives with its
-        pre-exit content (the emptied edit is not separately persisted
-        either), but the user is never trapped in the editor over it.
+        Returns:
+            Whether the still-blank exit was handled (even if cleanup failed).
+            False sends an intervening authored draft through normal flushing.
         """
         note_id = self._library_note_session_blank_id
-        # The row's current version -- NOT hardcoded to 1 -- since a
-        # mid-session autosave (deliberately still possible before GC;
-        # see the docstring above) may already have bumped it past its
-        # initial create-time version.
-        current_version = self._library_note_version or 1
+        session = self._library_note_session
+        snapshot = session.snapshot
+        if not note_id or snapshot is None or self._library_notes_mutation_in_flight:
+            return False
+        outcome = await session.request_destructive_admission(
+            DestructiveKind.DELETE,
+            note_id=note_id,
+            session_generation=snapshot.session_generation,
+            expected_version=snapshot.version,
+        )
+        admission = outcome.admission
+        current = session.snapshot
+        fields = self._read_library_note_editor_fields()
+        still_blank = (
+            current is not None
+            and current.session_generation == snapshot.session_generation
+            and current.note_id == note_id == self._selected_note_id
+            and self._library_note_session_blank_id == note_id
+            and fields is not None
+            and (
+                not fields[0].strip()
+                or (
+                    fields[0] == LIBRARY_NOTE_BLANK_SEED_TITLE
+                    and not self._library_note_title_user_edited
+                )
+            )
+            and not any(value.strip() for value in fields[1:])
+        )
+        if not still_blank:
+            if admission is not None:
+                session.cancel_destructive(admission)
+            return False
         self._library_note_session_blank_id = None
         self._library_note_pending_blank_gc_id = None
-        if not note_id or self._library_notes_mutation_in_flight:
-            return
-        self._library_notes_mutation_in_flight = True
+        if admission is None:
+            return (
+                not session.destructive_running
+                and session.destructive_admission is None
+            )
         service = getattr(self.app_instance, "notes_scope_service", None)
         delete_note = getattr(service, "delete_note", None)
         if not callable(delete_note):
-            self._library_notes_mutation_in_flight = False
-            return
+            session.cancel_destructive(admission)
+            return True
+        if not session.mark_destructive_running(admission):
+            session.cancel_destructive(admission)
+            return False
+        self._library_notes_mutation_in_flight = True
+        deleted = False
         try:
             deleted = await self._run_library_service_call(
                 delete_note,
                 scope="local_note",
                 note_id=note_id,
-                version=current_version,
+                version=admission.expected_version,
                 user_id=self._library_notes_user_id(),
                 isolate_in_worker=True,
             )
@@ -3810,9 +3808,10 @@ class LibraryNotesController:
             logger.opt(exception=True).debug(
                 f"Could not GC untouched blank note {note_id!r}; leaving it in place."
             )
-            return
         finally:
+            session.finish_destructive(admission, success=bool(deleted))
             self._library_notes_mutation_in_flight = False
+        return True
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
         """Resolve a conflict through the coordinator's token-gated action.
 

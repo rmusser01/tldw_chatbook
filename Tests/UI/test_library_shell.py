@@ -23956,6 +23956,9 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
         await pilot.pause()
         note_id = screen._notes_state.selected_note_id
 
+        # Focused fields own pending edits (TASK-32062); an unfocused widget
+        # may still be projected from the preceding save's canonical snapshot.
+        screen.query_one("#library-note-body", TextArea).focus()
         screen.query_one("#library-note-body", TextArea).text = "will be autosaved"
         await pilot.pause()
 
@@ -23978,7 +23981,11 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
 
         # Now empty it back out and exit without an explicit Save.
         screen.query_one("#library-note-body", TextArea).text = ""
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_session.snapshot.body == "",
+            message="The emptied body never reached the canonical draft.",
+        )
 
         _press_note_back(screen)
         for _ in range(150):
