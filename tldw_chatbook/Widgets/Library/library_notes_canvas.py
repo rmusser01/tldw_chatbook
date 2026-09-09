@@ -54,6 +54,29 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
+
+def compose_note_row_label(
+    title: str, *, folder_label: str = "", age_label: str = ""
+) -> str:
+    """Render one Notes list row label: title, folder, then age.
+
+    The single renderer for BOTH list paths (task-32137). The flat list used
+    to put the age on a second line of its own -- a branch nothing reached
+    once a folder tree existed -- while the tree rows carried no age at all,
+    so two notes titled "Reading list" rendered as identical rows.
+
+    Args:
+        title: The note title, already markup-escaped.
+        folder_label: The row's parent folder ("Unfiled", "Work / Q3"),
+            included only when the row needs telling apart from a sibling
+            with the same title, or when a filter has scattered the rows.
+        age_label: Relative age of the note ("3m", "1d"), if known.
+
+    Returns:
+        The row label, its present parts joined with " · ".
+    """
+    return " · ".join(part for part in (title, folder_label, age_label) if part)
+
 #: The storage authority every Database Notes surface answers to. Painted once
 #: per screen: the mounted list pane owns it, and a work pane beside it drops
 #: it rather than repeating the same sentence (task-32063).
@@ -1017,19 +1040,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # (or crashing on an unmatched closing tag) -- the same
                 # fix class as the escaped search-history Button labels.
                 title = escape_markup(row.title)
+                label_rest = compose_note_row_label(title, age_label=row.age_label)
                 if select_mode:
                     # Notes rows had no marker at all before select mode
                     # existed -- normal mode keeps that markerless label
-                    # (no ``▸``, unlike the media/conversations rows). The 2-col
-                    # glyph shifts line 1, so indent the age line by 2 to keep it
-                    # aligned under the title rather than under the checkbox.
+                    # (no ``▸``, unlike the media/conversations rows).
                     glyph = "☑ " if row.checked else "☐ "
-                    label_rest = (
-                        f"{title}\n  {row.age_label}" if row.age_label else title
-                    )
                     label = f"{glyph}{label_rest}"
                 else:
-                    label_rest = f"{title}\n{row.age_label}" if row.age_label else title
                     label = label_rest
                 # task-31945: shared row press behaviour (no 0.2s flash
                 # swallowing the next click on the same row).
@@ -1060,6 +1078,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             return
         checked_ids = {row.note_id for row in list_state.rows if row.checked}
+        # task-32137: only a title that repeats under the SAME parent earns
+        # a folder suffix -- two rows with one title in two folders already
+        # sit under their own folder rows, and spending the width there
+        # ellipsized the semantic sync status instead.
+        sibling_counts = Counter(
+            (row.folder_id or "", row.label)
+            for row in projection.rows
+            if row.kind == "note"
+        )
+        duplicate_siblings = {
+            sibling for sibling, count in sibling_counts.items() if count > 1
+        }
         with Vertical(id="library-notes-list", classes="library-notes-tree"):
             for index, row in enumerate(projection.rows):
                 indent = "  " * row.depth
@@ -1105,10 +1135,23 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     yield button
                     continue
 
-                title = f"{indent}{escape_markup(row.label)}"
-                if self.filter_value and row.breadcrumb:
-                    parent_breadcrumb = row.breadcrumb.rsplit(" / ", 1)[0]
-                    title = f"{title}  — {escape_markup(parent_breadcrumb)}"
+                # A filter scatters rows out of their folders, and a
+                # repeated title is otherwise an identical row: both name
+                # their folder (task-32137).
+                folder_label = (
+                    row.breadcrumb.rsplit(" / ", 1)[0]
+                    if row.breadcrumb
+                    and (
+                        self.filter_value
+                        or (row.folder_id or "", row.label) in duplicate_siblings
+                    )
+                    else ""
+                )
+                title = indent + compose_note_row_label(
+                    escape_markup(row.label),
+                    folder_label=escape_markup(folder_label),
+                    age_label=row.age_label,
+                )
                 if row.status_text:
                     title = f"{title}  {row.status_text}"
                 if list_state.select_mode:

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from typing import Literal
+
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
@@ -58,6 +63,10 @@ class LibraryNotesTreeRow:
     loading: bool = False
     disabled: bool = False
     unsafe_mutation_disabled: bool = False
+    #: Relative age of the note behind this row ("3m", "1d"), rendered
+    #: beside the title so duplicate titles are not identical rows
+    #: (task-32137). Empty for folder, Unfiled and pager rows.
+    age_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -624,16 +633,27 @@ def _record_title(note: Mapping[str, object]) -> str:
     return str(note.get("title", "") or "Untitled")
 
 
+def _record_age(note: Mapping[str, object], now: datetime) -> str:
+    """Return the note's relative age, or "" when it records no timestamp."""
+    for key in ("last_modified", "updated_at", "created_at"):
+        raw = str(note.get(key, "") or "").strip()
+        if raw:
+            return format_console_relative_age(raw, now=now)
+    return ""
+
+
 def _note_row(
     *,
     note: Mapping[str, object],
     folder: NoteFolder | None,
     membership: NoteFolderMembership | None,
     depth: int,
+    now: datetime,
     unsafe_mutation_disabled: bool = False,
 ) -> LibraryNotesTreeRow:
     note_id = _record_id(note)
     title = _record_title(note)
+    age_label = _record_age(note, now)
     if folder is None:
         return LibraryNotesTreeRow(
             placement_id=FolderPlacementId.unfiled(note_id),
@@ -643,6 +663,7 @@ def _note_row(
             note_id=note_id,
             breadcrumb=f"Unfiled / {title}",
             unsafe_mutation_disabled=unsafe_mutation_disabled,
+            age_label=age_label,
         )
 
     assert membership is not None
@@ -676,6 +697,7 @@ def _note_row(
         status_text=status_text,
         version=membership.version,
         unsafe_mutation_disabled=unsafe_mutation_disabled,
+        age_label=age_label,
     )
 
 
@@ -892,12 +914,16 @@ def build_paged_library_notes_tree(
     expanded_folder_ids: set[str] | frozenset[str],
     protected_folder_ids: frozenset[str] = frozenset(),
     inactive_managed_folder_ids: frozenset[str] = frozenset(),
+    now: datetime | None = None,
 ) -> LibraryNotesTreeProjection:
     """Project independently loaded parent-keyed slices into one visible tree.
 
     Only supplied branch slices are projected. Expanded identities control
     recursion, and every continuation remains at the boundary it extends.
+    ``now`` is the instant every row's relative age is measured against
+    (defaults to the current UTC time, as the flat list state does).
     """
+    now = now or datetime.now(timezone.utc)
     for key, state in branch_states.items():
         if key != state.key:
             raise ValueError("branch state key does not match its mapping key")
@@ -969,6 +995,7 @@ def build_paged_library_notes_tree(
                 assert membership is not None
                 rows.append(
                     _note_row(
+                        now=now,
                         note=item.note,
                         folder=folder,
                         membership=membership,
@@ -1008,6 +1035,7 @@ def build_paged_library_notes_tree(
             if isinstance(item, NotePlacementRecord) and item.folder_id is None:
                 rows.append(
                     _note_row(
+                        now=now,
                         note=item.note,
                         folder=None,
                         membership=None,
@@ -1022,8 +1050,11 @@ def build_paged_library_notes_tree(
 
 def build_filtered_library_notes_tree(
     state: LibraryNotesFilterState,
+    *,
+    now: datetime | None = None,
 ) -> LibraryNotesTreeProjection:
     """Project one exact filter page without touching browse branch state."""
+    now = now or datetime.now(timezone.utc)
     folders = {folder.folder_id: folder for folder in state.ancestor_folders}
     rows: list[LibraryNotesTreeRow] = []
     rendered_folders: set[str] = set()
@@ -1060,6 +1091,7 @@ def build_filtered_library_notes_tree(
                 unfiled_rendered = True
             rows.append(
                 _note_row(
+                    now=now,
                     note=placement.note,
                     folder=None,
                     membership=None,
@@ -1093,6 +1125,7 @@ def build_filtered_library_notes_tree(
             continue
         rows.append(
             _note_row(
+                now=now,
                 note=placement.note,
                 folder=folder,
                 membership=membership,
