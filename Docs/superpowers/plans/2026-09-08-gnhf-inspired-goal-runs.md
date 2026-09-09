@@ -10,11 +10,11 @@ wtf
 
 **Spec:** [Review and proposed design](../specs/2026-09-08-gnhf-inspired-goal-runs-design.md).
 
-**Status:** Design direction accepted in conversation; revised after the requested [preimplementation review](../reviews/2026-09-08-goal-runs-preimplementation-review.md). The feature belongs inside Chatbook and includes existing CLI tools. Implementation has not started; this document does not claim its code or tests exist.
+**Status:** Implementation authorized by the user on 2026-09-08, following the requested [preimplementation review](../reviews/2026-09-08-goal-runs-preimplementation-review.md). The feature belongs inside Chatbook and includes existing CLI tools. Implementation is in progress in the isolated native-goal-runs worktree; unchecked steps remain outstanding.
 
 ADR required: yes
 ADR path: `backlog/decisions/141-native-console-goal-runs.md`
-Reason: Adds a durable goal lifecycle, new automatic submission/attempt semantics, storage, and long-lived Console UX. The [ADR is proposed](../../../backlog/decisions/141-native-console-goal-runs.md); existing ADR-134/135 semantics are extended only after acceptance.
+Reason: Adds a durable goal lifecycle, new automatic submission/attempt semantics, storage, and long-lived Console UX. The [ADR is accepted](../../../backlog/decisions/141-native-console-goal-runs.md); the accepted extension preserves existing ADR-134/135 fleet semantics.
 
 ## Global constraints
 
@@ -40,9 +40,9 @@ Reason: Adds a durable goal lifecycle, new automatic submission/attempt semantic
 
 - [x] Confirm the native goal-loop direction with the user and review the proposal before implementation. Existing CLI capability is an implementation input. Review corrections and remaining validation are recorded in the linked review.
 - [ ] Read the corresponding Backlog records for existing work: 32034–32037 (native ownership and budgets), 32077 and 32088–32095 (Workflows design/first milestone). Reconcile their actual source/status and any active branches before editing.
-- [ ] Accept or revise ADR-141, recheck its identifier against current branches/worktrees, and add it to the ADR index. Do not relabel an existing accepted ADR to make the new feature appear preapproved.
-- [ ] File the five slices below through Backlog CLI in dependency order. Slice labels below are planning labels, not invented Backlog IDs. Allocate/check IDs at filing time, give each measurable acceptance criteria, and link this plan, spec and ADR. Change each task to In Progress before adding its implementation plan or writing code.
-- [ ] Use an isolated implementation checkout based on the reconciled agent changes. The reviewed checkout is extensively dirty; do not stage or overwrite its unrelated changes. Record the precise implementation baseline and update file/version references if it has advanced.
+- [x] Accept ADR-141 under the user's implementation authorization, recheck its identifier against 461 local refs and 12 worktrees, and add it to the ADR index.
+- [x] File the five slices below through Backlog CLI in dependency order (TASK-32116 through TASK-32120). Slice labels below are planning labels, not invented Backlog IDs. Allocate/check IDs at filing time, give each measurable acceptance criteria, and link this plan, spec and ADR. Change each task to In Progress before adding its implementation plan or writing code.
+- [x] Use the isolated `.worktrees/native-goal-runs` checkout, with the reviewed agent changes preserved at baseline `77bc58dc17`. The reviewed checkout is extensively dirty; do not stage or overwrite its unrelated changes. Record the precise implementation baseline and update file/version references if it has advanced.
 
 ## File responsibilities
 
@@ -62,7 +62,7 @@ Reason: Adds a durable goal lifecycle, new automatic submission/attempt semantic
 
 Paths below are repository-relative planning references. Tests are added alongside the corresponding runtime owner. Existing production files are inspected again at execution time because current agent changes are uncommitted.
 
-## Slice 1: Durable goal records and immutable launch contract
+## Task 1: Durable goal records and immutable launch contract
 
 **Deliverable:** A goal can be created, inspected and reopened without running a model. Duplicate Start delivery cannot create duplicate goals or conversations. Its launch intent and budget chain are allocated atomically; cross-store conversation provisioning is recoverable.
 
@@ -94,7 +94,7 @@ assert service.get(first.id).iteration_count == 0
 
 Here `service` is a `GoalRunService` bound to a real temporary AgentRunsDB; `request` is a valid request built in this test module. Fixtures must reopen the same database file for persistence assertions.
 
-## Slice 2: One native iteration with durable dispatch authority
+## Task 2: One native iteration with durable dispatch authority
 
 **Deliverable:** Execute exactly one goal iteration, including a real CLI check, through the real Console path while sharing permissions, accounting, capacity and cancellation. Repetition is not enabled yet. Prove this vertical path before UI work.
 
@@ -134,7 +134,7 @@ validated goal identity
 
 A changed provider/tool/source binding pauses the goal; it does not silently refresh an immutable launch into a new authority.
 
-## Slice 3: Bounded memory, observed progress and completion review
+## Task 3: Bounded memory, observed progress and completion review
 
 **Deliverable:** Each finished turn becomes a durable, inspectable checkpoint. False success reports and repeated no-ops cannot produce verified completion.
 
@@ -173,7 +173,7 @@ Representative adverse report:
 
 Expected result: no verified evidence or completed criterion; retain the report as an unsuccessful checkpoint and expose the evidence error. Never follow an evidence ID as a filesystem path or URL supplied by the model.
 
-## Slice 4: Bounded repetition, wait states and restart recovery
+## Task 4: Bounded repetition, wait states and restart recovery
 
 **Deliverable:** A goal can run multiple increments autonomously, stop predictably, and recover without duplicate effects or replenished budget.
 
@@ -193,7 +193,7 @@ Expected result: no verified evidence or completed criterion; retain the report 
 - [ ] Add a child-process harness using a temporary profile/database: terminate after durable acceptance and before completion, restart, and assert zero redispatched provider/tool operations and retained reservations. A second case stops after a complete checkpoint and requires explicit Resume. This is process-restart evidence, not simulated power-loss certification.
 - [ ] Run the new modules and relevant `Tests/DB/test_automatic_runtime_owner.py`, `test_automatic_work_deadlines.py`, `Tests/Chat/test_automatic_wake_recovery.py`, and `test_automatic_wake_scheduling.py`. Review/commit and record the exact scope of tested cancellation guarantees.
 
-## Slice 5: Console controls and first useful end-to-end result
+## Task 5: Console controls and first useful end-to-end result
 
 **Deliverable:** A user can launch, observe and control a CLI-backed goal through real Textual controls, inspect actual verification results and edits, and preserve work across navigation/restart.
 

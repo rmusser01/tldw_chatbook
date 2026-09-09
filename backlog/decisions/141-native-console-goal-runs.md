@@ -1,13 +1,13 @@
 # ADR-141: Native Console goal runs
 
-Status: Proposed
+Status: Accepted
 Date: 2026-09-08
-Implementation status: Design only; no runtime changes
-Task: Implementation tasks will be filed after review of this proposal.
+Implementation status: In progress; task records track delivered behavior
+Tasks: TASK-32116 through TASK-32120 track the five-slice implementation.
 Design: [gnhf review and native goal runs](../../Docs/superpowers/specs/2026-09-08-gnhf-inspired-goal-runs-design.md)
 Plan: [First native goal-run milestone](../../Docs/superpowers/plans/2026-09-08-gnhf-inspired-goal-runs.md)
 Review: [Preimplementation findings and corrections](../../Docs/superpowers/reviews/2026-09-08-goal-runs-preimplementation-review.md)
-Amends, if accepted: ADR-134/135 for a new goal-origin automatic attempt; preserves their fleet semantics.
+Amends: ADR-134/135 for a new goal-origin automatic attempt; preserves their fleet semantics.
 
 ## Context
 
@@ -25,7 +25,7 @@ would add a second orchestration/accounting owner and Git-centric effect recover
 Existing CLI capability is available to the proposed native runner; there is no
 requirement to build CLI support or postpone verification first.
 
-## Proposed decision
+## Decision
 
 1. Add app-owned `GoalRunService` under `ConsoleRuntime`. It schedules bounded
    native iterations through the existing controller/bridge. It is independent

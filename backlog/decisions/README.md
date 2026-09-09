@@ -82,6 +82,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-137](137-queued-console-agent-delegation.md) | Proposed; awaiting design review | Route explicit queued prompts to named fleet children with independent accepted-work provenance, FIFO capacity waits, and a scoped yield for completion delivery. |
 | [ADR-138](138-portable-workflow-definitions-and-local-execution.md) | Accepted; implementation pending | Define a local-first three-pane workflow editor, portable server-compatible definitions, explicit runtime requirements, and coordinated revision-aware synchronization. |
 
+| [ADR-141](141-native-console-goal-runs.md) | Accepted | Run bounded native Console goals with typed CLI evidence, durable attempts, independent goal policy and explicit recovery. |
+
 ## Historical Decision Material
 
 Some older decision material exists outside this directory. See [historical-index.md](historical-index.md). Historical entries are context, not canonical ADRs under the current immutability rules.

@@ -1,14 +1,14 @@
 # Native goal runs: gnhf review and proposed Chatbook design
 
 - Date: 2026-09-08
-- Status: Design direction accepted in conversation; revised after preimplementation review. Implementation has not started.
+- Status: Accepted for implementation by the user on 2026-09-08 after preimplementation review; implementation in progress.
 - User scope: an autonomous workflow **inside Chatbook**, confirmed in this conversation.
 - First-release scope: iterative work using existing Chatbook tools, including CLI/script tools. No research-only restriction was selected by the user.
 - Reference: gnhf v0.1.49, commit `0227fe415d38e6df0fad4828c7999ba2a3b065de`, dated 2026-09-04.
 - Chatbook baseline: HEAD `22aa927f0287e84c76ab39836a05a028f2a73e82` plus the existing shared working tree. Some relevant agent changes are uncommitted; the local Workflows engine is planned work, not a shipped dependency.
 - Evidence: README, source, test definitions, local task files, and ADR inspection. Neither gnhf nor Chatbook was executed for this review; existing task verification is attributed to those task records.
 - [Implementation plan](../plans/2026-09-08-gnhf-inspired-goal-runs.md)
-- [Proposed ADR-141](../../../backlog/decisions/141-native-console-goal-runs.md)
+- [Accepted ADR-141](../../../backlog/decisions/141-native-console-goal-runs.md)
 - [Preimplementation review and corrections](../reviews/2026-09-08-goal-runs-preimplementation-review.md)
 
 ## Recommendation
@@ -179,4 +179,4 @@ The first release is useful when a user can start a CLI-backed validation goal, 
 
 Use real SQLite and the real controller/agent dispatch path with controlled providers for deterministic tests. Count attempted provider/tool calls, not only visible output; the fleet retry-storm lesson applies. Include an actual subprocess restart test against isolated stores, plus Textual mounted controls/navigation. A separately opted-in local-model demonstration validates actual source reading and output quality. No cloud spend or full-suite run is implicit in this plan.
 
-This proposal makes a new goal lifecycle and extends automatic admission, storage and long-lived UX. ADR required: yes. ADR path: `backlog/decisions/141-native-console-goal-runs.md` (Proposed). Existing ADR-032/033/063/067/069/131/134/135/138 remain governing constraints. Implementation task records should be created through Backlog after design review; this document does not mark the feature or those existing tasks complete.
+This proposal makes a new goal lifecycle and extends automatic admission, storage and long-lived UX. ADR required: yes. ADR path: `backlog/decisions/141-native-console-goal-runs.md` (Accepted). Existing ADR-032/033/063/067/069/131/134/135/138 remain governing constraints. Implementation task records should be created through Backlog after design review; this document does not mark the feature or those existing tasks complete.
