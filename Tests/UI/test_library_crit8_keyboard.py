@@ -301,7 +301,7 @@ async def test_new_note_canvas_focuses_blank_note_on_entry_and_arrows_move():
         await pilot.press("enter")
         editor = await _wait_for_selector(screen, pilot, "#library-note-body")
         assert editor is not None
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.view == "editor"
         assert screen._library_note_session.snapshot is not None
 
 

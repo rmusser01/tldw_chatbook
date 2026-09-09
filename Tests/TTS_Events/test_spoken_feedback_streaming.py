@@ -41,9 +41,11 @@ is reported via the file the write loop already produced -- see
 `test_wav_response_with_a_trailing_chunk_stops_pumped_bytes_at_datas_end`
 and `test_wav_sink_failure_falls_back_to_the_already_written_file_silently`.
 """
+
 from __future__ import annotations
 
 import threading
+import wave
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -109,8 +111,15 @@ def test_fake_response_mirrors_the_real_ttsaudioresponse_field_names():
         byte_stream=_empty(),
         sample_rate=RATE,
     )
-    for field in ("provider_id", "model_id", "audio_format", "content_type",
-                  "byte_stream", "sample_rate", "metadata"):
+    for field in (
+        "provider_id",
+        "model_id",
+        "audio_format",
+        "content_type",
+        "byte_stream",
+        "sample_rate",
+        "metadata",
+    ):
         assert hasattr(real, field), f"_FakeResponse's {field!r} is not a real field"
 
 
@@ -164,7 +173,9 @@ class _FakeService:
     def preferences_snapshot(self):
         return SimpleNamespace(provider_id=self._provider_id)
 
-    async def synthesize_default(self, *, text, voice_override=None, progress_sink=None):
+    async def synthesize_default(
+        self, *, text, voice_override=None, progress_sink=None
+    ):
         self.synthesize_default_calls.append((text, voice_override))
         return self._response
 
@@ -181,7 +192,9 @@ class _RecordingSink:
     #: `open()` failure without touching any real audio backend.
     _open_should_fail = False
 
-    def __init__(self, *, on_event, blocksize_ms: int = 20, stream_factory=None) -> None:
+    def __init__(
+        self, *, on_event, blocksize_ms: int = 20, stream_factory=None
+    ) -> None:
         self.on_event = on_event
         self.opened_with: tuple[int, int] | None = None
         #: Fix-round F2 pin: which thread actually called `open()`, so a
@@ -272,8 +285,11 @@ def _spy_sink_class(holder: dict) -> type[_RecordingSink]:
 # (a) pcm response streams through a fake sink -- no file playback.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_pcm_response_streams_through_the_sink_with_no_file_playback(handler, monkeypatch):
+async def test_pcm_response_streams_through_the_sink_with_no_file_playback(
+    handler, monkeypatch
+):
     chunks = [bytes([1, 0]) * 50, bytes([2, 0]) * 50]
     response = _FakeResponse(chunks, audio_format="pcm", sample_rate=RATE)
     service = _FakeService(response)
@@ -281,7 +297,9 @@ async def test_pcm_response_streams_through_the_sink_with_no_file_playback(handl
     _forbid_legacy_artifact_creation(handler)
 
     sink_holder: dict = {}
-    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder))
+    monkeypatch.setattr(
+        tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder)
+    )
     monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
 
     await handler._generate_tts("Capture ended.", "adhoc", None)
@@ -289,7 +307,9 @@ async def test_pcm_response_streams_through_the_sink_with_no_file_playback(handl
     sink = sink_holder["sink"]
     assert sink.opened_with == (RATE, 1)
     assert b"".join(sink.fed) == b"".join(chunks)
-    assert handler._audio_files == {}, "no artifact should ever be tracked for a streamed response"
+    assert handler._audio_files == {}, (
+        "no artifact should ever be tracked for a streamed response"
+    )
 
     complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
     assert len(complete_events) == 1
@@ -304,15 +324,20 @@ async def test_pcm_response_streams_through_the_sink_with_no_file_playback(handl
 # (b) mp3 response -> legacy `play_audio_file` path, no sink touched.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_mp3_response_uses_the_legacy_path_and_never_constructs_a_sink(handler, monkeypatch):
+async def test_mp3_response_uses_the_legacy_path_and_never_constructs_a_sink(
+    handler, monkeypatch
+):
     chunks = [b"ID3", b"restofmp3bytes"]
     response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
     service = _FakeService(response)
     handler._tts_service = service
 
     sink_holder: dict = {}
-    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder))
+    monkeypatch.setattr(
+        tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder)
+    )
     # Sink IS available -- eligibility must still be refused for a
     # compressed format regardless, proving the branch keys off the
     # response's own declared format, not just availability.
@@ -322,7 +347,9 @@ async def test_mp3_response_uses_the_legacy_path_and_never_constructs_a_sink(han
         await handler._generate_tts("Discarded.", "adhoc", None)
 
         assert sink_holder == {}, "a compressed format must never even construct a sink"
-        complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+        complete_events = [
+            m for m in handler.messages if isinstance(m, TTSCompleteEvent)
+        ]
         assert len(complete_events) == 1
         assert complete_events[0].error is None
         artifact_path = complete_events[0].audio_file
@@ -335,6 +362,7 @@ async def test_mp3_response_uses_the_legacy_path_and_never_constructs_a_sink(han
 # ---------------------------------------------------------------------------
 # (c) sink open-failure -> legacy path used, exactly one completion posted.
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_sink_open_failure_falls_through_to_the_legacy_path(handler, monkeypatch):
@@ -352,7 +380,9 @@ async def test_sink_open_failure_falls_through_to_the_legacy_path(handler, monke
     try:
         await handler._generate_tts("Still responding.", "adhoc", None)
 
-        complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+        complete_events = [
+            m for m in handler.messages if isinstance(m, TTSCompleteEvent)
+        ]
         assert len(complete_events) == 1, (
             "a sink open failure must fall through silently -- exactly one "
             "completion (the legacy path's own) may ever surface, no phantom "
@@ -361,7 +391,12 @@ async def test_sink_open_failure_falls_through_to_the_legacy_path(handler, monke
         assert complete_events[0].error is None
         artifact_path = complete_events[0].audio_file
         assert artifact_path is not None and artifact_path.exists()
-        assert artifact_path.read_bytes() == b"".join(chunks)
+        assert artifact_path.suffix == ".wav"
+        with wave.open(str(artifact_path), "rb") as audio:
+            assert audio.getframerate() == RATE
+            assert audio.getnchannels() == 1
+            assert audio.getsampwidth() == 2
+            assert audio.readframes(audio.getnframes()) == b"".join(chunks)
     finally:
         await handler.cleanup_tts_resources()
 
@@ -370,13 +405,16 @@ async def test_sink_open_failure_falls_through_to_the_legacy_path(handler, monke
 # (d) A lifecycle-less stop can only stop an unowned live sink globally.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("message_id", "expected_stop_count"),
     [(None, 1), ("adhoc", 0)],
 )
 async def test_stop_action_stops_whatever_sink_is_currently_registered_live(
-    handler, message_id, expected_stop_count,
+    handler,
+    message_id,
+    expected_stop_count,
 ):
     stop_calls: list[bool] = []
 
@@ -387,7 +425,9 @@ async def test_stop_action_stops_whatever_sink_is_currently_registered_live(
     with streaming_sink_module._LIVE_SINK_LOCK:
         streaming_sink_module._LIVE_SINK = _FakeLiveSink()
 
-    await handler.handle_tts_playback(TTSPlaybackEvent(action="stop", message_id=message_id))
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(action="stop", message_id=message_id)
+    )
 
     assert stop_calls == [True] * expected_stop_count
 
@@ -397,9 +437,11 @@ async def test_stop_action_stops_whatever_sink_is_currently_registered_live(
 # (the review-contracted `data_bytes` pin).
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_wav_response_with_a_trailing_chunk_stops_pumped_bytes_at_datas_end(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     """WAV eligibility can only be decided from the COMPLETE body (see
     `pcm_stream.sink_plan`'s docstring), so -- unlike pcm -- the wav half of
@@ -422,7 +464,9 @@ async def test_wav_response_with_a_trailing_chunk_stops_pumped_bytes_at_datas_en
     # also refusing to read further ones) would still leak trailer bytes
     # fed from a later chunk.
     split = len(body) - 5
-    response = _FakeResponse([body[:split], body[split:]], audio_format="wav", sample_rate=None)
+    response = _FakeResponse(
+        [body[:split], body[split:]], audio_format="wav", sample_rate=None
+    )
     service = _FakeService(response)
     handler._tts_service = service
 
@@ -437,7 +481,9 @@ async def test_wav_response_with_a_trailing_chunk_stops_pumped_bytes_at_datas_en
     handler._create_tts_artifact = _spy_create_artifact
 
     sink_holder: dict = {}
-    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder))
+    monkeypatch.setattr(
+        tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder)
+    )
     monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
 
     await handler._generate_tts("Should be spoken.", "adhoc", None)
@@ -448,7 +494,9 @@ async def test_wav_response_with_a_trailing_chunk_stops_pumped_bytes_at_datas_en
     assert b"LIST" not in fed
     assert b"INFOtest" not in fed
 
-    assert len(created_paths) == 1, "the legacy write loop must still run, unmodified, for wav"
+    assert len(created_paths) == 1, (
+        "the legacy write loop must still run, unmodified, for wav"
+    )
     assert not created_paths[0].exists(), (
         "the now-redundant artifact must be deleted once it was played live"
     )
@@ -466,9 +514,11 @@ async def test_wav_response_with_a_trailing_chunk_stops_pumped_bytes_at_datas_en
 # upgrade that simply didn't pan out.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_wav_sink_failure_falls_back_to_the_already_written_file_silently(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     data = bytes(range(64))
     body = _wav_with_trailing_chunk(data=data)
@@ -485,7 +535,9 @@ async def test_wav_sink_failure_falls_back_to_the_already_written_file_silently(
     try:
         await handler._generate_tts("Discarded.", "adhoc", None)
 
-        complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+        complete_events = [
+            m for m in handler.messages if isinstance(m, TTSCompleteEvent)
+        ]
         assert len(complete_events) == 1, "no phantom error toast for a silent fallback"
         assert complete_events[0].error is None
         artifact_path = complete_events[0].audio_file
@@ -500,9 +552,11 @@ async def test_wav_sink_failure_falls_back_to_the_already_written_file_silently(
 # even for an otherwise-eligible pcm response.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_sink_unavailable_leaves_an_eligible_pcm_response_on_the_legacy_path(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [bytes([5, 0]) * 30]
     response = _FakeResponse(chunks, audio_format="pcm", sample_rate=RATE)
@@ -510,17 +564,26 @@ async def test_sink_unavailable_leaves_an_eligible_pcm_response_on_the_legacy_pa
     handler._tts_service = service
 
     sink_holder: dict = {}
-    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder))
+    monkeypatch.setattr(
+        tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder)
+    )
     monkeypatch.setattr(tts_events_module, "sink_available", lambda: False)
 
     try:
         await handler._generate_tts("Nothing to read yet.", "adhoc", None)
 
         assert sink_holder == {}
-        complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+        complete_events = [
+            m for m in handler.messages if isinstance(m, TTSCompleteEvent)
+        ]
         assert len(complete_events) == 1
         artifact_path = complete_events[0].audio_file
-        assert artifact_path is not None and artifact_path.read_bytes() == chunks[0]
+        assert artifact_path is not None and artifact_path.suffix == ".wav"
+        with wave.open(str(artifact_path), "rb") as audio:
+            assert audio.getframerate() == RATE
+            assert audio.getnchannels() == 1
+            assert audio.getsampwidth() == 2
+            assert audio.readframes(audio.getnframes()) == chunks[0]
     finally:
         await handler.cleanup_tts_resources()
 
@@ -532,9 +595,11 @@ async def test_sink_unavailable_leaves_an_eligible_pcm_response_on_the_legacy_pa
 # through the same TTSCompleteEvent(error=...) channel, exactly once.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_mid_stream_sink_failure_surfaces_exactly_one_error_completion(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     class _FailingMidStreamSink(_RecordingSink):
         def feed(self, pcm: bytes) -> bool:
@@ -569,8 +634,11 @@ async def test_mid_stream_sink_failure_surfaces_exactly_one_error_completion(
 # a newly-reachable hole (no sink existed in this path before task-4).
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_legacy_play_action_stops_a_live_sink_first(handler, monkeypatch, tmp_path):
+async def test_legacy_play_action_stops_a_live_sink_first(
+    handler, monkeypatch, tmp_path
+):
     stop_calls: list[bool] = []
 
     class _FakeLiveSink:
@@ -591,9 +659,13 @@ async def test_legacy_play_action_stops_a_live_sink_first(handler, monkeypatch, 
         "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
     )
 
-    await handler.handle_tts_playback(TTSPlaybackEvent(action="play", message_id="msg-1"))
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(action="play", message_id="msg-1")
+    )
 
-    assert stop_calls == [True], "a live sink must be stopped before legacy file playback starts"
+    assert stop_calls == [True], (
+        "a live sink must be stopped before legacy file playback starts"
+    )
     fake_player.play.assert_called_once()
 
 
@@ -608,9 +680,11 @@ async def test_legacy_play_action_stops_a_live_sink_first(handler, monkeypatch, 
 # would be flaky.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_sink_open_runs_off_the_event_loop_via_the_existing_offload_seam(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [bytes([7, 0]) * 10]
     response = _FakeResponse(chunks, audio_format="pcm", sample_rate=RATE)
@@ -618,7 +692,9 @@ async def test_sink_open_runs_off_the_event_loop_via_the_existing_offload_seam(
     handler._tts_service = service
 
     sink_holder: dict = {}
-    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder))
+    monkeypatch.setattr(
+        tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder)
+    )
     monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
 
     offload_calls: list[str] = []
@@ -643,8 +719,7 @@ async def test_sink_open_runs_off_the_event_loop_via_the_existing_offload_seam(
     )
     assert sink.opened_on_thread is not None
     assert sink.opened_on_thread is not threading.main_thread(), (
-        "sink.open() ran on the event-loop (main) thread instead of being "
-        "offloaded"
+        "sink.open() ran on the event-loop (main) thread instead of being offloaded"
     )
 
 
@@ -655,6 +730,7 @@ async def test_sink_open_runs_off_the_event_loop_via_the_existing_offload_seam(
 # the WHOLE response body in memory for every wav generation, regressing
 # the bounded-memory write-batching the legacy loop was designed to keep.
 # ---------------------------------------------------------------------------
+
 
 def test_wants_wav_collection_is_gated_on_sink_availability_too(monkeypatch):
     monkeypatch.setattr(tts_events_module, "sink_available", lambda: False)
@@ -680,8 +756,11 @@ def test_wants_wav_collection_is_gated_on_sink_availability_too(monkeypatch):
 # a regression guard against widening the fix too far.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_bare_stop_action_also_silences_legacy_file_playback(handler, monkeypatch):
+async def test_bare_stop_action_also_silences_legacy_file_playback(
+    handler, monkeypatch
+):
     stop_calls: list = []
     clip = Path("clip.mp3")
 
@@ -708,7 +787,8 @@ async def test_bare_stop_action_also_silences_legacy_file_playback(handler, monk
 
 @pytest.mark.asyncio
 async def test_message_scoped_stop_does_not_silence_a_different_messages_legacy_playback(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     """Regression guard (task-559 unit 2): F4's fix is scoped to ONLY the
     bare/global stop. A message-scoped stop for message A must still never
@@ -739,8 +819,7 @@ async def test_message_scoped_stop_does_not_silence_a_different_messages_legacy_
     )
 
     assert stop_calls == [], (
-        "stopping message A must never silence a different, "
-        "still-playing message B"
+        "stopping message A must never silence a different, still-playing message B"
     )
     async with handler._audio_files_lock:
         assert handler._last_played == ("message-B", clip)
@@ -766,6 +845,7 @@ async def test_message_scoped_stop_does_not_silence_a_different_messages_legacy_
 # What it proves is narrower and still real: a sink that IS registered as
 # `_LIVE_SINK`, by whatever means, is only interrupted by a global stop.
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -795,6 +875,7 @@ async def test_real_sink_end_to_end_stop_wiring(handler, message_id, expected_st
 # was simply never generated) must not silence live streaming audio and
 # then play nothing back.
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_play_for_a_missing_cached_file_does_not_stop_a_live_sink(handler):
@@ -827,9 +908,11 @@ async def test_play_for_a_missing_cached_file_does_not_stop_a_live_sink(handler)
 # behavioral assertion happens to still pass.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_generate_tts_calls_the_wav_collection_gate_at_its_call_site(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     calls: list[str] = []
     original = tts_events_module._wants_wav_collection
@@ -853,7 +936,9 @@ async def test_generate_tts_calls_the_wav_collection_gate_at_its_call_site(
             "_generate_tts must call _wants_wav_collection at its call "
             "site, not inline the format-only check it wraps"
         )
-        complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+        complete_events = [
+            m for m in handler.messages if isinstance(m, TTSCompleteEvent)
+        ]
         assert len(complete_events) == 1
         artifact_path = complete_events[0].audio_file
         assert artifact_path is not None and artifact_path.read_bytes() == chunks[0]
@@ -868,9 +953,11 @@ async def test_generate_tts_calls_the_wav_collection_gate_at_its_call_site(
 # playback must be silenced, same as a bare/global stop.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_stop_with_empty_string_message_id_is_treated_as_a_bare_stop(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     sink_stop_calls: list[bool] = []
 
@@ -912,9 +999,11 @@ async def test_stop_with_empty_string_message_id_is_treated_as_a_bare_stop(
 # folds it back into "success".
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_a_barged_in_utterance_reports_interrupted_not_success_in_metrics(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     class _BargedInSink(_RecordingSink):
         def feed(self, pcm: bytes) -> bool:
@@ -973,9 +1062,11 @@ async def test_a_barged_in_utterance_reports_interrupted_not_success_in_metrics(
 # review, or the suite itself).
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_no_real_audio_device_guard_blocks_the_reproduced_hazard(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     """Deliberately reproduces the reviewer's exact hazard shape: the REAL
     `StreamingPcmSink` class, the REAL `sink_available()` probe -- no
@@ -1025,7 +1116,9 @@ async def test_no_real_audio_device_guard_blocks_the_reproduced_hazard(
             "the conftest _no_real_audio_device guard failed to prevent a "
             "real sounddevice.OutputStream construction"
         )
-        complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+        complete_events = [
+            m for m in handler.messages if isinstance(m, TTSCompleteEvent)
+        ]
         assert len(complete_events) == 1
         assert complete_events[0].error is None
         assert complete_events[0].audio_file is not None, (
@@ -1047,9 +1140,11 @@ async def test_no_real_audio_device_guard_blocks_the_reproduced_hazard(
 # (same pattern F8 already established for `"interrupted"`) -- no UI.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_an_underrun_is_logged_at_info_and_bumps_the_metric_on_utterance_end(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     class _UnderrunningSink(_RecordingSink):
         def feed(self, pcm: bytes) -> bool:
@@ -1088,9 +1183,9 @@ async def test_an_underrun_is_logged_at_info_and_bumps_the_metric_on_utterance_e
     finally:
         loguru_logger.remove(handler_id)
 
-    assert any(
-        "42" in line and "underrun" in line.lower() for line in captured_logs
-    ), captured_logs
+    assert any("42" in line and "underrun" in line.lower() for line in captured_logs), (
+        captured_logs
+    )
     assert any(
         name == "tts_generation_total" and labels.get("outcome_code") == "underrun"
         for name, labels in metric_calls
@@ -1103,14 +1198,18 @@ async def test_an_underrun_is_logged_at_info_and_bumps_the_metric_on_utterance_e
 
 
 @pytest.mark.asyncio
-async def test_no_underrun_never_logs_or_bumps_the_underrun_metric(handler, monkeypatch):
+async def test_no_underrun_never_logs_or_bumps_the_underrun_metric(
+    handler, monkeypatch
+):
     chunks = [bytes([1, 0]) * 10]
     response = _FakeResponse(chunks, audio_format="pcm", sample_rate=RATE)
     service = _FakeService(response)
     handler._tts_service = service
 
     sink_holder: dict = {}
-    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder))
+    monkeypatch.setattr(
+        tts_events_module, "StreamingPcmSink", _spy_sink_class(sink_holder)
+    )
     monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
 
     metric_calls: list[tuple[str, dict]] = []

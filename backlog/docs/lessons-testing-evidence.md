@@ -12472,3 +12472,99 @@ Process exit status, nonzero RMS and a first spoken word do not establish that
 the entire response survived encoding. Keep inference, codec, device and content
 evidence distinct; these checks used real ONNX inference and codecs, while
 PyTorch coverage replaced only inference and voice loading.
+
+### TASK-32076: A zero player exit does not prove full playback
+
+The TTS backend parity audit produced a valid 5.717-second Opus clip that
+FFmpeg decoded and Whisper transcribed completely. macOS `afplay` returned
+exit code 0 after approximately 2.0 seconds, while `afinfo` could not open the
+file. Switching Opus playback to the existing FFplay path took 6.13 seconds
+and retained the complete transcript. For playback evidence, check decoded
+frames/content **and** player elapsed time/completion; a nonempty file and a
+successful process exit can both conceal an unsupported format. Also retain
+the exact process in completion callbacks: a late previous monitor must not
+finish the next clip.
+
+PR #2520's Qodo review then exposed a second gap: the player correctly reported
+ERROR, but Speech Lab kept polling and spoken feedback reported success at its
+timeout. Mounted playback and public utterance tests reproduced eight failures
+that direct player tests missed. A manager-level Higgs close test also missed
+that its host detaches the manager at shutdown; a real host/manager test proved
+cleanup must remain owned past that deadline. Verify terminal outcomes and
+resource release through the caller that actually owns the operation.
+
+## Successful tool discovery changes the rendered system row (TASK-32048, 2026-09-08)
+
+The reported third-request `unsupported_surface_change` was reproduced only
+when llama.cpp successfully ran `find_tools` then `load_tools`. Repeated
+calculator calls and a discovery run whose load failed its token budget were
+passing controls: neither changed the advertised tool schemas. The successful
+load changed the leading system row while adding tool traffic, exceeding the
+trace ledger's bounded history replacement shape.
+
+Verify the successful tool transition through the real controller, agent,
+gateway and SQLite trace factory, then read every captured request and send
+again. Assert the raw HTTP input separately from credential/PII-filtered trace
+content. Header changes must preserve earlier calls and survive a cold factory;
+a passing isolated trace helper does not establish those properties.
+
+## Discard settlement and trace settlement are separate (TASK-32075, 2026-09-08)
+
+Recreating the third-request capture rejection, reopening the conversation and
+discarding its pending response reproduced the later generic `validation` error
+as `surface_replacement_checkpoint_unavailable`. With project instructions on,
+the same successor failed as `unsupported_surface_change`. The first two HTTP
+responses had returned, but their trace calls remained `response_started`; only
+the saved assistant had durable `discarded` state. HTTP completion and controller
+completion were not evidence of trace settlement. Preserve those separate facts
+when testing recovery, and compare the earlier request snapshots and call rows.
+Also reproduce already-failed follow-ups: they may have committed user messages
+without provider calls, so testing only the first recovery can miss a second
+blocker in conversations that already contain repeated failed sends.
+
+Review also caught a false-positive dictionary-transform control: the fixture
+had no persisted conversation when the transform ran, so the applier returned
+unchanged text. Persist first, assert transformed wire content, and verify the
+origin's `active_request` row and exact source pin before claiming transform
+coverage. Both corrected controls passed with the discard fix.
+
+## Native Console speech tests must resolve the destination first
+
+**Incident (TASK-32096, 2026-09-08).** Real Supertonic inference through the
+pinned audio.cpp runtime worked in Speech Lab, but Speak replies failed with
+`TTSEffectiveResolutionError: catalog_unavailable`. The Console destination
+check omitted the native capability reader. Earlier native request tests passed
+because they called the handler without first resolving a destination or
+supplying its expected fingerprint. Adding both operations to the existing
+real-service regression reproduced the failure for explicit and server-default
+voices. Wiring the public capability reader fixed both tests and real CPU/Metal
+playback, without weakening exact model/voice validation.
+
+Qodo then identified a second gap: those live runs used an already-running
+external server. The public snapshot intentionally cannot start a stopped
+managed child. Eight managed cases failed until destination resolution used
+the existing deliberate catalog refresh before passive validation. Real managed
+CPU and Metal runs then passed cold start and shutdown/restart before each reply.
+
+**Practice.** Exercise the same destination-resolution and authorization path
+as automatic speech, before admitting and draining its audio request. A working
+adapter, Speech Lab run, or handler call without a destination fingerprint does
+not prove Speak replies can reach that adapter. Include a stopped managed child
+when the provider supports app-owned startup; keep passive observation tests
+separate so fixing deliberate first use does not make background reads launch it.
+
+## Optional runtime imports can conceal an unusable model dependency
+
+**Incident (TASK-32096, 2026-09-08).** Chatterbox 0.1.7 imported successfully in a
+fresh environment, but model construction failed because Perth 1.0.1 suppressed
+a missing `pkg_resources` import and exported `PerthImplicitWatermarker=None`.
+An unseeded wheel-extra install reproduced the failure with setuptools 84;
+the repaired extra selected a version below 82 and passed watermarker-callable
+and bundled-resource checks. The unconstrained extra also resolved an older
+Chatterbox release with a broken `pkuseg` source build, requiring a minimum
+Chatterbox version in that extra.
+
+**Practice.** Validate optional runtime installation from a built wheel in an
+unseeded environment. Probe the capability and required resources, not just the
+top-level import or declared dependency consistency. Preserve the original
+extra-only evidence before adding test instrumentation.

@@ -55,17 +55,10 @@
     background: $ds-surface-raised;
 }
 
-/* F-054/F-057: these two badges carry whole SENTENCES (the inspector's
-   empty-state explainer, the servers-mode aggregate summary), not one-word
-   chips -- they must wrap at narrow widths instead of clipping mid-word.
-   ID selectors beat the `.ds-status-badge` class rule above on
-   specificity; every other `.ds-status-badge` consumer keeps the fixed
-   height. `width: 1fr` is required alongside: the class rule's
-   `width: auto` would otherwise size the badge to its content's natural
-   width (no wrap at all -- the line just overflows its pane). Kept in
-   lockstep with the matching overrides in MCPInspector.DEFAULT_CSS and
-   MCPServersMode.DEFAULT_CSS, which cover the bare test harnesses that
-   never load this bundle. */
+/* F-054/F-057: sentence badges must wrap. ID rules override the fixed
+   .ds-status-badge size; 1fr avoids intrinsic-width overflow. Keep these
+   overrides in sync with MCPInspector/MCPServersMode.DEFAULT_CSS for
+   standalone harnesses. */
 #mcp-inspector-state,
 #mcp-overview-summary {
     width: 1fr;
@@ -1863,12 +1856,8 @@ ConsoleRunLogModal {
     max-width: 100%;
 }
 
-/* task-32042 (critique #7 P1) mirrors task-30043 on the Media canvas: a 1fr
-   squeeze chopped every select-action label to fragments ("Selec"/"Exp") and
-   wrapped "0 selected" at the narrow conversations list pane. The toolbar now
-   splits into content-width rows (library_conversations_canvas.py), so each
-   action keeps its own width (auto, min-width:0 lifting Button's 16-cell floor)
-   and every label paints in full. */
+/* task-32042: content-width actions keep full labels in narrow selection rows;
+   min-width: 0 lifts Button's 16-cell floor. */
 #library-conversations-canvas > .ds-toolbar > .library-toolbar-count,
 #library-conversations-canvas > .ds-toolbar > .library-canvas-action {
     width: auto;

@@ -160,7 +160,7 @@ async def test_resize_compact_crossing_still_transitions_both_ways_twice():
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _settled_library(host, pilot)
-        assert screen._library_notes_compact is False
+        assert screen._notes_state.compact is False
         applied = Mock(wraps=screen._apply_library_notes_stage_visibility)
         screen._apply_library_notes_stage_visibility = applied
 
@@ -169,7 +169,7 @@ async def test_resize_compact_crossing_still_transitions_both_ways_twice():
             await pilot.resize_terminal(110, 48)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_notes_compact,
+                lambda: screen._notes_state.compact,
                 message="narrow resize never crossed into compact",
             )
             await pilot.pause()
@@ -184,7 +184,7 @@ async def test_resize_compact_crossing_still_transitions_both_ways_twice():
             await pilot.resize_terminal(170, 48)
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._library_notes_compact,
+                lambda: not screen._notes_state.compact,
                 message="wide resize never crossed back out of compact",
             )
             await pilot.pause()
@@ -249,7 +249,7 @@ async def test_stage_visibility_runs_once_per_emergency_band_crossing():
     async with host.run_test(size=(110, 30)) as pilot:
         screen = await _settled_library(host, pilot)
         assert screen._library_emergency_stage is None
-        assert screen._library_notes_compact is True
+        assert screen._notes_state.compact is True
 
         applied = Mock(wraps=screen._apply_library_notes_stage_visibility)
         screen._apply_library_notes_stage_visibility = applied
@@ -396,17 +396,23 @@ class _StageGateScreen:
             else None
         )
         self._library_selected_row_id = row_id
-        self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
-        self._library_notes_view = "list"
-        self._library_notes_stage = "rail"
-        self._library_notes_compact = False
+        # (wave-8 task 3) The five notes names below are `LibraryNotesState`
+        # fields, not flat screen attributes -- the screen's generated shim
+        # block was deleted in the notes cleanup PR -- and this double is not
+        # a `LibraryScreen`, so nothing constructs its state object for it.
+        # Same explicit seed the `_media_state`/`_ingest_state` fakes carry.
+        self._notes_state = SimpleNamespace()
+        self._notes_state.source = LIBRARY_NOTES_SOURCE_DATABASE
+        self._notes_state.view = "list"
+        self._notes_state.stage = "rail"
+        self._notes_state.compact = False
         self._library_rail_collapsed = False
         self._library_emergency_stage: str | None = None
         self._library_emergency_restore_receipt = None
         self._library_reader_shared_preferences = SimpleNamespace(
             library_open=True, custom_widths_enabled=False, library_width=34
         )
-        self._library_notes_stage_applied_signature: tuple | None = None
+        self._notes_state.stage_applied_signature: tuple | None = None
 
     def set_width(self, width: int) -> None:
         """Resize both the viewport and the shell grid, as a real frame does."""
@@ -484,7 +490,7 @@ def test_stage_gate_fails_open_when_the_signature_cannot_be_computed():
     """
     screen = _StageGateScreen(width=100)
     screen._apply_library_notes_stage_visibility_for_resize()  # arm
-    assert screen._library_notes_stage_applied_signature is not None
+    assert screen._notes_state.stage_applied_signature is not None
 
     screen.refs["#library-rail"] = None  # mid-recompose: reference gone
     assert screen._library_notes_stage_signature() is None
@@ -494,7 +500,7 @@ def test_stage_gate_fails_open_when_the_signature_cannot_be_computed():
         f"{screen.leg_calls - 1} of 3 frames applied the leg while the "
         "signature was unavailable; the gate must fail open"
     )
-    assert screen._library_notes_stage_applied_signature is None
+    assert screen._notes_state.stage_applied_signature is None
 
 
 def test_stage_signature_carries_the_effective_not_raw_emergency_decision():
@@ -590,7 +596,7 @@ def test_every_stage_visibility_seam_arms_the_gate_not_only_the_resize_one():
         "the resize gate re-applied a leg a non-resize seam had just settled; "
         "the applied signature is not being recorded inside the seam"
     )
-    assert screen._library_notes_stage_applied_signature is not None
+    assert screen._notes_state.stage_applied_signature is not None
 
 
 def test_a_raising_stage_leg_leaves_the_gate_re_armed_not_stale():
@@ -601,12 +607,12 @@ def test_a_raising_stage_leg_leaves_the_gate_re_armed_not_stale():
     """
     screen = _StageGateScreen(width=100)
     screen._apply_library_notes_stage_visibility_for_resize()  # arm
-    assert screen._library_notes_stage_applied_signature is not None
+    assert screen._notes_state.stage_applied_signature is not None
 
     screen.leg_failure = RuntimeError("stage leg blew up")
     with pytest.raises(RuntimeError):
         screen._apply_library_notes_stage_visibility()
-    assert screen._library_notes_stage_applied_signature is None, (
+    assert screen._notes_state.stage_applied_signature is None, (
         "a raising leg left a stale applied signature behind"
     )
 

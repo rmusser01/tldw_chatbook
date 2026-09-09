@@ -258,7 +258,7 @@ async def test_inspection_finish_restores_only_its_owned_projection(library, new
                 generation=99,
             )
         elif newer == "notes":
-            screen._library_notes_work_session_activation_pending = True
+            screen._notes_state.work_session_activation_pending = True
         elif newer == "service":
             owner.chat_conversation_scope_service = object()
         elif newer == "marker":
@@ -269,7 +269,7 @@ async def test_inspection_finish_restores_only_its_owned_projection(library, new
             screen._selected_conversation_id,
             screen._conversations_state.reader_state,
             screen._conversations_state.requested_query,
-            screen._library_notes_work_session_activation_pending,
+            screen._notes_state.work_session_activation_pending,
         )
         prepared.finish(target_owned=False)
         prepared.finish(target_owned=False)
@@ -284,7 +284,7 @@ async def test_inspection_finish_restores_only_its_owned_projection(library, new
                 screen._selected_conversation_id,
                 screen._conversations_state.reader_state,
                 screen._conversations_state.requested_query,
-                screen._library_notes_work_session_activation_pending,
+                screen._notes_state.work_session_activation_pending,
             ) == current
         assert getattr(screen, "_prepared_library_inspection_entry", None) is (
             marker if newer == "marker" else None
@@ -507,8 +507,8 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
             )
 
             target._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-            target._library_notes_work_session_phase = NotesWorkSessionPhase.ACTIVE
-            target._library_notes_work_session_activation_pending = True
+            target._notes_state.work_session_phase = NotesWorkSessionPhase.ACTIVE
+            target._notes_state.work_session_activation_pending = True
             target._selected_conversation_id = "previous"
             target._conversations_state.page_records = ({"id": "previous"},)
             target._conversations_state.query = "previous search"
@@ -521,8 +521,8 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
                 target._conversations_state.page,
                 target._conversations_state.reader_state,
                 target._navigation_controller.character_route,
-                target._library_notes_work_session_phase,
-                target._library_notes_work_session_activation_pending,
+                target._notes_state.work_session_phase,
+                target._notes_state.work_session_activation_pending,
                 getattr(target, "_prepared_library_inspection_entry", None),
             )
             # Real app overlay teardown sees a modal that refuses to leave.
@@ -637,8 +637,8 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
                 target._conversations_state.page,
                 target._conversations_state.reader_state,
                 target._navigation_controller.character_route,
-                target._library_notes_work_session_phase,
-                target._library_notes_work_session_activation_pending,
+                target._notes_state.work_session_phase,
+                target._notes_state.work_session_activation_pending,
                 getattr(target, "_prepared_library_inspection_entry", None),
             ) == before_transfer
         if cancel == "projection-cancel":

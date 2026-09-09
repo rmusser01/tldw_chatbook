@@ -523,18 +523,26 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     create, sync) follow the same grammar, and a state whose keys are all
     locked advertises NOTHING instead of a dead 'Esc Locked' entry."""
     fake = SimpleNamespace(
-        _library_notes_compact=False,
-        _library_notes_stage="notes",
+        # (wave-8 task 3) The seven `LibraryNotesState` fields are nested
+        # below; the three entries here are NOT state fields and stay flat --
+        # two are method stand-ins and `_library_note_session` is one of the
+        # three WIRING attributes the state PR deliberately left on the
+        # screen. They were moved above the run so the field run is
+        # contiguous and its nesting stayed mechanical.
         _library_notes_workflow_active=lambda: True,
         _library_note_session=SimpleNamespace(
             snapshot=None, conflict_resolution_running=False
         ),
-        _library_note_confirming_delete=True,
-        _library_notes_select_mode=False,
-        _library_notes_sort_choices_visible=False,
-        _library_note_create_running=False,
-        _library_notes_sync_active_token=None,
         _library_notes_focus_region=lambda: "navigator",
+        _notes_state=SimpleNamespace(
+            compact=False,
+            stage="notes",
+            confirming_delete=True,
+            select_mode=False,
+            sort_choices_visible=False,
+            create_running=False,
+            sync_active_token=None,
+        ),
     )
     from types import MethodType
 
@@ -546,7 +554,7 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     assert shortcuts == (("enter", "confirm delete"), ("esc", "cancel delete"))
 
     # A running conflict resolution locks every key -> nothing advertised.
-    fake._library_note_confirming_delete = False
+    fake._notes_state.confirming_delete = False
     fake._library_note_session = SimpleNamespace(
         snapshot=SimpleNamespace(in_conflict=True),
         conflict_resolution_running=True,
@@ -558,7 +566,7 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     fake._library_note_session = SimpleNamespace(
         snapshot=None, conflict_resolution_running=False
     )
-    fake._library_notes_compact = True
+    fake._notes_state.compact = True
     fake._library_notes_focus_region = lambda: "editor"
     compact = LibraryScreen._library_notes_footer_shortcuts(fake)
     assert compact == LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT
