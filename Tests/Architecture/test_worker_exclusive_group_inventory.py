@@ -805,6 +805,11 @@ def test_awaited_mutation_loader_is_flagged() -> None:
 
 
 def test_nested_loader_wrapper_requires_exclusive_grouped_dispatch() -> None:
+    """Require exclusive grouped dispatch for nested loader wrappers.
+
+    Both function and coroutine callbacks require literal exclusivity and the
+    loader's group. Additional direct or nested awaits must still be rejected.
+    """
     for callback in ("refresh", "refresh()"):
         for exclusive, group, extra_call, permitted in (
             ("True", "tasks", "", True),

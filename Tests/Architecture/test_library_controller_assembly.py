@@ -52,6 +52,13 @@ _OWNERS = (
 def test_existing_controller_reads_replaced_state_at_call_time(
     owner_name: str, owner_type: type, state_name: str
 ) -> None:
+    """Resolve replacement state through the existing controller's live accessor.
+
+    Args:
+        owner_name: Screen attribute holding the controller.
+        owner_type: Expected controller class.
+        state_name: Screen state attribute read by the controller's accessor.
+    """
     screen = library_screen.LibraryScreen(SimpleNamespace(app_config={}))
     controller = getattr(screen, owner_name)
     assert type(controller) is owner_type
@@ -65,6 +72,7 @@ def test_existing_controller_reads_replaced_state_at_call_time(
 
 
 def test_conversation_sibling_lookup_is_late_bound() -> None:
+    """Resolve the current sibling controller after its screen attribute changes."""
     screen = library_screen.LibraryScreen(SimpleNamespace(app_config={}))
     controller = screen._conversations_controller
     first, second = object(), object()
@@ -80,6 +88,7 @@ def test_conversation_sibling_lookup_is_late_bound() -> None:
 
 
 def test_existing_controller_assembly_keeps_order_and_explicit_live_ports() -> None:
+    """Preserve controller construction order and explicit live lambda ports."""
     source = inspect.getsource(build_library_controllers)
     tree = ast.parse(textwrap.dedent(source))
     expected = [owner_type.__name__ for _, owner_type, _ in _OWNERS]
@@ -102,6 +111,7 @@ def test_existing_controller_assembly_keeps_order_and_explicit_live_ports() -> N
 
 
 def test_assembly_preserves_media_state_and_later_controller_order() -> None:
+    """Keep media state before assembly and subsequent controller order intact."""
     tree = ast.parse(
         textwrap.dedent(inspect.getsource(library_screen.LibraryScreen.__init__))
     )
