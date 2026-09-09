@@ -5,6 +5,49 @@ waveform path with the official runtime. TASK-32112 and TASK-32113 extend real
 audio.cpp recovery and model qualification. The runtime decision is
 [ADR-140](../../../backlog/decisions/140-official-kokoro-pytorch-runtime.md).
 
+## Final Buddy integration and playback
+
+The final source qualification is `e9866c11e8207aa637397cb1ed4624d6314b2f3e`,
+rebased onto dev `5655c4820733d24754f872c21cc6196d83bf1504`. Its wheel SHA-256 is
+`b5dd4279da2491409d9038235291f648cf71c457e8688b3212f927209d209d6c`.
+All 2,253 packaged Chatbook Python files matched both the checkout and the two
+installed Python 3.12/3.13 environments before playback.
+
+The incoming Buddy work exposed a shared-handler cancellation defect: replacing
+an utterance before its first audio cancelled synthesis but never acknowledged
+terminal playback, blocking the Buddy queue. TASK-32115 registers an exact-task
+completion callback only after cancellation is accepted. This also handles a
+replacement that is itself cancelled during the old provider's cleanup, which
+an initial post-join acknowledgement missed. The completed-task and mismatched
+owner branches retain their existing behavior.
+
+The regression first reproduced both failure paths, then passed all four
+current/stale-owner and normal/cancelled-replacement combinations. It checks that
+cleanup finishes before acknowledgement, the old utterance returns unsuccessful,
+the queue continues, a cancelled replacement is never admitted, and a late old
+Stop leaves an active replacement alone. All 11 Buddy handler tests and 461
+targeted integration tests passed. An independent review repeated both failure
+probes against the fix and found no remaining actionable issue. The later Library
+rebase left the tested handler and regression byte-identical. The test file passes
+Ruff and formatting; the existing handler retains its 57 baseline Ruff findings
+and formatting debt, with no new findings.
+
+The rebuilt installed package generated and played nine additional complete
+clips: MPS WAV (`af_heart`, speed 1.0), CPU MP3 (`bf_emma`, speed 1.25), and Python
+3.13 ONNX WAV. Each run exercised Speech Lab and two trusted Speak replies. Their
+Lab/reply durations were 6.450/6.850/6.100, 5.175/5.600/5.000, and
+6.101/6.336/5.717 seconds respectively. Every clip passed the same full-file
+content gate described below; all playback drained or exited zero, source hashes
+remained unchanged, and cleanup joined. Both installed Python 3.13 dependency
+guidance checks also passed. The user's configuration hash stayed unchanged.
+
+All six local artifact guards passed. The combined diagnostic inventory retains
+the fixed-string Library lifecycle warning from the latest dev, with no new sink.
+[Buddy integration evidence](buddy-integration-validation.json) preserves exact
+commands, source/audio hashes, raw transcripts, RED/GREEN results and review
+receipts. Earlier Kokoro and native results below remain tied to their recorded
+revisions rather than being relabeled as final-source validation.
+
 ## Kokoro results
 
 Every row below generated one clip through the mounted production Speech Lab
