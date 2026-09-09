@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## Fault injection can also intercept an observation-only probe
+
+**PR #2427 / TASK-31932, 2026-09-09.** A native descriptor observer reported
+one failure in a 443-case Notes import cohort: the test intentionally replaced
+`os.fstat`, and the observer's after-call hook invoked that replacement before
+fixture teardown. The application's expected exception and exact close-set
+assertions had already passed. All 443 cases passed without the observer, as
+did the five-case isolated control; the native final inventory retained no
+SQLite or instance-lock handles. Keep the diagnostic interruption distinct
+from a product failure and from a successful native run. Do not weaken the
+fault injection or add cleanup to repair an observer's interference.
+
 Working knowledge about testing in this repo. Not decisions (see `backlog/decisions/`)
 and not point-in-time audits — these are traps that have actually cost time here, kept
 so the next person does not rediscover them.
