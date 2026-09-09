@@ -798,6 +798,12 @@ async def test_a_facet_failure_is_live_until_the_next_facet_request_starts() -> 
             "unable to open database file <path>",
         ),
         (
+            sqlite3.OperationalError(
+                'unable to open database file "/Users/x/Private Media/final draft.sqlite"'
+            ),
+            'unable to open database file "<path>"',
+        ),
+        (
             sqlite3.OperationalError("database is locked"),
             "database is locked",
         ),
@@ -839,6 +845,16 @@ async def test_page_failure_reason_redacts_filesystem_paths(
         (
             "No such file or directory: '/Users/x/My Docs/db.sqlite'",
             "No such file or directory: '<path>'",
+        ),
+        (
+            'No such file or directory: "/Users/x/Bob\'s Docs/private draft.sqlite" '
+            "was rejected",
+            'No such file or directory: "<path>" was rejected',
+        ),
+        (
+            r"unable to open database file 'C:\Program Files\tldw\private media.db' "
+            "during retry",
+            "unable to open database file '<path>' during retry",
         ),
         # Negatives: no over-match.
         ("database is locked", "database is locked"),

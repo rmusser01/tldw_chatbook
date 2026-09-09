@@ -292,7 +292,8 @@ class ConsoleRowActionsController:
         if db is None:
             return False
         try:
-            return bool(db.get_messages_for_conversation(conversation_id, limit=1))
+            with db.transaction():
+                return bool(db.get_messages_for_conversation(conversation_id, limit=1))
         except Exception:
             return False
 

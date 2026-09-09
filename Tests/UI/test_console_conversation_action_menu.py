@@ -9,6 +9,8 @@ operable menu.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.widgets import Button
 
@@ -310,6 +312,70 @@ def _copy_target(**overrides):
     }
     base.update(overrides)
     return ConversationMenuTarget(**base)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message_count", [0, 1])
+async def test_persisted_copy_eligibility_reads_in_a_borrow_safe_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    message_count: int,
+) -> None:
+    """The persisted probe uses a transaction without owning its caller's.
+
+    Args:
+        monkeypatch: Fixture used to observe the real database read boundary.
+        tmp_path: Isolated directory for the real SQLite database.
+        message_count: Whether the persisted conversation has a message.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    database = CharactersRAGDB(str(tmp_path / "eligibility.db"), "eligibility")
+    try:
+        async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+            screen = pilot.app.screen
+            screen.app_instance.chachanotes_db = database
+            conversation_id = database.add_conversation({"title": "Eligibility"})
+            if message_count:
+                database.add_message(
+                    {
+                        "conversation_id": conversation_id,
+                        "sender": "user",
+                        "content": "present",
+                    }
+                )
+            connection = database.get_connection()
+            connection.commit()
+            assert not connection.in_transaction
+
+            original = database.get_messages_for_conversation
+            transaction_states: list[bool] = []
+
+            def observed_read(*args, **kwargs):
+                transaction_states.append(database.get_connection().in_transaction)
+                return original(*args, **kwargs)
+
+            monkeypatch.setattr(
+                database, "get_messages_for_conversation", observed_read
+            )
+            assert screen._row_actions._console_target_has_messages(
+                "", conversation_id
+            ) is bool(message_count)
+            assert transaction_states == [True]
+
+            connection.execute("BEGIN")
+            try:
+                assert screen._row_actions._console_target_has_messages(
+                    "", conversation_id
+                ) is bool(message_count)
+                assert connection.in_transaction
+                assert transaction_states == [True, True]
+            finally:
+                connection.rollback()
+    finally:
+        with database.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert database.registered_connection_count() == 0
 
 
 @pytest.mark.asyncio

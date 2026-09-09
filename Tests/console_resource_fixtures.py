@@ -84,6 +84,11 @@ async def close_owned_console_test_apps(
     def build_owned_app(*args, **kwargs):
         app = build_app(*args, **kwargs)
         apps.append(app)
+        instance_handle = getattr(
+            getattr(app, "_instance_lock_status", None), "handle", None
+        )
+        if instance_handle is not None:
+            close_owned_console_resources.callback(instance_handle.close)
         for database in (
             app.local_workspace_db,
             app.subscriptions_db,

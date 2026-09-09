@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -307,3 +308,91 @@ async def test_app_cleanup_owns_only_importing_module_builder_products(
     ]
     # Retain both foreign owners throughout teardown so GC cannot hide a close.
     assert existing is not foreign
+
+
+@pytest.mark.parametrize("failure", [None, "runtime", "runtime_cancel", "auxiliary"])
+async def test_app_cleanup_releases_only_owned_real_instance_locks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str | None
+) -> None:
+    """Release exact app locks despite teardown faults, retaining foreign locks.
+
+    Args:
+        monkeypatch: Fixture isolating the importing module's app builder.
+        tmp_path: Private directories for real advisory lock files.
+        failure: Optional runtime or auxiliary teardown failure to inject.
+    """
+    from tldw_chatbook.Utils.instance_lock import acquire_profile_instance_lock
+
+    error = (
+        asyncio.CancelledError("runtime cancelled")
+        if failure == "runtime_cancel"
+        else RuntimeError("teardown failed")
+    )
+    with ExitStack() as cleanup:
+        def build_app(name):
+            directory = tmp_path / name
+            directory.mkdir()
+            status = acquire_profile_instance_lock(directory)
+            assert status.acquired and status.handle is not None
+            cleanup.callback(status.handle.close)
+
+            async def shutdown():
+                if failure in {"runtime", "runtime_cancel"}:
+                    raise error
+
+            return SimpleNamespace(
+                _instance_lock_status=status,
+                _shutdown_console_runtime=shutdown,
+                local_workspace_db=None,
+                subscriptions_db=None,
+                local_library_collections_db=None,
+                evaluation_orchestrator=None,
+            )
+
+        existing = build_app("existing")
+        module = SimpleNamespace(_build_test_app=build_app)
+        foreign_module = SimpleNamespace(_build_test_app=build_app)
+        auxiliary = ExitStack()
+        cleanup.callback(auxiliary.close)
+        fixture = resources.close_owned_console_test_apps.__wrapped__(
+            SimpleNamespace(module=module), monkeypatch, auxiliary
+        )
+        await anext(fixture)
+        owned = module._build_test_app("owned")
+        foreign = foreign_module._build_test_app("foreign")
+
+        def fail_auxiliary():
+            raise error
+
+        if failure == "auxiliary":
+            auxiliary.callback(fail_auxiliary)
+        try:
+            if failure in {"runtime", "runtime_cancel"}:
+                with pytest.raises(BaseExceptionGroup) as caught:
+                    await anext(fixture)
+                assert caught.value.exceptions == (error,)
+            else:
+                with pytest.raises(StopAsyncIteration):
+                    await anext(fixture)
+        finally:
+            await fixture.aclose()
+        if failure == "auxiliary":
+            with pytest.raises(RuntimeError) as caught:
+                auxiliary.close()
+            assert caught.value is error
+        else:
+            auxiliary.close()
+
+        # Keep all owners referenced so garbage collection cannot release them.
+        assert owned._instance_lock_status.handle.closed
+        assert not existing._instance_lock_status.handle.closed
+        assert not foreign._instance_lock_status.handle.closed
+        assert all(
+            (tmp_path / name / ".instance.lock").is_file()
+            for name in ("owned", "existing", "foreign")
+        )
+        for name in ("owned", "existing", "foreign"):
+            probe = acquire_profile_instance_lock(tmp_path / name)
+            if probe.handle is not None:
+                cleanup.callback(probe.handle.close)
+            assert probe.acquired is (name == "owned")
