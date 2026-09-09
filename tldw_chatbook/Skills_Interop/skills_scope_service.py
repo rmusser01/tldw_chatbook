@@ -468,6 +468,13 @@ class SkillsScopeService:
             service.describe_skill_script(skill_name, script_path)
         )
 
+    async def goal_verifier_invocation(self, verifier: VerificationSpec) -> dict:
+        """Resolve model-visible call data through the existing local trust owner."""
+        self._enforce_policy("skills.run_script.launch.local")
+        return await self._require_service(
+            SkillsBackend.LOCAL
+        ).goal_verifier_invocation(verifier)
+
     async def goal_verifier_reference(
         self,
         skill_name: str,

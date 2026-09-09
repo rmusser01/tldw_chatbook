@@ -207,13 +207,16 @@ class LocalToolProvider:
         no_callback_refusal: str | None = None,
         allow_write: bool = True,
         root_guard: Callable[[], bool] | None = None,
+        read_only_roots: tuple[Path, ...] = (),
     ) -> None:
         self._root = workspace_root
+        self._read_only_roots = read_only_roots
         selected_specs = (
             specs
             if specs is not None
             else _default_specs(
                  workspace_root,
+                 read_root=self._read_root,
                  todo_store=todo_store,
                  on_todo_change=on_todo_change,
                  watchlists_service=watchlists_service,
@@ -373,6 +376,21 @@ class LocalToolProvider:
         """
         return [self.hub_tool_for(name) for name in self._specs]
 
+    def _read_root(self, path: str) -> Path:
+        """Resolve selected absolute source reads; relative paths remain primary."""
+        from tldw_chatbook.Tools.local_tool_impls import resolve_workspace_path
+
+        candidate = Path(path)
+        if candidate.is_absolute():
+            for root in self._read_only_roots:
+                # Require lexical membership AND canonical confinement: a link or
+                # traversal out of one source cannot jump into another authority.
+                if candidate.is_relative_to(root):
+                    resolve_workspace_path(path, root)
+                    return root
+        resolve_workspace_path(path, self._root)
+        return self._root
+
     def path_targets(
         self, tool_id: str, args: Mapping[str, Any]
     ) -> tuple[ToolPathTarget, ...]:
@@ -387,6 +405,11 @@ class LocalToolProvider:
         )
 
         root = Path(self._root).resolve()
+        if name in {"fs_read", "fs_list"}:
+            read_root = self._read_root(args["path"])
+            if read_root in self._read_only_roots:
+                # Extra sources are data, never a second AGENTS activation root.
+                return (ToolPathTarget(path=None, kind="outside"),)
         if name in {"fs_read", "fs_write", "fs_edit"}:
             path = resolve_workspace_path(args["path"], root)
             return (ToolPathTarget(path=path, kind="exact"),)
@@ -1005,6 +1028,7 @@ def _make_todo_list_handler(store: SessionTodoStore) -> Callable[[dict], str]:
 def _default_specs(
     workspace_root: Path,
     *,
+    read_root: Callable[[str], Path] | None = None,
     todo_store: SessionTodoStore | None = None,
     on_todo_change: TodoChangeCallback | None = None,
     watchlists_service: WatchlistsToolService | None = None,
@@ -1067,7 +1091,8 @@ def _default_specs(
                 "required": ["path"],
             },
             handler=lambda args: list_directory(
-                args["path"], workspace_root=workspace_root
+                args["path"],
+                workspace_root=read_root(args["path"]) if read_root else workspace_root,
             ),
             tags=(),
         ),
@@ -1095,7 +1120,7 @@ def _default_specs(
             },
             handler=lambda args: read_file(
                 args["path"],
-                workspace_root=workspace_root,
+                workspace_root=read_root(args["path"]) if read_root else workspace_root,
                 offset=args.get("offset", 1),
                 limit=args.get("limit"),
             ),

@@ -1,0 +1,58 @@
+...........................................s............................ [ 25%]
+........................................................................ [ 51%]
+........................................................................ [ 76%]
+.....................................................F...........        [100%]
+=================================== FAILURES ===================================
+___________ test_selected_root_swap_fails_closed_before_local_invoke ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x120566720>
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35909/test_selected_root_swap_fails_0')
+
+    def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_path):
+        selected = tmp_path / "selected"
+        selected.mkdir()
+        (selected / "secret.txt").write_text("inside")
+        identity = controller_mod._capture_project_root_identity(selected)
+        monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
+        controller = _bare_controller(
+            SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
+        )
+        local_provider, review = controller._compose_local_provider(
+            project_root=selected,
+            project_root_identity=identity,
+        )
+
+        moved = tmp_path / "moved"
+        selected.rename(moved)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("outside")
+        selected.symlink_to(outside, target_is_directory=True)
+
+>       assert review([ToolCall(name="fs_read", args={"path": "secret.txt"})]) == {}
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: build_local_review_hook.<locals>.review_tool_calls() missing 1 required positional argument: 'run_id'
+
+Tests/Chat/test_console_local_review_hook.py:539: TypeError
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 08:23:26.021 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4772 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35909/test_selected_root_swap_fails_0/test_data/config/config.toml
+2026-09-09 08:23:26.022 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4786 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35909/test_selected_root_swap_fails_0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 08:23:26.022 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4795 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35909/test_selected_root_swap_fails_0/test_data/config/config.toml
+2026-09-09 08:23:26.023 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4840 - load_cli_config_and_ensure_existence returning config with top-level keys: ['general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'database', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'image_generation', 'character_defaults', 'analysis_defaults', 'llm_management', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'web_server', '_first_run']
+2026-09-09 08:23:26.023 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:4844 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+3.36s call     Tests/UI/test_console_goal_navigation.py::test_production_styles_keep_goal_actions_visible_and_keyboard_accessible[size0]
+3.32s call     Tests/UI/test_console_goal_navigation.py::test_production_styles_keep_goal_actions_visible_and_keyboard_accessible[size1]
+1.66s call     Tests/UI/test_console_goal_navigation.py::test_palette_discovers_and_opens_goal_history
+
+(22 durations < 1s hidden.)
+=========================== short test summary info ============================
+SKIPPED [1] Tests/Chat/test_goal_cli_verification.py:750: Set TLDW_GOAL_LIVE_LOCAL=1 for the explicitly configured loopback endpoint
+FAILED Tests/Chat/test_console_local_review_hook.py::test_selected_root_swap_fails_closed_before_local_invoke
+1 failed, 279 passed, 1 skipped, 1 warning in 57.61s

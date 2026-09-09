@@ -73,6 +73,14 @@ class GoalIterationAuthorization:
     ) -> None:
         if _key is not _KEY:
             raise PermissionError("goal authority is coordinator-internal")
+        from tldw_chatbook.Chat.console_chat_controller import (
+            _capture_project_root_identity,
+        )
+
+        self._source_root_identities = tuple(
+            (Path(b.locator), _capture_project_root_identity(Path(b.locator)))
+            for b in goal.request.source_bindings
+        )
         self._coordinator = coordinator
         self.goal = goal
         self.attempt = attempt
@@ -108,7 +116,16 @@ class GoalIterationAuthorization:
         return "GoalIterationAuthorization(authority=<redacted>)"
 
     def check_binding(self) -> None:
+        from tldw_chatbook.Chat.console_chat_controller import (
+            _project_root_identity_matches,
+        )
+
         self._coordinator._check_admission_open()
+        if any(
+            identity is None or not _project_root_identity_matches(root, identity)
+            for root, identity in self._source_root_identities
+        ):
+            raise AutomaticWorkRefused("binding_changed")
         reason = self._coordinator.service._binding_reason(self.goal.request)
         if reason:
             raise AutomaticWorkRefused(reason)
@@ -923,7 +940,27 @@ class ConsoleGoalCoordinator:
             authorization.project_state = state
             from tldw_chatbook.Agents.goal_iteration import build_goal_handoff
 
-            handoff = build_goal_handoff(goal, goal.checkpoints)
+            invocations = []
+            for verifier in goal.request.verifiers:
+                skills = self.controller._agent_bridge._skills_service
+                if skills is None:
+                    raise AutomaticWorkRefused("goal_verifier_mapping_missing")
+                from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+                from tldw_chatbook.Skills_Interop.skill_trust_models import (
+                    SkillTrustBlockedError,
+                )
+
+                try:
+                    invocations.append(await skills.goal_verifier_invocation(verifier))
+                except (ValueError, SkillTrustBlockedError, PolicyDeniedError):
+                    raise AutomaticWorkRefused("verifier_binding_changed") from None
+                authorization.check_binding()
+            try:
+                handoff = build_goal_handoff(
+                    goal, goal.checkpoints, verifier_invocations=invocations
+                )
+            except ValueError:
+                raise AutomaticWorkRefused("goal_launch_context_capacity") from None
             with authorization.context.scope():
                 await self.controller.submit_draft(
                     handoff,

@@ -5546,6 +5546,11 @@ class ConsoleChatController:
                 project_selection.root_identity if project_selection else None
             ),
             project_root_guard=project_authority_guard,
+            read_only_roots=(
+                tuple(Path(b.locator) for b in goal.goal.request.source_bindings)
+                if goal is not None
+                else ()
+            ),
         )
         return mcp_provider, builtin_gate, local_provider, local_review_hook
 
@@ -5558,6 +5563,7 @@ class ConsoleChatController:
         allow_write: bool = True,
         project_root_identity: tuple[tuple[str, int, int, int], ...] | None = None,
         project_root_guard: Callable[[], bool] | None = None,
+        read_only_roots: tuple[Path, ...] = (),
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -5707,6 +5713,7 @@ class ConsoleChatController:
         )
         provider = LocalToolProvider(
             workspace_root=root,
+            read_only_roots=read_only_roots,
             allow_write=allow_write,
             root_guard=(
                 project_root_guard

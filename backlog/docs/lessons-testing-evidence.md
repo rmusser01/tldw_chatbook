@@ -5874,3 +5874,22 @@ constructors could interleave them. Wrapping the goal schema script in one
 serializes replacement. Making only `CREATE TRIGGER` conditional would hide the
 error while retaining a period without the guard. Concurrent admission evidence
 must include handle initialization as well as the later acceptance transaction.
+
+
+## Selected resources must cross the actual model/tool boundary (TASK-32117/32118/32120, 2026-09-09)
+
+The final native-goal review found that the deterministic provider knew its
+verifier arguments from fixture variables while the actual outgoing request did
+not contain them. Selected sibling sources were stored and validated but could
+not be read. The corrected fixture derives command arguments from the outgoing
+launch JSON and executes real source reads with project instructions enabled.
+That source probe first needed to honor the existing instruction-delivery retry:
+a deferred tool response is not evidence that the read occurred. Once it retried
+the real call, it exposed a same-path directory replacement passing canonical
+registry checks and returning replacement bytes. Reusing the existing root and
+ancestor identity guard closed that wait/use gap.
+
+Assert the actual model-visible result and effects, including explicit source
+and sibling canaries; selection metadata or a fake provider's private knowledge
+does not establish resource usability. For changed authority, distinguish a
+preflight refusal with zero calls from a later execution-time refusal.

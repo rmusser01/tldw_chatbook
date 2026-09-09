@@ -219,3 +219,56 @@ async def test_mandatory_goal_request_over_budget_never_dispatches_or_truncates_
         assert saved.accounting.used["generation"] == 1
     finally:
         await gateway.aclose()
+
+
+def test_selected_resource_projection_cannot_silently_exceed_launch_ceiling(stores):
+    from Tests.Chat.test_goal_conversation_provisioning import service
+    from tldw_chatbook.Agents.goal_iteration import build_goal_handoff
+
+    goal = service(stores).create(stores[3], launch_id="capacity")
+    # Escaped locator bytes consume the mandatory projection ceiling too.
+    sources = tuple(
+        goal.request.binding.model_copy(
+            update={"binding_id": str(i), "locator": "/" + "é" * 4000, "access": "ro"}
+        )
+        for i in range(32)
+    )
+    goal = goal.model_copy(
+        update={"request": goal.request.model_copy(update={"source_bindings": sources})}
+    )
+    with pytest.raises(ValueError, match="goal_launch_context_capacity"):
+        build_goal_handoff(goal, ())
+
+
+@pytest.mark.asyncio
+async def test_verifier_projection_does_not_change_historical_launch_bytes(tmp_path):
+    from Tests.Chat.test_goal_cli_verification import trusted_skill
+
+    scope, _path, _trust = trusted_skill(tmp_path, "print('check')\n")
+    verifier = await scope.goal_verifier_reference(
+        "verifier",
+        "scripts/check.py",
+        arguments=("argument with spaces",),
+        input_paths=("fixture.txt",),
+    )
+    before = verifier.model_dump_json()
+    invocation = await scope.goal_verifier_invocation(verifier)
+    assert invocation == {
+        "tool_name": "run_skill_script",
+        "arguments": {
+            "skill_name": "verifier",
+            "script_path": "scripts/check.py",
+            "args": ["argument with spaces"],
+        },
+    }
+    assert verifier.model_dump_json() == before
+    with pytest.raises(ValueError):
+        await scope.goal_verifier_invocation(
+            verifier.model_copy(
+                update={"verifier_path": str(tmp_path / "unselected.py")}
+            )
+        )
+    with pytest.raises(ValueError, match="goal_verifier_mapping_changed"):
+        await scope.goal_verifier_invocation(
+            verifier.model_copy(update={"verifier_sha256": "0" * 64})
+        )

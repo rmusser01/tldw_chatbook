@@ -35,8 +35,11 @@ For a command-backed check, select a previously trusted local skill and its
 script path. Arguments and checked input paths are JSON arrays. Pass the project
 path explicitly as an argument: the script runs in a temporary working directory.
 Keep the verifier outside the editable project. **Review launch** fixes the
-provider, bindings, tools, arguments, verifier hash and input scope; **Start**
-then launches those selections. Cancel to revise them. Result review is required
+objective, criteria, review requirement, provider, bindings, tools, arguments,
+verifier hash and input scope before validation waits; **Start** then launches
+those same selections. Failed validation restores editable controls. Every
+iteration receives the selected target and exact verifier invocation, so you do
+not need to duplicate command arguments in the objective. Cancel to revise them. Result review is required
 by default. Turning it off requires at least one configured objective check.
 A passing model report alone cannot satisfy that check.
 
@@ -64,7 +67,15 @@ remove uncertain evidence. **Remove payloads** is available only for settled
 eligible history and removes private goal reports/evidence while retaining
 accounting tombstones. It is not a general deletion of existing run logs or files.
 
-Local file tools are confined by the selected binding. Trusted scripts retain
+Selected additional sources are available through the selected `fs_read` and
+`fs_list` tools using absolute paths, under existing tool permissions. Selecting
+a source does not automatically select either tool or grant access. Relative
+paths, `fs_glob`, `fs_grep`, and file writes stay within the primary binding;
+unselected sibling roots remain inaccessible. Source bindings and directory
+identity are checked again after waits and before use. Source files are untrusted
+data; their `AGENTS.md` files are not automatically activated as instructions.
+
+Trusted scripts retain
 the executor's actual authority; a scratch directory is not an operating-system
 sandbox for arbitrary script code. The real CLI qualification for this release
 covers the POSIX skill path. The finite local Qwen endpoint demonstration did not

@@ -480,3 +480,162 @@ async def test_binding_discovery_ignores_late_cancelled_refresh(stores):
         assert modal.tool_ids == ("local:fs_read", "local:fs_edit")
         assert "local:fs_edit" in modal.query_one("#goal-tools", SelectionList).selected
         assert not modal.query_one("#goal-start").disabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reject", [False, True])
+async def test_setup_freezes_all_fields_before_validation_and_restores_on_failure(
+    stores, tmp_path, reject
+):
+    import asyncio
+
+    from textual.widgets import Checkbox, Input, SelectionList
+
+    from Tests.Chat.test_goal_cli_verification import trusted_skill
+    from tldw_chatbook.Agents.goal_models import GoalRequest
+    from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+
+    req = stores[3]
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    source = req.binding.model_copy(
+        update={"binding_id": "source", "locator": str(source_root), "access": "ro"}
+    )
+    stores[2].save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id="workspace",
+            binding_id="source",
+            binding_kind="local-filesystem",
+            label="Source",
+            locator=str(source_root),
+            status="ready",
+            metadata={"access": "ro"},
+        )
+    )
+    skills, _path, _trust = trusted_skill(tmp_path, "print('valid')\n")
+    entered, release = asyncio.Event(), asyncio.Event()
+    captured = []
+    owner = service(stores)
+    launched = []
+
+    async def configure(values, *args):
+        captured.append(values)
+        entered.set()
+        await release.wait()
+        if reject:
+            raise ValueError("validation rejected")
+        skill, script, arguments, inputs = args
+        values["verifiers"] = (
+            (
+                await skills.goal_verifier_reference(
+                    skill, script, arguments=arguments, input_paths=inputs
+                )
+            ).model_dump(),
+        )
+        return GoalRequest.model_validate(values)
+
+    async def start(request, launch_id):
+        goal = owner.create(request, launch_id=launch_id)
+        launched.append(goal)
+        return goal
+
+    app = App()
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = setup_view()(
+            req,
+            start=start,
+            bindings=(req.binding, source),
+            tool_ids=req.tool_scope.catalog_tools,
+            configure=configure,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#goal-objective", TextArea).load_text("Frozen objective")
+        modal.query_one("#goal-criteria", TextArea).load_text("Frozen criteria")
+        modal.query_one("#goal-sources", SelectionList).select("source")
+        modal.query_one("#goal-skill", Input).value = "verifier"
+        modal.query_one("#goal-script", Input).value = "scripts/check.py"
+        modal.query_one("#goal-arguments", Input).value = '["exact argument"]'
+        modal.query_one("#goal-inputs", Input).value = '["checked.txt"]'
+        modal.query_one("#goal-human-review", Checkbox).value = False
+        await pilot.click("#goal-start")
+        await asyncio.wait_for(entered.wait(), 1)
+        fields = list(modal.query("Input, TextArea, Select, SelectionList, Checkbox"))
+        assert all(field.disabled for field in fields)
+        release.set()
+        await pilot.pause()
+        if reject:
+            assert all(not field.disabled for field in fields)
+            assert not modal.query_one("#goal-start").disabled
+            assert modal._submitted is None
+        else:
+            assert modal._submitted.objective == "Frozen objective"
+            assert modal._submitted.criteria == "Frozen criteria"
+            assert modal._submitted.source_bindings == (source,)
+            assert modal._submitted.tool_scope == req.tool_scope
+            assert modal._submitted.verifiers[0].arguments == ("exact argument",)
+            assert modal._submitted.verifiers[0].input_paths == ("checked.txt",)
+            assert not modal._submitted.human_review_required
+            assert all(field.disabled for field in fields)
+            await pilot.click("#goal-start")
+            await pilot.pause()
+            assert launched[0].request == GoalRequest.model_validate(captured[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reject", [False, True])
+async def test_rejected_validation_restores_completed_discovery_without_stale_choices(
+    stores,
+    reject,
+):
+    import asyncio
+
+    from textual.widgets import Select, SelectionList
+
+    req = stores[3]
+    source = req.binding.model_copy(update={"binding_id": "source", "access": "ro"})
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def configure(*args):
+        entered.set()
+        await release.wait()
+        if reject:
+            raise ValueError("rejected validation")
+        from tldw_chatbook.Agents.goal_models import GoalRequest
+
+        return GoalRequest.model_validate(args[0])
+
+    async def discover(binding):
+        return (
+            ("local:fs_read",)
+            if binding.access == "ro"
+            else ("local:fs_read", "local:fs_edit")
+        )
+
+    async def no_start(*args):
+        pytest.fail("Rejected setup must not launch")
+
+    app = App()
+    async with app.run_test() as pilot:
+        modal = setup_view()(
+            req,
+            start=no_start,
+            bindings=(req.binding, source),
+            tool_ids=("local:fs_read", "local:fs_edit"),
+            configure=configure,
+            discover_tools=discover,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#goal-start")
+        await asyncio.wait_for(entered.wait(), 1)
+        # An already queued binding update can finish discovery during validation.
+        modal.query_one("#goal-binding", Select).value = "source"
+        await pilot.pause()
+        assert not modal._refreshing_tools
+        release.set()
+        await pilot.pause()
+        choices = modal.query_one("#goal-tools", SelectionList)
+        assert not choices.disabled and not modal.query_one("#goal-start").disabled
+        assert "local:fs_edit" not in choices.selected
+        assert modal._submitted is None

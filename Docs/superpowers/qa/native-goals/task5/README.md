@@ -9,8 +9,11 @@ Accepted contract: [ADR-141](../../../../../backlog/decisions/141-native-console
 exits **7 then 0**, stdout/stderr, five model-visible message payloads and runtime
 lookup IDs across **two increments**. The test uses real SQLite, the real native
 controller/bridge, approved local `fs_edit`, and real POSIX subprocess execution.
-The recording provider chooses references from actual tool messages; it does not
-read private coordinator observations to invent evidence. This fixture is not a
+The recording provider derives the exact verifier tool name/arguments and target
+input path from the actual outgoing selected-resource JSON on both increments,
+and chooses evidence references from actual tool messages. It does not read
+private coordinator observations or fixture-only invocation variables to choose
+the command. This fixture is not a
 live language model.
 
 The unchanged [check.py](check.py) receives the project path explicitly, checks
@@ -28,6 +31,11 @@ The application uses Chatbook's `llama_cpp` adapter and incumbent fenced-tool
 protocol. This names the adapter, not the endpoint's serving binary. Parent
 verified a local uvicorn process and a corroborating existing local-LLM UAT record;
 the temporary server application source was no longer available for inspection.
+
+These two live traces predate the final review fixes. They remain historical
+negative evidence; their objectives already duplicated the verifier invocation.
+The refreshed deterministic trace is current, and no further live model calls
+were made for the final fix wave.
 
 Two initial harness attempts stopped **before network dispatch** at
 `native_goal_required` (zero HTTP/model calls), revealing an incorrect native
@@ -135,3 +143,38 @@ eight changed files. Independent scoped re-review approved all four fixes. It
 identified one nonblocking form-state issue when a binding changes during
 validation; this is carried into the final review and fix wave. The qualification
 report tracks the final disposition.
+
+
+## Final whole-branch fix wave
+
+The final review fixes freeze every setup control before awaited validation,
+restore rejected forms after discovery, project exact selected verifier calls
+into initial/later model requests, and provide bounded selected-source reads
+through existing `fs_read`/`fs_list` permission owners. The source tests cover
+actual native result delivery with project instructions enabled, no source
+AGENTS activation, unselected sibling and source-write refusal, primary edits,
+symlink/traversal escape, registry changes and same-path directory replacement.
+The mandatory resource projection stays under the 128 KiB launch ceiling; the
+16 KiB checkpoint memory bound and complete prepared-request budget remain.
+
+- [Affected gate](final-fix-affected.txt): **279 passed, 1 opt-in live skip,
+  1 existing baseline failure**. The unchanged local-review test calls
+  `review(calls)` without its required `run_id`, matching the Task2 baseline
+  proof; this is not an overall passing gate.
+- [Strengthened setup/source gate](final-fix-strengthened.txt): **20 passed**.
+- [Stale/rejected validation](final-fix-stale-validation.txt): **2 passed**,
+  including an otherwise successful validation invalidated by a binding change.
+- [Final source-copy geometry](final-fix-geometry.txt): **2 passed** at
+  80×24/160×44 with production styles. Existing images remain geometry evidence,
+  not refreshed screenshots of the amended source-access wording.
+- Scoped Ruff and formatter checks pass for the goal owners and tests.
+  [Legacy-owner differential lint](final-fix-legacy-lint.json) adds no diagnostic.
+  MarkdownIt confirms ADR129 and ADR141 are actual table rows; only their
+  preceding blank separators were removed. Whitespace checks pass.
+
+These runs overlap. Existing Requests dependency warnings remain; historical
+syntax warnings and the three proven baseline diagnostic failures are unchanged.
+No whole-suite sweep, live model call, backend change or new permission owner was
+introduced. The current deterministic trace was inspected against the actual
+unchanged verifier source/hash, outputs, final file and diff. The two historical
+local model trials still did not achieve a corrected artifact.

@@ -1,0 +1,22 @@
+{
+  "tldw_chatbook/Agents/local_tool_provider.py": {
+    "baseline_count": 2,
+    "current_count": 2,
+    "new_diagnostics": []
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "baseline_count": 96,
+    "current_count": 96,
+    "new_diagnostics": []
+  },
+  "tldw_chatbook/Skills_Interop/local_skills_service.py": {
+    "baseline_count": 11,
+    "current_count": 11,
+    "new_diagnostics": []
+  },
+  "tldw_chatbook/Skills_Interop/skills_scope_service.py": {
+    "baseline_count": 0,
+    "current_count": 0,
+    "new_diagnostics": []
+  }
+}

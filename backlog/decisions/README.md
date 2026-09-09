@@ -71,7 +71,6 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-075](075-durable-character-emote-metadata.md) | Proposed | Match the pinned server emote grammar while persisting bounded final-expression metadata and immutable visual references. |
 | [ADR-076](076-server-offloaded-scheduled-agent-tasks.md) | Proposed | tldw_server is the execution authority for server-scoped scheduled agent work (single-owner execution, notifications pass-back, phase-1 side-effect-free runs), amending ADR-018's execution-unavailable clause. |
 | [ADR-118](118-chunking-lab-local-execution-and-recovery.md) | Accepted | Keep Chunking Lab Library-owned, use canonical flat templates and local capability-gated execution, and recover profile-local A/B experiments transactionally. |
-
 | [ADR-129](129-fleet-mailbox-and-wake-reliability.md) | Accepted | Bound steering admission and complete retained payloads, expose unread terminal steering, prune obsolete events, and delay refused wakes without starving ready conversations. |
 | [ADR-130](130-model-call-lifeline-client-teardown.md) | Accepted | Close each model-call HTTP pool from its owning lifeline before the event loop closes. |
 | [ADR-131](131-durable-agent-budget-accounting.md) | Accepted | Persist per-run budget usage and scoped continuation ancestry without feeding history into billed totals. |
@@ -81,7 +80,6 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-136](136-scoped-child-progress-and-supervisor-relay.md) | Proposed; awaiting design review | Bound child progress reports and explicit supervisor collection/relay without direct peer addressing or progress-triggered wakes. |
 | [ADR-137](137-queued-console-agent-delegation.md) | Proposed; awaiting design review | Route explicit queued prompts to named fleet children with independent accepted-work provenance, FIFO capacity waits, and a scoped yield for completion delivery. |
 | [ADR-138](138-portable-workflow-definitions-and-local-execution.md) | Accepted; implementation pending | Define a local-first three-pane workflow editor, portable server-compatible definitions, explicit runtime requirements, and coordinated revision-aware synchronization. |
-
 | [ADR-141](141-native-console-goal-runs.md) | Accepted | Run bounded native Console goals with typed CLI evidence, durable attempts, independent goal policy and explicit recovery. |
 
 ## Historical Decision Material

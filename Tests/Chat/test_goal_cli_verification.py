@@ -410,8 +410,14 @@ async def test_script_outcomes_and_post_approval_changes_are_authoritative(
                     else RunTerminationReason.PERMISSION_REFUSED
                 )
                 assert result.termination_reason == expected
-                assert result.outcome.status == "stuck"
-                assert count == 1
+                if case == "trust_changed":
+                    # Mandatory invocation projection refuses stale trust before
+                    # any model work; later approval changes still use the native gate.
+                    assert result.outcome is None
+                    assert count == 0
+                else:
+                    assert result.outcome.status == "stuck"
+                    assert count == 1
     finally:
         await gateway.aclose()
 
@@ -554,19 +560,28 @@ raise SystemExit(0 if value == 'valid\\n' else 7)
     def provider(**kwargs):
         nonlocal n
         n += 1
+        user_context = next(
+            m["content"] for m in kwargs["messages_payload"] if m["role"] == "user"
+        )
+        resources = json.loads(
+            user_context.split("Selected launch resources (JSON):\n", 1)[1].split(
+                "\n\nPrivate checkpoint memory", 1
+            )[0]
+        )
+        selected = resources["verifiers"][0]
         if n in (1, 4):
-            message = tool(
-                "run_skill_script",
-                {
-                    "skill_name": "verifier",
-                    "script_path": "scripts/check.py",
-                    "args": [str(project)],
-                },
-            )
+            message = tool(selected["tool_name"], selected["arguments"])
         elif n == 3:
             message = tool(
                 "fs_edit",
-                {"path": "fixture.txt", "old_string": "invalid", "new_string": "valid"},
+                {
+                    "path": str(
+                        Path(resources["primary_target"]["locator"])
+                        / selected["input_paths"][0]
+                    ),
+                    "old_string": "invalid",
+                    "new_string": "valid",
+                },
             )
         else:
             refs = re.findall(r"goal_evidence_id: ([a-f0-9]{32})", str(kwargs))

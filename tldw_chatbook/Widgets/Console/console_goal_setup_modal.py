@@ -148,11 +148,13 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                     markup=False,
                 )
                 yield Static(
-                    "Local file tools stay within the selected project. Trusted CLI scripts run with the configured executor’s actual authority; the scratch directory is not an OS sandbox. Existing trust and approval rules still apply.",
+                    "File writes, glob and grep stay within the selected project. Selected read-only sources support fs_read/fs_list under existing permissions. Trusted CLI scripts run with the configured executor’s actual authority; the scratch directory is not an OS sandbox. Existing trust and approval rules still apply.",
                     markup=False,
                 )
                 yield Checkbox(
-                    "Require human result review", value=True, id="goal-human-review"
+                    "Require human result review",
+                    value=self.request.human_review_required,
+                    id="goal-human-review",
                 )
                 yield Static("", id="goal-setup-error", markup=False)
             with Horizontal():
@@ -203,10 +205,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
         finally:
             if self.is_mounted and version == self._binding_version:
                 self._refreshing_tools = False
-                self.query_one("#goal-tools", SelectionList).disabled = self._busy
-                self.query_one("#goal-start", Button).disabled = (
-                    self._busy or self._catalog_binding_id is None
-                )
+                self._update_controls()
 
     def action_cancel(self) -> None:
         if not self._busy:
@@ -220,8 +219,23 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
     def start_pressed(self) -> None:
         if not self._busy and not self._refreshing_tools:
             self._busy = True
-            self.query_one("#goal-start", Button).disabled = True
+            self._update_controls()
             self.launch()
+
+    def _update_controls(self) -> None:
+        """Lock the entire submission before validation can yield."""
+        locked = self._busy or self._submitted is not None
+        for widget in self.query("Input, TextArea, Select, SelectionList, Checkbox"):
+            widget.disabled = locked
+        if self.query("#goal-tools"):
+            self.query_one("#goal-tools", SelectionList).disabled = (
+                locked or self._refreshing_tools or self._catalog_binding_id is None
+            )
+        self.query_one("#goal-start", Button).disabled = (
+            self._busy
+            or self._refreshing_tools
+            or (self.discover_tools is not None and self._catalog_binding_id is None)
+        )
 
     @work(exclusive=True)
     async def launch(self) -> None:
@@ -325,4 +339,4 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
         finally:
             self._busy = False
             if self.is_mounted:
-                self.query_one("#goal-start", Button).disabled = self._refreshing_tools
+                self._update_controls()

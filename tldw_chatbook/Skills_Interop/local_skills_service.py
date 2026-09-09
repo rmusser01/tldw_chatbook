@@ -2296,6 +2296,30 @@ class LocalSkillsService:
             self._canonical_skill_name(skill_name), script_path, path
         )
 
+    async def goal_verifier_invocation(self, verifier: VerificationSpec) -> dict:
+        """Project an exact current trusted verifier into executable tool arguments."""
+        relative = Path(verifier.verifier_path).relative_to(self.skills_dir.resolve())
+        if len(relative.parts) < 2:
+            raise ValueError("goal_verifier_mapping_missing")
+        skill_name = relative.parts[0]
+        script_path = relative.relative_to(skill_name).as_posix()
+        current = await self.goal_verifier_reference(
+            skill_name,
+            script_path,
+            arguments=verifier.arguments,
+            input_paths=verifier.input_paths,
+        )
+        if current.invocation_key != verifier.invocation_key:
+            raise ValueError("goal_verifier_mapping_changed")
+        return {
+            "tool_name": "run_skill_script",
+            "arguments": {
+                "skill_name": skill_name,
+                "script_path": script_path,
+                "args": list(verifier.arguments),
+            },
+        }
+
     async def goal_verifier_reference(
         self,
         skill_name: str,
