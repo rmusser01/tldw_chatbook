@@ -75,7 +75,11 @@ class LibraryLandingCanvasState:
     # task-32072: the Get started steps are live controls that unlock in
     # sequence, so the canvas needs the two facts that gate them.
     has_any_content: bool = False
-    search_has_results: bool = False
+    #: Whether a search result is actually STAGEABLE -- the same condition
+    #: `_stage_library_rag_result_in_console` enforces (review of PR #2531):
+    #: results alone unlocked the step, and pressing it then answered with the
+    #: staging refusal instead of Console, because nothing was selected.
+    search_result_selected: bool = False
 
 
 @dataclass(frozen=True)
@@ -382,10 +386,13 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         """Return why a step cannot run yet, and the step that unlocks it."""
         if step == "find" and not self.state.has_any_content:
             return "Find it needs something to search — Import a file first."
-        if step == "use" and not self.state.search_has_results:
+        if step == "use" and not self.state.search_result_selected:
             if not self.state.has_any_content:
                 return "Use it in Console needs a search result — Import a file first."
-            return "Use it in Console needs a search result — run Find it first."
+            return (
+                "Use it in Console needs a search result — run Find it and "
+                "pick one."
+            )
         return ""
 
     def _compose_get_started_steps(self) -> ComposeResult:

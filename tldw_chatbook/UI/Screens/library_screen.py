@@ -13631,7 +13631,7 @@ class LibraryScreen(BaseAppScreen):
             show_explore=get_started and self._library_rail_collapsed,
             # task-32072: the two facts the Get started steps unlock on.
             has_any_content=self._has_local_sources(),
-            search_has_results=bool(self._rag_search_state.results),
+            search_result_selected=self._library_search_result_is_selected(),
             continue_action=(
                 self._library_landing_continue_action() if not get_started else None
             ),
@@ -34318,7 +34318,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-hub-step-import")
     def handle_library_get_started_import(self, event: Button.Pressed) -> None:
-        """Step 1 of Get started: open Import (task-32072)."""
+        """Step 1 of Get started: open Import (task-32072).
+
+        Args:
+            event: Press of the Get started "Import a file" step.
+        """
         event.stop()
         self.run_worker(
             self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA),
@@ -34327,7 +34331,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-hub-step-find")
     def handle_library_get_started_find(self, event: Button.Pressed) -> None:
-        """Step 2 of Get started: open Search/RAG once anything is importable."""
+        """Step 2 of Get started: open Search/RAG once anything is importable.
+
+        Args:
+            event: Press of the Get started "Find it" step.
+        """
         event.stop()
         if not self._has_local_sources():
             notify = getattr(self.app_instance, "notify", None)
@@ -34342,11 +34350,32 @@ class LibraryScreen(BaseAppScreen):
             group="library_get_started_step",
         )
 
+    def _library_search_result_is_selected(self) -> bool:
+        """Whether a Search/RAG result is selected and still in the results.
+
+        The Get started "Use it in Console" step and
+        ``_stage_library_rag_result_in_console`` must agree: results alone
+        never made the step usable, because staging needs the SELECTED result
+        and nothing selects one for the user (review of PR #2531).
+
+        Returns:
+            ``True`` when the stored selection names one of the current results.
+        """
+        selected_id = self._rag_search_state.selected_result_id
+        return bool(selected_id) and any(
+            result.result_id == selected_id
+            for result in self._rag_search_state.results
+        )
+
     @on(Button.Pressed, "#library-hub-step-use")
     def handle_library_get_started_use(self, event: Button.Pressed) -> None:
-        """Step 3 of Get started: stage the selected search result in Console."""
+        """Step 3 of Get started: stage the selected search result in Console.
+
+        Args:
+            event: Press of the Get started "Use it in Console" step.
+        """
         event.stop()
-        if not self._rag_search_state.results:
+        if not self._library_search_result_is_selected():
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(
@@ -34355,7 +34384,7 @@ class LibraryScreen(BaseAppScreen):
                         "Import a file first."
                         if not self._has_local_sources()
                         else "Use it in Console needs a search result — "
-                        "run Find it first."
+                        "run Find it and pick one."
                     ),
                     severity="warning",
                 )
@@ -34364,7 +34393,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-search-clear")
     def handle_library_search_clear(self, event: Button.Pressed) -> None:
-        """Empty the rail search box from its own visible affordance."""
+        """Empty the rail search box from its own visible affordance.
+
+        Args:
+            event: Press of the rail search box's clear button.
+        """
         event.stop()
         try:
             search = self.query_one("#library-search-input", Input)
