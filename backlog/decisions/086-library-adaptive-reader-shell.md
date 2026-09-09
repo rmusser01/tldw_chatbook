@@ -35,6 +35,12 @@ Library-to-canvas proportion as `floor((3W + 8) / 16) + 5` (exact halves round u
 29–39 cells. Ordinary destinations and adaptive readers project the same policy from their
 settled content width to exact cells. Ordinary destinations compress the result when necessary
 to preserve the 40-cell canvas minimum; adaptive readers retain resolver-owned collapse.
+Adaptive readers treat the added five Library cells and ten Items cells as
+preferred space: they use the preceding bounded rail width and 40-cell Items
+target to decide whether panes fit, then allocate spare space to the Library
+increase followed by the Items increase. This preserves the earlier collapse
+boundaries with the intentionally five-cell controls. Explicit reopening bypasses
+resize hysteresis for the requested pane; custom widths keep their exact policy.
 Destination Items preferences default to 50 cells. A zero-width pre-layout state remains an all-zero effective sentinel;
 36 is the representative new/reset preference value, not zero-width geometry.
 

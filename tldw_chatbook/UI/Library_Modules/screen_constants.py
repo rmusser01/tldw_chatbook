@@ -45,19 +45,11 @@ from ...Widgets.Library import PROMPT_DISCARD_TOOLTIP_BUSY
 LIBRARY_SKILLS_IMPORT_WORKER_GROUP = "library_skills_import"
 
 
-# task-31951: Conversations, Skills and Collections join Media on the
-# one-cell grip (task-31633 AC#2 shipped it for Media alone). Each surface was
-# spending ten columns on two five-column grips that paint a single arrow;
-# the resolver reserves what the grip paints, so eight of those ten cells now
-# go to the panes (the two the one-cell grips paint stay reserved) -- and the
-# rail-open threshold drops by the same eight (118 -> 110 here,
-# 122 -> 114 on Skills and Collections), the ordinary consequence of a
-# cheaper `required_width()`. Notes, File Notes and Prompts keep the default.
-LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile(grip_width=1)
+# All destinations retain the shared five-cell collapse controls.
+LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile()
 LIBRARY_COLLECTIONS_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_min_width=48,
     work_comfort_width=56,
-    grip_width=1,
 )
 # task-32127: Notes joined Media on `list_grows` and raised its comfort
 # ceiling to 64. At 235 columns the list was pinned at the 40-cell target
@@ -72,7 +64,6 @@ LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=3
 LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
 LIBRARY_SKILLS_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_min_width=48,
-    grip_width=1,
 )
 LIBRARY_CONVERSATION_READER_MAX_CHARS = 8000
 LIBRARY_SOURCE_PAGE_SIZES = {
