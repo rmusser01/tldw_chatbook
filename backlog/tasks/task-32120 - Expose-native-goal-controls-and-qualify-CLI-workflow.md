@@ -1,11 +1,11 @@
 ---
 id: TASK-32120
 title: Expose native goal controls and qualify CLI workflow
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:19'
-updated_date: '2026-09-09 14:46'
+updated_date: '2026-09-09 15:04'
 labels:
   - agents
   - console
@@ -31,6 +31,7 @@ Users need to start and inspect autonomous goals in Console and see a real faile
 - [x] #3 A real controller and agent path runs a trusted CLI verifier, corrects an editable fixture and passes the unchanged check across at least two increments.
 - [x] #4 Controls and evidence remain usable at 80x24 and the ordinary terminal size; displayed actions and footer hints are implemented.
 - [x] #5 Targeted integration, migration, privacy and diagnostics checks cover the delivered feature; documented live-provider evidence or an explicitly recorded unavailable prerequisite remains honest.
+- [ ] #6 Every launch field shown at confirmation matches the submitted immutable request across awaited validation, and validation failure restores usable controls without stale selections.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,6 +48,8 @@ Reason: Implements the accepted native goal UX/runtime ownership and private-evi
 5. Inspect production-style rendered controls at 80x24 and ordinary terminal size; confirm focus, scrolling, wait reasons and exact review links. Use the verified local SVG renderer and one bounded visual correction pass.
 6. Run a strictly finite isolated demonstration against the configured local model endpoint with the actual tool/report protocol; save and inspect commands/results/diff/final artifact, recording model or prerequisite limitations honestly without cloud fallback.
 7. Run targeted new UI/integration and affected settings/runtime tests plus applicable migration/private-data/diagnostic/architecture checks. Classify baseline failures with evidence, update scoped inventories and user docs, run scoped lint/format/diff checks, self-review and commit. Root handles independent review and completion bookkeeping.
+
+Final whole-branch review fix wave (before new code): existing ADR-141 applies; no duplicate ADR. Reproduce the affected setup/selected-resource failures through isolated mounted/native requests, fix all findings in the shared final-review list while preserving owner boundaries, run focused amended regressions and scoped static checks, update user/qualification docs and commit. One independent scoped re-review follows. Root owns final AC/status/notes after approval.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

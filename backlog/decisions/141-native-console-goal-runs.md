@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-09-08
-Implementation status: Five slices approved; whole-branch review and final fixes pending. See the [qualification report](../../Docs/superpowers/reviews/2026-09-09-goal-runs-qualification.md) for evidence and limitations.
+Implementation status: Whole-branch review complete; final fixes in progress. See the [qualification report](../../Docs/superpowers/reviews/2026-09-09-goal-runs-qualification.md) for evidence and limitations.
 Tasks: TASK-32116 through TASK-32120 track the five-slice implementation.
 Design: [gnhf review and native goal runs](../../Docs/superpowers/specs/2026-09-08-gnhf-inspired-goal-runs-design.md)
 Plan: [First native goal-run milestone](../../Docs/superpowers/plans/2026-09-08-gnhf-inspired-goal-runs.md)
@@ -52,8 +52,14 @@ requirement to build CLI support or postpone verification first.
    Revalidate authority on each iteration and after waits. Tool allowlists narrow
    existing permissions; they do not grant them. Enforce the goal's scope on
    catalog tools, runtime callbacks and progressive loading at both schema and
-   invocation boundaries. Automatically loaded project instruction bodies
-   retain their ephemeral ownership under ADR-069.
+    invocation boundaries. Automatically loaded project instruction bodies
+    retain their ephemeral ownership under ADR-069.
+    Additional selected source bindings must provide usable, bounded read-only
+    context or file reads through the existing permission owner. They never
+    widen write authority beyond the primary writable binding, and unselected
+    sibling roots remain inaccessible. Source data does not become project
+    instructions or a tool permission grant. Confirmation must display exactly
+    the immutable fields submitted after asynchronous validation.
 6. Reuse existing budget reservations, exact-request accounting, manual capacity
    reserves and retained physical ownership. Start with one active goal and no
    goal-created subagents. Defaults are 3 iterations, 32 calls, 500000 budget
@@ -105,6 +111,13 @@ requirement to build CLI support or postpone verification first.
     conversation history is insufficient. Do not restore a settled prior
     iteration's provider continuation. Keep continuation within an iteration
     coherent and account for the final request after all context preparation.
+    Include a bounded projection of the selected execution root, source read
+    references, exact verifier invocation arguments and checked inputs. The
+    projection must derive from canonical execution owners, not require the user
+    to duplicate form selections in objective prose. It remains subject to the
+    existing 128 KiB launch ceiling and complete prepared-request budget; the
+    separate 16 KiB checkpoint-memory bound is unchanged. If mandatory content
+    cannot fit, refuse or pause explicitly rather than silently omit it.
 
 ## Alternatives
 

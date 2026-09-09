@@ -10,7 +10,7 @@ wtf
 
 **Spec:** [Review and proposed design](../specs/2026-09-08-gnhf-inspired-goal-runs-design.md).
 
-**Status:** Implementation authorized by the user on 2026-09-08, following the requested [preimplementation review](../reviews/2026-09-08-goal-runs-preimplementation-review.md). The feature belongs inside Chatbook and includes existing CLI tools. All five slices have task-scoped specification and quality approval in the isolated native-goal-runs worktree. Whole-branch review and its fix wave remain outstanding; qualification limits are recorded below.
+**Status:** Implementation authorized by the user on 2026-09-08, following the requested [preimplementation review](../reviews/2026-09-08-goal-runs-preimplementation-review.md). The feature belongs inside Chatbook and includes existing CLI tools. All five slices have task-scoped specification and quality approval in the isolated native-goal-runs worktree. Whole-branch review found three functional gaps and two minor issues; the final fix wave is in progress. Qualification limits are recorded below.
 
 ADR required: yes
 ADR path: `backlog/decisions/141-native-console-goal-runs.md`
@@ -219,6 +219,20 @@ Expected result: no verified evidence or completed criterion; retain the report 
 - [x] Run scoped Ruff/format and whitespace checks on modified files. Run applicable migration/private-data/diagnostic architecture checks because these owner kinds changed; do not run the full suite without permission. Finish self-review, update Backlog AC/notes and relevant docs, then commit the scoped slice.
 
 Task5 qualification: independent specification and quality review approved the slice after fixes for restart hydration, binding-dependent tool choices, submitted summary and older-history access. One nonblocking form-state finding is carried to the final fix wave. The configured local model did not produce the requested corrected live artifact: both bounded attempts yielded malformed reports and no tools, so the inspected final artifact remained invalid. The actual failed traces are retained; successful correction was demonstrated by the deterministic provider through the real CLI path. This deviation and all baseline check failures are recorded in the [qualification report](../reviews/2026-09-09-goal-runs-qualification.md), with no live-success claim.
+
+## Final whole-branch fix wave
+
+ADR required: yes
+ADR path: backlog/decisions/141-native-console-goal-runs.md (Accepted; selected-resource and confirmation contract clarified before fixes)
+Reason: restore immutable setup and usable selected-resource integration within the existing native authority boundary; no new executor, grant or allowance owner.
+
+Affected Backlog tasks TASK-32117, TASK-32118 and TASK-32120 are reopened with explicit behavioral acceptance criteria before code. One implementer handles the five final-review findings and one scoped re-review checks the resulting diff.
+
+- [ ] Keep every displayed launch field identical to the submitted request across awaited validation; restore usable controls on failure, including tool choices.
+- [ ] Include bounded exact selected verifier invocations, execution root and checked inputs in actual initial/later model requests without objective duplication or fixture-only knowledge. Canonical executor owners provide the executable call details; execution-time verification remains authoritative. Keep the existing 128 KiB launch ceiling, 16 KiB checkpoint memory and complete prepared-request budget; refuse/pause explicitly if mandatory context cannot fit.
+- [ ] Make additional selected read-only source bindings usable through existing bounded context/file tools and permission gates. Test actual selected reads, unselected sibling refusal, primary-only writes, identity changes and real native request/tool behavior. Source data never becomes automatic project instructions or permission grants.
+- [ ] Remove the blank separator before ADR-141 in the existing index table.
+- [ ] Reproduce affected behavior before changes, run focused amended gates/static checks, update actual traces and user docs, then complete the single independent fix-wave re-review. Preserve existing live-model and baseline-diagnostic limitations honestly.
 
 Example targeted verification commands, once the new files exist and the dev environment is activated:
 

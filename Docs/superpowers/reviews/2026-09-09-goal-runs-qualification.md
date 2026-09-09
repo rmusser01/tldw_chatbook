@@ -1,6 +1,6 @@
 # Native goal runs: implementation qualification
 
-Status: **whole-branch review pending**. All five implementation slices have independent specification and quality approval. One nonblocking form-state finding from Console re-review is carried into the final review and fix wave. The configured local model was exercised and did not complete the task; its observed failure is recorded below.
+Status: **final review fixes in progress**. Five slices received task-scoped approval; the whole-branch review found three functional gaps and two minor issues. The affected tasks are reopened for one fix wave and scoped re-review. The configured local model was exercised and did not complete the task; its observed failure remains recorded below.
 
 Scope: the goal feature on `codex/native-goal-runs`, relative to preserved prerequisite baseline `77bc58dc171c3dcd2178f4433d19a6ceb59b1e7b`. The original shared checkout was extensively dirty; its prerequisite changes were preserved separately before implementation. Integration must reconcile those owners and the independent Workflows branch before merging.
 
@@ -64,11 +64,11 @@ The final source scan confirms the updated goal entries/counts match and TTS is 
 
 This gate also emitted existing invalid-escape warnings from `Tools/patch_tool_impls.py` and `Utils/Splash_Screens/environmental/train_journey.py`; both files are byte-identical to the feature baseline. These findings were classified, not silently repaired or treated as passing checks.
 
-## Remaining review
+## Final whole-branch review
 
-- Whole-branch independent review of all seven original findings and their cross-module contracts.
-- Resolve the remaining Console form-state finding with any final-review fixes.
-- Final Backlog/plan bookkeeping and integration handoff after those gates.
+The independent review at `2c63e578e1` found three functional gaps: editable fields could diverge from the saved request during launch validation; selected verifier invocation details were absent from model context; and additional source selections were never consumed by context or tools. It also carried the disabled tool-choice cleanup issue and found a blank separator before ADR-141 in the index table. All five findings are accepted for one fix wave. The retention-cap distinction was investigated and matched the specified evidence-per-goal and aggregate-payload limits.
+
+Remaining: implement all five fixes, inspect the affected behavioral evidence and scoped re-review, finish Backlog/plan bookkeeping, then hand off the isolated branch with its integration constraints.
 
 ## Implementation decisions
 

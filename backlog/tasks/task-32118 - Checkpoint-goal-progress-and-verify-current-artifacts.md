@@ -1,11 +1,11 @@
 ---
 id: TASK-32118
 title: Checkpoint goal progress and verify current artifacts
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:18'
-updated_date: '2026-09-09 07:12'
+updated_date: '2026-09-09 15:04'
 labels:
   - agents
   - console
@@ -31,6 +31,7 @@ Users need retained progress and completion based on actual current evidence rat
 - [x] #3 No-progress and failure decisions preserve observed work; next-iteration requests retain the objective within finite memory limits.
 - [x] #4 Evidence survives original-output pruning through bounded private copies; aggregate payload capacity is reserved before work and settled history removal preserves accounting.
 - [x] #5 Automatic completion requires launch-bound verifiers and current checked artifacts; human review remains required unless explicitly disabled at launch. Failed checks or later edits invalidate proof.
+- [ ] #6 Actual initial and later model requests include bounded exact selected verifier invocations, target and input references without relying on objective prose or fixture-only knowledge; existing memory, budget and evidence gates remain enforced.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,6 +44,8 @@ Reason: implements the approved private checkpoint, evidence freshness, bounded 
 2. Implement exact run-owned evidence resolution and bounded manifests/copies, deterministic progress and handoff, and atomic checkpoint/attempt settlement with durable result capacity reservations.
 3. Add migration/retention changes only where the accepted contract requires them; protect uncertain work and preserve accounting tombstones on explicit settled-payload removal.
 4. Verify real outgoing later-iteration requests, real CLI freshness and failure/rollback/replay cases with targeted tests, scoped lint and required owner checks. Self-review and commit before independent spec/quality review. Repetition and UI remain later tasks.
+
+Final whole-branch review fix wave (before new code): existing ADR-141 applies; no duplicate ADR. Reproduce the affected setup/selected-resource failures through isolated mounted/native requests, fix all findings in the shared final-review list while preserving owner boundaries, run focused amended regressions and scoped static checks, update user/qualification docs and commit. One independent scoped re-review follows. Root owns final AC/status/notes after approval.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

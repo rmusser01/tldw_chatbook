@@ -1,11 +1,11 @@
 ---
 id: TASK-32117
 title: Execute one bounded native goal iteration with CLI evidence
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:17'
-updated_date: '2026-09-09 06:09'
+updated_date: '2026-09-09 15:04'
 labels:
   - agents
   - console
@@ -32,6 +32,7 @@ Users need goal iterations to use the existing Console execution path with relia
 - [x] #4 Actual script exit, timeout, identity and output evidence survives display formatting and cannot be forged by tool text.
 - [x] #5 Fresh goal requests omit prior settled iteration history and preserve provider continuation within the current iteration.
 - [x] #6 One runtime startup audit governs goal and fleet coordinators without revoking live owners when a view or service is attached.
+- [ ] #7 Selected additional read-only source bindings provide a bounded usable native read path; unselected siblings and all writes outside the primary writable binding remain refused under existing permissions.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,6 +45,8 @@ Reason: implements the reviewed automatic runtime, authority, policy and native 
 2. Implement one bounded iteration through the existing Console with shared recovery ownership, typed CLI observation, fresh initial request history and scope enforcement at actual dispatch.
 3. Run the named targeted tests and relevant manual/fleet/capacity/skill regressions; inspect final provider requests and real subprocess results.
 4. Self-review, commit only this task's files, obtain independent spec/quality review and record exact evidence. Repetition and UI remain later tasks.
+
+Final whole-branch review fix wave (before new code): existing ADR-141 applies; no duplicate ADR. Reproduce the affected setup/selected-resource failures through isolated mounted/native requests, fix all findings in the shared final-review list while preserving owner boundaries, run focused amended regressions and scoped static checks, update user/qualification docs and commit. One independent scoped re-review follows. Root owns final AC/status/notes after approval.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
