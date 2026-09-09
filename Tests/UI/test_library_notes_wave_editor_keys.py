@@ -207,3 +207,64 @@ async def test_delete_confirmation_traps_tab_between_cancel_and_delete():
         assert screen.focused is confirm_button
 
 
+# --- task-32133: refused Escape notifies; a blank note reads as a draft ----
+
+
+@pytest.mark.asyncio
+async def test_refused_escape_notifies_why_and_what_to_do():
+    """AC#1: a veto (e.g. a whitespace-padded title) must not be silent."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        title_input = screen.query_one("#library-note-title", Input)
+        title_input.value = "Research Note "
+        title_input.post_message(Input.Changed(title_input, "Research Note "))
+        await pilot.pause()
+
+        screen.app_instance.notify = MagicMock()
+        await screen.action_library_notes_escape()
+        await pilot.pause()
+
+        assert screen._notes_state.view == "editor", (
+            "Escape exited the editor despite the validation veto"
+        )
+        screen.app_instance.notify.assert_called_once_with(
+            "Can't leave yet — fix the title or press Discard new note.",
+            severity="warning",
+        )
+
+
+@pytest.mark.asyncio
+async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
+    """AC#2: a blank note must not claim 'Saved' before anything is typed."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await pilot.press("n")
+        blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        blank.press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        status = screen.query_one("#library-note-status", Static)
+        assert str(status.renderable) == "Draft — not saved yet", (
+            f"A blank, untouched note claimed {status.renderable!r} before "
+            "anything was typed or saved"
+        )
+
+        body = screen.query_one("#library-note-body", TextArea)
+        body.text = "hello"
+        body.post_message(TextArea.Changed(body))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert str(status.renderable) != "Draft — not saved yet"
+
+

@@ -1356,6 +1356,21 @@ class LibraryNotesController:
             meta_line=meta_line,
             has_note=True,
         )
+    def _library_note_is_pending_blank(self) -> bool:
+        """Whether the open note is still the untouched blank-GC candidate.
+
+        Mirrors the condition ``_apply_library_note_presentation_state``
+        already uses for ``title_placeholder_only`` -- a note this fresh
+        was created (persisted) as a create-flow side effect, not because
+        the user asked to keep anything, and gets silently deleted again if
+        abandoned untouched (``_gc_pending_blank_note``). "Saved" is
+        technically true and practically dishonest here: nothing the user
+        typed is safe, because nothing has been typed yet.
+        """
+        return bool(
+            self._library_note_pending_blank_gc_id
+            and self._library_note_pending_blank_gc_id == self._selected_note_id
+        )
     def _library_note_status_line(self) -> str:
         """Return the persistent, text-labeled save state for both regions."""
         snapshot = self._library_note_session.snapshot
@@ -1363,6 +1378,11 @@ class LibraryNotesController:
             return "No note open"
         if self._library_note_shortcut_status:
             return self._library_note_shortcut_status
+        # task-32133 AC#2: a blank note this fresh reads "Saved" before a
+        # single character is typed -- true of the empty seed record, but
+        # not of anything the user has asked to keep.
+        if self._library_note_is_pending_blank():
+            return "Draft — not saved yet"
         if self._library_note_autosave_state == "saving" or snapshot.saving:
             return "Saving…"
         if snapshot.in_conflict:
@@ -1394,10 +1414,11 @@ class LibraryNotesController:
                 content_recovery=status_line,
                 safe_next_action=None,
             )
-        elif snapshot.in_conflict or self._library_note_autosave_state in {
-            "error",
-            "validation",
-        }:
+        elif (
+            snapshot.in_conflict
+            or self._library_note_autosave_state in {"error", "validation"}
+            or self._library_note_is_pending_blank()
+        ):
             status_channels = dataclasses.replace(
                 status_channels,
                 content_recovery=status_line,
@@ -1566,10 +1587,7 @@ class LibraryNotesController:
             canvas = self.query_one("#library-note-work-pane", LibraryNoteWorkPane)
         except (NoMatches, QueryError):
             return
-        canvas.title_placeholder_only = bool(
-            self._library_note_pending_blank_gc_id
-            and self._library_note_pending_blank_gc_id == self._selected_note_id
-        )
+        canvas.title_placeholder_only = self._library_note_is_pending_blank()
         self._library_note_presentation_syncing = True
         try:
             canvas.apply_session_state(self._library_note_presentation_state())
@@ -2887,7 +2905,21 @@ class LibraryNotesController:
             # `action_library_note_editor_back` already use (dirty-flush +
             # veto + session-blank GC + list restore) instead of inventing
             # a second exit path.
-            await self._exit_library_note_editor_guarded()
+            #
+            # task-32133 AC#1: a veto (invalid title, a failed/conflicted
+            # flush, ...) used to return here silently -- live, with a
+            # whitespace-padded title, Escape did nothing and said nothing,
+            # and "Discard new note" had already disappeared, leaving no
+            # visible way out at all.
+            exited = await self._exit_library_note_editor_guarded()
+            if not exited:
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(
+                        "Can't leave yet — fix the title or press Discard "
+                        "new note.",
+                        severity="warning",
+                    )
             return
         if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
             if self._library_note_create_running:
