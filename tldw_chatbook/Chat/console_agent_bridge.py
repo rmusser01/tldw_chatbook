@@ -3884,6 +3884,8 @@ class ConsoleAgentBridge:
                     )
 
                 lines = [f"exit_code: {outcome.exit_code}"]
+                if outcome.goal_evidence_id:
+                    lines.append(f"goal_evidence_id: {outcome.goal_evidence_id}")
                 if outcome.timed_out:
                     lines.append("timed out — the script was killed")
                 if outcome.output_capped:

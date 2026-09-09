@@ -118,6 +118,8 @@ class ScriptRunResult:
     #: reaches the model, and a script's artifact is not trust-reviewed.
     output_dir: str | None = None
     output_files: tuple[dict, ...] = field(default=())
+    #: Runtime-owned lookup key, populated after the typed goal observation.
+    goal_evidence_id: str | None = None
 
 
 class SandboxUnsupportedError(RuntimeError):

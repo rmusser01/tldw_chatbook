@@ -14,7 +14,14 @@ def v13_database(path):
     db.set_status(run_id, "done", "original result", budget_tokens=23)
     with db.transaction() as conn:
         # Reconstruct v13, including removing newer goal foreign-key dependents.
-        for table in ("goal_reports", "goal_iterations", "goal_runs"):
+        for table in (
+            "goal_payload_reservations",
+            "goal_evidence",
+            "goal_checkpoints",
+            "goal_reports",
+            "goal_iterations",
+            "goal_runs",
+        ):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
         triggers = [
             row[0]

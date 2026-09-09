@@ -89,9 +89,9 @@ def test_verifier_cannot_be_inside_editable_input_binding():
 def test_reports_bound_draft_learnings_evidence_and_total_bytes():
     m = models()
     for fields in (
-        {"draft": "é" * 16385},
+        {"candidate_draft": "é" * 16385},
         {"learnings": ("x",) * 9},
-        {"evidence_refs": ("x",) * 33},
+        {"evidence_ids": ("x",) * 33},
         {"summary": "é" * 32769},
     ):
         with pytest.raises(ValidationError):

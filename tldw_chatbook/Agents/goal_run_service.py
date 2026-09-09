@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tldw_chatbook.Agents.goal_models import GoalRequest, GoalSnapshot
+from tldw_chatbook.Agents.goal_models import (
+    GoalDecision,
+    GoalIterationResult,
+    GoalRequest,
+    GoalSnapshot,
+)
 from tldw_chatbook.Chat.chat_persistence_service import (
     ChatPersistenceService,
     GoalConversationConflict,
@@ -22,6 +27,69 @@ class GoalRunService:
     def get(self, goal_id: str) -> GoalSnapshot:
         """Inspect saved state without dispatch, recovery audit or provisioning."""
         return self.db.goal_runs.get(goal_id)
+
+    def checkpoint(self, result: GoalIterationResult) -> GoalSnapshot:
+        """Atomically retain a native iteration; never dispatch its successor."""
+        goal = self.get(result.goal_id)
+        return self.db.goal_runs.checkpoint(
+            result,
+            binding_available=goal.request is not None
+            and not self._binding_reason(goal.request),
+        )
+
+    def completion_check(
+        self,
+        goal_id: str,
+        *,
+        checkpoint_id: str | None = None,
+        artifact_digest: str | None = None,
+    ) -> GoalDecision:
+        """Recheck current versions for review; never approve or release an attempt."""
+        from tldw_chatbook.Agents.goal_iteration import (
+            evaluate_iteration,
+            goal_criteria,
+            refresh_evidence,
+        )
+        from tldw_chatbook.Agents.goal_models import GoalDecision
+
+        goal = self.get(goal_id)
+        if goal.request is None:
+            raise ValueError("goal_payload_removed")
+        with self.db.connection() as conn:
+            unsettled = conn.execute(
+                "SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=? AND a.state IN ('prepared','accepted','review_required')",
+                (goal_id,),
+            ).fetchone()
+        if goal.status == "recovery_required" or unsettled:
+            return GoalDecision(action="recovery_required", reason="uncertain_effect")
+        if not goal.checkpoints:
+            return GoalDecision(action="continue", reason="no_checkpoint")
+        checkpoint = goal.checkpoints[-1]
+        if (checkpoint_id is not None and checkpoint_id != checkpoint.id) or (
+            artifact_digest is not None
+            and artifact_digest != checkpoint.artifact_digest
+        ):
+            raise ValueError("stale_result_review")
+        evidence = (
+            tuple(
+                refresh_evidence(goal, item)
+                for item in self.db.goal_runs.evidence(goal_id)
+            )
+            if not self._binding_reason(goal.request)
+            else ()
+        )
+        decision = evaluate_iteration(
+            checkpoint.report, evidence, checkpoint, goal_criteria(goal)
+        )
+        return decision.model_copy(
+            update={
+                "checkpoint_id": checkpoint.id,
+                "artifact_digest": checkpoint.artifact_digest,
+            }
+        )
+
+    def remove_payloads(self, goal_id: str) -> GoalSnapshot:
+        return self.db.goal_runs.remove_payloads(goal_id)
 
     def create(self, request: GoalRequest, *, launch_id: str) -> GoalSnapshot:
         """Persist intent first and reconcile exact chat/workspace identity.

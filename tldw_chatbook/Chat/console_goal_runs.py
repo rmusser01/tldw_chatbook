@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -18,7 +17,14 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused, GoalAttempt
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
-from tldw_chatbook.Agents.goal_models import GoalProviderRef, GoalSnapshot
+from tldw_chatbook.Agents.goal_models import (
+    GoalIterationResult,
+    GoalProviderRef,
+    GoalScriptEvidence,
+    GoalScriptInvocation,
+    GoalSnapshot,
+    GoalToolObservation,
+)
 from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.run_log import _setting
 from tldw_chatbook.Chat.console_provider_endpoints import (
@@ -45,49 +51,6 @@ def goal_provider_ref(resolution: ConsoleProviderResolution) -> GoalProviderRef:
         endpoint_ref=normalize_generic_endpoint_for_compare(resolution.base_url)
         or "provider-default",
     )
-
-
-@dataclass(frozen=True)
-class GoalIterationResult:
-    goal_id: str
-    ordinal: int
-    attempt_id: str | None
-    native_run_id: str | None
-    outcome: RunOutcome | None
-    termination_reason: RunTerminationReason
-    tool_records: tuple[GoalScriptEvidence, ...] = ()
-    reason_code: str | None = None
-
-    def __post_init__(self):
-        if isinstance(self.termination_reason, RunTerminationReason):
-            return
-        code = self.termination_reason
-        try:
-            reason = RunTerminationReason(code)
-        except ValueError:
-            reason = RunTerminationReason.PREFLIGHT_REFUSED
-        object.__setattr__(self, "termination_reason", reason)
-        object.__setattr__(self, "reason_code", code)
-
-
-@dataclass(frozen=True)
-class GoalScriptInvocation:
-    id: str
-    goal_id: str
-    attempt_id: str
-    ordinal: int
-    run_id: str
-    verifier_path: str
-    verifier_sha256: str
-    skill_name: str
-    skill_trust_ref: str
-    arguments: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class GoalScriptEvidence:
-    invocation: GoalScriptInvocation
-    result: ScriptRunResult
 
 
 _KEY = object()
@@ -128,6 +91,10 @@ class GoalIterationAuthorization:
         self.native_run_id = None
         self.outcome = None
         self.records = []
+        self.observations = []
+        self.evidence_limit = coordinator.service.db.goal_runs.result_record_capacity(
+            attempt.id
+        )
         self.started = None
         self._script_invocations = {}
         self.registry = None
@@ -234,9 +201,24 @@ class GoalIterationAuthorization:
         from tldw_chatbook.Agents.run_context import current_run_id
 
         self.context.check()
+        if len(self.records) + len(self.observations) >= self.evidence_limit:
+            raise AutomaticWorkRefused("goal_evidence_capacity")
         if not self.permits_runtime("run_skill_script"):
             raise AutomaticWorkRefused("goal_tool_scope")
-        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        from tldw_chatbook.Agents.goal_iteration import (
+            capture_manifest,
+            verifier_digest,
+        )
+
+        selected = next(
+            (
+                v
+                for v in self.goal.request.verifiers
+                if v.verifier_path == str(Path(path).resolve())
+            ),
+            None,
+        )
+        digest = verifier_digest(selected) if selected else None
         path = str(Path(path).resolve())
         if not any(
             v.verifier_path == path
@@ -261,6 +243,11 @@ class GoalIterationAuthorization:
             skill_name,
             trust_digest,
             tuple(args),
+            capture_manifest(
+                self.goal.request.binding.locator,
+                selected,
+                seconds=self.remaining_seconds(),
+            ),
         )
         self._script_invocations[invocation.id] = invocation
         return invocation
@@ -282,8 +269,48 @@ class GoalIterationAuthorization:
         )
         if attempt.state != "accepted":
             raise ValueError("goal evidence attempt no longer accepted")
-        self.records.append(GoalScriptEvidence(invocation, result))
+        from tldw_chatbook.Agents.goal_iteration import capture_manifest
+
+        spec = next(
+            v
+            for v in self.goal.request.verifiers
+            if v.verifier_path == invocation.verifier_path
+        )
+        manifest = capture_manifest(
+            self.goal.request.binding.locator, spec, seconds=self.remaining_seconds()
+        )
+        self.records.append(GoalScriptEvidence(invocation, result, manifest))
         del self._script_invocations[invocation.id]
+
+    def observe_tool_result(self, tool: str, arguments: dict, content: str) -> str:
+        """Own bounded generic observations, with no objective verification verdict."""
+        import json
+
+        from tldw_chatbook.Agents.goal_iteration import digest
+        from tldw_chatbook.Agents.run_context import current_run_id
+
+        if (
+            tool == "run_skill_script"
+            or len(self.records) + len(self.observations) >= self.evidence_limit
+        ):
+            return content
+        run_id = current_run_id()
+        if not run_id or not self.permits_call(tool):
+            return content
+        encoded = content.encode("utf-8")
+        retained = encoded[: 48 * 1024].decode("utf-8", "ignore")
+        item = GoalToolObservation(
+            uuid4().hex,
+            self.goal.id,
+            self.attempt_id,
+            run_id,
+            tool,
+            digest(json.dumps(arguments, sort_keys=True, default=str)),
+            retained,
+            len(encoded) <= 48 * 1024,
+        )
+        self.observations.append(item)
+        return f"goal_evidence_id: {item.id}\n" + content
 
     def record_outcome(self, run_id: str, outcome: RunOutcome) -> None:
         if self.native_run_id is not None and self.native_run_id != run_id:
@@ -408,6 +435,8 @@ class ConsoleGoalCoordinator:
                 goal_id, 0, None, None, None, "runtime_unavailable"
             )
         goal = await asyncio.to_thread(self.service.get, goal_id)
+        if goal.status != "ready" or goal.request is None:
+            return GoalIterationResult(goal_id, 0, None, None, None, "goal_not_ready")
         if not _coerce_autowake_enabled(_setting("goal_runs_enabled", False)):
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "goal_runs_disabled"
@@ -488,12 +517,9 @@ class ConsoleGoalCoordinator:
                 session.id, state
             )
             authorization.project_state = state
-            handoff = (
-                "Goal objective:\n"
-                + goal.request.objective
-                + "\n\nCompletion criteria:\n"
-                + goal.request.criteria
-            )
+            from tldw_chatbook.Agents.goal_iteration import build_goal_handoff
+
+            handoff = build_goal_handoff(goal, goal.checkpoints)
             with authorization.context.scope():
                 await self.controller.submit_draft(
                     handoff,
@@ -548,4 +574,5 @@ class ConsoleGoalCoordinator:
             reason,
             tuple(authorization.records) if authorization else (),
             reason_code,
+            tuple(authorization.observations) if authorization else (),
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
@@ -15,10 +16,12 @@ from pydantic import (
     model_validator,
 )
 
+from tldw_chatbook.Agents.agent_models import RunOutcome, RunTerminationReason
 from tldw_chatbook.Agents.automatic_work_budget import (
     AutomaticWorkLimits,
     AutomaticWorkSnapshot,
 )
+from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
 
 Finite = Annotated[int, Field(ge=0, lt=2**63)]
 Identity = Annotated[str, StringConstraints(min_length=1, max_length=256)]
@@ -152,6 +155,7 @@ class GoalRequest(GoalModel):
     tool_scope: GoalToolScope
     verifiers: tuple[VerificationSpec, ...] = Field(default=(), max_length=32)
     policy: GoalPolicy = Field(default_factory=GoalPolicy)
+    human_review_required: bool = True
 
     @field_validator("objective", "criteria")
     @classmethod
@@ -162,6 +166,8 @@ class GoalRequest(GoalModel):
 
     @model_validator(mode="after")
     def check_verifiers(self) -> GoalRequest:
+        if not self.human_review_required and not self.verifiers:
+            raise ValueError("objective-only completion requires a verifier")
         tools = self.tool_scope.catalog_tools + self.tool_scope.runtime_tools
         roots = [
             PurePosixPath(b.locator)
@@ -191,21 +197,142 @@ class GoalRequest(GoalModel):
         )
 
 
-class GoalReport(GoalModel):
+EvidenceIdentity = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,128}$")]
+
+
+class IterationReport(GoalModel):
     summary: str = ""
     learnings: tuple[str, ...] = Field(default=(), max_length=8)
     next_action: str = ""
-    draft: str = ""
-    evidence_refs: tuple[Identity, ...] = Field(default=(), max_length=32)
+    candidate_draft: str = ""
+    evidence_ids: tuple[EvidenceIdentity, ...] = Field(default=(), max_length=32)
+    completion_recommended: bool = False
 
     @model_validator(mode="after")
-    def bounded_payload(self) -> GoalReport:
+    def bounded_payload(self):
         if (
-            len(self.draft.encode("utf-8")) > 32768
+            len(self.candidate_draft.encode("utf-8")) > 32768
             or len(self.model_dump_json().encode("utf-8")) > 65536
         ):
             raise ValueError("goal report exceeds private payload limit")
         return self
+
+
+# One persisted/public shape. Legacy field names are intentionally rejected.
+GoalReport = IterationReport
+
+
+class GoalCriterion(GoalModel):
+    id: Identity
+    verifier_id: str | None = None
+    human: bool = False
+
+
+class GoalCheck(GoalModel):
+    criterion_id: str
+    satisfied: bool = False
+    evidence_id: str | None = None
+    reason: str = "unavailable"
+
+
+class GoalDecision(GoalModel):
+    action: Literal[
+        "continue", "pause", "awaiting_result_review", "recovery_required", "completed"
+    ]
+    reason: Identity
+    checks: tuple[GoalCheck, ...] = Field(default=(), max_length=33)
+    evidence_errors: tuple[EvidenceIdentity, ...] = Field(default=(), max_length=32)
+    no_progress_count: int = 0
+    failed_count: int = 0
+    source_digests: tuple[str, ...] = Field(default=(), max_length=1)
+    checkpoint_id: str | None = None
+    artifact_digest: str | None = None
+    draft_digest: str = ""
+
+
+class GoalCheckpoint(GoalModel):
+    id: str = ""
+    artifact_digest: str = ""
+    ordinal: int
+    report: IterationReport
+    decision: GoalDecision
+    report_error: str | None = None
+
+
+class GoalEvidence(GoalModel):
+    """Private runtime observation. Never parsed from a model report."""
+
+    id: EvidenceIdentity
+    goal_id: str
+    attempt_id: str
+    run_id: str
+    verifier_id: str
+    source_digest: str
+    checked_manifest: str | None
+    verifier_sha256: str
+    passed: bool
+    fresh: bool
+    reason: str
+    stdout: str = ""
+    stderr: str = ""
+
+
+@dataclass(frozen=True)
+class GoalScriptInvocation:
+    id: str
+    goal_id: str
+    attempt_id: str
+    ordinal: int
+    run_id: str
+    verifier_path: str
+    verifier_sha256: str
+    skill_name: str
+    skill_trust_ref: str
+    arguments: tuple[str, ...]
+    before_manifest: str | None = None
+
+
+@dataclass(frozen=True)
+class GoalScriptEvidence:
+    invocation: GoalScriptInvocation
+    result: ScriptRunResult
+    after_manifest: str | None = None
+
+
+@dataclass(frozen=True)
+class GoalToolObservation:
+    id: str
+    goal_id: str
+    attempt_id: str
+    run_id: str
+    tool: str
+    arguments_digest: str
+    content: str
+    complete: bool
+
+
+@dataclass(frozen=True)
+class GoalIterationResult:
+    goal_id: str
+    ordinal: int
+    attempt_id: str | None
+    native_run_id: str | None
+    outcome: RunOutcome | None
+    termination_reason: RunTerminationReason
+    tool_records: tuple[GoalScriptEvidence, ...] = ()
+    reason_code: str | None = None
+    observations: tuple[GoalToolObservation, ...] = ()
+
+    def __post_init__(self):
+        if isinstance(self.termination_reason, RunTerminationReason):
+            return
+        code = self.termination_reason
+        try:
+            reason = RunTerminationReason(code)
+        except ValueError:
+            reason = RunTerminationReason.PREFLIGHT_REFUSED
+        object.__setattr__(self, "termination_reason", reason)
+        object.__setattr__(self, "reason_code", code)
 
 
 class GoalProvisioning(GoalModel):
@@ -223,10 +350,19 @@ class GoalSnapshot(GoalModel):
     conversation_id: Identity
     chain_id: Identity
     revision: int
-    status: Literal["starting", "ready", "paused"]
+    status: Literal[
+        "starting",
+        "ready",
+        "paused",
+        "awaiting_result_review",
+        "recovery_required",
+        "completed",
+        "removed",
+    ]
     iteration_count: int
     pause_reason: str | None
-    request: GoalRequest
+    request: GoalRequest | None
+    checkpoints: tuple[GoalCheckpoint, ...] = ()
     reports: tuple[GoalReport, ...] = ()
     accounting: AutomaticWorkSnapshot
 

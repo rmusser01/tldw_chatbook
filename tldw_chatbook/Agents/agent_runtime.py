@@ -1667,6 +1667,8 @@ def run_agent_loop(
             # that assigns it in THIS iteration (a non-"proceed" verdict
             # skips dispatch entirely, so `result` -- if it exists at all --
             # would be a stale value from a different call in this batch).
+            if verdict == "proceed" and automatic is not None and automatic.goal is not None:
+                content = automatic.goal.observe_tool_result(call.name, call.args, content)
             if verdict == "proceed":
                 record_status = "ok" if result.ok else "error"
             else:

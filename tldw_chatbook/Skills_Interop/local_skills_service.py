@@ -2429,6 +2429,7 @@ class LocalSkillsService:
                 result = replace(result, output_dir=None, output_files=())
                 if goal is not None:
                     goal.finish_script(invocation, result)
+                    result = replace(result, goal_evidence_id=invocation.id)
                 return result
             self._prune_output_runs(
                 output_root, SCRIPT_OUTPUT_KEEP_RUNS, protect=run_dir
@@ -2436,6 +2437,7 @@ class LocalSkillsService:
             result = replace(result, output_dir=str(run_dir), output_files=produced)
             if goal is not None:
                 goal.finish_script(invocation, result)
+                result = replace(result, goal_evidence_id=invocation.id)
             return result
 
         # Offloaded to a thread: run_script_subprocess is a blocking call

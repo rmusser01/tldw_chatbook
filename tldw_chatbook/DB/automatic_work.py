@@ -892,6 +892,11 @@ class AutomaticWorkLedger:
             if existing:
                 self._attempt(conn, existing["id"], owner_id, "goal_iteration")
                 attempt_id = existing["id"]
+                if not conn.execute(
+                    "SELECT 1 FROM goal_payload_reservations WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone():
+                    self._db.goal_runs.reserve_result(conn, goal, attempt_id)
             else:
                 self._check_admission(
                     conn,
@@ -931,6 +936,7 @@ class AutomaticWorkLedger:
                     "INSERT INTO goal_iterations (id,goal_id,ordinal,launch_id,attempt_id,status) VALUES (?,?,?,?,?,'prepared')",
                     (uuid4().hex, goal_id, ordinal, uuid4().hex, attempt_id),
                 )
+                self._db.goal_runs.reserve_result(conn, goal, attempt_id)
         return self.read_goal_attempt(attempt_id, owner_id=owner_id)
 
     def accept_goal_iteration(self, attempt_id: str, *, owner_id: str) -> bool:
@@ -1031,6 +1037,10 @@ class AutomaticWorkLedger:
                 (self._wall_clock(), attempt_id),
             )
             if kind == "goal_iteration":
+                conn.execute(
+                    "DELETE FROM goal_payload_reservations WHERE attempt_id=?",
+                    (attempt_id,),
+                )
                 conn.execute(
                     "UPDATE goal_iterations SET status='aborted', revision=revision+1 WHERE attempt_id=?",
                     (attempt_id,),

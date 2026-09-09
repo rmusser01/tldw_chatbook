@@ -55,7 +55,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 16
+    _CURRENT_SCHEMA_VERSION = 17
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -567,6 +567,7 @@ class AgentRunsDB(BaseDB):
             # authority even when its previous attempt already completed.
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (15)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (16)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (17)")
 
     def record_change_snapshot(
         self,
