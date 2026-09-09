@@ -707,6 +707,7 @@ class LibraryNotesController:
         patch_library_note_list_from_session,
         project_library_media_stage_classes,
         push_library_note_import_picker,
+        reconcile_library_notes_tree_mutation,
         refresh_library_note_detail,
         refresh_local_source_snapshot,
         register_footer_shortcuts,
@@ -826,6 +827,9 @@ class LibraryNotesController:
         self._patch_library_note_list_from_session_fn = patch_library_note_list_from_session
         self._project_library_media_stage_classes_fn = project_library_media_stage_classes
         self._push_library_note_import_picker_fn = push_library_note_import_picker
+        self._reconcile_library_notes_tree_mutation_fn = (
+            reconcile_library_notes_tree_mutation
+        )
         self._refresh_library_note_detail_fn = refresh_library_note_detail
         self._refresh_local_source_snapshot_fn = refresh_local_source_snapshot
         self._register_footer_shortcuts_fn = register_footer_shortcuts
@@ -1238,6 +1242,10 @@ class LibraryNotesController:
     @property
     def _push_library_note_import_picker(self) -> Any:
         return self._push_library_note_import_picker_fn
+
+    @property
+    def _reconcile_library_notes_tree_mutation(self) -> Any:
+        return self._reconcile_library_notes_tree_mutation_fn
 
     @property
     def _refresh_library_note_detail(self) -> Any:
@@ -3090,6 +3098,12 @@ class LibraryNotesController:
             ),
             "title_placeholder_only": False,
             "compact": self._library_notes_compact,
+            # task-32127: the toolbar merges its two action groups only when
+            # the pane can hold them; this is the width the reader layout
+            # just resolved for the Items pane.
+            "pane_width": getattr(
+                self._notes_state.reader_layout, "items_width", 0
+            ),
             "create_running": self._library_note_create_running,
             "create_status": self._library_note_create_status,
             "load_state": self._library_note_load_state,
@@ -5073,6 +5087,28 @@ class LibraryNotesController:
             self._library_notes_mutation_in_flight = False
             if self.is_mounted:
                 if restored_record is not None:
+                    # task-32124: the folder tree is projected from paged
+                    # branch state, not from the flat source records the
+                    # restore just patched, so re-syncing the canvas alone
+                    # brought the rail count back without the row. Reuse the
+                    # seam a create already commits through -- a restore is
+                    # "this note exists again" -- rather than adding a second
+                    # refresh mechanism. It reloads exactly the affected
+                    # branches (the note's folders, plus Unfiled) and selects
+                    # the restored placement.
+                    #
+                    # NOT the deep-link locator: repainting the canvas here
+                    # removes the receipt the pressed Undo button lives in,
+                    # and the focus move that follows is read as user intent
+                    # (`on_descendant_focus`), which supersedes the locator's
+                    # navigation before its first await returns. Proved live:
+                    # the count returned to 10 and the row never came back.
+                    await self._reconcile_library_notes_tree_mutation(
+                        "note_create",
+                        {"note_id": receipt.note_id},
+                        before=None,
+                        result=restored_record,
+                    )
                     identity = LibraryNotesFocusIdentity(
                         stage="notes",
                         region="navigator",

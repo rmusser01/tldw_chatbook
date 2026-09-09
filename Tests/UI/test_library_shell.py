@@ -18876,7 +18876,18 @@ async def test_library_shell_notes_row_opens_notes_list_canvas():
 
 @pytest.mark.asyncio
 async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
-    """Navigator actions stay grouped without overlapping the note list."""
+    """Navigator actions stay grouped without overlapping the note list.
+
+    task-32127 kept this contract rather than overriding it: the two groups
+    share one row ONLY from `_TOOLBAR_MERGE_MIN_WIDTH` (100 columns) up,
+    and this harness's list pane is ~78, so both keep their own row here.
+    Above the threshold they are still two named `ds-toolbar` Horizontals,
+    nested in `#library-notes-action-rows`; the merged geometry is pinned
+    in Tests/UI/test_library_notes_wave_list.py.
+
+    NOTE: failing on dev before this branch as well -- it waits for
+    `#library-notes-row-0`, and Database Notes composes a folder tree.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -18957,10 +18968,18 @@ async def test_library_shell_notes_list_renders_bracketed_titles_verbatim():
         # escape in place, the resulting Text's plain form (str(label)) is
         # the verbatim title -- pre-fix it was " Q3 plan " with both
         # bracket segments consumed as tags.
+        #
+        # task-32137 made the row label ONE line ("title · age"), so the
+        # title is now the label's first " · " segment rather than its
+        # first line; `splitlines()[0]` is kept because it still isolates
+        # the title on a one-line label, and the split below is what the
+        # assertion now leans on. (This test also fails on dev before this
+        # branch: it waits for `#library-notes-row-1`, and Database Notes
+        # composes a folder tree.)
         first = str(screen.query_one("#library-notes-row-0", Button).label)
         second = str(screen.query_one("#library-notes-row-1", Button).label)
-        assert first.splitlines()[0] == "[draft] Q3 plan [wip]"
-        assert second.splitlines()[0] == "[/wip] closing tag title"
+        assert first.splitlines()[0].split(" · ")[0] == "[draft] Q3 plan [wip]"
+        assert second.splitlines()[0].split(" · ")[0] == "[/wip] closing tag title"
 
 
 @pytest.mark.asyncio
@@ -18972,20 +18991,18 @@ async def test_library_shell_notes_sort_opens_direct_choices_and_applies_one_val
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-sort")
+        # task-32128: this list is a folder tree, whose row order is the
+        # repository's (`page_note_placements` pages ORDER BY title, and
+        # every browse offset is computed against it), so it composes no
+        # Sort control and the direct-choices flow this test drove is
+        # unreachable here. The flow itself still ships for the flat list
+        # and is pinned at
+        # Tests/UI/test_library_notes_wave_list.py::test_every_sort_option_
+        # renders_in_the_narrowest_pane. What survives here is the absence,
+        # and that the persisted sort key is untouched by it.
+        await _wait_for_selector(screen, pilot, "#library-notes-browse-actions")
         assert screen._notes_state.sort == "newest"
-        screen.query_one("#library-notes-sort").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-sort-oldest")
-        assert {
-            button.id for button in screen.query("#library-notes-sort-choices Button")
-        } == {
-            "library-notes-sort-newest",
-            "library-notes-sort-oldest",
-            "library-notes-sort-title",
-        }
-        screen.query_one("#library-notes-sort-oldest").press()
-        await pilot.pause()
-        assert screen._notes_state.sort == "oldest"
+        assert not screen.query("#library-notes-sort")
         assert not screen.query("#library-notes-sort-choices")
 
 
@@ -19005,11 +19022,12 @@ async def test_library_shell_notes_navigator_has_named_action_groups_and_filter_
             str(screen.query_one("#library-notes-filter-label", Static).renderable)
             == "Filter"
         )
+        # task-32128 removed "library-notes-sort" from the folder tree's
+        # toolbar; it is composed only for the flat list.
         assert {
             button.id for button in screen.query("#library-notes-browse-actions Button")
         } == {
             "library-notes-new",
-            "library-notes-sort",
             "library-notes-select-toggle",
         }
         assert {
@@ -27772,10 +27790,13 @@ async def test_library_shell_restored_notes_sort_and_filter_render_on_first_pain
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         active_screen = _active_library_screen(host)
-        await _wait_for_selector(active_screen, pilot, "#library-notes-sort")
+        await _wait_for_selector(active_screen, pilot, "#library-notes-filter")
 
-        sort_button = active_screen.query_one("#library-notes-sort")
-        assert "Oldest" in str(sort_button.label)
+        # task-32128: the folder tree composes no Sort control, so the
+        # restored key is pinned on the state it is restored into rather
+        # than on a button label.
+        assert active_screen._notes_state.sort == "oldest"
+        assert not active_screen.query("#library-notes-sort")
         filter_box = active_screen.query_one("#library-notes-filter", Input)
         assert filter_box.value == "retro"
 
@@ -33026,11 +33047,9 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         await pilot.press("escape")
         await wait_footer("ctrl+n new | / find | esc rail")
 
-        screen.query_one("#library-notes-sort").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-sort-choices")
-        await wait_footer("enter choose sort | esc cancel")
-        await pilot.press("escape")
-        await wait_footer("ctrl+n new | / find | esc rail")
+        # task-32128: the sort strip is not reachable from a folder tree
+        # (no Sort control there), so its footer state is covered by the
+        # flat-list pin rather than from here.
 
         await pilot.press("ctrl+n")
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")

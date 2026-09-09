@@ -473,7 +473,9 @@ async def test_notes_select_toggle_latency_probe() -> None:
             expected = (
                 "#library-notes-select-all"
                 if index % 2 == 0
-                else "#library-notes-sort"
+                # task-32128: "New" is the browse toolbar's stable marker now
+                # that Sort is composed only for the flat list.
+                else "#library-notes-new"
             )
             await _wait_for_selector(screen, pilot, expected)
             samples.append((perf_counter() - started) * 1000.0)

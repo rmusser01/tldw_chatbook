@@ -59,7 +59,15 @@ LIBRARY_COLLECTIONS_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_comfort_width=56,
     grip_width=1,
 )
-LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
+# task-32127: Notes joined Media on `list_grows` and raised its comfort
+# ceiling to 64. At 235 columns the list was pinned at the 40-cell target
+# while the Reader held 151 columns of "Select a note to edit it here.",
+# which is what clipped the titles, the ages and the delete receipt.
+LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(
+    work_min_width=48,
+    list_comfort_width=64,
+    list_grows=True,
+)
 LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=30)
 LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
 LIBRARY_SKILLS_READER_PROFILE = AdaptiveReaderLayoutProfile(

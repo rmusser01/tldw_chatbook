@@ -252,6 +252,17 @@ def test_patch_branches_no_match_returns_slice_identity_and_flag_false() -> None
 
 
 def test_placement_title_sort_key_matches_repository_tiebreakers() -> None:
+    """Title order is the repository's, not a display choice.
+
+    task-32128 reconciled the inert Sort control against this pin rather
+    than the other way round: ``page_note_placements`` pages with ``ORDER BY
+    title COLLATE NOCASE``, and every offset the tree browses with -- the
+    deep-link locator's ``containing_offset`` included -- is computed
+    against that order. A Newest/Oldest control could only re-sort the
+    loaded window, so it was removed from the folder tree; the flat list,
+    which sorts its own records, keeps it. See
+    ``Tests/UI/test_library_notes_wave_list.py``.
+    """
     a = _placement("a", "Same", "f1", "m2")
     b = _placement("a", "Same", "f1", "m1")
     # Equal title + note id -> membership_id breaks the tie.
