@@ -210,24 +210,15 @@ class GoalIterationAuthorization:
             verifier_digest,
         )
 
-        selected = next(
-            (
-                v
-                for v in self.goal.request.verifiers
-                if v.verifier_path == str(Path(path).resolve())
-            ),
-            None,
-        )
-        digest = verifier_digest(selected) if selected else None
         path = str(Path(path).resolve())
-        if not any(
-            v.verifier_path == path
-            and v.verifier_sha256 == digest
-            and v.skill_trust_ref == trust_digest
-            and v.arguments == tuple(args)
-            and v.executor_tool_id in {"run_skill_script", "runtime:run_skill_script"}
-            for v in self.goal.request.verifiers
-        ):
+        digest = verifier_digest(path)
+        try:
+            selected = self.goal.request.select_script_verifier(
+                path, digest, tuple(args), trust_digest
+            )
+        except ValueError:
+            raise AutomaticWorkRefused("ambiguous_verifier_invocation") from None
+        if selected is None:
             raise AutomaticWorkRefused("verifier_binding_changed")
         run_id = current_run_id()
         if not run_id:
@@ -248,6 +239,7 @@ class GoalIterationAuthorization:
                 selected,
                 seconds=self.remaining_seconds(),
             ),
+            verifier_id=selected.id,
         )
         self._script_invocations[invocation.id] = invocation
         return invocation
@@ -271,11 +263,15 @@ class GoalIterationAuthorization:
             raise ValueError("goal evidence attempt no longer accepted")
         from tldw_chatbook.Agents.goal_iteration import capture_manifest
 
-        spec = next(
-            v
-            for v in self.goal.request.verifiers
-            if v.verifier_path == invocation.verifier_path
+        spec = self.goal.request.select_script_verifier(
+            invocation.verifier_path,
+            invocation.verifier_sha256,
+            invocation.arguments,
+            invocation.skill_trust_ref,
+            verifier_id=invocation.verifier_id,
         )
+        if spec is None:
+            raise ValueError("stale goal verifier callback")
         manifest = capture_manifest(
             self.goal.request.binding.locator, spec, seconds=self.remaining_seconds()
         )

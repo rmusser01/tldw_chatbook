@@ -148,9 +148,10 @@ def capture_manifest(
         return None
 
 
-def verifier_digest(spec: VerificationSpec) -> str | None:
+def verifier_digest(spec: VerificationSpec | str) -> str | None:
     try:
-        with _open_bound("/", spec.verifier_path.lstrip("/")) as fd:
+        path = spec if isinstance(spec, str) else spec.verifier_path
+        with _open_bound("/", path.lstrip("/")) as fd:
             before = os.fstat(fd)
             if not stat.S_ISREG(before.st_mode) or before.st_size > 1024 * 1024:
                 return None
@@ -206,22 +207,17 @@ def resolve_runtime_evidence(goal: GoalSnapshot, result) -> tuple[GoalEvidence, 
             result.native_run_id,
         ):
             continue
-        spec = next(
-            (
-                v
-                for v in goal.request.verifiers
-                if (v.verifier_path, v.verifier_sha256, v.arguments, v.skill_trust_ref)
-                == (
-                    inv.verifier_path,
-                    inv.verifier_sha256,
-                    inv.arguments,
-                    inv.skill_trust_ref,
-                )
-                and v.executor_tool_id
-                in ("run_skill_script", "runtime:run_skill_script")
-            ),
-            None,
-        )
+        try:
+            spec = goal.request.select_script_verifier(
+                inv.verifier_path,
+                inv.verifier_sha256,
+                inv.arguments,
+                inv.skill_trust_ref,
+                verifier_id=inv.verifier_id,
+            )
+        except ValueError:
+            # Historical ambiguity is inspectable, never objective proof.
+            continue
         if spec is None:
             continue
         stable = bool(

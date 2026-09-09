@@ -885,6 +885,10 @@ class AutomaticWorkLedger:
             ).fetchone()
             if row["status"] != "ready":
                 raise AutomaticWorkRefused("goal_not_ready")
+            try:
+                goal.request.validate_verifier_invocations()
+            except ValueError:
+                raise AutomaticWorkRefused("ambiguous_verifier_invocation") from None
             existing = conn.execute(
                 "SELECT a.id, a.owner_id FROM automatic_wake_attempts a JOIN goal_iterations i ON i.attempt_id=a.id WHERE i.goal_id=? AND a.state IN ('prepared','accepted')",
                 (goal_id,),
@@ -981,11 +985,20 @@ class AutomaticWorkLedger:
                 return False
             if kind == "goal_iteration":
                 goal = conn.execute(
-                    "SELECT g.status FROM goal_runs g JOIN goal_iterations i ON i.goal_id=g.id WHERE i.attempt_id=?",
+                    "SELECT g.status, g.request_json FROM goal_runs g JOIN goal_iterations i ON i.goal_id=g.id WHERE i.attempt_id=?",
                     (attempt_id,),
                 ).fetchone()
                 if goal is None or goal["status"] != "ready":
                     raise AutomaticWorkRefused("goal_not_ready")
+                from tldw_chatbook.Agents.goal_models import GoalRequest
+
+                request = GoalRequest.model_validate_json(goal["request_json"])
+                try:
+                    request.validate_verifier_invocations()
+                except ValueError:
+                    raise AutomaticWorkRefused(
+                        "ambiguous_verifier_invocation"
+                    ) from None
                 from tldw_chatbook.Agents.run_log import _setting
                 from tldw_chatbook.config import coerce_bool_setting
 

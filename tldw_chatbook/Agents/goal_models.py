@@ -126,6 +126,20 @@ class VerificationSpec(GoalModel):
     expected_exit_code: Annotated[int, Field(ge=0, le=255)] = 0
     require_complete_output: bool = True
 
+    @property
+    def invocation_key(self) -> tuple:
+        """Canonical executor identity plus the complete launch-bound invocation."""
+        executor = self.executor_tool_id
+        if executor == "runtime:run_skill_script":
+            executor = "run_skill_script"
+        return (
+            executor,
+            self.verifier_path,
+            self.verifier_sha256,
+            self.arguments,
+            self.skill_trust_ref,
+        )
+
     @field_validator("verifier_path")
     @classmethod
     def absolute_verifier(cls, value: str) -> str:
@@ -187,6 +201,30 @@ class GoalRequest(GoalModel):
         if len(self.canonical_json().encode("utf-8")) > 128 * 1024:
             raise ValueError("launch request exceeds 128 KiB")
         return self
+
+    def validate_verifier_invocations(self) -> None:
+        """Reject ambiguous execution without making historical JSON unreadable."""
+        keys = [verifier.invocation_key for verifier in self.verifiers]
+        if len(set(keys)) != len(keys):
+            raise ValueError("ambiguous_verifier_invocation")
+
+    def select_script_verifier(
+        self,
+        path: str,
+        sha256: str | None,
+        arguments: tuple[str, ...],
+        trust_ref: str,
+        *,
+        verifier_id: str | None = None,
+    ) -> VerificationSpec | None:
+        """Resolve one exact script invocation; IDs cannot disambiguate duplicates."""
+        key = ("run_skill_script", path, sha256, arguments, trust_ref)
+        matches = [v for v in self.verifiers if v.invocation_key == key]
+        if len(matches) > 1:
+            raise ValueError("ambiguous_verifier_invocation")
+        if not matches or (verifier_id is not None and matches[0].id != verifier_id):
+            return None
+        return matches[0]
 
     def canonical_json(self) -> str:
         return json.dumps(
@@ -290,6 +328,7 @@ class GoalScriptInvocation:
     skill_trust_ref: str
     arguments: tuple[str, ...]
     before_manifest: str | None = None
+    verifier_id: str | None = None
 
 
 @dataclass(frozen=True)

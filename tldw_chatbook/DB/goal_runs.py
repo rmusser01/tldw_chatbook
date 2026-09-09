@@ -126,6 +126,7 @@ class GoalRunsStore:
                     ):
                         raise ValueError("launch_payload_conflict")
                 return self._snapshot(conn, existing)
+            request.validate_verifier_invocations()
             self._require_capacity(
                 conn, len(payload.encode()), request.policy.payload_bytes
             )
@@ -286,8 +287,13 @@ class GoalRunsStore:
 
         if type(result) is not GoalIterationResult or not result.attempt_id:
             raise ValueError("checkpoint_requires_accepted_attempt")
+        result_payload = asdict(result)
+        # Optional selection identity must not change pre-selection checkpoint hashes.
+        for record in result_payload["tool_records"]:
+            if record["invocation"].get("verifier_id") is None:
+                record["invocation"].pop("verifier_id", None)
         fingerprint = hashlib.sha256(
-            json.dumps(asdict(result), sort_keys=True, default=str).encode()
+            json.dumps(result_payload, sort_keys=True, default=str).encode()
         ).hexdigest()
         with self.db.automatic_work.transaction() as conn:
             row = conn.execute(
