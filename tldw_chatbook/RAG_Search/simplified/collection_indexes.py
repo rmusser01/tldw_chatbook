@@ -64,8 +64,13 @@ def _close_client(client: Any) -> None:
         close = getattr(client, "close", None)
         if callable(close):
             close()
-    except Exception:
-        logger.warning("Could not close collection-index client")
+    except Exception as exc:
+        from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
+
+        logger.warning(
+            "Could not close collection-index client ({})",
+            safe_metadata_token(type(exc).__name__),
+        )
 
 
 def adopt_legacy_collection(

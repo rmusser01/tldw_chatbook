@@ -30,9 +30,13 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.widgets import Button
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
-    _build_console_send_test_app,
     _configure_native_ready_console,
     _select_llamacpp_console,
     _wait_for_selector,
@@ -58,7 +62,8 @@ async def test_console_message_send_persists_user_and_assistant_rows():
     """Send/receive path: a real send queues a user turn and persists the
     streamed assistant reply as store rows, not just visible text."""
     gateway = CapturingGateway(chunks=("hello ", "there"))
-    app = _build_console_send_test_app()
+    app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -377,7 +382,12 @@ def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
     runtime._canvas_gateway = SimpleNamespace(
         has_browser_session_for=lambda session_id: session_id == "session-a"
     )
-    screen.app_instance = SimpleNamespace(call_from_thread=lambda callback: callback())
+    call_from_thread = Mock()
+    screen.app_instance = SimpleNamespace(
+        _thread_id=threading.get_ident(), call_from_thread=call_from_thread
+    )
+    scheduled: list[object] = []
+    screen.call_later = lambda callback: scheduled.append(callback) or True
     screen._message._open_console_canvas_selection = Mock(
         side_effect=lambda **_kwargs: _closed_coroutine()
     )
@@ -393,6 +403,10 @@ def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
     screen._message._schedule_console_canvas_tool_open("session-a", info)
     screen._message._schedule_console_canvas_tool_open("session-b", info)
 
+    call_from_thread.assert_not_called()
+    assert len(scheduled) == 2
+    for callback in scheduled:
+        callback()
     screen._message._open_console_canvas_selection.assert_called_once_with(
         session_id="session-b",
         canvas_id="canvas-a",
@@ -400,6 +414,102 @@ def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
         follow_latest=True,
     )
     assert len(workers) == 1
+
+
+def test_canvas_auto_open_accepted_worker_handoff_runs_ui_work_on_owner_thread():
+    """An accepted worker handoff defers all Textual work to the app owner."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    owner_thread = threading.get_ident()
+    handoffs: list[object] = []
+    handoff_threads: list[int] = []
+
+    def accept_handoff(callback):
+        handoff_threads.append(threading.get_ident())
+        handoffs.append(callback)
+
+    screen.app_instance = SimpleNamespace(
+        _thread_id=owner_thread, call_from_thread=accept_handoff
+    )
+    screen._message._open_console_canvas_selection = Mock(
+        side_effect=lambda **_kwargs: _closed_coroutine()
+    )
+    worker_threads: list[int] = []
+
+    def capture_worker(coroutine, **_kwargs):
+        worker_threads.append(threading.get_ident())
+        coroutine.close()
+
+    screen.run_worker = capture_worker
+    info = SimpleNamespace(canvas_id="canvas-a", revision_id="revision-a")
+    errors: list[BaseException] = []
+
+    def invoke() -> None:
+        try:
+            screen._message._schedule_console_canvas_tool_open("session-a", info)
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert handoff_threads == [thread.ident]
+    assert worker_threads == []
+    assert len(handoffs) == 1
+    handoffs.pop()()
+    assert worker_threads == [owner_thread]
+
+
+@pytest.mark.parametrize("handoff", ["missing", "rejected"])
+def test_canvas_auto_open_rejected_worker_handoff_drops_ui_work(handoff: str) -> None:
+    """A worker never falls through to Textual work after a failed handoff.
+
+    Args:
+        handoff: Whether the app lacks or rejects its thread-marshalling API.
+    """
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    owner_thread = threading.get_ident()
+    handoff_threads: list[int] = []
+
+    def reject_handoff(_callback):
+        handoff_threads.append(threading.get_ident())
+        raise RuntimeError("app is closing")
+
+    screen.app_instance = SimpleNamespace(_thread_id=owner_thread)
+    if handoff == "rejected":
+        screen.app_instance.call_from_thread = reject_handoff
+    screen._message._open_console_canvas_selection = Mock(
+        side_effect=lambda **_kwargs: _closed_coroutine()
+    )
+    worker_threads: list[int] = []
+
+    def capture_worker(coroutine, **_kwargs):
+        worker_threads.append(threading.get_ident())
+        coroutine.close()
+
+    screen.run_worker = capture_worker
+    info = SimpleNamespace(canvas_id="canvas-a", revision_id="revision-a")
+    errors: list[BaseException] = []
+
+    def invoke() -> None:
+        try:
+            screen._message._schedule_console_canvas_tool_open("session-a", info)
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert handoff_threads == ([thread.ident] if handoff == "rejected" else [])
+    screen._message._open_console_canvas_selection.assert_not_called()
+    assert worker_threads == []
 
 
 def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
