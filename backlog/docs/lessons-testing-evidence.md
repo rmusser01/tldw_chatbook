@@ -12629,3 +12629,30 @@ before its Select child labels were composed. Assigning Select.value at that poi
 raised NoMatches for the internal label. Settle the pilot after detecting the modal,
 then interact with its controls; the normal journey and compact controls passed
 together after that fixture correction.
+
+## A widget id that becomes conditional must be reconciled across all of Tests/
+
+**task-32128, Library ▸ Notes critique wave, 2026-09-09.** The wave gated
+`#library-notes-sort` on the flat list (the folder tree's order is the
+repository's paging contract, so a Sort control there would lie). The group
+found two suites that waited on that id, reconciled the one in
+`test_library_shell.py` and one of the **two** references inside
+`Tests/UI/test_library_canvas_scoped_sync.py` — and shipped with the second
+still waiting 30 s for a control that can no longer mount. The final
+whole-branch review caught it as a merge blocker
+(`AssertionError: #library-notes-sort never mounted within 30.0s`).
+
+The second reference was in the same file as the one that was fixed, so
+"I already handled that file" is not the check.
+
+**What to do.** When a change makes a widget's composition conditional,
+`grep -rn "<the-id>" Tests/` over the WHOLE tree before claiming the wave is
+green, and reconcile every hit — not the file the failure first pointed at.
+Each reconciled site gets a one-line reason naming the task and the marker
+that replaced it, so the next reader does not "restore" the wait.
+
+A second trap on the same test: once the timeout was fixed, the line after it
+failed too (`#library-notes-row-0` is a flat-list id; the tree indexes its
+note rows across its folder rows). That line was already red at the wave base,
+which had never reached it — a test that fails early hides whatever fails
+later, so re-run to green rather than to "past my line".

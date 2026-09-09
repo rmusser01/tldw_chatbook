@@ -53,4 +53,11 @@ Live at 235x52 on the power profile: list pane ~137 columns with no note open (c
 The pinned decision test `test_only_the_media_profile_opts_into_list_growth` is reconciled: it now takes a named set of growth profiles rather than asserting Media is alone.
 
 Files: tldw_chatbook/UI/Library_Modules/screen_constants.py, tldw_chatbook/UI/Screens/library_screen.py, tldw_chatbook/UI/Library_Modules/library_notes_controller.py, tldw_chatbook/Widgets/Library/library_notes_canvas.py, tldw_chatbook/css/components/_agentic_terminal.tcss (+ regenerated screen_agentic_library.tcss), Tests/Library/test_library_adaptive_reader_state.py, Tests/UI/test_library_shell.py, Tests/UI/test_library_notes_wave_list.py.
+FINAL WHOLE-BRANCH REVIEW (2026-09-09), I3: `assert_every_action_fits` ran at 137 and 62 columns only, and the docs sweep had observed Rename/Move/Remove clipping in a narrower pane. Adding the 38-column case with the same folder-selected projection reproduced it: `library-notes-import-receipt` at x=32..47 and `library-notes-folder-remove` at x=36..46 on a 38-column pane, both unpressable.
+
+Fix: below `_TOOLBAR_STACK_MIN_WIDTH` (48 columns) the transfer group and the folder actions each stack one action per line instead of running off the pane -- the same shape task-32123 gave the delete receipt, because Textual toolbars do not wrap. 48 is the real boundary, not a round number: a 130-column terminal hands the list 44 columns beside an open note (the transfer group is 47 cells, the folder actions 46).
+
+The stacking is gated on NOT compact. In a compact shell the split-screen sheet pins `#library-notes-transfer-actions` to `height: 1; overflow-x: hidden` (pinned in Tests/UI/test_css_build_integrity.py), so a stacked column there would be clipped to its FIRST button -- strictly worse than the off-pane overflow. Both halves are pinned: `test_notes_toolbar_keeps_every_action_on_a_thirty_eight_column_pane` and `test_narrow_compact_toolbar_groups_stay_on_one_row` (the latter fails with "stacked onto 3 lines" if the compact gate is removed).
+
+Files: tldw_chatbook/Widgets/Library/library_notes_canvas.py, Tests/UI/test_library_notes_wave_list.py, Docs/User_Guide/library/notes.md.
 <!-- SECTION:NOTES:END -->

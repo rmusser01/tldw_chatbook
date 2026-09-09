@@ -96,8 +96,13 @@ editor's own Back control returns to its list.
   list row no longer keeps the pre-rename "Untitled" title until a filter
   re-query).*
 
+  In a narrow list pane the toolbar's action groups stack one action per
+  line rather than running off the pane edge, so every action stays
+  pressable.
+
   *Verified against fix/library-notes-list — 2026-09-09 (task-32127: the list
-  no longer sits at 38 columns beside an empty work area; task-32137: rows
+  no longer sits at 38 columns beside an empty work area, and its action
+  groups stack rather than clip in a narrow pane; task-32137: rows
   carry an age and same-folder duplicate titles name their folder;
   task-32128: the tree's title order is the database's, so Sort is not
   offered there).*
