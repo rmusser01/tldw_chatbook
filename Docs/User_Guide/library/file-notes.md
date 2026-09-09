@@ -53,9 +53,11 @@ Using compact **Back to navigator** does not reset it.
   instead.
 - **Library navigation** (left of the workspace) — the same Library rail as
   the rest of the screen, so you can leave for Media, Prompts or Skills
-  without going back through Notes first. Its grip collapses it. Before a
-  folder is linked, the empty state below takes the full canvas width and
-  the rail is not shown; it returns once a folder is linked.
+  without going back through Notes first. Its grip collapses it. The rail is
+  there before a folder is linked too — the file list and the editor are what
+  wait for a folder, not the rail. On compact terminals (under about 120
+  columns) the rail is collapsed whether or not a folder is linked, so the
+  empty state takes the full canvas width there.
 - **Folder link row** (top) — before setup the status reads "Choose a notes
   folder." with buttons **Details** and **Choose folder…**, and the line
   under it explains the mode: "Folder files edits Markdown files in a folder
@@ -470,8 +472,8 @@ there; a slow scan reports its entry count and offers Keep waiting / Choose
 another. task-32136: once a folder is linked, Folder files keeps the Library
 rail and the source strip at wide sizes; the empty state shown before any
 folder is linked explains the mode and offers the configured
-`[notes] sync_directory` folder, but is a full-width onboarding step without
-the Library rail until you link one.)*
+`[notes] sync_directory` folder, but was a full-width onboarding step without
+the Library rail until you linked one — superseded by task-32173 below.)*
 
 *Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
 "Choose File Notes Folder" picker used to commit the directory being
@@ -491,3 +493,9 @@ review round 2: **Keep waiting** also extends a change queued behind an
 earlier folder's scan, and the "finished before it could be stopped" outcome
 is painted on the folder line rather than only in the editor's status line.
 `[notes] sync_directory` must be an absolute path to be offered.)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32173:
+the Library rail is now shown inside Folder files before a folder is linked,
+not only after — the file list and the editor are what wait for a folder. On
+terminals under about 120 columns the rail stays collapsed either way, which
+is unchanged.)*

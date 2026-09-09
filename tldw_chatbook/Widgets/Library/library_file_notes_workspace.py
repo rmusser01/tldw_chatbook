@@ -816,6 +816,13 @@ class LibraryFileNotesWorkspace(Vertical):
         min-height: 8;
     }
 
+    /* task-32173: before a folder is linked the body holds the Library
+       rail and nothing else, so it must not claim eight rows back from
+       the empty state's own copy on a short terminal. */
+    #file-notes-body.-no-root {
+        min-height: 0;
+    }
+
     #library-file-notes-reader-shell,
     #file-notes-work {
         height: 100%;
@@ -1549,6 +1556,11 @@ class LibraryFileNotesWorkspace(Vertical):
         shell = self._reader_shell
         if shell is not None:
             shell.sync_layout(layout, manual_reopen=manual_reopen)
+            # task-32173: ``sync_layout`` restores ``items`` from the
+            # resolved layout, which knows nothing about whether a folder
+            # is linked. Re-assert the root gate here so a resize cannot
+            # paint the file panes back into the empty state.
+            self._sync_body_panes()
         self._schedule_editor_action_layout()
 
     def _ensure_standalone_reader_shell(self) -> LibraryAdaptiveReaderShell:
@@ -2617,16 +2629,47 @@ class LibraryFileNotesWorkspace(Vertical):
         except (OSError, ValueError):
             return None
 
+    def _sync_body_panes(self) -> None:
+        """Keep the Library rail; make only the file panes wait for a folder.
+
+        task-32173: Folder files is a mode of Notes (task-32136 user
+        decision), so its rail belongs on screen from the first frame, not
+        after a folder is linked. The body itself stays mounted --
+        display-gating it left the reader shell with zero width, so the
+        adaptive layout never resolved at all and the rail could not open
+        even at 235 columns.
+
+        Compact terminals are unchanged because the resolver already closes
+        the rail below the Library's compact breakpoint: at 60 and at 100
+        columns it reports ``library_open=False``, so the unlinked body
+        holds nothing to paint.
+        """
+        linked = self._root is not None
+        shell = self._reader_shell
+        if shell is not None:
+            # ``library`` is deliberately absent: the resolver owns it.
+            shell.items.display = linked and shell.effective_layout.items_open
+            shell.items_grip.display = linked
+            shell.library_grip.display = linked
+            shell.work.display = linked
+        try:
+            body = self.query_one("#file-notes-body")
+        except NoMatches:
+            return
+        # An empty body must not claim its ``min-height`` back from the
+        # empty state's own copy on a short terminal.
+        body.set_class(not linked, "-no-root")
+
     def _update_root_surface(self, *, offline: bool | None = None) -> None:
         if not self._active or not self.is_mounted or not self.children:
             return
         try:
             status = self.query_one("#file-notes-root-status", Static)
-            body = self.query_one("#file-notes-body")
             details = self.query_one("#file-notes-root-details", Button)
             choose = self.query_one("#file-notes-choose-root", Button)
         except NoMatches:
             return
+        self._sync_body_panes()
         binding = self._session_binding
         mutation_active = binding is not None and self._session_owner.mutation_active(
             binding
@@ -2670,7 +2713,6 @@ class LibraryFileNotesWorkspace(Vertical):
             status.tooltip = None
             status.update(self._root_status_summary)
             status.set_class(self._root is None, "-empty-root")
-            body.display = self._root is not None
             details.display = self._root is not None
             choose.display = True
             self._render_status_channels()
@@ -2689,7 +2731,6 @@ class LibraryFileNotesWorkspace(Vertical):
             status.set_class(not reason, "-empty-root")
             status.set_class(False, "-warning")
             status.set_class(False, "-offline")
-            body.display = False
             details.display = False
             choose.label = "Choose folder…"
             choose.display = True
@@ -2724,7 +2765,6 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_status_summary = self._root_action_reason
         status.tooltip = Text(detail)
         status.update(self._root_status_summary)
-        body.display = True
         details.display = True
         choose.label = "Change…"
         choose.display = True
@@ -6369,6 +6409,7 @@ class LibraryFileNotesWorkspace(Vertical):
         still refuse -- which is the swallowed-Escape bug. Bumping the
         generation makes the abandoned run's late results stale, so it can
         never commit the folder it was still scanning.
+
         """
         task.cancel()
         # task-32121: the asyncio cancel never reached the scan THREAD,

@@ -831,8 +831,8 @@ stuck load now reaches a failed state with Retry).*
 Folder files is a mode of Notes — once a folder is linked, the Library rail
 and the "Library notes | Folder files" strip stay visible inside it at wide
 sizes, and the strip, not the back cue, is the way back. The empty state
-shown before any folder is linked is full-width without the rail; see
-[File notes](file-notes.md).)*
+shown before any folder is linked was full-width without the rail —
+superseded by task-32173 below; see [File notes](file-notes.md).)*
 
 *Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
 Import once and Keep-synced folder pickers used to commit the directory
@@ -920,3 +920,9 @@ the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
 Obsidian vault detection is stated as POSIX-only, since the Windows
 discovery adapter never reports a vault (task-32178).)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32173:
+Folder files now keeps the Library rail before a folder is linked as well as
+after, so the empty state is a mode of Notes rather than a full-width
+onboarding step. Compact terminals — under about 120 columns — collapse the
+rail either way, as before. See [File notes](file-notes.md).)*

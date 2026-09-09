@@ -26,7 +26,7 @@ The user decided Folder files is a mode of Notes, not a separate screen. Today s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [~] #1 At wide sizes the Library rail and the source strip stay visible inside Folder files — once a folder is linked; before linking only the source strip is visible
+- [x] #1 At wide sizes the Library rail and the source strip stay visible inside Folder files, before a folder is linked as well as after (the qualifier this AC carried was removed by task-32173)
 - [x] #2 The empty state explains in one line what Folder files does and offers the configured sync folder when one is set
 - [x] #3 The file-notes guide's layout tour matches
 - [x] #4 Covered by a compose test at 235x52
@@ -58,6 +58,8 @@ Files: tldw_chatbook/UI/Screens/library_screen.py, tldw_chatbook/UI/Library_Modu
 FINAL WHOLE-BRANCH REVIEW (2026-09-09), I2 -- AC#1 re-marked `[~]`. Controller ruling: the rail this task pins is the workspace's OWN rail, mounted inside `#file-notes-body`, and `library_file_notes_workspace.py`'s root-status render sets `body.display = self._root is not None`. So before a folder is linked there is no rail at all -- only half of AC#1 holds unconditionally. The source strip DOES survive the unlinked state, so the user is never trapped in Folder files, which is why this is a qualifier and not a reopened defect.
 
 Renumbering-free rider (follow-up work, no new task id): give the pre-link Folder files empty state the workspace rail, so the mode reads as a mode from the first frame rather than as a full-width onboarding step. Whoever picks it up should start at the `body.display` gate above -- the rail is a child of the body that gate hides, so it needs either its own display rule or a rail that lives outside `#file-notes-body`.
+
+DONE by task-32173 (2026-09-09): the `body.display` gate is gone. Hiding the body left the reader shell with zero width, so its adaptive layout never resolved and `library_open` was False even at 235 columns -- the rail could not have been un-hidden on its own. The body now stays mounted and `_sync_body_panes` gates only `items`, `work` and the two grips; the resolver owns the rail and already closes it below the Library compact breakpoint, so compact is unchanged. AC#1 re-ticked `[x]`.
 
 `Docs/User_Guide/library/file-notes.md`'s task-32136 stamp on this branch now carries the same qualified wording the docs group applied on the integration branch, so the two do not disagree. No code change.
 <!-- SECTION:NOTES:END -->
