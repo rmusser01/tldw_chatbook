@@ -1495,3 +1495,41 @@ All six derived-artifact preflight checks pass
 pass, and `git diff --check` is clean. The 17 incoming-inventory failures are
 addressed; final-source lifecycle verification, the newer dev increment and
 final-head PR review/checks still remain. Do not mark the owning task Done yet.
+
+## Wave 9 — latest Library keyboard and speech increment
+
+Checkpoint `279282b5991053aa8e1aa53756351b3682891a58` is published on PR 2427;
+its final per-click file passes **11** cases, including separate actual-recompose
+and refresh-fallback counters (`/private/tmp/pr2427-step65-final-spies.log`).
+Backup `codex/pr2427-before-wave9-rebase-20260908` preserves it. The 210-commit
+rebase onto fetched dev `38f7fe63d4f476cf593e06b09a2385d003233c53` completed at
+local `208660c3fdc4f8068b00e780bb78bad08e85585c`. Two conflicts preserved the
+new Tab bindings and both independently appended testing lesson sets.
+
+Complete incoming qualification initially reports **331 passed / 5 failed**
+(144.11 s, `/private/tmp/pr2427-wave9-incoming.log`). Three fake audio.cpp
+child-server cases cannot bind loopback ports in the sandbox; the complete two
+TTS files pass **117** cases (3.19 s) outside that restriction, without models,
+devices or external inference (`/private/tmp/pr2427-wave9-tts-local.log`).
+The navigation allowlist erroneously inherits Shift+F6 as universal, despite
+the retained route gate. Only Tab/Shift+Tab are universal; that test-only
+correction is independently diagnosed and its complete navigation file is
+rerunning. Backlog IDs remain unique across **3652** files.
+
+The remaining structural gate is real: LibraryScreen is **32156 / 31901 lines**
+after the accepted upstream keyboard behavior, with seven added methods.
+Preserving earlier delegate deletions does not earn that saving a second time.
+Inspect current unused delegates before proposing any new extraction; retain
+all seven new keyboard methods and do not raise caps. Final-source native
+Library verification and final-head Qodo/CI are still required before merge.
+
+The corrected complete navigation file passes **145** cases (105.70 s,
+`/private/tmp/pr2427-wave9-navigation-final.log`). Together with the complete
+incoming run and unrestricted offline TTS rerun, all incoming behavioral test
+files now pass; the Screen structural gate remains open at **32156 lines and
+1236 methods**, versus **31901 / 1229**. Current-reference review found only
+four safely dead helpers (53 lines), insufficient by itself. Do not conflate
+prior extraction savings with new savings or remove the newly accepted keyboard
+behavior. A bounded follow-on controller-boundary reduction requires an explicit
+plan/approval before implementation. Existing native evidence is historical
+until the final source is requalified; no merge-ready claim is made here.
