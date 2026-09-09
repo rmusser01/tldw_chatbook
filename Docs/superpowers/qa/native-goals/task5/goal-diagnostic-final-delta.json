@@ -1,0 +1,24 @@
+{
+  "top_level_changes": {},
+  "owners_changes": {
+    "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": {
+      "expected": {
+        "call_count": 50,
+        "diagnostic_digest": "f7faf8b3c1e797ef8684",
+        "owner": "TASK-494",
+        "path": "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py",
+        "reason": "remaining Chatbook production diagnostic owner"
+      },
+      "actual": {
+        "path": "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py",
+        "owner": "TASK-494",
+        "reason": "remaining Chatbook production diagnostic owner",
+        "call_count": 50,
+        "diagnostic_digest": "95d2b6a88660ad3919a2"
+      }
+    }
+  },
+  "persistent_sink_topology_changes": {},
+  "tts_source_unchanged": true,
+  "tts_sha256": "c22919b572b227e2d80565f6dec6a5c4b0bcd59cdea66432a3b03e27b9652b92"
+}

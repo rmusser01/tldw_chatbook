@@ -14441,81 +14441,23 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
-    def _console_change_review_run_id(
-        self, store: ConsoleChatStore, message_id: str
-    ) -> str | None:
-        """Resolve the run id a review-changes action should open (TASK-2030).
+    def _console_change_review_provider(self, conversation_id=None):
+        from ..Console_Modules.goals import change_review_provider
 
-        The transcript's display model is checked FIRST: the ✎ summary row
-        is a display-only TOOL marker that the store's tree lookup can never
-        resolve. The store remains the fallback for tree-node rows.
-
-        Args:
-            store: The native Console chat store.
-            message_id: The action button's message id.
-
-        Returns:
-            The run id to review, or ``None`` when no rendered or stored
-            row with that id carries one.
-        """
-        try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
-            transcript = None
-        if transcript is not None:
-            row = transcript.display_message(message_id)
-            run_id = (
-                getattr(row, "change_review_run_id", None) if row is not None else None
-            )
-            if run_id:
-                return str(run_id)
-        try:
-            run_id = getattr(
-                store.get_message(message_id), "change_review_run_id", None
-            )
-        except KeyError:
-            return None
-        return str(run_id) if run_id else None
-
-    def _console_change_review_provider(self):
-        """The v-opener's provider recipe, shared with the turn file card.
-
-        Returns None whenever any collaborator is missing -- the card
-        degrades to the marker header; only the v opener toasts.
-        """
-        bridge = self._ensure_console_agent_bridge()
-        conversation_id = None
-        controller = self._console_chat_controller
-        if controller is not None:
-            try:
-                # The SAME id the run store keys by (persisted id when set,
-                # session id otherwise) -- change_snapshots joins agent_runs
-                # on it, so any other spelling shows an empty history.
-                active = controller.store.active_session_id
-                if active:
-                    conversation_id = controller._agent_conversation_id(active)
-            except Exception:  # noqa: BLE001 -- opener must degrade, not raise
-                conversation_id = None
-        provider = (
-            bridge.change_review_provider(conversation_id)
-            if bridge is not None and conversation_id
-            else None
+        return change_review_provider(
+            self._console_chat_controller,
+            self._ensure_console_agent_bridge(),
+            conversation_id,
         )
-        if provider is None:
-            return None
-        # TASK-1974: reverts refuse while a run is active -- the engine's
-        # probe reads THIS controller's live run state each time.
-        if controller is not None:
-            # CONSOLE_ACTIVE_RUN_STATUSES is this module's own constant.
-            provider.run_active = lambda: (
-                controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-            )
-        return provider
+
+    def action_open_console_goals(self) -> None:
+        self._goals.open_history()
 
     def _open_change_review(
         self,
         run_id: str | None = None,
         *,
+        conversation_id: str | None = None,
         initial_path: str | None = None,
         initial_snapshot_id: int | None = None,
     ) -> None:
@@ -14537,7 +14479,11 @@ class ChatScreen(BaseAppScreen):
                 two windows of the SAME run covering the same path (spec
                 §2). ``None`` when the caller has no snapshot row to pin to.
         """
-        provider = self._console_change_review_provider()
+        provider = (
+            self._console_change_review_provider(conversation_id)
+            if conversation_id
+            else self._console_change_review_provider()
+        )
         if provider is None:
             self.app_instance.notify(
                 "Change review needs git and a saved conversation.",

@@ -1,0 +1,22 @@
+........................................................................ [ 72%]
+.......................s...                                              [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+3.25s call     Tests/UI/test_console_goal_navigation.py::test_production_styles_keep_goal_actions_visible_and_keyboard_accessible[size1]
+3.12s call     Tests/Chat/test_console_goal_scheduling.py::test_adapter_proof_survives_native_route_and_retry_is_bounded[rate-paused-3]
+3.10s call     Tests/UI/test_console_goal_navigation.py::test_production_styles_keep_goal_actions_visible_and_keyboard_accessible[size0]
+1.55s call     Tests/UI/test_console_goal_navigation.py::test_palette_discovers_and_opens_goal_history
+1.48s call     Tests/UI/test_console_goal_settings.py::test_mounted_goal_policy_save_revert_and_fleet_independence
+1.08s call     Tests/Chat/test_console_goal_scheduling.py::test_pre_effect_proof_does_not_refund_earlier_native_call
+1.01s call     Tests/Chat/test_console_runtime_lifetime.py::test_a_round_from_the_previous_visit_is_not_resurrected
+1.01s call     Tests/Chat/test_console_runtime_lifetime.py::test_leaving_console_still_denies_a_parked_approval_round
+
+(17 durations < 1s hidden.)
+=========================== short test summary info ============================
+SKIPPED [1] Tests/Chat/test_goal_cli_verification.py:735: Set TLDW_GOAL_LIVE_LOCAL=1 for the explicitly configured loopback endpoint
+98 passed, 1 skipped, 1 warning in 54.29s

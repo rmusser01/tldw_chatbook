@@ -1,0 +1,6 @@
+tldw_chatbook/Skills_Interop/local_skills_service.py 0 changed-range format edits; AST unchanged
+tldw_chatbook/Skills_Interop/skills_scope_service.py 0 changed-range format edits; AST unchanged
+tldw_chatbook/UI/Console_Modules/wiring.py 0 changed-range format edits; AST unchanged
+tldw_chatbook/UI/Screens/chat_screen.py 0 changed-range format edits; AST unchanged
+tldw_chatbook/UI/Screens/settings_screen.py 0 changed-range format edits; AST unchanged
+tldw_chatbook/UI/console_command_provider.py 0 changed-range format edits; AST unchanged

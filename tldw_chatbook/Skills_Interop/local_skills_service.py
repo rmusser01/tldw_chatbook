@@ -26,6 +26,8 @@ from .atomic_write import write_bytes_atomic, write_text_atomic
 from .skill_trust_models import SkillTrustBlockedError
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.goal_models import VerificationSpec
+
     # Deferred at runtime (see run_skill_script) to avoid a module-scope
     # import of the subprocess sandbox for every LocalSkillsService caller;
     # imported here only so the type hints below resolve for static analysis.
@@ -2293,6 +2295,40 @@ class LocalSkillsService:
         return self._plan_for_script(
             self._canonical_skill_name(skill_name), script_path, path
         )
+
+    async def goal_verifier_reference(
+        self,
+        skill_name: str,
+        script_path: str,
+        *,
+        arguments: tuple[str, ...],
+        input_paths: tuple[str, ...],
+    ) -> VerificationSpec:
+        """Resolve immutable verifier identity through the current local trust owner."""
+        from tldw_chatbook.Agents.goal_models import VerificationSpec
+
+        def resolve() -> VerificationSpec:
+            self._enforce("skills.run_script.launch.local")
+            self._require_trusted_skill(skill_name)
+            _root, path = self._resolve_script(skill_name, script_path)
+            plan = self._plan_for_script(
+                self._canonical_skill_name(skill_name), script_path, path
+            )
+            if self.trust_service is None:
+                raise ValueError("A trusted local verifier is required")
+            return VerificationSpec(
+                id=plan.skill_name + ":" + script_path,
+                executor_tool_id="run_skill_script",
+                verifier_path=str(path.resolve()),
+                verifier_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                skill_trust_ref=self.trust_service.current_fingerprint_digest(
+                    plan.skill_name
+                ),
+                arguments=arguments,
+                input_paths=input_paths,
+            )
+
+        return await asyncio.to_thread(resolve)
 
     async def run_skill_script(
         self,

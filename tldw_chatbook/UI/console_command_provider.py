@@ -30,6 +30,11 @@ class ConsoleCommandProvider(Provider):
         """
         return (
             (
+                "Console: Goal runs…",
+                screen.action_open_console_goals,
+                "Start, inspect, pause or review a finite goal",
+            ),
+            (
                 "Console: Switch session…",
                 screen.action_open_console_session_switcher,
                 "Fuzzy-find and activate a conversation (Ctrl+K)",

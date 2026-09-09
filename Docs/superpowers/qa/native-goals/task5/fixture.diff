@@ -1,0 +1,5 @@
+--- fixture.txt.before
++++ fixture.txt.after
+@@ -1 +1 @@
+-invalid
++valid

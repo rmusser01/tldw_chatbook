@@ -1,0 +1,159 @@
+{
+  "qualification": "POSIX local trusted skill; process retains host executor authority",
+  "provider": "deterministic recording adapter",
+  "actual_exit_codes": [
+    7,
+    0
+  ],
+  "commands": [
+    {
+      "argv": [
+        "/usr/bin/python3",
+        "<fixture-root>/trusted/skills/verifier/scripts/check.py",
+        "<fixture-root>/fixture"
+      ],
+      "exit_code": 7
+    },
+    {
+      "argv": [
+        "/usr/bin/python3",
+        "<fixture-root>/trusted/skills/verifier/scripts/check.py",
+        "<fixture-root>/fixture"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "verifier_source": "from pathlib import Path\nimport sys\nproject = Path(sys.argv[1])\nvalue = (project / 'fixture.txt').read_text()\nprint('checked fixture.txt: ' + value.strip())\nprint('validation provenance: trusted check.py', file=sys.stderr)\nraise SystemExit(0 if value == 'valid\\n' else 7)\n",
+  "verifier_sha256": "faca19f2698a758f5be14dc7bdb198ad1ed73484d423fbf854b634ce9358ef3f",
+  "model_visible_requests": [
+    [
+      {
+        "role": "user",
+        "content": "Intermediate tool calls must follow the available tool protocol (including fenced tool calls when that protocol requires them). For the FINAL iteration report after authorized tool work, return exactly one JSON object with summary (string), learnings (array of up to 8 strings), next_action (string), candidate_draft (string), evidence_ids (array of up to 32 runtime-issued goal_evidence_id lookup keys), completion_recommended (boolean). The final report has no extra fields or fences. Report <=64 KiB UTF-8; draft <=32 KiB. Report recommendations do not establish completion.\nGoal objective:\nRepair fixture\n\nCompletion criteria:\nValidation exits zero\n\nPrivate checkpoint memory (advisory):\n{}"
+      }
+    ],
+    [
+      {
+        "role": "user",
+        "content": "Intermediate tool calls must follow the available tool protocol (including fenced tool calls when that protocol requires them). For the FINAL iteration report after authorized tool work, return exactly one JSON object with summary (string), learnings (array of up to 8 strings), next_action (string), candidate_draft (string), evidence_ids (array of up to 32 runtime-issued goal_evidence_id lookup keys), completion_recommended (boolean). The final report has no extra fields or fences. Report <=64 KiB UTF-8; draft <=32 KiB. Report recommendations do not establish completion.\nGoal objective:\nRepair fixture\n\nCompletion criteria:\nValidation exits zero\n\nPrivate checkpoint memory (advisory):\n{}"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call-1",
+            "type": "function",
+            "function": {
+              "name": "run_skill_script",
+              "arguments": "{\"skill_name\": \"verifier\", \"script_path\": \"scripts/check.py\", \"args\": [\"<fixture-root>/fixture\"]}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "content": "exit_code: 7\ngoal_evidence_id: 9a6bcaaed68947368dc0e68e2b6a6b2d\nnote: memory (RLIMIT_AS) is not enforced on macOS/BSD; this script is bounded by CPU and wall-clock time but not by peak memory\nstdout:\nchecked fixture.txt: invalid\n\nstderr:\nvalidation provenance: trusted check.py\n"
+      }
+    ],
+    [
+      {
+        "role": "user",
+        "content": "Intermediate tool calls must follow the available tool protocol (including fenced tool calls when that protocol requires them). For the FINAL iteration report after authorized tool work, return exactly one JSON object with summary (string), learnings (array of up to 8 strings), next_action (string), candidate_draft (string), evidence_ids (array of up to 32 runtime-issued goal_evidence_id lookup keys), completion_recommended (boolean). The final report has no extra fields or fences. Report <=64 KiB UTF-8; draft <=32 KiB. Report recommendations do not establish completion.\nGoal objective:\nRepair fixture\n\nCompletion criteria:\nValidation exits zero\n\nPrivate checkpoint memory (advisory):\n{\"ordinal\": 1, \"summary\": \"first failed check\", \"next_action\": \"Fix fixture then rerun the unchanged check\", \"candidate_draft\": \"\", \"checks\": [{\"criterion_id\": \"fixture-check\", \"satisfied\": false, \"evidence_id\": null, \"reason\": \"unavailable\"}], \"evidence_ids\": [\"9a6bcaaed68947368dc0e68e2b6a6b2d\"], \"learnings\": []}"
+      }
+    ],
+    [
+      {
+        "role": "user",
+        "content": "Intermediate tool calls must follow the available tool protocol (including fenced tool calls when that protocol requires them). For the FINAL iteration report after authorized tool work, return exactly one JSON object with summary (string), learnings (array of up to 8 strings), next_action (string), candidate_draft (string), evidence_ids (array of up to 32 runtime-issued goal_evidence_id lookup keys), completion_recommended (boolean). The final report has no extra fields or fences. Report <=64 KiB UTF-8; draft <=32 KiB. Report recommendations do not establish completion.\nGoal objective:\nRepair fixture\n\nCompletion criteria:\nValidation exits zero\n\nPrivate checkpoint memory (advisory):\n{\"ordinal\": 1, \"summary\": \"first failed check\", \"next_action\": \"Fix fixture then rerun the unchanged check\", \"candidate_draft\": \"\", \"checks\": [{\"criterion_id\": \"fixture-check\", \"satisfied\": false, \"evidence_id\": null, \"reason\": \"unavailable\"}], \"evidence_ids\": [\"9a6bcaaed68947368dc0e68e2b6a6b2d\"], \"learnings\": []}"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call-3",
+            "type": "function",
+            "function": {
+              "name": "fs_edit",
+              "arguments": "{\"path\": \"fixture.txt\", \"old_string\": \"invalid\", \"new_string\": \"valid\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call-3",
+        "content": "goal_evidence_id: 6a7743a271364694b599b99c337a8b79\nmade 1 replacement in fixture.txt"
+      }
+    ],
+    [
+      {
+        "role": "user",
+        "content": "Intermediate tool calls must follow the available tool protocol (including fenced tool calls when that protocol requires them). For the FINAL iteration report after authorized tool work, return exactly one JSON object with summary (string), learnings (array of up to 8 strings), next_action (string), candidate_draft (string), evidence_ids (array of up to 32 runtime-issued goal_evidence_id lookup keys), completion_recommended (boolean). The final report has no extra fields or fences. Report <=64 KiB UTF-8; draft <=32 KiB. Report recommendations do not establish completion.\nGoal objective:\nRepair fixture\n\nCompletion criteria:\nValidation exits zero\n\nPrivate checkpoint memory (advisory):\n{\"ordinal\": 1, \"summary\": \"first failed check\", \"next_action\": \"Fix fixture then rerun the unchanged check\", \"candidate_draft\": \"\", \"checks\": [{\"criterion_id\": \"fixture-check\", \"satisfied\": false, \"evidence_id\": null, \"reason\": \"unavailable\"}], \"evidence_ids\": [\"9a6bcaaed68947368dc0e68e2b6a6b2d\"], \"learnings\": []}"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call-3",
+            "type": "function",
+            "function": {
+              "name": "fs_edit",
+              "arguments": "{\"path\": \"fixture.txt\", \"old_string\": \"invalid\", \"new_string\": \"valid\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call-3",
+        "content": "goal_evidence_id: 6a7743a271364694b599b99c337a8b79\nmade 1 replacement in fixture.txt"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call-4",
+            "type": "function",
+            "function": {
+              "name": "run_skill_script",
+              "arguments": "{\"skill_name\": \"verifier\", \"script_path\": \"scripts/check.py\", \"args\": [\"<fixture-root>/fixture\"]}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call-4",
+        "content": "exit_code: 0\ngoal_evidence_id: 123d7171ffcc4d1c9ac6481256bf91f7\nnote: memory (RLIMIT_AS) is not enforced on macOS/BSD; this script is bounded by CPU and wall-clock time but not by peak memory\nstdout:\nchecked fixture.txt: valid\n\nstderr:\nvalidation provenance: trusted check.py\n"
+      }
+    ]
+  ],
+  "iterations": 2,
+  "model_calls": 5,
+  "checks": [
+    {
+      "passed": false,
+      "stdout": "checked fixture.txt: invalid\n",
+      "stderr": "validation provenance: trusted check.py\n",
+      "source_digest": "1df01a014e9455ccc5bd069571f3b0e7ccda4444f05b8ce78b56b196466c41ad",
+      "evidence_id": "9a6bcaaed68947368dc0e68e2b6a6b2d"
+    },
+    {
+      "passed": true,
+      "stdout": "checked fixture.txt: valid\n",
+      "stderr": "validation provenance: trusted check.py\n",
+      "source_digest": "aafd3e0ea5aa8ab18d914ad57a9ddb14bd72d0c7c7afcbb2bf035dbdfa041984",
+      "evidence_id": "123d7171ffcc4d1c9ac6481256bf91f7"
+    }
+  ],
+  "diff": "--- fixture.txt.before\n+++ fixture.txt.after\n@@ -1 +1 @@\n-invalid\n+valid\n",
+  "final_artifact": "valid\n",
+  "sentinel_unchanged": true,
+  "evidence_note": "Actual POSIX subprocess/controller results with a deterministic recording provider over synthetic fixtures. Temporary fixture roots normalized; evidence IDs, output, source digests and provider messages unchanged.",
+  "raw_artifact_sha256": "e6ec2df4b7162fd397ed780bff695301b748f74a7b78a2beaa6013ac3334c972"
+}

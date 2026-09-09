@@ -5,6 +5,26 @@ structurally could not surface. Every entry states the incident that produced it
 
 ---
 
+## Native tool fixtures do not qualify the fenced provider path (TASK-32120, 2026-09-09)
+
+The recorded native-tool fixture passed real CLI execution, but the configured
+local OpenAI-compatible Qwen endpoint was refused before HTTP because goal
+admission incorrectly required provider-native function calling. The incumbent
+AgentService also supports fenced tool calls. After that narrow gate was fixed,
+the first actual endpoint trace exposed contradictory handoff wording: requiring
+an immediate unfenced JSON report competed with the system's fenced tool protocol.
+The handoff now applies the JSON schema to the FINAL iteration report after
+authorized tool work, leaving the strict parser unchanged.
+
+A real fenced-controller/CLI regression and an outgoing-request regression now
+cover both seams. One final finite endpoint attempt received the amended prompt,
+returned malformed no-tool reports (including an unsupported completion claim),
+and paused at no_progress with unchanged invalid input and no evidence. This is
+negative execution evidence, not successful model qualification. Preserve both
+[actual endpoint traces](../../Docs/superpowers/qa/native-goals/task5/README.md),
+separate pre-network refusals, and do not infer provider compatibility or model
+quality from a scripted native-wire fixture.
+
 ## Textual modal ownership is stricter than `is_current` (TASK-19055, 2026-09-04)
 
 **Incident.** Buddy overlay tests found that Textual 8 keeps the background screen's

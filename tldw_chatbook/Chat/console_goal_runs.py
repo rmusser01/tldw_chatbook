@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,12 +22,12 @@ from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 from tldw_chatbook.Agents.goal_models import (
     GoalIterationResult,
     GoalProviderRef,
+    GoalRequest,
     GoalScriptEvidence,
     GoalScriptInvocation,
     GoalSnapshot,
     GoalToolObservation,
 )
-from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.run_log import _setting
 from tldw_chatbook.Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
@@ -352,7 +352,30 @@ class ConsoleGoalCoordinator:
         self._wake = asyncio.Event()
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._dispatch_goal_id: str | None = None
+        self._observers: set[Callable[[str], None]] = set()
+        self._launch_task: asyncio.Task[GoalSnapshot] | None = None
+        self._launch_id: str | None = None
         self.service._control_listener = self._control_changed
+
+    def subscribe(self, callback: Callable[[str], None]) -> Callable[[], None]:
+        """Attach a body-free view observer on the runtime loop; return its detach."""
+        self._event_loop = asyncio.get_running_loop()
+        self._observers.add(callback)
+        return lambda: self._observers.discard(callback)
+
+    def notify_goal_changed(self, goal_id: str) -> None:
+        """Publish identity only, never selected private reports or evidence."""
+        loop = self._event_loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._deliver_goal_changed, goal_id)
+
+    def _deliver_goal_changed(self, goal_id: str) -> None:
+        for callback in tuple(self._observers):
+            try:
+                callback(goal_id)
+            except Exception:  # noqa: BLE001 - observer failure cannot change execution
+                # View failure cannot alter admission or durable accounting.
+                self._observers.discard(callback)
 
     @property
     def primary_reserved(self) -> bool:
@@ -434,6 +457,7 @@ class ConsoleGoalCoordinator:
             loop.call_soon_threadsafe(self._apply_control, snapshot)
 
     def _apply_control(self, snapshot):
+        self.notify_goal_changed(snapshot.id)
         self._wake.set()
         if snapshot.id == self.active_goal_id and snapshot.status in {
             "stopping",
@@ -446,10 +470,49 @@ class ConsoleGoalCoordinator:
         if self._active is not None:
             self.controller._signal_stop(session_id=self._active.session_id)
 
+    def launch(
+        self, request: GoalRequest, launch_id: str, *, app: Any
+    ) -> asyncio.Task[GoalSnapshot]:
+        """Own one bounded provisioning/hydration task independently of a view."""
+        if self._closed or self.controller._disposed:
+            raise RuntimeError("runtime_unavailable")
+        if self._launch_task is not None and not self._launch_task.done():
+            if self._launch_id == launch_id:
+                return self._launch_task
+            raise ValueError("goal_setup_active")
+        if self.active_goal_id is not None:
+            raise ValueError("goal_active")
+        self._launch_id = launch_id
+        self._launch_task = asyncio.create_task(self._launch(request, launch_id, app))
+        return self._launch_task
+
+    async def _launch(
+        self, request: GoalRequest, launch_id: str, app: Any
+    ) -> GoalSnapshot:
+        goal = await asyncio.to_thread(
+            self.service.create, request, launch_id=launch_id
+        )
+        if (
+            not self._closed
+            and not self.controller._disposed
+            and goal.status == "ready"
+        ):
+            await self.restore_session(goal.id, app=app)
+            if not self._closed and not self.controller._disposed:
+                self.start(goal.id)
+        self.notify_goal_changed(goal.id)
+        return goal
+
     def start(self, goal_id: str) -> asyncio.Task[GoalSnapshot]:
         """Start one runtime-owned chain; await the task to observe its next rest state."""
         if self._closed or self.controller._disposed:
             raise RuntimeError("runtime_unavailable")
+        if (
+            self._launch_task is not None
+            and not self._launch_task.done()
+            and asyncio.current_task() is not self._launch_task
+        ):
+            raise ValueError("goal_setup_active")
         if self._runner is not None and not self._runner.done():
             if self._running_goal != goal_id:
                 raise ValueError("goal_active")
@@ -457,16 +520,19 @@ class ConsoleGoalCoordinator:
         self._event_loop = asyncio.get_running_loop()
         self._running_goal = goal_id
         self._runner = asyncio.create_task(self._continue(goal_id))
+        self.notify_goal_changed(goal_id)
         return self._runner
 
     async def _continue(self, goal_id: str):
         try:
             while not self._closed:
+                # Clear before the awaited snapshot: a control notification arriving
+                # during that read must remain observable even if the snapshot is old.
+                self._wake.clear()
                 goal = await asyncio.to_thread(self.service.get, goal_id)
                 if goal.status != "ready":
                     return goal
                 if goal.retry_at is not None:
-                    self._wake.clear()
                     try:
                         await asyncio.wait_for(
                             self._wake.wait(), max(0.01, goal.retry_at - time.time())
@@ -514,6 +580,7 @@ class ConsoleGoalCoordinator:
                 goal = await asyncio.to_thread(
                     self.service.db.goal_runs.settle_control, goal_id
                 )
+                self.notify_goal_changed(goal_id)
                 if goal.status != "ready":
                     return goal
                 if (
@@ -532,6 +599,7 @@ class ConsoleGoalCoordinator:
             return self.service.get(goal_id)
         finally:
             self._running_goal = None
+            self.notify_goal_changed(goal_id)
 
     def notify_capacity(self) -> None:
         """Wake the single runtime waiter; provider retry time remains authoritative."""
@@ -557,6 +625,8 @@ class ConsoleGoalCoordinator:
 
     async def shutdown(self) -> None:
         self.close_admission()
+        if self._launch_task is not None:
+            await asyncio.shield(self._launch_task)
         if self._runner is not None:
             await asyncio.shield(self._runner)
 
@@ -618,9 +688,6 @@ class ConsoleGoalCoordinator:
             or not turn_context.tool_configuration.get(
                 "native_tool_calls_enabled", True
             )
-            or not provider_supports_native_tools(
-                resolution.execution_key or resolution.provider
-            )
         ):
             raise AutomaticWorkRefused("native_goal_required")
 
@@ -654,7 +721,9 @@ class ConsoleGoalCoordinator:
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "runtime_unavailable"
             )
-        if self._dispatching:
+        if self._dispatching or (
+            self._launch_task is not None and not self._launch_task.done()
+        ):
             return GoalIterationResult(goal_id, 0, None, None, None, "goal_active")
         self._event_loop = asyncio.get_running_loop()
         self._dispatching = True

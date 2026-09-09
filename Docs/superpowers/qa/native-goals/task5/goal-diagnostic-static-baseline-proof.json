@@ -1,0 +1,33 @@
+{
+  "base": "77bc58dc171c3dcd2178f4433d19a6ceb59b1e7b",
+  "test_source_unchanged": true,
+  "baseline": {
+    "test_reviewed_diagnostic_changes_are_metadata_only": [
+      "tldw_chatbook/Chat/console_agent_bridge.py: expected one diagnostic containing 'fleet drain consumer raised', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'fleet wake drain intake failed', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake send gate raised; deferring', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake user-priority probe raised; deferring', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake delivery ledger stamp failed', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake mark listing failed', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake ledger read failed', found 0"
+    ],
+    "test_task_15743_final_rebase_diagnostics_are_metadata_only": [
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected 1 diagnostics containing 'wake delivery UI hook raised', found 0"
+    ]
+  },
+  "current": {
+    "test_reviewed_diagnostic_changes_are_metadata_only": [
+      "tldw_chatbook/Chat/console_agent_bridge.py: expected one diagnostic containing 'fleet drain consumer raised', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'fleet wake drain intake failed', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake send gate raised; deferring', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake user-priority probe raised; deferring', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake delivery ledger stamp failed', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake mark listing failed', found 0",
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected one diagnostic containing 'wake ledger read failed', found 0"
+    ],
+    "test_task_15743_final_rebase_diagnostics_are_metadata_only": [
+      "tldw_chatbook/Chat/console_fleet_wake.py: expected 1 diagnostics containing 'wake delivery UI hook raised', found 0"
+    ]
+  },
+  "identical_failures": true
+}

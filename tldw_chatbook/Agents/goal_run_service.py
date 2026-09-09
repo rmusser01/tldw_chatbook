@@ -8,6 +8,7 @@ from pathlib import Path
 from tldw_chatbook.Agents.automatic_work_budget import RuntimeRecoveryResult
 from tldw_chatbook.Agents.goal_models import (
     GoalDecision,
+    GoalEvidence,
     GoalHistoryEntry,
     GoalIterationResult,
     GoalRequest,
@@ -45,6 +46,23 @@ class GoalRunService:
     def get(self, goal_id: str) -> GoalSnapshot:
         """Inspect saved state without dispatch, recovery audit or provisioning."""
         return self.db.goal_runs.get(goal_id)
+
+    def checkpoint_run_id(self, goal_id: str, checkpoint_id: str) -> str | None:
+        """Resolve one owned saved iteration for exact change-review navigation."""
+        goal = self.get(goal_id)
+        if not any(c.id == checkpoint_id for c in goal.checkpoints):
+            raise ValueError("stale_result_review")
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT run_id FROM goal_iterations WHERE goal_id=? AND attempt_id=?",
+                (goal_id, checkpoint_id),
+            ).fetchone()
+        return row[0] if row else None
+
+    def evidence(self, goal_id: str) -> tuple[GoalEvidence, ...]:
+        """Read selected private evidence; never part of a diagnostic projection."""
+        self.get(goal_id)
+        return self.db.goal_runs.evidence(goal_id)
 
     def pause(self, goal_id: str) -> GoalSnapshot:
         snapshot = self.db.goal_runs.control(goal_id)

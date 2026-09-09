@@ -435,7 +435,7 @@ def build_goal_handoff(
     payload = json.dumps(memory, ensure_ascii=False)
     if len(payload.encode()) > 16384:
         raise ValueError("goal_memory_capacity")
-    protocol = "\n\nReturn exactly one JSON object with summary (string), learnings (array of up to 8 strings), next_action (string), candidate_draft (string), evidence_ids (array of up to 32 runtime-issued goal_evidence_id lookup keys), completion_recommended (boolean). No extra fields or fences. Report <=64 KiB UTF-8; draft <=32 KiB. Report recommendations do not establish completion.\n"
+    protocol = "\n\nIntermediate tool calls must follow the available tool protocol (including fenced tool calls when that protocol requires them). For the FINAL iteration report after authorized tool work, return exactly one JSON object with summary (string), learnings (array of up to 8 strings), next_action (string), candidate_draft (string), evidence_ids (array of up to 32 runtime-issued goal_evidence_id lookup keys), completion_recommended (boolean). The final report has no extra fields or fences. Report <=64 KiB UTF-8; draft <=32 KiB. Report recommendations do not establish completion.\n"
     return (
         protocol
         + "Goal objective:\n"

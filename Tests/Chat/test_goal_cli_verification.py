@@ -491,3 +491,448 @@ async def test_native_install_refusal_is_typed_and_denial_never_fetches(
         assert controller._agent_bridge.runtime_capacity.snapshot().executions == ()
     finally:
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_two_increment_real_cli_repairs_file_with_model_visible_evidence(
+    stores, monkeypatch, tmp_path
+):
+    """POSIX qualification: real subprocess, real approved fs_edit, actual native loop."""
+    import difflib
+    import re
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import tldw_chatbook.Chat.console_chat_controller as controller_module
+    from Tests.Agents.test_goal_iteration_report import report
+    from Tests.Chat.test_console_local_review_hook import ALLOW, _FakeService
+
+    runs, persistence, registry, req = stores
+    project = Path(req.binding.locator)
+    artifact = project / "fixture.txt"
+    artifact.write_text("invalid\n")
+    sentinel = tmp_path / "external-sentinel.txt"
+    sentinel.write_text("must remain unchanged")
+    original = artifact.read_text()
+    script = """from pathlib import Path
+import sys
+project = Path(sys.argv[1])
+value = (project / 'fixture.txt').read_text()
+print('checked fixture.txt: ' + value.strip())
+print('validation provenance: trusted check.py', file=sys.stderr)
+raise SystemExit(0 if value == 'valid\\n' else 7)
+"""
+    scope, path, trust = trusted_skill(tmp_path, script)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    verifier = VerificationSpec(
+        id="fixture-check",
+        executor_tool_id="run_skill_script",
+        verifier_path=str(path),
+        verifier_sha256=digest,
+        skill_trust_ref=trust.current_fingerprint_digest("verifier"),
+        arguments=(str(project),),
+        input_paths=("fixture.txt",),
+    )
+    req = req.model_copy(
+        update={"verifiers": (verifier,), "human_review_required": False}
+    )
+    n = 0
+    seen_ids = []
+
+    def tool(name, args):
+        return {
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": f"call-{n}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(args)},
+                }
+            ],
+        }
+
+    def provider(**kwargs):
+        nonlocal n
+        n += 1
+        if n in (1, 4):
+            message = tool(
+                "run_skill_script",
+                {
+                    "skill_name": "verifier",
+                    "script_path": "scripts/check.py",
+                    "args": [str(project)],
+                },
+            )
+        elif n == 3:
+            message = tool(
+                "fs_edit",
+                {"path": "fixture.txt", "old_string": "invalid", "new_string": "valid"},
+            )
+        else:
+            refs = re.findall(r"goal_evidence_id: ([a-f0-9]{32})", str(kwargs))
+            seen_ids.extend(refs)
+            message = {
+                "content": report(
+                    summary="first failed check" if n == 2 else "corrected and checked",
+                    next_action="Fix fixture then rerun the unchanged check"
+                    if n == 2
+                    else "",
+                    evidence_ids=list(dict.fromkeys(refs)),
+                    completion_recommended=n == 5,
+                )
+            }
+        return {
+            "choices": [{"message": message}],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3},
+        }
+
+    goal, _store, _session, controller, coordinator, gateway, calls = build_goal_rig(
+        (runs, persistence, registry, req), monkeypatch, provider
+    )
+    controller._agent_bridge._skills_service = scope
+    controller.set_pending_skill_script = lambda *args, **kwargs: None
+    controller.app = SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
+    setting = controller_module.get_cli_setting
+    monkeypatch.setattr(
+        controller_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True
+            if (section, key) == ("console", "local_tools_enabled")
+            else setting(section, key, default)
+        ),
+    )
+    from tldw_chatbook.Skills_Interop import skill_script_runner
+
+    commands = []
+    subprocess_run = skill_script_runner.run_script_subprocess
+
+    def record_process(target_argv, **kwargs):
+        result = subprocess_run(target_argv, **kwargs)
+        commands.append({"argv": target_argv, "exit_code": result.exit_code})
+        return result
+
+    monkeypatch.setattr(skill_script_runner, "run_script_subprocess", record_process)
+    native_results = []
+    dispatch = coordinator.dispatch_once
+
+    async def record_dispatch(goal_id):
+        result = await dispatch(goal_id)
+        native_results.append(result)
+        return result
+
+    monkeypatch.setattr(coordinator, "dispatch_once", record_dispatch)
+    try:
+        saved = await coordinator.start(goal.id)
+        assert saved.status == "completed", (
+            saved.status,
+            saved.pause_reason,
+            str(calls[-1]),
+        )
+        process_records = [
+            record for result in native_results for record in result.tool_records
+        ]
+        assert [record.result.exit_code for record in process_records] == [7, 0]
+        assert all(
+            record.invocation.arguments == (str(project),) for record in process_records
+        )
+        assert saved.iteration_count == 2
+        assert saved.accounting.used["generation"] == 2
+        assert saved.accounting.used["model_call"] == 5
+        evidence = tuple(
+            e
+            for e in runs.goal_runs.evidence(goal.id)
+            if e.verifier_id == "fixture-check"
+        )
+        assert len(evidence) == 2
+        assert [item.passed for item in evidence] == [False, True]
+        assert all(
+            item.stderr == "validation provenance: trusted check.py\n"
+            for item in evidence
+        )
+        assert [item.stdout for item in evidence] == [
+            "checked fixture.txt: invalid\n",
+            "checked fixture.txt: valid\n",
+        ]
+        assert evidence[0].source_digest != evidence[1].source_digest
+        assert all(item.id in seen_ids for item in evidence)
+        assert artifact.read_text() == "valid\n"
+        assert (
+            path.read_text() == script
+            and hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        )
+        assert sentinel.read_text() == "must remain unchanged"
+        diff = "".join(
+            difflib.unified_diff(
+                original.splitlines(True),
+                artifact.read_text().splitlines(True),
+                fromfile="fixture.txt.before",
+                tofile="fixture.txt.after",
+            )
+        )
+        assert "-invalid\n+valid\n" in diff
+        # Actual execution evidence over synthetic fixtures; no user data or credentials.
+        import os
+
+        target = os.environ.get("TLDW_GOAL_QUALIFICATION_ARTIFACT")
+        if target:
+            Path(target).write_text(
+                json.dumps(
+                    {
+                        "qualification": "POSIX local trusted skill; process retains host executor authority",
+                        "provider": "deterministic recording adapter",
+                        "actual_exit_codes": [
+                            r.result.exit_code for r in process_records
+                        ],
+                        "commands": commands,
+                        "verifier_source": script,
+                        "verifier_sha256": digest,
+                        "model_visible_requests": [
+                            c["messages_payload"] for c in calls
+                        ],
+                        "iterations": saved.iteration_count,
+                        "model_calls": len(calls),
+                        "checks": [
+                            {
+                                "passed": e.passed,
+                                "stdout": e.stdout,
+                                "stderr": e.stderr,
+                                "source_digest": e.source_digest,
+                                "evidence_id": e.id,
+                            }
+                            for e in evidence
+                        ],
+                        "diff": diff,
+                        "final_artifact": artifact.read_text(),
+                        "sentinel_unchanged": True,
+                    },
+                    indent=2,
+                )
+            )
+    finally:
+        await coordinator.shutdown()
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_configured_local_goal_live(stores, monkeypatch, tmp_path):
+    """Explicit opt-in, finite local OpenAI-compatible Qwen endpoint qualification."""
+    import asyncio
+    import difflib
+    import os
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import httpx
+
+    import tldw_chatbook.Chat.console_chat_controller as controller_module
+    from Tests.Chat.test_automatic_provider_budget import resolution
+    from Tests.Chat.test_console_local_review_hook import ALLOW, _FakeService
+    from tldw_chatbook.Agents.goal_models import GoalPolicy
+
+    if os.environ.get("TLDW_GOAL_LIVE_LOCAL") != "1":
+        pytest.skip(
+            "Set TLDW_GOAL_LIVE_LOCAL=1 for the explicitly configured loopback endpoint"
+        )
+    runs, persistence, registry, req = stores
+    project = Path(req.binding.locator)
+    artifact = project / "fixture.txt"
+    artifact.write_text("invalid\n")
+    before = artifact.read_text()
+    sentinel = tmp_path / "external-sentinel.txt"
+    sentinel.write_text("unchanged")
+    script = "from pathlib import Path\nimport sys\nv=(Path(sys.argv[1])/'fixture.txt').read_text()\nprint('checked value: '+v.strip())\nprint('trusted verifier',file=sys.stderr)\nraise SystemExit(0 if v == 'valid\\n' else 7)\n"
+    scope, path, _trust = trusted_skill(tmp_path, script)
+    verifier = await scope.goal_verifier_reference(
+        "verifier",
+        "scripts/check.py",
+        arguments=(str(project),),
+        input_paths=("fixture.txt",),
+    )
+    req = req.model_copy(
+        update={
+            "objective": f"Repair fixture.txt in {project}. First run the trusted verifier skill verifier, scripts/check.py, with args [{json.dumps(str(project))}]. After observing the failure, change invalid to valid using fs_edit. Rerun the same check. Cite runtime goal_evidence_id references in the required JSON report.",
+            "criteria": "fixture.txt contains exactly valid followed by a newline; the unchanged trusted verifier exits zero for that current file.",
+            "verifiers": (verifier,),
+            "human_review_required": False,
+            "policy": GoalPolicy(
+                iterations=2,
+                model_calls=8,
+                budget_tokens=50000,
+                output_tokens=1024,
+                wall_seconds=60,
+                iteration_model_turns=4,
+                iteration_steps=32,
+                iteration_wall_seconds=30,
+            ),
+        }
+    )
+    selected = resolution(
+        provider="llama_cpp",
+        execution_key="llama_cpp",
+        readiness_key="llama_cpp",
+        model="Qwen2.5-0.5B-Instruct",
+        base_url="http://127.0.0.1:9099/v1",
+        max_tokens=1024,
+        streaming=False,
+    )
+    goal, _store, _session, controller, co, gateway, calls = build_goal_rig(
+        (runs, persistence, registry, req), monkeypatch, resolved=selected
+    )
+    controller._agent_bridge._skills_service = scope
+    controller.set_pending_skill_script = lambda *args, **kwargs: None
+    controller.app = SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
+    setting = controller_module.get_cli_setting
+    monkeypatch.setattr(
+        controller_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True
+            if (section, key) == ("console", "local_tools_enabled")
+            else setting(section, key, default)
+        ),
+    )
+    exchanges = []
+    send = httpx.AsyncClient.send
+
+    async def recording_send(client, request, *args, **kwargs):
+        assert request.url.host == "127.0.0.1" and request.url.port == 9099
+        response = await send(client, request, *args, **kwargs)
+        await response.aread()
+        exchanges.append(
+            {
+                "method": request.method,
+                "url": str(request.url),
+                "request": json.loads(request.content) if request.content else None,
+                "status": response.status_code,
+                "response": response.text,
+            }
+        )
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", recording_send)
+    try:
+        saved = await asyncio.wait_for(co.start(goal.id), 90)
+        assert exchanges, (
+            "No actual HTTP/provider operation occurred",
+            saved.status,
+            saved.pause_reason,
+            [c.model_dump() for c in saved.checkpoints],
+            calls,
+        )
+        assert saved.iteration_count <= 2 and saved.accounting.used["model_call"] <= 8
+        assert path.read_text() == script and sentinel.read_text() == "unchanged"
+        evidence = runs.goal_runs.evidence(goal.id)
+        diff = "".join(
+            difflib.unified_diff(
+                before.splitlines(True),
+                artifact.read_text().splitlines(True),
+                fromfile="fixture.txt.before",
+                tofile="fixture.txt.after",
+            )
+        )
+        output = {
+            "endpoint": "http://127.0.0.1:9099/v1",
+            "advertised_model": selected.model,
+            "adapter": "Chatbook llama_cpp (existing fence tool protocol)",
+            "limits": req.policy.model_dump(),
+            "status": saved.status,
+            "reason": saved.pause_reason,
+            "iterations": saved.iteration_count,
+            "model_calls": saved.accounting.used["model_call"],
+            "quality_success": saved.status == "completed",
+            "exchanges": exchanges,
+            "checkpoints": [c.model_dump() for c in saved.checkpoints],
+            "evidence": [e.model_dump() for e in evidence],
+            "diff": diff,
+            "final_artifact": artifact.read_text(),
+            "sentinel_unchanged": True,
+        }
+        target = Path(os.environ["TLDW_GOAL_LIVE_ARTIFACT"])
+        target.write_text(json.dumps(output, indent=2))
+        print(
+            json.dumps(
+                {
+                    k: output[k]
+                    for k in (
+                        "status",
+                        "reason",
+                        "iterations",
+                        "model_calls",
+                        "quality_success",
+                        "final_artifact",
+                    )
+                }
+            )
+        )
+    finally:
+        await co.shutdown()
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_existing_fence_agent_protocol_runs_real_trusted_cli(
+    stores, monkeypatch, tmp_path
+):
+    from Tests.Chat.test_automatic_provider_budget import resolution
+
+    scope, path, trust = trusted_skill(tmp_path, "print('real fence check')\n")
+    runs, persistence, registry, req = stores
+    req = req.model_copy(
+        update={
+            "verifiers": (
+                VerificationSpec(
+                    id="check",
+                    executor_tool_id="run_skill_script",
+                    verifier_path=str(path),
+                    verifier_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                    skill_trust_ref=trust.current_fingerprint_digest("verifier"),
+                    input_paths=("fixture.txt",),
+                ),
+            )
+        }
+    )
+    count = 0
+
+    def provider(**kwargs):
+        nonlocal count
+        count += 1
+        content = (
+            "```tool_call\n"
+            + json.dumps(
+                {
+                    "name": "run_skill_script",
+                    "arguments": {
+                        "skill_name": "verifier",
+                        "script_path": "scripts/check.py",
+                        "args": [],
+                    },
+                }
+            )
+            + "\n```"
+            if count == 1
+            else "finished"
+        )
+        return {
+            "choices": [{"message": {"content": content}}],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3},
+        }
+
+    goal, _, _, controller, co, gateway, calls = build_goal_rig(
+        (runs, persistence, registry, req),
+        monkeypatch,
+        provider,
+        resolved=resolution(provider="huggingface", execution_key="huggingface"),
+    )
+    controller._agent_bridge._skills_service = scope
+    controller.set_pending_skill_script = lambda *args, **kwargs: None
+    try:
+        result = await co.dispatch_once(goal.id)
+        assert len(result.tool_records) == 1, result
+        assert result.tool_records[0].result.exit_code == 0
+        assert result.tool_records[0].result.stdout == "real fence check\n"
+        assert "```tool_call" in str(calls[0])
+    finally:
+        await co.shutdown()
+        await gateway.aclose()

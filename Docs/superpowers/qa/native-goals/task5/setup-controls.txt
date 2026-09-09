@@ -1,0 +1,11 @@
+......                                                                   [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_console_goal_setup.py::test_double_start_retains_launch_identity_and_provisions_one_conversation
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(18 durations < 1s hidden.)
+6 passed, 1 warning in 3.79s

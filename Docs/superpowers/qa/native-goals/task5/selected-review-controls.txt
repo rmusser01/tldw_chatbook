@@ -1,0 +1,14 @@
+..........                                                               [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+3.40s call     Tests/UI/test_console_goal_navigation.py::test_production_styles_keep_goal_actions_visible_and_keyboard_accessible[size0]
+3.39s call     Tests/UI/test_console_goal_navigation.py::test_production_styles_keep_goal_actions_visible_and_keyboard_accessible[size1]
+1.49s call     Tests/UI/test_console_goal_navigation.py::test_palette_discovers_and_opens_goal_history
+
+(22 durations < 1s hidden.)
+10 passed, 1 warning in 16.86s

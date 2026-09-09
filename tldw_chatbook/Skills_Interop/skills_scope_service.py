@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.goal_models import VerificationSpec
+
     # Deferred at runtime (mirrors local_skills_service.py's own TYPE_CHECKING
     # import of skill_script_runner): skills_scope_service is deliberately
     # thin and must not pull in the subprocess sandbox or the local service's
@@ -464,6 +466,20 @@ class SkillsScopeService:
         self._enforce_policy("skills.run_script.launch.local")
         return await self._maybe_await(
             service.describe_skill_script(skill_name, script_path)
+        )
+
+    async def goal_verifier_reference(
+        self,
+        skill_name: str,
+        script_path: str,
+        *,
+        arguments: tuple[str, ...],
+        input_paths: tuple[str, ...],
+    ) -> VerificationSpec:
+        """Describe a launch-bound local verifier without granting trust or execution."""
+        self._enforce_policy("skills.run_script.launch.local")
+        return await self._require_service(SkillsBackend.LOCAL).goal_verifier_reference(
+            skill_name, script_path, arguments=arguments, input_paths=input_paths
         )
 
     async def run_skill_script(

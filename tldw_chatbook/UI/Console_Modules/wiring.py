@@ -57,6 +57,7 @@ from .agent import ConsoleAgentController
 from .character import ConsoleCharacterController
 from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
+from .goals import ConsoleGoalsController
 from .hands_free import ConsoleHandsFreeController
 from .image import ConsoleImageController
 from .message import ConsoleMessageController
@@ -111,6 +112,20 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    screen._goals = ConsoleGoalsController(
+        app_instance=screen.app_instance,
+        get_controller=lambda: screen._ensure_console_chat_controller(),
+        get_coordinator=lambda: screen._console_runtime().ensure_goal_coordinator(),
+        push_screen=lambda modal, callback=None: screen.app.push_screen(
+            modal, callback=callback
+        ),
+        run_worker=lambda coroutine: screen.run_worker(
+            coroutine, group="goal-ui", exclusive=True
+        ),
+        open_changes=lambda run_id, **kwargs: screen._open_change_review(
+            run_id, **kwargs
+        ),
+    )
     screen._image = ConsoleImageController(
         screen,
         app_instance=screen.app_instance,

@@ -866,3 +866,52 @@ async def test_shutdown_fence_survives_awaited_admission_with_failed_stop(
         )
         await controller.shutdown()
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pause_during_awaited_wait_snapshot_is_not_lost(stores, monkeypatch):
+    from tldw_chatbook.LLM_Calls.provider_outcomes import PreEffectRateLimitError
+
+    def provider(**kwargs):
+        raise PreEffectRateLimitError("local gate")
+
+    goal, _, _, _, co, gateway, calls = build_goal_rig(stores, monkeypatch, provider)
+    get = co.service.get
+    defer = co.service.defer
+    entered, release = threading.Event(), threading.Event()
+    captured = []
+
+    def slow_snapshot(goal_id):
+        saved = get(goal_id)
+        if (
+            threading.current_thread() is not threading.main_thread()
+            and saved.retry_at is not None
+            and saved.status == "ready"
+            and not entered.is_set()
+        ):
+            captured.append(saved.retry_at)
+            entered.set()
+            release.wait(3)
+        return saved
+
+    def long_backoff(goal_id, *, reason, delay):
+        return defer(goal_id, reason=reason, delay=5)
+
+    monkeypatch.setattr(co.service, "get", slow_snapshot)
+    monkeypatch.setattr(co.service, "defer", long_backoff)
+    task = co.start(goal.id)
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        co.service.pause(goal.id)
+        # The read captured Ready before Pause; its control signal must survive.
+        await asyncio.sleep(0)
+        release.set()
+        saved = await asyncio.wait_for(asyncio.shield(task), 0.5)
+        assert saved.status == "paused"
+        assert saved.retry_at == captured[0]
+        assert len(calls) == 1
+    finally:
+        release.set()
+        co.close_admission()
+        await task
+        await gateway.aclose()

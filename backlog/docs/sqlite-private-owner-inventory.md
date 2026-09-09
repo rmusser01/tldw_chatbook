@@ -15,6 +15,18 @@ Classifications have these meanings:
 - `read_only_uri`: a path-based `mode=ro` URI built by the private SQLite
   boundary after validating the source file.
 
+## Native goal payload classification (TASK-32120 / ADR-141)
+
+AgentRunsDB uses the existing C14 `BaseDB._get_connection` / `db.base` owner for
+schema-v18 goal tables. Goals introduce no additional connection, backup owner,
+or diagnostic sink. Immutable objectives, criteria, reports, learnings, drafts,
+selected evidence and command stdout/stderr are private database payloads.
+History summaries and runtime notifications expose only body-free identities and
+state; opening a selected goal is an explicit private payload view. Payload
+removal retains accounting tombstones and refuses active or uncertain work.
+This bounded goal retention does not cap or erase existing run logs/artifacts.
+See [ADR-141](../decisions/141-native-console-goal-runs.md).
+
 ## Direct connection inventory
 
 | ID | Module | Symbol | Owner ID | Classification | Intent | Migration disposition |

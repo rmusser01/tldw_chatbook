@@ -26,7 +26,7 @@ def goal_module():
     return importlib.import_module(spec.name)
 
 
-def build_goal_rig(stores, monkeypatch, provider=None):
+def build_goal_rig(stores, monkeypatch, provider=None, *, resolved=None):
     mod = goal_module()
     runs, persistence, registry, req = stores
     monkeypatch.setenv("TLDW_AGENTS_GOAL_RUNS_ENABLED", "true")
@@ -40,10 +40,12 @@ def build_goal_rig(stores, monkeypatch, provider=None):
     gateway = ConsoleProviderGateway(chat_api_call_fn=generate)
 
     async def resolve(_selection):
-        return resolution()
+        return resolved or resolution()
 
     gateway.resolve_for_send = resolve
-    req = req.model_copy(update={"provider": mod.goal_provider_ref(resolution())})
+    req = req.model_copy(
+        update={"provider": mod.goal_provider_ref(resolved or resolution())}
+    )
     owner = service((runs, persistence, registry, req))
     goal = owner.create(req, launch_id="start")
     store = ConsoleChatStore(persistence=persistence)
@@ -466,4 +468,22 @@ async def test_live_goal_disablement_at_resolution_refunds_before_acceptance(
             == "aborted"
         )
     finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_goal_outgoing_request_distinguishes_tool_work_from_final_report(
+    stores, monkeypatch
+):
+    goal, _, _, _, co, gateway, calls = build_goal_rig(stores, monkeypatch)
+    try:
+        await co.dispatch_once(goal.id)
+        outgoing = str(calls[0])
+        assert "For the FINAL iteration report after authorized tool work" in outgoing
+        assert (
+            "Intermediate tool calls must follow the available tool protocol"
+            in outgoing
+        )
+    finally:
+        await co.shutdown()
         await gateway.aclose()
