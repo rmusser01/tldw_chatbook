@@ -552,6 +552,12 @@ structural delta between the two routes -- the 5-widget Notes source strip plus
 the 2-widget media viewer, seven widgets in total -- and still a 7× cut on
 today's 177.
 
+Ceiling provenance: the 25 derives from a mechanism floor measured **without**
+the reader-shell id split resolved, whose own mount cost was therefore
+unmeasured (the test's docstring carries the same note). If Task 2 finds 25
+tight, re-derive the ceiling from a fresh measurement with the split resolved
+and record the derivation here -- never quietly raise the number.
+
 Wall-clock stays in this record as context, not as a gate: **block 124 → 30 ms
 (−76%), cpu 187 → 15 ms (−92%)** at the mechanism's measured floor. The landed
 change will sit above that floor because a real switch also re-applies the rail
