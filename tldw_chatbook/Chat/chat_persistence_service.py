@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
 
+from tldw_chatbook.Agents.goal_models import GoalProvisioning
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
@@ -70,6 +71,10 @@ def _mapping_keys_are_strings(value: object) -> bool:
     if isinstance(value, (list, tuple)):
         return all(_mapping_keys_are_strings(item) for item in value)
     return True
+
+
+class GoalConversationConflict(ValueError):
+    """The preallocated conversation cannot be proven to belong to this launch."""
 
 
 class ChatPersistenceService:
@@ -329,6 +334,69 @@ class ChatPersistenceService:
                 self._discard_created_conversation(conversation_id)
                 raise
         return conversation_id
+
+    def provision_goal_conversation(self, intent: GoalProvisioning) -> str:
+        """Reconcile one launch's exact conversation and workspace membership.
+
+        Args:
+            intent: Immutable IDs and payload digest persisted by the goal owner.
+
+        Returns:
+            The preallocated conversation UUID after membership is present.
+
+        Raises:
+            GoalConversationConflict: Existing history has different ownership.
+            Exception: A store write failed; retry this intent without cleanup.
+        """
+        if type(intent) is not GoalProvisioning:
+            raise TypeError("intent must be GoalProvisioning")
+        workspace_id = self._require_workspace_scope(
+            scope_type="workspace", workspace_id=intent.workspace_id
+        )
+        marker = {
+            "goal_id": intent.goal_id,
+            "launch_id": intent.launch_id,
+            "payload_hash": intent.payload_hash,
+        }
+        row = self.db.get_conversation_by_id(
+            intent.conversation_id, include_deleted=True
+        )
+        if row is None:
+            try:
+                self.db.add_conversation(
+                    {
+                        "id": intent.conversation_id,
+                        "title": "Goal run",
+                        "scope_type": "workspace",
+                        "workspace_id": workspace_id,
+                        "client_id": self.db.client_id,
+                        "metadata": json.dumps({"goal_launch": marker}, sort_keys=True),
+                    }
+                )
+            except ConflictError:
+                # A concurrent identical Start may have committed the same UUID.
+                pass
+            row = self.db.get_conversation_by_id(
+                intent.conversation_id, include_deleted=True
+            )
+        try:
+            metadata = _initial_metadata_object(row.get("metadata")) if row else {}
+        except ValueError:
+            metadata = {}
+        if (
+            not row
+            or row.get("deleted")
+            or row.get("scope_type") != "workspace"
+            or row.get("workspace_id") != workspace_id
+            or metadata.get("goal_launch") != marker
+        ):
+            raise GoalConversationConflict("conversation_identity_conflict")
+        self._link_workspace_conversation(
+            workspace_id=workspace_id,
+            conversation_id=intent.conversation_id,
+            title=str(row.get("title") or "Goal run"),
+        )
+        return intent.conversation_id
 
     def fork_conversation_into_workspace(
         self,

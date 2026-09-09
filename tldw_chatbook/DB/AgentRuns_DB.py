@@ -26,6 +26,7 @@ from tldw_chatbook.Agents.agent_models import (
     validate_agent_definition,
 )
 from .base_db import BaseDB
+from .goal_runs import GoalRunsStore, SCHEMA as GOAL_RUNS_SCHEMA
 from .automatic_work import AutomaticWorkLedger, SCHEMA as AUTOMATIC_WORK_SCHEMA
 
 
@@ -54,7 +55,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 15
+    _CURRENT_SCHEMA_VERSION = 16
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -66,6 +67,7 @@ class AgentRunsDB(BaseDB):
         self._thread_local = threading.local()
         super().__init__(db_path, client_id)
         self.automatic_work = AutomaticWorkLedger(self)
+        self.goal_runs = GoalRunsStore(self)
         # After super().__init__: the agent_runs table exists (base_db ran
         # _initialize_schema) and self.is_memory_db is set. Reconcile once per
         # file per process so a crash mid-run doesn't leave a 'running' row
@@ -436,6 +438,15 @@ class AgentRunsDB(BaseDB):
                     "REFERENCES automatic_work_chains(id)"
                 )
             conn.executescript(AUTOMATIC_WORK_SCHEMA)
+            attempt_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(automatic_wake_attempts)")
+            }
+            if "attempt_kind" not in attempt_columns:
+                conn.execute(
+                    "ALTER TABLE automatic_wake_attempts ADD COLUMN attempt_kind TEXT NOT NULL DEFAULT 'fleet_wake' CHECK (attempt_kind IN ('fleet_wake', 'goal_iteration'))"
+                )
+            conn.executescript(GOAL_RUNS_SCHEMA)
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -555,6 +566,7 @@ class AgentRunsDB(BaseDB):
             # ADR-135 / TASK-32037: explicit startup revokes stale runtime
             # authority even when its previous attempt already completed.
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (15)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (16)")
 
     def record_change_snapshot(
         self,

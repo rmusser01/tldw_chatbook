@@ -310,29 +310,45 @@ class AutomaticWorkLedger:
         if not isinstance(limits, AutomaticWorkLimits):
             raise TypeError("limits must be AutomaticWorkLimits")
         with self.transaction() as conn:
-            existing = conn.execute(
-                "SELECT id, conversation_id FROM automatic_work_chains WHERE root_submission_id=?",
-                (root_submission_id,),
-            ).fetchone()
-            if existing:
-                if existing["conversation_id"] != conversation_id:
-                    raise ValueError("submission scope conflict")
-                return str(existing["id"])
-            chain_id = uuid4().hex
-            now = self._wall_clock()
-            conn.execute(
-                "INSERT INTO automatic_work_chains "
-                "(id, conversation_id, root_submission_id, limits_json, created_at, last_observed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    chain_id,
-                    conversation_id,
-                    root_submission_id,
-                    json.dumps(asdict(limits)),
-                    now,
-                    now,
-                ),
+            return self._create_chain(
+                conn,
+                conversation_id,
+                root_submission_id=root_submission_id,
+                limits=limits,
             )
+
+    def _create_chain(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        *,
+        root_submission_id: str,
+        limits: AutomaticWorkLimits,
+    ) -> str:
+        """Allocate inside the caller's transaction; never commit independently."""
+        existing = conn.execute(
+            "SELECT id, conversation_id FROM automatic_work_chains WHERE root_submission_id=?",
+            (root_submission_id,),
+        ).fetchone()
+        if existing:
+            if existing["conversation_id"] != conversation_id:
+                raise ValueError("submission scope conflict")
+            return str(existing["id"])
+        chain_id = uuid4().hex
+        now = self._wall_clock()
+        conn.execute(
+            "INSERT INTO automatic_work_chains "
+            "(id, conversation_id, root_submission_id, limits_json, created_at, last_observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                chain_id,
+                conversation_id,
+                root_submission_id,
+                json.dumps(asdict(limits)),
+                now,
+                now,
+            ),
+        )
         return chain_id
 
     @staticmethod

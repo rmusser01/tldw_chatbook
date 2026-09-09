@@ -13,6 +13,9 @@ def v13_database(path):
     run_id = db.create_run(conversation_id="legacy", agent_kind="primary")
     db.set_status(run_id, "done", "original result", budget_tokens=23)
     with db.transaction() as conn:
+        # Reconstruct v13, including removing newer goal foreign-key dependents.
+        for table in ("goal_reports", "goal_iterations", "goal_runs"):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
         triggers = [
             row[0]
             for row in conn.execute(
