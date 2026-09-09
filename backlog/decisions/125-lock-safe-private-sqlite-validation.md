@@ -170,8 +170,33 @@ covered by behavioral regressions. Exclusive finalizer/census and installed-whee
 platform qualification remain; 11 SemLock-blocked spawned cases are unqualified.
 This checkpoint is not whole-correction completion or Canvas admission.
 
+## Owner-approved static qualification scope (2026-09-08)
+
+For TASK-31942 only, the user approved a no-new-static-debt acceptance gate.
+Whole-file lint/format results may retain documented baseline debt; they must
+remain reported as nonzero, not described as clean. Fix findings introduced by
+the correction, including unresolved ordering in its ten changed import blocks.
+Use the same Ruff version/configuration and explicit Python3.12 target for
+baseline/current comparisons, with source-span or exact-edit attribution rather
+than net diagnostic counts. New files require clean scoped results.
+
+The two existing explicit unsupported-interpreter guards, retargeted to the
+approved floor, and the exact relocated RowLike alias retain individually
+documented baseline findings. They are not grounds for removing runtime checks,
+rewriting annotations, adding suppressions, or exempting other changed code.
+Recheck unmatched findings after the import correction; unexplained findings
+block this scoped gate. This is not a repository-wide lint policy change.
+
+Existing private-storage behavior, runtime/import budgets, behavioral and
+platform evidence requirements, independent review, and Canvas admission gates
+are unchanged. No CI workflow, dependency installation, host repair or merge
+is authorized by this static-scope decision. The alternative of wholesale
+legacy lint/format cleanup is deferred to avoid unrelated churn in this
+security-sensitive correction.
+
 ## Links
 
+- [Task15 static qualification evidence](../../Docs/superpowers/reviews/2026-09-08-sqlite-no-new-static-debt.md)
 - [Detailed design](../../Docs/superpowers/specs/2026-09-07-sqlite-lock-safe-private-validation-design.md)
 - [TASK-31942](<../tasks/task-31942 - Resolve-native-SQLite-crash-blocking-Canvas-qualification.md>)
 - [ADR-029](029-local-private-data-boundary.md)

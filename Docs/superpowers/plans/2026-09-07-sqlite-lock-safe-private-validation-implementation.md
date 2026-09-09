@@ -36,6 +36,7 @@ Reason: This implements the accepted cross-process privacy/proof boundary, termi
 - Use `apply_patch` for manual edits. Commit only named task files, never blanket-stage the untracked diagnostic. Do not weaken test or performance budgets to obtain green results.
 - Owner-approved Task13 exception (2026-09-08): replace only the actual Canvas test's implicit5s first-output plus explicit45s Composer waits with one shared45s initial post-login readiness deadline. Both conditions remain; no reset/retry. Runtime, helper, import/UI and other test budgets remain unchanged.
 - Owner-approved Task14 exception (2026-09-08): set up and push the scoped macOS evidence job only to `codex/task-31942-macos-concurrency-evidence`, then inspect its exact run. Runner-only installation of existing dev dependencies is allowed; no local host/dependency change, main/dev update, PR/rebase/merge or V2 admission.
+- Owner-approved Task15 exception (2026-09-08): apply a no-new-static-debt gate to this correction only. Retain exactly attributed baseline lint/format debt, fix affected-code issues, and never call nonzero whole-file checks clean. No blanket suppression, unrelated cleanup or other gate waiver.
 
 ## Evidence and file map
 
@@ -1589,6 +1590,93 @@ in retained SDD archive with hashes. Existing action/Node deprecation warnings
 remain disclosed. AC15 checked; originalfinalACs/platform/optional/static gates
 and V2disabled status remain unchanged. No localprobe/install/productrun or
 main/dev/PR/rebase/merge action. Historicalfailedsetup evidence remains intact.
+
+### Task 15: Resolve affected import ordering under the approved static gate
+
+User approved the correction-specific no-new-debt gate after the residual
+qualification reconciliation. BASE `34891632589b123d2101e2551f0396fb97a679f0`.
+Bounded continuation of existing Task7 qualification, not a new subsystem.
+
+ADR required: yes (qualification-scope amendment to existing ADR)
+ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md
+Reason: Record the explicit owner acceptance of attributed baseline static debt;
+runtime, privacy, dependencies and other release gates remain unchanged.
+
+**Implementer-owned source files and exact affected I001 block starts at BASE:**
+
+| File | Block start |
+| --- | ---: |
+| `Tests/DB/test_chachanotes_connection_quiescence.py` | 3 |
+| `Tests/DB/test_core_sqlite_owner_privacy.py` | 1 |
+| `Tests/DB/test_private_sqlite_inventory.py` | 1 |
+| `Tests/Performance/test_app_startup_performance.py` | 3 |
+| `tldw_chatbook/Chat/console_trace_maintenance.py` | 3 |
+| `tldw_chatbook/Library/collections_legacy_recovery.py` | 3 |
+| `tldw_chatbook/TTS/__init__.py` | 1 |
+| `tldw_chatbook/TTS/profile_migration_publication.py` | 3 |
+| `tldw_chatbook/TTS/profile_migration_recovery.py` | 3 |
+| `tldw_chatbook/app.py` | 114 |
+
+Root owns ADR, plan, Backlog, evidence/diagnostic scripts, index and commits.
+No new production/test framework or permanent lint-baseline file is required.
+
+**Bounded change and evidence contract:**
+
+- [x] Capture actual Ruff I001 RED for the ten named blocks before edits. This
+  is a mechanical import cleanup: the real linter is the failing oracle; do not
+  add a source-string test or new test framework just for reordered imports.
+- [x] Correct only those blocks, including their formatting. Preserve import
+  bindings, comments, executable boundaries, deferred imports, public exports
+  and module side-effect requirements. No function/body/annotation rewrite,
+  import removal, new dependency or suppressions. Do not apply whole-file
+  autofix/format to large legacy modules or touch unrelated I001 blocks.
+- [x] Report import-only AST/binding comparisons plus actual linter GREEN for
+  each corrected block. If side-effect ordering makes a mechanical change
+  unsafe, report the precise dependency before broadening or masking it.
+- [x] Run the following targeted covering selection once after the final edits:
+  `Tests/DB/test_chachanotes_connection_quiescence.py`,
+  `Tests/DB/test_core_sqlite_owner_privacy.py`,
+  `Tests/DB/test_private_sqlite_inventory.py`,
+  `Tests/Performance/test_app_startup_performance.py`,
+  `Tests/Chat/test_console_trace_compaction.py`,
+  `Tests/Library/test_collections_legacy_recovery.py`,
+  `Tests/TTS/test_profile_migration_publication.py`, and
+  `Tests/TTS/test_profile_migration_recovery.py`.
+  Use `../../.venv/bin/python -m pytest -q --tb=short` and normal repository
+  pre-import isolation. Root independently runs the unchanged import/UI/preload
+  budget guards after the source commit, not a benchmark replay.
+- [x] Record whole-file Ruff/format nonzero results as baseline debt. Compare
+  formatter edits for the changed import spans; no new formatting debt is
+  accepted. Root reuses the saved baseline-comparison method across the current
+  correction manifest after the commit; all unmatched findings need explicit
+  scrutiny, not acceptance by lower aggregate count.
+- [x] Leave source files unstaged and append exact RED/GREEN/static/self-review
+  evidence to `task-15-report.md`. No subagents or Git/index writes by implementer.
+  Root commits only source files, obtains one independent scoped spec/quality
+  review, and records the final no-new-debt verdict and its limits in Task7 docs.
+
+**Retained baseline findings:** two UP036 checks in
+`Packaging/windows/build_windows.py:26` and `run_all_tests_with_report.py:166`
+are the existing explicit unsupported-interpreter guards retargeted to3.12.
+The UP040 RowLike alias in `TTS/profile_validation.py:118` is an exact move.
+Preserve these with the existing attributed evidence; do not remove guards,
+rewrite the alias or use their attribution as a blanket exception elsewhere.
+
+**Limits:** No local semaphore controls or the eleven known product nodes; their
+fresh macOS CI gate is complete. No local dependency/host change, new CI job or
+push, PR/rebase/merge, whole-repository sweep, broad review/benchmark replay,
+budget/snapshot edits or V2 admission. Other platform/optional coverage stays
+explicitly unverified. Preserve all historical nonzero results and SDD evidence.
+
+Completion: source commit `28a37eac8d2be04cdb13d8678ada9a48e9e8ca34` passed
+independent scoped spec/quality review, no Critical/Important findings. Covering
+343 passed with one inherited warning; root committed startup guards 3 passed
+with unchanged counts/budgets. Full 58-file attribution: 1363 lint findings,
+1360 unchanged-span matches plus the three individually accepted findings;
+all 319 remaining formatter groups exactly match baseline. Whole-file checks
+remain nonzero. [Task15 evidence](../reviews/2026-09-08-sqlite-no-new-static-debt.md)
+records the gate and warning limits. AC16 only is closed; original final ACs,
+platform/optional qualification and V2-disabled status remain unchanged.
 
 ## Spec coverage and handoff
 

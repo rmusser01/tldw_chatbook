@@ -111,3 +111,16 @@ The eleven host-blocked concurrency cases still require a reported host-state
 change and a successful isolated allocation control before retrying. Platform/
 optional coverage remains separate. See
 [final local qualification](2026-09-08-sqlite-final-local-qualification.md).
+
+## Subsequent owner-approved gate
+
+This report retains its historical scope and nonzero results. The subsequent
+[Task15 correction and 58-file comparison](2026-09-08-sqlite-no-new-static-debt.md)
+resolves the ten affected import blocks and satisfies the explicitly approved
+correction-only no-new-static-debt gate. At `28a37eac8d`, 1363 lint findings
+remain (1360 exact unchanged spans plus the three separately accepted findings);
+all 319 current formatter groups match baseline over the expanded manifest.
+Whole-file checks are still nonzero. The separately completed Task14 macOS
+concurrency evidence and all remaining platform/admission limits are recorded
+in the final qualification report; this earlier audit is not retroactively
+expanded or relabeled as a clean lint run.

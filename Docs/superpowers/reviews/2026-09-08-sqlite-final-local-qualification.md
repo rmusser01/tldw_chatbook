@@ -325,3 +325,22 @@ nonzero whole-file results, not make them green. Such acceptance is proposed,
 not applied; broad inherited cleanup, gate waiver, Windows CI dispatch and V2
 admission remain unauthorized by this read-only reconciliation. Original final
 ACs remain unchecked and TASK-31942 stays In Progress.
+
+## Subsequent approved static gate completion
+
+The user approved the correction-specific no-new-static-debt gate, recorded in
+the ADR125 amendment. Task15 source commit `28a37eac8d` corrects only the ten
+named import blocks, with preserved bindings, comments and executable/deferred
+boundaries. Covering 343 tests pass with one inherited warning; root's three
+startup guards pass at the unchanged 625/660, 963/972 and 499/500 module counts.
+Independent scoped spec/quality review approved with no blocking findings.
+
+The full 58-file immutable comparison finds 1363 lint diagnostics: 1360 exact
+unchanged-span matches and the three individually approved floor-guard/alias
+attributions. All 319 remaining formatter edit groups match baseline content
+and adjacent lines. The [Task15 report](2026-09-08-sqlite-no-new-static-debt.md)
+records exact commands, counts, review, warnings and scope. The approved gate
+passes, but whole-file lint/format remains nonzero. Historical results above
+remain evidence of their respective checkpoints. AC16 is checked; original
+AC1–7 remain unchecked, TASK-31942 In Progress and Canvas V2 disabled. No broader
+test/benchmark/review replay, host/dependency action or new remote operation.
