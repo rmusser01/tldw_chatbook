@@ -19005,11 +19005,13 @@ async def test_library_shell_notes_sort_opens_direct_choices_and_applies_one_val
         # repository's (`page_note_placements` pages ORDER BY title, and
         # every browse offset is computed against it), so it composes no
         # Sort control and the direct-choices flow this test drove is
-        # unreachable here. The flow itself still ships for the flat list
-        # and is pinned at
+        # unreachable here. The flow itself still ships for the flat list:
         # Tests/UI/test_library_notes_wave_list.py::test_every_sort_option_
-        # renders_in_the_narrowest_pane. What survives here is the absence,
-        # and that the persisted sort key is untouched by it.
+        # renders_in_the_narrowest_pane pins that every option is composed
+        # and pressable, and ::test_pressing_a_sort_option_applies_that_sort
+        # pins the press -> apply round trip this test used to own. What
+        # survives here is the absence, and that the persisted sort key is
+        # untouched by it.
         await _wait_for_selector(screen, pilot, "#library-notes-browse-actions")
         assert screen._notes_state.sort == "newest"
         assert not screen.query("#library-notes-sort")

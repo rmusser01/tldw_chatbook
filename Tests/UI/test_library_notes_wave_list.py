@@ -286,6 +286,56 @@ async def test_notes_toolbar_keeps_every_action_on_pane_beside_an_open_note() ->
         assert_every_action_fits(app)
 
 
+@pytest.mark.asyncio
+async def test_notes_toolbar_keeps_every_action_on_a_thirty_eight_column_pane() -> None:
+    """task-32127 AC#2 at the narrowest pane the list is ever given.
+
+    A 130-column terminal hands the list 44 columns beside an open note,
+    and 38 is the width the delete-receipt pin already uses; the
+    folder-selected toolbar is the heaviest frame there (browse +
+    transfer + the four tree actions). The docs sweep saw Rename/Move/
+    Remove clip here, and "Last import" clipped with them.
+    """
+    app = _toolbar_app(38)
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        for selector in (
+            "#library-notes-folder-rename",
+            "#library-notes-folder-move",
+            "#library-notes-folder-remove",
+        ):
+            assert app.query(selector), f"{selector} is not composed"
+        assert_every_action_fits(app)
+
+
+@pytest.mark.asyncio
+async def test_narrow_compact_toolbar_groups_stay_on_one_row() -> None:
+    """The compact shell pins these rows to one line, so they must not stack.
+
+    `#library-shell-grid.library-notes-compact #library-notes-transfer-actions`
+    is `height: 1; overflow-x: hidden` (pinned in
+    Tests/UI/test_css_build_integrity.py), so a stacked column there would be
+    clipped to its first button -- worse than the off-pane overflow the
+    stacking fixes.
+    """
+    app = _CanvasApp(
+        pane_width=38,
+        compact=True,
+        list_state=_list_state(),
+        tree_projection=_folder_selected_projection(),
+        tree_selected_placement_id=FolderPlacementId.folder("work"),
+        import_receipt_available=True,
+    )
+    async with app.run_test(size=COMPACT) as pilot:
+        await pilot.pause()
+        for group in (
+            "#library-notes-transfer-actions",
+            "#library-notes-tree-actions",
+        ):
+            lines = {button.region.y for button in app.query(f"{group} Button")}
+            assert len(lines) == 1, f"{group} stacked onto {len(lines)} lines"
+
+
 # -- task-32123: the delete receipt's recovery actions are reachable ------
 
 
@@ -502,6 +552,60 @@ async def test_every_sort_option_renders_in_the_narrowest_pane() -> None:
         # Every action in the frame, not only the three options: the strip
         # shares this pane with the transfer actions (review round 1).
         assert_every_action_fits(app)
+
+
+@pytest.mark.asyncio
+async def test_pressing_a_sort_option_applies_that_sort(monkeypatch) -> None:
+    """task-32128 AC#3: the composed option really applies its sort value.
+
+    The press -> apply round trip used to be pinned in the shell by
+    `test_library_shell_notes_sort_opens_direct_choices_and_applies_one_value`,
+    which now only asserts Sort's ABSENCE (the seeded shell always builds the
+    folder tree, so it composes no Sort control to press). Nothing else
+    asserted that pressing an option changes the sort, so the two real halves
+    are joined here: the option Button this canvas composes, and the
+    controller handler the screen routes its press to.
+    """
+    state = LibraryNotesListState(
+        rows=(LibraryNotesListRow("n1", "Alpha", "2h", False),),
+        header_copy="Notes (1)",
+        status_copy="",
+        empty_copy="",
+        sort_choices_visible=True,
+    )
+    app = _CanvasApp(pane_width=38, list_state=state)
+    synced: list[str] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Library_Modules.library_notes_controller"
+        "._sync_library_canvas",
+        lambda _screen, kind, **_kwargs: synced.append(kind),
+    )
+    cleared: list[bool] = []
+    fake = SimpleNamespace(
+        _library_notes_mutation_fenced=lambda: False,
+        _library_notes_sort="newest",
+        _library_notes_sort_choices_visible=True,
+        _library_notes_select_mode=True,
+        _library_notes_row_selection=SimpleNamespace(
+            clear=lambda: cleared.append(True)
+        ),
+    )
+
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        option = app.query_one("#library-notes-sort-oldest", Button)
+        # The class the screen's `@on(Button.Pressed, ...)` selector matches:
+        # without it the press never reaches the handler below.
+        assert option.has_class("library-notes-sort-choice")
+        LibraryNotesController.handle_library_notes_sort_choice(
+            fake, Button.Pressed(option)
+        )
+
+    assert fake._library_notes_sort == "oldest"
+    assert fake._library_notes_sort_choices_visible is False
+    assert fake._library_notes_select_mode is False
+    assert cleared == [True]
+    assert synced == ["notes"]
 
 
 # -- task-32137: rows carry an age and duplicates are distinguishable -----

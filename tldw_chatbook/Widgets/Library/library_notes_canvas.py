@@ -66,6 +66,18 @@ _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 #: pane, which is worse than the third row it saves (task-32127, review 1).
 _TOOLBAR_MERGE_MIN_WIDTH = 100
 
+#: Columns a single action group needs to stay on one row. The transfer group
+#: (Add from files…, Export, Last import) is 47 cells and the folder actions
+#: (New folder, Rename, Move, Remove) are 46, so at the 44-column pane a
+#: 130-column terminal gives the list beside an open note, "Last import" and
+#: "Remove" were painted past the pane's right edge and could not be pressed
+#: (task-32127, final review). Below this width each group stacks, the way the
+#: delete receipt already stacks its recovery actions (task-32123) -- Textual
+#: toolbars do not wrap. NOT in a compact shell: there the split screen sheet
+#: pins these rows to `height: 1; overflow-x: hidden`, so a stacked column
+#: would be clipped to its first button instead of merely running off-pane.
+_TOOLBAR_STACK_MIN_WIDTH = 48
+
 
 def compose_note_row_label(
     title: str, *, folder_label: str = "", age_label: str = ""
@@ -965,7 +977,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     if self.import_snapshot is not None
                     else ""
                 )
-                transfer_actions = Horizontal(
+                stacked = (
+                    self.pane_width < _TOOLBAR_STACK_MIN_WIDTH and not self.compact
+                )
+                transfer_actions = (Vertical if stacked else Horizontal)(
                     id="library-notes-transfer-actions", classes="ds-toolbar"
                 )
                 transfer_actions.styles.height = "auto"
@@ -1268,7 +1283,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "This folder is managed by sync; change its sync root instead."
         )
         stale_reason = "This branch may be out of date; retry it before changing it."
-        with Horizontal(id="library-notes-tree-actions", classes="ds-toolbar"):
+        stacked = self.pane_width < _TOOLBAR_STACK_MIN_WIDTH and not self.compact
+        with (Vertical if stacked else Horizontal)(
+            id="library-notes-tree-actions", classes="ds-toolbar"
+        ):
             yield Button(
                 "New folder",
                 id="library-notes-folder-new",
