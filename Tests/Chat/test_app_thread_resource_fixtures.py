@@ -14,17 +14,35 @@ from Tests import console_resource_fixtures as resources
 
 
 class ThreadDatabase:
-    def __init__(self, *, close_error=None):
+    """Own one in-memory SQLite handle per worker for cleanup regression tests."""
+
+    def __init__(self, *, close_error: Exception | None = None) -> None:
+        """Initialize the thread-local owner and optional cleanup failure.
+
+        Args:
+            close_error: Exception to raise after successfully closing a handle.
+        """
         self._thread_local = threading.local()
         self.close_error = close_error
         self.closed_on = []
 
-    def connection(self):
+    def connection(self) -> sqlite3.Connection:
+        """Return or create the current thread's SQLite handle.
+
+        Returns:
+            The current thread's cached in-memory connection.
+        """
         if getattr(self._thread_local, "conn", None) is None:
             self._thread_local.conn = sqlite3.connect(":memory:")
         return self._thread_local.conn
 
-    def close(self):
+    def close(self) -> None:
+        """Close the current thread's handle and record its creator-thread cleanup.
+
+        Raises:
+            Exception: The injected close_error, after closing and clearing the handle.
+            sqlite3.Error: If SQLite cannot close the current handle.
+        """
         self._thread_local.conn.close()
         self._thread_local.conn = None
         self.closed_on.append(threading.get_ident())

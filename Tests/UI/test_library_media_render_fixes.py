@@ -1653,19 +1653,46 @@ def _plain_local_host() -> LibraryProductionCSSHarness:
 
 
 @pytest.mark.asyncio
-async def test_local_reader_chrome_stops_before_the_sixth_row():
+@pytest.mark.parametrize("delayed_layout", [False, True])
+async def test_local_reader_chrome_stops_before_the_sixth_row(monkeypatch, delayed_layout):
     """task-31277 (critique #4 P2): nine rows of chrome before the first
     content line (measured live at 235x52). The identity line restates what the Media list already
     said, the byline row paints empty when an item has no author or URL,
     and the section header repeats the selected mode tab. Counted from the
     reader pane's top edge to the first content line, inclusive of the
     content box's top border: Back, title, toolbar, mode row, border."""
+    from tldw_chatbook.Widgets.Library.library_media_raw_view import VirtualizedRawContent
+
+    delayed_builds = []
+    if delayed_layout:
+        real_build = VirtualizedRawContent._build_index_now
+
+        def defer_first_layout(body, width):
+            if width > 0 and body.wrap_index is None:
+                if not delayed_builds:
+                    delayed_builds.append(
+                        body.set_timer(0.4, lambda: real_build(body, width))
+                    )
+                return
+            real_build(body, width)
+
+        monkeypatch.setattr(VirtualizedRawContent, "_build_index_now", defer_first_layout)
+
     host = _plain_local_host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
         await _open_first_reader_row(screen, pilot)
         viewer = screen.query_one("#library-media-viewer")
         body = screen.query_one("#library-media-viewer-content-text")
+        if delayed_layout:
+            assert delayed_builds, "the real first-layout boundary must be exercised"
+        # Detail settlement precedes the Raw widget's first positive-width
+        # layout/index. Measure chrome only after real content reaches paint.
+        await _wait_for_condition(
+            pilot,
+            lambda: "Line 1 of recording 1." in _painted(host, viewer.region),
+            message="The settled reader never painted its first content line.",
+        )
         chrome = body.region.y - viewer.region.y
         painted = _painted(host, viewer.region)
         assert chrome <= 5, (chrome, painted.splitlines()[:10])

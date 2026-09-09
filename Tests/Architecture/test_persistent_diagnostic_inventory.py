@@ -67,6 +67,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "fleet survivor count failed for a session": (),
     },
     "tldw_chatbook/Chat/console_chat_store.py": {
+        "Workspace default Persona notice could not be shown": (),
         "Failed to reconcile restored Chat sync intent": (),
         "Failed to project Sync v2 continuation owner": (),
         "Failed to project Sync v2 Chat tombstone": (),

@@ -10,6 +10,7 @@ from textual import events
 from textual.app import App
 from textual.containers import HorizontalScroll
 from textual.content import Content
+from textual.widget import MountError
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
@@ -53,6 +54,63 @@ def _sessions(count: int) -> list[ConsoleChatSession]:
         ConsoleChatSession(title=f"Session {i}", id=f"s{i}")
         for i in range(1, count + 1)
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_replacement_stops_when_strip_unmounts_during_removal(
+    monkeypatch,
+):
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)):
+        surface = app.query_one(ConsoleSessionSurface)
+        await surface.sync_sessions(sessions=_sessions(1), active_session_id="s1")
+        strip = app.query_one(ConsoleSessionTabStrip)
+        removed = []
+        detached_mounts = []
+        real_mount = strip.mount
+
+        def observed_mount(*widgets, **kwargs):
+            if not strip.is_attached:
+                detached_mounts.extend(widgets)
+            return real_mount(*widgets, **kwargs)
+
+        monkeypatch.setattr(strip, "mount", observed_mount)
+
+        def detach_after(operation):
+            async def remove_then_detach(*args, **kwargs):
+                await operation(*args, **kwargs)
+                await strip.remove()
+                removed.append(True)
+
+            return remove_then_detach
+
+        # Exercise the same real teardown boundary for single/batched removal.
+        for child in list(strip.children):
+            monkeypatch.setattr(child, "remove", detach_after(child.remove))
+        monkeypatch.setattr(
+            strip, "remove_children", detach_after(strip.remove_children)
+        )
+        await surface.sync_sessions(sessions=_sessions(2), active_session_id="s2")
+        assert removed
+        assert strip.parent is None
+        assert not strip.children
+        assert not detached_mounts
+        assert not surface.query("#console-session-tab-s2")
+
+
+@pytest.mark.asyncio
+async def test_session_replacement_keeps_live_mount_errors_visible(monkeypatch):
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)):
+        surface = app.query_one(ConsoleSessionSurface)
+        strip = app.query_one(ConsoleSessionTabStrip)
+
+        def fail_mount(*args, **kwargs):
+            raise MountError("injected live mount failure")
+
+        monkeypatch.setattr(strip, "mount", fail_mount)
+        with pytest.raises(MountError, match="injected live mount failure"):
+            await surface.sync_sessions(sessions=_sessions(1), active_session_id="s1")
 
 
 @pytest.mark.asyncio
@@ -446,4 +504,3 @@ def test_chat_screen_exposes_rail_body_height_seam() -> None:
     ``test_console_native_chat_flow.py``, which drives the real screen.
     """
     assert callable(getattr(ChatScreen, "_console_rail_body_height", None))
-

@@ -1908,3 +1908,65 @@ native Library run remain active. No full-source pass or merged status is
 claimed. The no-splash setup wrapper also explicitly catches and logs setup
 exceptions, explaining why a test expecting propagation needs lifecycle-path
 review; the two mount failures still need attribution before any repair.
+
+### Wave-twelve terminal evidence and step-75 repairs (2026-09-09 UTC)
+
+The frozen native Library run finished **851 passed, 10 warnings in 1431.36s**,
+exit 0 and `sqlite_paths: []`; evidence is
+`/private/tmp/pr2427-wave12-shell-native.YbMd42/{pytest.log,native.jsonl}`.
+Incoming group 4 finished **641 passed, 2 failed, 9 warnings in 618.51s**:
+the headless approval and Personas unchanged-resize fixtures.
+
+Step 75 repairs preserve existing ownership and privacy boundaries:
+
+- Tab replacement previously attempted six mounts after real strip removal.
+  The deterministic RED is `/private/tmp/pr2427-wave12-tab-red3.log`; the
+  live-MountError negative control already passed. Native batch removal,
+  exact `is_attached` admission and one batch mount eliminate awaited gaps
+  while preserving order and churn. `is_mounted` remains true after removal
+  and is deliberately not the guard.
+- Startup then exposed the separate queued legacy-workspace-alias worker
+  mounting into a detached tray (`/private/tmp/pr2427-wave12-startup-trace.log`).
+  That synchronous owner now checks its exact tray before mounting; neither
+  repair catches or suppresses live mount errors. The setup-failure fixture
+  observes the existing no-splash logged suppression, with deterministic sink
+  cleanup and unchanged no-readiness/no-scheduler assertions.
+- The complete tab/startup/workspace-rail cohort passed **72 tests, 3 warnings
+  in 72.72s** (`/private/tmp/pr2427-wave12-startup-owners.log`). The final
+  sink-cleanup form was also covered by the subsequent startup/reuse cohort.
+- Bridge fixtures now pin explicit redacted durable text and unchanged
+  structured success/blocked outcomes. No redactor or security policy changed.
+  Two obsolete upstream-deleted diagnostic pins were replaced by the current
+  constant-only default-Persona notice pin. Personas' unchanged-state guard
+  covers pane/workbench queries, not the accepted dynamic conversation rows.
+  The combined complete files initially produced **759 passed / 1 failed**;
+  the sole remaining failure was a new over-strong short-output assertion:
+  complete inline output intentionally has no duplicate expansion affordance.
+  After correction, the complete bridge and headless files passed **294 tests,
+  3 warnings in 78.90s** (`/private/tmp/pr2427-wave12-headless-bridge-final.log`).
+- Headless approval now seeds the exact installed/cache-owned startup Console,
+  rather than stacking an ad-hoc screen that competes for the runtime. After
+  ordinary navigation, the existing exact-owner uninstall helper supplies true
+  teardown. Shutdown-event, detached seams, app-wide painted toast, poll-budget
+  survival, new-screen/card identity and human-verdict assertions remain.
+  Production retained-navigation policy is unchanged. The prior helper attempt
+  correctly failed on the unregistered screen; no precondition was weakened.
+- A controlled delayed first Raw index reproduced the same empty painted
+  reader body while detail was already settled. The geometry test now waits
+  boundedly for real first-line paint, retaining all chrome/title/content
+  assertions. Both ordinary/delayed variants and the complete file pass:
+  **124 passed, 3 warnings in 168.70s**
+  (`/private/tmp/pr2427-wave12-paint-green.log`). Production rendering is unchanged.
+- Qodo comments 3964725128/3964725134 on head565d request helper contracts.
+  `ThreadDatabase` now documents and annotates connection ownership, injected
+  post-close failure and cleanup; complete helper file **10 passed, 2 warnings**
+  (`/private/tmp/pr2427-wave12-qodo-helper.log`).
+
+Fresh derived-artifact preflight passes
+(`/private/tmp/pr2427-wave12-repair-preflight.log`). Ruff passes every changed
+test and the session surface. ChatScreen has exactly its three pre-existing
+Ruff diagnostics (same codes/messages before and after); no new diagnostic.
+Whitespace checks pass. Independent review found no issue in the two production
+guards; final fixture review is being recorded separately. This is not a merge
+claim: fetched dev has advanced to `2e3389e694` (Library crit8 and offline TTS/MCP
+changes), so the next integration/qualification remains necessary.
