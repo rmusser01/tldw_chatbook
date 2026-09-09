@@ -560,3 +560,57 @@ the repository's additional immutable snapshot reader, configured app source bin
 finite preselection, restore/publication/materializer/runtime and all-owner startup
 remain immediate Task10 work. Successful schema inspection never proves those resources
 retired. No Complete/replacement/responder/startup capability or task AC is promoted.
+
+### Task10 phase14d — configured TTS source and delegated pin ownership (rulings82–88)
+
+Bind only the original repository created by actual app composition to its original
+loaded configuration source/functions, selected profile and exact database path.
+Check source identity before ordinary admission effects, on the worker with its
+admitted generation, and before publishing results. Preserve harmless config/cache
+changes, pure standalone constructors, ordinary custom behavior and definitive
+cleanup of original resources after a source mismatch. This binding grants no
+across-pause IO capability and does not register whole-app/runtime coverage.
+
+The shared checked SQLite source-pin helper retains concrete jobs through preflight,
+final source pin and native cleanup. Ordinary exact source/parent leases remain
+separate from existing validated capture leases. The latter associate the job with
+the same capture scope and preserve native maintenance quarantine on failed
+retirement. No owner policy, source/staging scope, registry or callback permission
+is widened. Existing private preflight helpers receive the job explicitly; the
+trusted-directory verifier's optional private open/close observers preserve their
+default native calls and existing raw/visual attribution. The concrete job marks
+allocation only after admission, associates actual returned descriptors immediately,
+and retains unreturned allocation failures separately from later successful opens. Independent close attempts retain
+original body/cleanup association and never retry an uncertain descriptor number.
+
+A disposable, unpublished ordinary backup validation can finish at the spec's
+completed boundary with its truthful refusal after pause blocks allocation. Actual
+worker/result completion and positive temporary/native retirement are required;
+failed ownership remains a blocker. Successful user operation is not the only
+completed boundary. This decision grants no new validation IO after pause and
+waives none of the native journal/BLOB/outer-reader/migration/restore/runtime graph.
+Task10 remains incomplete and startup/responder/Complete/replacement unavailable.
+
+
+Ruling87 distinguishes confirmed native rejection from unknown provider outcome
+with one explicit per-call outcome record at the original native-open boundary.
+Only rejection by the exact original native primitive proves no descriptor; its
+returned FD is recorded before raw registration or outer wrapper work. Known
+wrapper failures can therefore retire their actual FDs. Substituted/delegated
+unreturned failures retain uncertainty, regardless of exception type or later
+successful opens. Existing raw/visual attribution and trust/scope rules remain.
+This corrects the demonstrated trusted-alias regression: default TTS profile paths
+can remain lexical, while custom TTS database selections resolve canonically.
+Ordinary alias copies and actual adapter capture must both positively retire;
+no normal supported alias is waived as an unqualified-platform limitation.
+
+
+Ruling88 carries the same per-call outcome into the existing SQLite artifact-open
+primitive, preserving its non-raw/visual attribution and unrelated callers. Concrete
+preflight and final pins attach known returned FDs before wrapper errors, recognize
+only original-native rejection as absence, and retain unknown substituted outcomes.
+This repairs a confirmed disappearing-optional-sidecar retirement regression against
+BASE. Real ordinary/capture copies cover all three suffixes; actual replacement retry
+retires, while a successful retry after an unknown allocation cannot erase that
+older uncertainty. Privacy, no-follow, generation/absence retries and source identity
+checks remain unchanged. No new capture/source/descendant permission is introduced.

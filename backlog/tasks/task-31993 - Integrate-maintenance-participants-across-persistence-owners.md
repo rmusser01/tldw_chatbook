@@ -109,6 +109,17 @@ ADR required: yes
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: direct ordinary native-lifetime implementation of ADR126 under ruling81; ADR028/040/051/023 ownership and schema contracts remain unchanged.
 
+### Phase14d implementation plan — configured TTS source and delegated native pins
+
+1. Preserve actual configured app/source and delegated pin behavioral REDs, correcting profile fixture to general.users_name; follow controller rulings82–84.
+2. Retain shared SQLite pin jobs under existing ordinary or validated capture ownership, including partial allocation, once-only independent retirement and body/cleanup association; preserve helper policies and copy/restore contracts.
+3. Bind only the exact app-created repository to original loaded config functions, effective/cache source, selected user-data/profile and TTS path; check admission, worker generation and publication without constructor IO or callback authority.
+4. Verify truthful completed refusal with actual worker/result/native/temp settlement, plus source/copy/reload/custom/cancellation and capture native uncertainty in private fixtures.
+5. Run targeted affected helper/domain/source/census/static checks, self-review, update ADR126 and exact remaining native routes, and scoped commit with identical dual reports. Preserve In Progress and all AC unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct maintenance source/native lifetime integration under rulings82–84; no capture policy or scope expansion, no Complete/startup promotion.
+
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -793,3 +804,55 @@ Reason: direct ordinary native-lifetime implementation under ruling81; ADR028/04
 remain intact. Next immediate TTS source/preselection/delegated pin+journal/BLOB/outer
 reader and remaining migration/restore/materializer/runtime/app work stays Task10.
 No installed capability, startup/responder/Complete/replacement or AC promotion.
+
+### Phase14d implementation notes — configured TTS source and delegated pins
+
+The actual app-created TTS repository now verifies its original config module,
+selector callable identities, effective/cache source, profile and database before
+entry, worker effects and result publication. Harmless same-source config/cache
+changes and ordinary custom constructors remain usable; changed/copied/reloaded
+sources are refused, while public close can retire original resources.
+
+The shared SQLite source helper retains concrete ordinary or existing exact capture
+jobs through preflight, final pin and independent once-only cleanup. Explicit private
+open/close observers preserve native helper attribution and distinguish positively
+retired known descriptors from failed unreturned allocations. Capture uncertainty
+retains the existing maintenance quarantine. Truthful unpublished backup refusal
+at pause is tested through actual worker/publication/temp/native completion.
+
+Final ruling87 affected helper/native/alias/capture checks:102 passed/13 deselected
+35.28s, including actual raw alias and visual publication attribution contracts.
+Source/static/census results and exact logs are in the dual report; counts overlap.
+The no-fault alias regression was demonstrated against actual default lexical TTS
+adapter paths and compared with immutable BASE, then expected-success assertions
+failed before repair. A private per-call native outcome now preserves confirmed
+original-primitive rejection versus unknown provider error, recording known FDs
+before wrapper/registration failures. Alias copy/capture positively retire; unknown
+substituted providers still block local/native drain and retain capture quarantine.
+Actual original preflight RED, separate immutable-BASE final-pin RED, configured-source
+REDs, later root allocation RED, alias RED and fixture/source-provenance mistakes
+remain distinctly recorded. Fatal Ruff, new-module format and diff checks pass.
+
+ADR required: yes. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct bounded rulings82–87; no scope/policy/registry or across-pause privilege
+expansion. Mandatory outer-reader/journal/current/migration/lease/BLOB/restore/service/
+UI/runtime and shared-voice/native/app work remain Task10. No Complete/replacement/
+startup/responder promotion; status stays In Progress and all AC unchecked.
+
+### Phase14d final verification addendum — ruling88
+
+The same explicit outcome record now covers original SQLite artifact native opens
+for both preflight and final pins, preserving their existing non-raw attribution.
+Actual BASE/current evidence exposed the disappearing optional-sidecar retirement
+regression; all3 suffixes now preserve ordinary/capture copy and positive retirement.
+Known wrapper-return FDs retire, while truly unknown substituted native allocation
+survives a subsequent successful optional generation retry and retains quarantine.
+
+Final affected results supersede the preceding ruling87 checkpoint:112 passed/
+13 deselected33.45s native/helper/alias/actual TTS capture;57 passed/260 deselected
+8.80s shared backup/copy/restore contracts;3 exact census checks passed39.80s.
+Fatal Ruff/new-module format/diffcheck clean. Full identical dual phase14d report
+preserves every RED/BASE/fixture distinction, exact commands/logs and native limits.
+ADR126 rulings82–88; no source/capture/namespace permission expansion. All mandatory
+remaining Task10 native/routes and inherited debts stay open, with In Progress and
+all3 AC unchecked. WholeTask10 independent review remains controller-owned.

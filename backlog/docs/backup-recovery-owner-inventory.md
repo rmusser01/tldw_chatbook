@@ -2585,3 +2585,68 @@ service/UI dirty state and runtime/audio/model/process work remain Task10. ADR04
 voice path census correction follows this immediate TTS graph, not a default-path move.
 The inherited exact JSONStorage AST guard follow-up, three host SemLock failures and
 combined-order/diagnostic debts retain their earlier separate assignments.
+
+### Task10 phase14d: configured TTS source checks and delegated SQLite pins
+
+The actual TldwCli constructor explicitly binds its original TTSProfileRepository
+receiver to the loaded config module/functions, effective/cache config source,
+selected profile and TTS database path. Source checks precede ordinary entry,
+worker execution and result publication; first-open worker generation is checked
+before effects. Harmless setting changes and same-source cache replacement remain
+valid. Copied/subclass receivers and reloaded/retargeted sources receive no binding
+permission; standalone/custom constructors remain ordinary. The repository constructor
+still performs no config import or IO. Existing shared named app open/close tasks,
+service retained calls and definitive close of original resources remain intact.
+This is no new across-pause privilege or whole-app participant registration.
+
+Shared DB/private_sqlite `_SQLiteSourcePinJob` retains ordinary exact source/parent
+leases or the existing validated capture lease/scope resource association. Explicit
+preflight propagation owns returned main/sidecar/parent descriptors before metadata;
+final `_PinnedSQLiteSource` owns returned source file/parent descriptors. The trusted
+directory verifier's explicit private open/close observers delegate original native
+calls, including existing raw/visual attribution. Admission precedes allocation
+accounting; returned descriptors are attached before metadata, and unreturned failures
+remain separate from later successful opens. Independent retirement attempts run once;
+uncertain allocation/close, original body errors and cleanup errors retain actual
+resources and exclusion. Capture uncertainty retains its native maintenance session.
+No capture policy, scope paths, registry or directory-descendant grant was expanded.
+
+Ruling84 permits ordinary unpublished backup validation to return its truthful
+refusal when pause prevents a new allocation, after actual worker/publication,
+known temporary bytes and native resources retire. Private diagnostic evidence covers
+aggregate local drain and later native entry; it does not release production startup,
+discard drafts or claim a successful backup receipt. Complete/replacement remain
+unavailable and Task31993 remains In Progress with every AC unchecked.
+
+Mandatory immediate continuation still includes outer immutable reader namespace
+association, destination journal provenance, current/migration wrappers and native
+ProfileStoreLease, BLOBs, recovery backup, restore/publication/rebind, materializer,
+bundle/service/dirty editor/runtime owners, then shared voice roots and remaining
+app/headless/runtime aggregation. See the phase14d dual report for exact native
+limits, source evidence and inherited SemLock/voice census/pet AST/combined-order/
+diagnostic debt. This entry supersedes only the now-implemented source/pin portions
+of earlier phase handoffs, never their remaining routes.
+
+
+Ruling87 distinguishes confirmed native rejection from unknown provider outcome
+with one explicit per-call outcome record at the original native-open boundary.
+Only rejection by the exact original native primitive proves no descriptor; its
+returned FD is recorded before raw registration or outer wrapper work. Known
+wrapper failures can therefore retire their actual FDs. Substituted/delegated
+unreturned failures retain uncertainty, regardless of exception type or later
+successful opens. Existing raw/visual attribution and trust/scope rules remain.
+This corrects the demonstrated trusted-alias regression: default TTS profile paths
+can remain lexical, while custom TTS database selections resolve canonically.
+Ordinary alias copies and actual adapter capture must both positively retire;
+no normal supported alias is waived as an unqualified-platform limitation.
+
+
+Ruling88 carries the same per-call outcome into the existing SQLite artifact-open
+primitive, preserving its non-raw/visual attribution and unrelated callers. Concrete
+preflight and final pins attach known returned FDs before wrapper errors, recognize
+only original-native rejection as absence, and retain unknown substituted outcomes.
+This repairs a confirmed disappearing-optional-sidecar retirement regression against
+BASE. Real ordinary/capture copies cover all three suffixes; actual replacement retry
+retires, while a successful retry after an unknown allocation cannot erase that
+older uncertainty. Privacy, no-follow, generation/absence retries and source identity
+checks remain unchanged. No new capture/source/descendant permission is introduced.

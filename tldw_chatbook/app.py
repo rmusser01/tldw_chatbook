@@ -5502,6 +5502,9 @@ class TldwCli(
         self.tts_service = build_default_tts_service(self.app_config)
         self._tts_binding_active = False
         self._tts_profile_repository = TTSProfileRepository(get_tts_profiles_db_path())
+        from tldw_chatbook.TTS.profile_source import bind_app_repository
+
+        bind_app_repository(self)
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
         self._tts_profile_service: TTSProfileService | None = None
@@ -9451,6 +9454,13 @@ class TldwCli(
             return None
         if getattr(self, "_tts_profile_repository_close_task", None) is not None:
             return None
+        if getattr(repository, "_configured_source", None) is not None:
+            from tldw_chatbook.TTS.profile_source import check_repository_source
+
+            try:
+                check_repository_source(repository)
+            except ProfileRepositoryError:
+                return None
         if repository.state is ProfileRepositoryState.OPEN:
             return repository
 

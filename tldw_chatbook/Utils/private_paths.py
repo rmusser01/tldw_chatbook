@@ -32,6 +32,7 @@ _WINDOWS_PLATFORM = os.name == "nt"
 # Matches the usual kernel ELOOP budget, so a symlink cycle terminates instead
 # of walking forever.
 _MAX_TRUSTED_SYMLINK_HOPS = 8
+_ORIGINAL_NATIVE_OPEN = os.open
 
 
 class PrivatePathStatus(StrEnum):
@@ -137,8 +138,8 @@ def _trusted_directory_owner(directory_stat: os.stat_result, euid: int) -> bool:
     return directory_stat.st_uid in {0, euid}
 
 
-def _open_directory_component(parent_fd: int, component: str) -> int:
-    return _native_open(
+def _open_directory_component(parent_fd: int, component: str, *, _open=None) -> int:
+    return (_open or _native_open)(
         component,
         _DIRECTORY_OPEN_FLAGS | _NOFOLLOW,
         dir_fd=parent_fd,
@@ -214,6 +215,7 @@ def _follow_trusted_symlink(
     selected: Path,
     exc: OSError,
     _close: Callable[[int], None] | None = None,
+    _open: Callable[..., int] | None = None,
 ) -> tuple[int, int]:
     """Splice a trusted symlink's target into the pending walk.
 
@@ -237,7 +239,7 @@ def _follow_trusted_symlink(
     pending[:0] = components
     if not absolute:
         return current_fd, hops + 1
-    root_fd = _native_open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    root_fd = (_open or _native_open)(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
     (_close or _native_close)(current_fd)
     return root_fd, hops + 1
 
@@ -306,6 +308,7 @@ def _open_verified_parent(
     *,
     missing_leaf_allowed: bool,
     _close: Callable[[int], None] | None = None,
+    _open: Callable[..., int] | None = None,
 ) -> tuple[int, str]:
     close = _close or _native_close
     parts = selected.parts
@@ -319,7 +322,7 @@ def _open_verified_parent(
         )
 
     euid = os.geteuid()
-    current_fd = _native_open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    current_fd = (_open or _native_open)(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
     try:
         current_stat = os.fstat(current_fd)
         pending = list(parts[1:-1])
@@ -346,7 +349,11 @@ def _open_verified_parent(
                     )
                 )
             try:
-                next_fd = _open_directory_component(current_fd, component)
+                next_fd = _open_directory_component(
+                    current_fd,
+                    component,
+                    **({"_open": _open} if _open is not None else {}),
+                )
             except FileNotFoundError:
                 raise PrivatePathError(
                     PrivatePathResult(
@@ -364,6 +371,7 @@ def _open_verified_parent(
                     selected=selected,
                     exc=exc,
                     _close=_close,
+                    _open=_open,
                 )
                 current_stat = os.fstat(current_fd)
                 continue
@@ -478,12 +486,33 @@ def _native_mkdir(*args, **kwargs):
     return os.mkdir(*args, **kwargs)
 
 
-def _native_open(*args, **kwargs):
+@dataclass
+class _NativeOpenOutcome:
+    """Per-call native allocation result; no source or permission authority."""
+
+    descriptor: int | None = None
+    rejected: bool = False
+
+
+def _native_open(*args, _outcome: _NativeOpenOutcome | None = None, **kwargs):
     visual, state = _visual_native_scope()
     if state is not None:
-        return visual.native_open(*args, **kwargs)
+        fd = visual.native_open(*args, **kwargs)
+        if _outcome is not None:
+            _outcome.descriptor = fd
+        return fd
     operation = _runtime_operation()
-    fd = os.open(*args, **kwargs)
+    open = os.open  # Pin the exact callable used at this native edge.
+    try:
+        fd = open(*args, **kwargs)
+    except OSError:
+        # Only the original native primitive's actual rejection proves absence.
+        # A substituted provider can allocate and raise the same exception.
+        if _outcome is not None and open is _ORIGINAL_NATIVE_OPEN:
+            _outcome.rejected = True
+        raise
+    if _outcome is not None:
+        _outcome.descriptor = fd
     if operation is not None:
         raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
         raw._states[operation].descriptors.add(fd)
@@ -1497,6 +1526,8 @@ def verify_trusted_directory(
     path: PathInput,
     *,
     allow_shared_sticky: bool,
+    _close: Callable[[int], None] | None = None,
+    _open: Callable[..., int] | None = None,
 ) -> PrivatePathResult:
     """Verify an existing lexical directory without creating or changing it.
 
@@ -1523,6 +1554,7 @@ def verify_trusted_directory(
     that may have changed since. `lexical_path` deliberately does not resolve.
     """
 
+    close = _close or _native_close
     selected = lexical_path(path)
     operation = _runtime_operation()
     if operation is not None:
@@ -1565,7 +1597,7 @@ def verify_trusted_directory(
         )
 
     euid = os.geteuid()
-    current_fd = _native_open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    current_fd = (_open or _native_open)(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
     try:
         current_stat = os.fstat(current_fd)
         pending = list(parts[1:])
@@ -1594,7 +1626,11 @@ def verify_trusted_directory(
                 )
 
             try:
-                next_fd = _open_directory_component(current_fd, component)
+                next_fd = _open_directory_component(
+                    current_fd,
+                    component,
+                    **({"_open": _open} if _open is not None else {}),
+                )
             except FileNotFoundError:
                 raise PrivatePathError(
                     PrivatePathResult(
@@ -1611,6 +1647,8 @@ def verify_trusted_directory(
                     hops=symlink_hops,
                     selected=selected,
                     exc=exc,
+                    _close=_close,
+                    _open=_open,
                 )
                 current_stat = os.fstat(current_fd)
                 continue
@@ -1673,11 +1711,11 @@ def verify_trusted_directory(
                 old_fd = current_fd
                 current_fd = next_fd
                 transferred = True
-                _native_close(old_fd)
+                close(old_fd)
                 current_stat = next_stat
             finally:
                 if not transferred:
-                    _native_close(next_fd)
+                    close(next_fd)
 
         return PrivatePathResult(
             selected,
@@ -1689,4 +1727,4 @@ def verify_trusted_directory(
     except OSError as exc:
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
-        _native_close(current_fd)
+        close(current_fd)

@@ -1317,6 +1317,7 @@ class TTSProfileRepository:
             raise _repository_error("operation_failed")
 
         self._database_path = database_path
+        self._configured_source = None
         self._clock = _utc_now if _clock is None else _clock
         self._uuid_factory = uuid4 if _uuid_factory is None else _uuid_factory
         self._state = ProfileRepositoryState.CLOSED
@@ -1453,7 +1454,11 @@ class TTSProfileRepository:
         self._bind_or_check_loop()
         reservation = self._reserve_maintenance_entry()
         try:
-            return await self._open_admitted(reservation)
+            result = await self._open_admitted(reservation)
+            from .profile_source import check_repository_source
+
+            check_repository_source(self)
+            return result
         except BaseException as error:
             _raise_operation_error(error)
             raise AssertionError("unreachable")
@@ -1508,7 +1513,7 @@ class TTSProfileRepository:
             submission_error: BaseException | None = None
             open_future: Future[None] | None = None
             try:
-                open_future = executor.submit(self._worker_open)
+                open_future = executor.submit(self._worker_open_generation, generation)
             except BaseException as error:
                 submission_error = error
 
@@ -1574,9 +1579,18 @@ class TTSProfileRepository:
             raise _repository_error("stale")
         return ProfileStoreResult(generation=generation, value=None)
 
+    def _worker_open_generation(self, generation: int) -> None:
+        with self._state_lock:
+            if self._terminal or self._generation != generation:
+                raise _repository_error("stale")
+        self._worker_open()
+
     def _worker_open(self) -> None:
         """Acquire shared ownership and open the long-lived connection."""
 
+        from .profile_source import check_repository_source
+
+        check_repository_source(self)
         self._clear_reference_damage_markers()
         if self._connection is not None or self._lease is not None:
             self._worker_cleanup()
@@ -5240,6 +5254,9 @@ class TTSProfileRepository:
     ) -> _T:
         """Check freshness immediately before invoking one SQLite operation."""
 
+        from .profile_source import check_repository_source
+
+        check_repository_source(self)
         with self._state_lock:
             state_error = self._worker_state_error_locked(generation)
             connection = self._connection
@@ -5297,7 +5314,11 @@ class TTSProfileRepository:
     ) -> ProfileStoreResult[_T]:
         self._bind_or_check_loop()
         try:
-            return await self._publish_operation_result(admission)
+            value = await self._publish_operation_result(admission)
+            from .profile_source import check_repository_source
+
+            check_repository_source(self)
+            return value
         finally:
             with self._state_lock:
                 completion = self._publication_completions.pop(admission.future, None)
@@ -5353,7 +5374,15 @@ class TTSProfileRepository:
                     raise _repository_error("terminal")
                 if storage._pause is not None or self._maintenance_admission_closed:
                     raise _repository_error("unavailable")
-            return storage._Acquisition()
+            reservation = storage._Acquisition()
+        try:
+            from .profile_source import check_repository_source
+
+            check_repository_source(self)
+            return reservation
+        except BaseException:
+            reservation.close()
+            raise
 
     def _maintenance_close_admission(self) -> None:
         """Seal new calls on the owner loop without invalidating admitted work."""

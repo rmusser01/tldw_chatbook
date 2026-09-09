@@ -11,7 +11,7 @@ import stat
 import sys
 import warnings
 import weakref
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path, PureWindowsPath
 from threading import Lock, RLock, get_ident
@@ -693,6 +693,7 @@ def _open_artifact_fd(
     *,
     writable: bool,
     create: bool,
+    _outcome: private_paths._NativeOpenOutcome | None = None,
 ) -> int:
     flags = os.O_RDWR if writable else os.O_RDONLY
     flags |= (
@@ -702,12 +703,16 @@ def _open_artifact_fd(
     )
     if create:
         flags |= os.O_CREAT | os.O_EXCL
-    return os.open(
-        leaf,
-        flags,
-        _PRIVATE_FILE_MODE,
-        dir_fd=parent_fd,
-    )
+    open = os.open
+    try:
+        descriptor = open(leaf, flags, _PRIVATE_FILE_MODE, dir_fd=parent_fd)
+    except OSError:
+        if _outcome is not None and open is private_paths._ORIGINAL_NATIVE_OPEN:
+            _outcome.rejected = True
+        raise
+    if _outcome is not None:
+        _outcome.descriptor = descriptor
+    return descriptor
 
 
 def _artifact_postcondition_holds(
@@ -780,11 +785,15 @@ def _prepare_posix_artifact_generation(
     create_if_missing: bool,
     optional: bool,
     enforce_private_mode: bool,
+    _pin_job: _SQLiteSourcePinJob | None = None,
 ) -> bool:
-    parent_fd, leaf = private_paths._open_verified_parent(
-        selected,
-        missing_leaf_allowed=create_if_missing,
-    )
+    if _pin_job is None:
+        parent_fd, leaf = private_paths._open_verified_parent(
+            selected,
+            missing_leaf_allowed=create_if_missing,
+        )
+    else:
+        parent_fd, leaf = _pin_job.preflight_parent(selected, create_if_missing)
     file_fd = -1
     writable_fd = -1
     try:
@@ -834,7 +843,9 @@ def _prepare_posix_artifact_generation(
 
         created = entry_stat is None
         try:
-            file_fd = _open_artifact_fd(
+            file_fd = (
+                _open_artifact_fd if _pin_job is None else _pin_job.preflight_file
+            )(
                 parent_fd,
                 leaf,
                 writable=created,
@@ -937,7 +948,9 @@ def _prepare_posix_artifact_generation(
 
         if writable and not created:
             try:
-                writable_fd = _open_artifact_fd(
+                writable_fd = (
+                    _open_artifact_fd if _pin_job is None else _pin_job.preflight_file
+                )(
                     parent_fd,
                     leaf,
                     writable=True,
@@ -1029,16 +1042,27 @@ def _prepare_posix_artifact_generation(
                     "private_sqlite_postcondition_failed",
                 )
         return True
-    except PrivatePathError:
+    except PrivatePathError as error:
+        if _pin_job is not None:
+            _pin_job.preflight_body_errors.append(error)
         raise
     except OSError as exc:
+        if _pin_job is not None:
+            _pin_job.preflight_body_errors.append(exc)
         raise _path_error_from_oserror(selected, exc) from None
+    except BaseException as error:
+        if _pin_job is not None:
+            _pin_job.preflight_body_errors.append(error)
+        raise
     finally:
-        if writable_fd >= 0:
-            os.close(writable_fd)
-        if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+        if _pin_job is not None:
+            _pin_job.close_preflight((writable_fd, file_fd, parent_fd))
+        else:
+            if writable_fd >= 0:
+                os.close(writable_fd)
+            if file_fd >= 0:
+                os.close(file_fd)
+            os.close(parent_fd)
 
 
 def _prepare_posix_artifact(
@@ -1048,6 +1072,7 @@ def _prepare_posix_artifact(
     create_if_missing: bool,
     optional: bool = False,
     enforce_private_mode: bool = True,
+    _pin_job: _SQLiteSourcePinJob | None = None,
 ) -> bool:
     attempts = _OPTIONAL_SIDECAR_REVALIDATION_ATTEMPTS if optional else 1
     for attempt in range(attempts):
@@ -1058,6 +1083,7 @@ def _prepare_posix_artifact(
                 create_if_missing=create_if_missing,
                 optional=optional,
                 enforce_private_mode=enforce_private_mode,
+                _pin_job=_pin_job,
             )
         except _OptionalSQLiteGenerationChanged:
             if attempt + 1 == attempts:
@@ -1112,6 +1138,7 @@ def _prepare_artifact(
     create_if_missing: bool,
     optional: bool = False,
     enforce_private_mode: bool = True,
+    _pin_job: _SQLiteSourcePinJob | None = None,
 ) -> bool:
     if private_paths._posix_guards_available():
         return _prepare_posix_artifact(
@@ -1120,6 +1147,7 @@ def _prepare_artifact(
             create_if_missing=create_if_missing,
             optional=optional,
             enforce_private_mode=enforce_private_mode,
+            _pin_job=_pin_job,
         )
     if private_paths._WINDOWS_PLATFORM:
         return _prepare_windows_artifact(
@@ -1476,18 +1504,283 @@ def connect_private_sqlite_descriptor(
 @dataclass(slots=True)
 class _PinnedSQLiteSource:
     selected: Path
-    identity: os.stat_result
+    identity: os.stat_result | None = None
     parent_fd: int = -1
     file_fd: int = -1
     enforce_private_mode: bool = True
+    attempted: set[str] = field(default_factory=set)
+    cleanup_errors: list[BaseException] = field(default_factory=list)
+    native_close: Callable[[int], None] | None = field(default=None, repr=False)
 
     def close(self) -> None:
-        if self.file_fd >= 0:
-            os.close(self.file_fd)
-            self.file_fd = -1
-        if self.parent_fd >= 0:
-            os.close(self.parent_fd)
-            self.parent_fd = -1
+        # Each returned descriptor is attempted once, even when its sibling fails.
+        # An error after close is still uncertainty: never retry a recycled number.
+        for role in ("file_fd", "parent_fd"):
+            descriptor = getattr(self, role)
+            if descriptor < 0 or role in self.attempted:
+                continue
+            self.attempted.add(role)
+            try:
+                (self.native_close or os.close)(descriptor)
+            except BaseException as error:
+                self.cleanup_errors.append(error)
+            else:
+                setattr(self, role, -1)
+        if self.cleanup_errors:
+            raise next(
+                (e for e in self.cleanup_errors if not isinstance(e, Exception)),
+                self.cleanup_errors[0],
+            )
+
+
+class _SQLiteSourcePinJob:
+    """Retain one checked source pin under existing ordinary/capture ownership."""
+
+    def __init__(self, owner_id: str, selected: Path, private_mode: bool) -> None:
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        self.storage = storage
+        self.owner_id = owner_id
+        self.source = _PinnedSQLiteSource(selected, enforce_private_mode=private_mode)
+        self.pid = os.getpid()
+        self.thread = storage.threading.current_thread()
+        self.leases = []
+        self.capture_lease = None
+        self.preflight_descriptors = []
+        self.preflight_body_errors = []
+        self.traversal_failures = {}
+        self.traversal_descriptors = []
+        self.allocation_pending = False
+        self.allocation_failures = []
+        self.body_error = None
+        self.cleanup_errors = []
+        self.active = True
+        self.source.native_close = self.close_final
+        with storage._changed:
+            storage._raw_operations.add(self)
+            storage._changed.notify_all()
+
+    def admit(self) -> None:
+        lease = self.storage._acquire_capture_storage(
+            self.source.selected, owner_id=self.owner_id, read_only=True
+        )
+        if lease is not None:
+            self.capture_lease = lease
+            # Failed job retirement must precede removal of its validating lease.
+            lease.scope.resources.insert(lease.scope.resources.index(lease), self)
+            return
+        for selected in (self.source.selected, self.source.selected.parent):
+            self.check()
+            self.leases.append(self.storage.acquire_storage(selected))
+            self.check()
+
+    def check(self) -> None:
+        if (
+            os.getpid() != self.pid
+            or self.storage.threading.current_thread() is not self.thread
+        ):
+            raise RuntimeError("sqlite_pin_execution_changed")
+        if self.capture_lease is not None:
+            self.capture_lease.scope.check()
+        else:
+            # An ordinary helper cannot borrow an inherited source callback grant.
+            with self.storage._lock:
+                if self.storage._pause is not None:
+                    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                    raise RecoveryRequired("storage_locally_paused")
+
+    def open_traversal(self, *args, **kwargs) -> int:
+        self.check()
+        self.allocation_pending = True
+        outcome = private_paths._NativeOpenOutcome()
+        try:
+            descriptor = private_paths._native_open(*args, _outcome=outcome, **kwargs)
+        except BaseException as error:
+            if outcome.descriptor is not None:
+                self.traversal_descriptors.append([outcome.descriptor, None, False])
+                self.allocation_pending = False
+            elif outcome.rejected:
+                self.allocation_pending = False
+            else:
+                self.allocation_failures.append(error)
+            raise
+        self.traversal_descriptors.append([descriptor, None, False])
+        self.allocation_pending = False
+        return descriptor
+
+    def close_final(self, descriptor: int) -> None:
+        if any(r[0] == descriptor and not r[2] for r in self.traversal_descriptors):
+            self.close_traversal(descriptor)
+        else:
+            os.close(descriptor)
+
+    def close_traversal(self, descriptor: int) -> None:
+        # Preserve the helper's existing raw/visual attribution at this close edge.
+        if descriptor in self.traversal_failures:
+            raise self.traversal_failures[descriptor]
+        record = next(
+            (
+                r
+                for r in reversed(self.traversal_descriptors)
+                if r[0] == descriptor and not r[2]
+            ),
+            None,
+        )
+        if record is None:
+            record = [descriptor, None, False]
+            self.traversal_descriptors.append(record)
+        try:
+            info = os.fstat(descriptor)
+            record[1] = (info.st_dev, info.st_ino)
+        except BaseException as error:
+            self.cleanup_errors.append(error)
+        try:
+            private_paths._native_close(descriptor)
+        except BaseException as error:
+            self.traversal_failures[descriptor] = error
+            self.cleanup_errors.append(error)
+            raise
+        else:
+            record[2] = True
+
+    def preflight_parent(self, selected: Path, create: bool) -> tuple[int, str]:
+        self.check()
+        descriptor, leaf = private_paths._open_verified_parent(
+            selected,
+            missing_leaf_allowed=create,
+            _close=self.close_traversal,
+            _open=self.open_traversal,
+        )
+        self.preflight_descriptors.append([descriptor, selected.parent, False, False])
+        return descriptor, leaf
+
+    def preflight_file(self, parent_fd: int, leaf: str, **kwargs) -> int:
+        parent = next(
+            r[1]
+            for r in reversed(self.preflight_descriptors)
+            if r[0] == parent_fd and not r[3]
+        )
+        return self.open_file(parent_fd, leaf, parent / leaf, final=False, **kwargs)
+
+    def open_file(
+        self, parent_fd: int, leaf: str, selected: Path, *, final: bool, **kwargs
+    ) -> int:
+        self.check()
+        self.allocation_pending = True
+        outcome = private_paths._NativeOpenOutcome()
+        try:
+            descriptor = _open_artifact_fd(parent_fd, leaf, _outcome=outcome, **kwargs)
+        except BaseException as error:
+            if outcome.descriptor is not None:
+                self.record_file(outcome.descriptor, selected, final=final)
+                self.allocation_pending = False
+            elif outcome.rejected:
+                self.allocation_pending = False
+            else:
+                self.allocation_failures.append(error)
+            raise
+        self.record_file(descriptor, selected, final=final)
+        self.allocation_pending = False
+        return descriptor
+
+    def record_file(self, descriptor: int, selected: Path, *, final: bool) -> None:
+        if final:
+            self.source.file_fd = descriptor
+        else:
+            self.preflight_descriptors.append([descriptor, selected, False, False])
+
+    def close_preflight(self, descriptors: tuple[int, ...]) -> None:
+        failures = []
+        for descriptor in descriptors:
+            if descriptor < 0:
+                continue
+            record = next(
+                r
+                for r in reversed(self.preflight_descriptors)
+                if r[0] == descriptor and not r[3]
+            )
+            if record[2]:
+                continue
+            record[2] = True
+            try:
+                self.close_final(descriptor)
+            except BaseException as error:
+                self.cleanup_errors.append(error)
+                failures.append(error)
+            else:
+                record[3] = True
+        if failures:
+            raise next(
+                (e for e in failures if not isinstance(e, Exception)), failures[0]
+            )
+
+    def finish(self, body_error: BaseException | None) -> None:
+        self.body_error = (
+            self.preflight_body_errors[0] if self.preflight_body_errors else body_error
+        )
+        self.active = False
+        try:
+            self.close_preflight(
+                tuple(r[0] for r in self.preflight_descriptors if not r[2] and not r[3])
+            )
+        except BaseException as error:
+            if not any(error is retained for retained in self.cleanup_errors):
+                self.cleanup_errors.append(error)
+        try:
+            self.source.close()
+        except BaseException as error:
+            self.cleanup_errors.append(error)
+        for descriptor, _identity, retired in tuple(self.traversal_descriptors):
+            if not retired and descriptor not in self.traversal_failures:
+                try:
+                    self.close_traversal(descriptor)
+                except BaseException:
+                    pass  # Original native failure is retained by the observer.
+        if (
+            not self.allocation_pending
+            and not self.allocation_failures
+            and not self.cleanup_errors
+        ):
+            self.retire()
+        if self.cleanup_errors:
+            selected = next(
+                (e for e in self.cleanup_errors if not isinstance(e, Exception)),
+                self.cleanup_errors[0],
+            )
+            if body_error is not None and not isinstance(body_error, Exception):
+                raise body_error from selected
+            raise selected from body_error
+
+    def retire(self) -> None:
+        if (
+            self.active
+            or self.allocation_pending
+            or self.allocation_failures
+            or self.cleanup_errors
+            or self.source.file_fd >= 0
+            or self.source.parent_fd >= 0
+            or any(not r[3] for r in self.preflight_descriptors)
+            or any(not r[2] for r in self.traversal_descriptors)
+        ):
+            from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+            raise RecoveryRequired("sqlite_pin_resources_not_retired")
+        for lease in tuple(self.leases):
+            try:
+                lease.close()
+            except BaseException as error:
+                self.cleanup_errors.append(error)
+                raise
+            self.leases.remove(lease)
+        if self.capture_lease is not None:
+            scope = self.capture_lease.scope
+            self.capture_lease.close()
+            if self in scope.resources:
+                scope.resources.remove(self)
+        with self.storage._changed:
+            self.storage._raw_operations.discard(self)
+            self.storage._changed.notify_all()
 
 
 def _validate_backup_owner(
@@ -1529,16 +1822,23 @@ def _prepare_source_artifacts(
     selected: Path,
     *,
     enforce_private_mode: bool,
+    _pin_job: _SQLiteSourcePinJob | None = None,
 ) -> None:
     directory_result = verify_trusted_directory(
         selected.parent,
         allow_shared_sticky=False,
+        **(
+            {"_close": _pin_job.close_traversal, "_open": _pin_job.open_traversal}
+            if _pin_job is not None
+            else {}
+        ),
     )
     _prepare_artifact(
         selected,
         writable=False,
         create_if_missing=False,
         enforce_private_mode=enforce_private_mode,
+        _pin_job=_pin_job,
     )
     for suffix in _SIDECAR_SUFFIXES:
         _prepare_artifact(
@@ -1547,6 +1847,7 @@ def _prepare_source_artifacts(
             create_if_missing=False,
             optional=True,
             enforce_private_mode=enforce_private_mode,
+            _pin_job=_pin_job,
         )
     if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
         _warn_unverified_platform(owner_id)
@@ -1624,54 +1925,44 @@ def _pin_sqlite_source(
 
     policy = _validated_owner_policy(owner_id)
     enforce_private_mode = not policy.preserve_read_only_source_mode
-    _prepare_source_artifacts(
-        owner_id,
-        selected,
-        enforce_private_mode=enforce_private_mode,
-    )
-    if private_paths._posix_guards_available():
-        parent_fd, leaf = private_paths._open_verified_parent(
+    job = _SQLiteSourcePinJob(owner_id, selected, enforce_private_mode)
+    source = job.source
+    body_error = None
+    try:
+        job.admit()
+        _prepare_source_artifacts(
+            owner_id,
             selected,
-            missing_leaf_allowed=False,
+            enforce_private_mode=enforce_private_mode,
+            _pin_job=job,
         )
-        file_fd = -1
-        try:
-            file_fd = _open_artifact_fd(
-                parent_fd,
+        if private_paths._posix_guards_available():
+            job.check()
+            source.parent_fd, leaf = private_paths._open_verified_parent(
+                selected,
+                missing_leaf_allowed=False,
+                _close=job.close_traversal,
+                _open=job.open_traversal,
+            )
+            job.allocation_pending = False
+            job.open_file(
+                source.parent_fd,
                 leaf,
+                selected,
+                final=True,
                 writable=False,
                 create=False,
             )
-            identity = os.fstat(file_fd)
-            source = _PinnedSQLiteSource(
-                selected=selected,
-                identity=identity,
-                parent_fd=parent_fd,
-                file_fd=file_fd,
-                enforce_private_mode=enforce_private_mode,
-            )
-            parent_fd = -1
-            file_fd = -1
-            try:
-                _reverify_source(source)
-                yield source
-            finally:
-                source.close()
-        finally:
-            if file_fd >= 0:
-                os.close(file_fd)
-            if parent_fd >= 0:
-                os.close(parent_fd)
-        return
-
-    identity = selected.lstat()
-    source = _PinnedSQLiteSource(
-        selected=selected,
-        identity=identity,
-        enforce_private_mode=enforce_private_mode,
-    )
-    _reverify_source(source)
-    yield source
+            source.identity = os.fstat(source.file_fd)
+        else:
+            source.identity = selected.lstat()
+        _reverify_source(source)
+        yield source
+    except BaseException as error:
+        body_error = error
+        raise
+    finally:
+        job.finish(body_error)
 
 
 def _private_destination(database: str | os.PathLike[str]) -> Path:
