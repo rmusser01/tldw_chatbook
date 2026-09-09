@@ -463,7 +463,7 @@ def test_failed_row_line_appends_retry_suffix():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     row = state.queue_rows[0]
-    assert row.line == "✗ failed · report.txt · bad codec · attempt 3"
+    assert row.line == "✗ failed · report.txt · bad codec · retry 2"
 
 
 def test_basename_used_for_nested_path():
@@ -2580,7 +2580,7 @@ def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
     """
     # (Qodo round) detected_type is appended by the parsing/writing
     # branches, so the marker must be the row's TRAILING element -- with a
-    # type present it used to read "… · attempt 2 · pdf".
+    # type present it used to read "… · retry 1 · pdf".
     for state_value, word, detected in (
         (IngestJobState.QUEUED, "queued", ""),
         (IngestJobState.PARSING, "parsing", "pdf"),
@@ -2597,8 +2597,8 @@ def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
             (job,), form=LibraryIngestFormState()
         ).queue_rows[0]
         assert row.line.startswith(f"● {word} · broken.pdf")
-        assert row.line.endswith("· attempt 2"), (
-            f"{word} row must show the attempt number: {row.line!r}"
+        assert row.line.endswith("· retry 1"), (
+            f"{word} row must show the retry number: {row.line!r}"
         )
 
     first = _job(job_id="ingest-job-2", state=IngestJobState.PARSING)

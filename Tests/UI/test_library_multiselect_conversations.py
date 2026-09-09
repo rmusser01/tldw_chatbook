@@ -372,7 +372,19 @@ async def test_conversations_toolbar_count_static_stays_bounded_width_with_real_
 @pytest.mark.asyncio
 async def test_zero_checked_select_mode_keeps_reader_read_only_until_done() -> None:
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    conversations = _two_conversations()
+    _seed_conversations(app, conversations)
+    # (task-32056) The header action is now also gated on workspace
+    # eligibility, so link these rows into the active workspace -- this test
+    # is about the bulk-selection fence, not the workspace one.
+    registry = app.workspace_registry_service
+    for record in conversations:
+        registry.link_membership(
+            registry.ensure_default_workspace().workspace_id,
+            item_type="conversation",
+            item_id=str(record["conversation_id"]),
+            title=str(record["title"]),
+        )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:

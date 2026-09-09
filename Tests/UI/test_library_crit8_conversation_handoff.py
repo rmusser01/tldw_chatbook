@@ -1,0 +1,421 @@
+"""Conversations "Open in Console" recovery (critique #8 row 7, task-32056).
+
+The action sat at the bottom of the reader under a 30-message transcript and
+refused with a toast naming a workspace the user had no way to link into.
+"""
+
+from __future__ import annotations
+
+import pytest
+from textual.widgets import Button, Static
+
+from tldw_chatbook.Library.library_conversation_reader_state import (
+    ConversationMessageView,
+    ConversationReaderState,
+)
+from tldw_chatbook.Widgets.Library import LibraryConversationReader
+
+
+def _loaded_reader_state() -> ConversationReaderState:
+    return ConversationReaderState(
+        selected_id="chat-a",
+        selected_version=4,
+        loaded_id="chat-a",
+        loaded_version=4,
+        loaded_generation=2,
+        generation=2,
+        messages=(
+            ConversationMessageView(
+                "message-a", "user", "2026-08-23T12:01:00Z", "revision-a", 5, "hello"
+            ),
+        ),
+        message_total=1,
+        complete=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_open_console_sits_in_the_header_beside_read_and_info(
+    widget_pilot,
+) -> None:
+    """AC#1: the action is header chrome, not a footer under the transcript."""
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=_loaded_reader_state(),
+        loaded_metadata={"title": "Alpha planning"},
+        id="library-conversation-reader",
+    ) as pilot:
+        reader = pilot.app.query_one(
+            "#library-conversation-reader", LibraryConversationReader
+        )
+        order = [
+            child.id
+            for child in reader.walk_children()
+            if child.id
+            in {
+                "library-conversation-reader-read",
+                "library-conversation-reader-info",
+                "library-conversation-open-console",
+                "library-conversation-reader-status",
+                "library-conversation-reader-messages",
+            }
+        ]
+        assert order.index("library-conversation-open-console") < order.index(
+            "library-conversation-reader-status"
+        )
+        assert order.index("library-conversation-open-console") < order.index(
+            "library-conversation-reader-messages"
+        )
+
+
+@pytest.mark.asyncio
+async def test_workspace_refusal_is_inline_with_a_link_action(
+    widget_pilot,
+) -> None:
+    """AC#2/#3: the reason and the remedy render on the action itself."""
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=_loaded_reader_state(),
+        loaded_metadata={
+            "title": "Alpha planning",
+            "_workspace_block": "not in this workspace",
+            "_workspace_block_linkable": True,
+        },
+        id="library-conversation-reader",
+    ) as pilot:
+        open_console = pilot.app.query_one(
+            "#library-conversation-open-console", Button
+        )
+        blocked = pilot.app.query_one(
+            "#library-conversation-open-console-blocked", Static
+        )
+        link = pilot.app.query_one("#library-conversation-link-workspace", Button)
+
+        # The reason wraps in a Static, not the Button label: a Button label
+        # is single-line and truncates (fix round 1).
+        assert str(blocked.renderable) == (
+            "○ Open in Console · not in this workspace"
+        )
+        assert blocked.display is True
+        assert open_console.disabled is True
+        assert link.display is True
+        assert link.disabled is False
+        assert str(link.label) == "Link to workspace"
+
+
+@pytest.mark.asyncio
+async def test_linking_clears_the_inline_refusal(widget_pilot) -> None:
+    """After the link lands, the same reader enables the hand-off."""
+    state = _loaded_reader_state()
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=state,
+        loaded_metadata={
+            "title": "Alpha planning",
+            "_workspace_block": "not in this workspace",
+            "_workspace_block_linkable": True,
+        },
+        id="library-conversation-reader",
+    ) as pilot:
+        reader = pilot.app.query_one(
+            "#library-conversation-reader", LibraryConversationReader
+        )
+        reader.sync_state(state, loaded_metadata={"title": "Alpha planning"})
+        await pilot.pause()
+
+        open_console = pilot.app.query_one(
+            "#library-conversation-open-console", Button
+        )
+        blocked = pilot.app.query_one(
+            "#library-conversation-open-console-blocked", Static
+        )
+        link = pilot.app.query_one("#library-conversation-link-workspace", Button)
+        assert str(open_console.label) == "Open in Console"
+        assert open_console.disabled is False
+        assert blocked.display is False
+        assert link.display is False
+
+
+def test_link_to_workspace_makes_the_conversation_eligible() -> None:
+    """AC#2: the remedy writes the membership the eligibility rule wants."""
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.Workspaces.display_state import (
+        build_library_workspace_depth_state,
+        library_item_context_handoff,
+    )
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    registry.set_active_workspace("workspace-a")
+    records = {
+        "conversations": [{"id": "chat-a", "title": "Alpha planning"}],
+        "notes": [],
+        "media": [],
+    }
+
+    before = build_library_workspace_depth_state(
+        registry_service=registry, source_records=records
+    )
+    eligible, reason = library_item_context_handoff(
+        before, item_type="conversation", item_id="chat-a"
+    )
+    assert eligible is False
+    assert reason
+
+    registry.link_membership(
+        "workspace-a",
+        item_type="conversation",
+        item_id="chat-a",
+        title="Alpha planning",
+    )
+
+    after = build_library_workspace_depth_state(
+        registry_service=registry, source_records=records
+    )
+    assert library_item_context_handoff(
+        after, item_type="conversation", item_id="chat-a"
+    ) == (True, "")
+
+
+def test_conversation_open_console_has_a_keyboard_route() -> None:
+    """AC#1: 'c' reaches the hand-off, mirroring Media's own binding."""
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LibraryScreen,
+    )
+    from Tests.UI.app_factory import _build_test_app
+
+    actions = {
+        binding.action
+        for binding in LibraryScreen.BINDINGS
+        if getattr(binding, "key", None) == "c"
+    }
+    assert "library_conversation_open_console" in actions
+    assert hasattr(LibraryScreen, "action_library_conversation_open_console")
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    registry.set_active_workspace("workspace-a")
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
+    )
+    screen._conversations_state.reader_state = _loaded_reader_state()
+    screen._local_source_records["conversations"] = [
+        {"id": "chat-a", "title": "Alpha planning"}
+    ]
+
+    # Blocked: the key must refuse exactly where the button does, or it
+    # reaches the press and raises the toast (fix round 1).
+    assert screen.check_action("library_conversation_open_console", ()) is False
+
+    registry.link_membership(
+        "workspace-a",
+        item_type="conversation",
+        item_id="chat-a",
+        title="Alpha planning",
+    )
+    screen._invalidate_library_workspace_depth_state()
+    assert screen.check_action("library_conversation_open_console", ()) is True
+
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    assert screen.check_action("library_conversation_open_console", ()) is False
+
+
+@pytest.mark.asyncio
+async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None:
+    """End to end: the seeded (unlinked) conversation, then the remedy.
+
+    The refusal names the block on the action itself and the adjacent
+    "Link to workspace" resolves it in place -- previously the press only
+    raised a toast naming a workspace with nothing on screen to link into.
+    """
+    from Tests.UI.test_library_shell import (
+        LIBRARY_TEST_SIZE,
+        LibraryHarness,
+        _active_library_screen,
+        _build_test_app,
+        _seed_conversations,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        LibraryScreen,
+    )
+
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        [
+            {
+                "id": "chat-a",
+                "title": "Alpha planning",
+                "version": 4,
+                "message_count": 1,
+                "last_modified": "2026-08-23T12:00:00Z",
+            }
+        ],
+    )
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    registry.set_active_workspace("workspace-a")
+
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-conversation-reader")
+        for _ in range(20):
+            if screen._conversations_state.reader_state.loaded_id:
+                break
+            await pilot.pause(0.01)
+
+        open_console = screen.query_one(
+            "#library-conversation-open-console", Button
+        )
+        blocked = screen.query_one(
+            "#library-conversation-open-console-blocked", Static
+        )
+        link = screen.query_one("#library-conversation-link-workspace", Button)
+        assert str(blocked.renderable) == (
+            "○ Open in Console · not in this workspace"
+        )
+        assert open_console.disabled is True
+        assert link.display is True
+        # The accelerator must refuse exactly while the button does --
+        # otherwise "c" reaches the press and raises the toast this task
+        # exists to remove (fix round 1).
+        assert screen.check_action("library_conversation_open_console", ()) is False
+
+        link.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert registry.get_item_memberships(
+            item_type="conversation", item_id="chat-a"
+        )
+        open_console = screen.query_one(
+            "#library-conversation-open-console", Button
+        )
+        assert str(open_console.label) == "Open in Console"
+        assert open_console.disabled is False
+        assert (
+            screen.query_one(
+                "#library-conversation-open-console-blocked", Static
+            ).display
+            is False
+        )
+        assert (
+            screen.query_one(
+                "#library-conversation-link-workspace", Button
+            ).display
+            is False
+        )
+        assert screen.check_action("library_conversation_open_console", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_link_is_withheld_while_the_selection_outruns_the_transcript(
+    widget_pilot,
+) -> None:
+    """Review round 2: the remedy writes ``loaded_id``, so it obeys the load fence.
+
+    Selecting another conversation leaves the previous transcript on screen
+    until the new one loads; offering "Link to workspace" there would link
+    the conversation the user just navigated away from.
+    """
+    from dataclasses import replace
+
+    state = replace(
+        _loaded_reader_state(),
+        selected_id="chat-b",
+        selected_version=7,
+        loading=True,
+    )
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=state,
+        loaded_metadata={
+            "title": "Alpha planning",
+            "_workspace_block": "not in this workspace",
+            "_workspace_block_linkable": True,
+        },
+        id="library-conversation-reader",
+    ) as pilot:
+        link = pilot.app.query_one("#library-conversation-link-workspace", Button)
+        assert link.display is False
+
+
+@pytest.mark.asyncio
+async def test_non_linkable_block_keeps_its_own_recovery_copy(
+    widget_pilot,
+) -> None:
+    """Review round 2: never name a control the block does not offer.
+
+    A block linking cannot resolve (no active workspace) hides the link, so
+    the disabled hand-off must repeat the eligibility rule's own remedy
+    instead of pointing at a button that is not on screen.
+    """
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=_loaded_reader_state(),
+        loaded_metadata={
+            "title": "Alpha planning",
+            "_workspace_block": "blocked for this workspace",
+            "_workspace_block_linkable": False,
+            "_workspace_block_detail": (
+                "Select an active workspace before using this item in Console."
+            ),
+        },
+        id="library-conversation-reader",
+    ) as pilot:
+        open_console = pilot.app.query_one(
+            "#library-conversation-open-console", Button
+        )
+        link = pilot.app.query_one("#library-conversation-link-workspace", Button)
+        assert link.display is False
+        assert open_console.disabled is True
+        tooltip = str(open_console.tooltip)
+        assert "Link to workspace" not in tooltip
+        assert "Select an active workspace" in tooltip
+
+
+def test_link_remedy_refuses_a_stale_retained_transcript() -> None:
+    """Review round 2: the persisting seam re-checks the fence it renders."""
+    from dataclasses import replace
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        LibraryScreen,
+    )
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    registry.set_active_workspace("workspace-a")
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
+    )
+    screen._local_source_records["conversations"] = [
+        {"id": "chat-a", "title": "Alpha planning"}
+    ]
+    screen._conversations_state.reader_state = replace(
+        _loaded_reader_state(), selected_id="chat-b", selected_version=7, loading=True
+    )
+
+    screen._link_selected_conversation_to_workspace()
+
+    assert not registry.get_item_memberships(
+        item_type="conversation", item_id="chat-a"
+    )

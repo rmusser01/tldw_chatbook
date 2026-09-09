@@ -278,6 +278,10 @@ class LibraryWorkspaceSourceRow:
     authority_label: str
     context_label: str
     recovery_copy: str = ""
+    #: (task-32056) The rule's own reason code, so a consumer can render a
+    #: short inline label and decide whether linking would resolve it,
+    #: instead of pattern-matching ``recovery_copy``.
+    reason_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -878,6 +882,7 @@ def _library_source_rows_without_workspace(
                     active_context_eligible=True,
                     authority_label="Workspace: unscoped",
                     context_label="Console/RAG: local default",
+                    reason_code="visible",
                 )
             )
     return tuple(rows)
@@ -922,6 +927,7 @@ def _library_workspace_source_row(
             else "Console/RAG: blocked"
         ),
         recovery_copy=decision.recovery_copy,
+        reason_code=decision.reason_code,
     )
 
 
