@@ -369,6 +369,13 @@ name with the title the note will get. Available templates: Brainstorming
 session, Bug report, Code review, Daily journal entry, Meeting notes,
 Project planning, Research notes, Todo list.
 
+Opening this view parks keyboard focus on **Blank note**, so Enter creates
+a note straight away without tabbing to find it; ↑/↓ move between Blank
+note and the template rows, and the focused row carries the same left-edge
+bar the Notes list rows use. The footer's "enter create note" appears only
+while one of those rows genuinely has focus — move to "‹ Notes" and it
+drops, because Enter there goes back rather than creating anything.
+
 ### Add from files and lasting sync
 
 **Add from files…** first asks what relationship you want:
@@ -516,6 +523,8 @@ automatic-sync setting.
 | **/** | Focus the note filter ("find note") |
 | **Escape** | Focus the rail |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
+| ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
+| Enter (New note view) | Create from the focused row |
 
 The footer advertises these as `ctrl+n new note | / find note | esc focus
 rail`. Notes does not register **Ctrl+S** and does not replace it with
@@ -641,3 +650,9 @@ note / Remove placement** set, and the footer's **ctrl+n new note** and
 whitespace-title rule was corrected: the abandon-discard check tests
 `title.strip()`, so a spaces-only title with an empty body does NOT keep
 the note, contrary to the "typing anything keeps it" claim.)*
+
+*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32052: the
+New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
+rows with a visible cursor, the footer's "enter create note" follows the
+focused control, and Tab no longer leaves the Library screen for the
+navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*
