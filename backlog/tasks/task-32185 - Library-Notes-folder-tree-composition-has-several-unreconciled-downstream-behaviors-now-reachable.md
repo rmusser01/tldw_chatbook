@@ -1,5 +1,5 @@
 ---
-id: TASK-32182
+id: TASK-32185
 title: >-
   Library Notes: folder-tree composition has several unreconciled downstream
   behaviors now reachable
@@ -35,5 +35,5 @@ Unblocking task-32175's flat #library-notes-row-0 wait let numerous Database Not
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Discovered while verifying task-32175. Reproduction: each named test fails at the specific assertion cited in its AC once task-32175's row-selector fix lands; base (pre-task-32175) never reached these lines. Not fixed here -- task-32175 is test-only. task-32181 tracks a separate, already-filed items_width layout defect from the same unblocking.
+Discovered while verifying task-32175. Reproduction: each named test fails at the specific assertion cited in its AC once task-32175's row-selector fix lands; base (pre-task-32175) never reached these lines. Not fixed here -- task-32175 is test-only. task-32184 tracks a separate, already-filed items_width layout defect from the same unblocking.
 <!-- SECTION:NOTES:END -->

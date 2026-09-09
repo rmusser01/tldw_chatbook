@@ -1,5 +1,5 @@
 ---
-id: TASK-32181
+id: TASK-32184
 title: >-
   Library Notes: adaptive reader items_width mismatch for wide terminals now
   reachable
