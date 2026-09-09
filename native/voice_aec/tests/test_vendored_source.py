@@ -715,7 +715,12 @@ def test_vendor_verifier_rejects_changed_patch_bytes(
 
 def test_autocrlf_checkout_preserves_full_vendor_and_external_legal_bytes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Git apply also reads global settings in the out-of-repository pristine stage.
+    global_config = tmp_path / "gitconfig"
+    global_config.write_text("[core]\n\tautocrlf = true\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
     repository = tmp_path / "repository"
     package = repository / "native" / "voice_aec"
     package.mkdir(parents=True)

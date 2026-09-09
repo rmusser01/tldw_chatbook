@@ -474,8 +474,9 @@ def _verified_patch_path(name: str, expected_digest: str) -> Path:
 
 
 def _git_apply(vendor_root: Path, patch: Path, *options: str) -> None:
+    # Temporary pristine trees have no checkout attributes to protect their bytes.
     result = subprocess.run(
-        ["git", "apply", *options, str(patch)],
+        ["git", "-c", "core.autocrlf=false", "apply", *options, str(patch)],
         cwd=vendor_root,
         capture_output=True,
         text=True,
