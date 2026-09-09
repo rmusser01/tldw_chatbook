@@ -1,8 +1,10 @@
 # Native goal runs: implementation qualification
 
-Status: **final review fixes in progress**. Five slices received task-scoped approval; the whole-branch review found three functional gaps and two minor issues. The affected tasks are reopened for one fix wave and scoped re-review. The configured local model was exercised and did not complete the task; its observed failure remains recorded below.
+Status: **final fix re-review pending**. The five whole-branch findings are implemented in `525c61a944`; the affected tasks remain open until the scoped re-review approves them. The configured local model was exercised before these fixes and did not complete the task; its historical failure remains recorded below.
 
 Scope: the goal feature on `codex/native-goal-runs`, relative to preserved prerequisite baseline `77bc58dc171c3dcd2178f4433d19a6ceb59b1e7b`. The original shared checkout was extensively dirty; its prerequisite changes were preserved separately before implementation. Integration must reconcile those owners and the independent Workflows branch before merging.
+
+A final [local identifier scan](../qa/native-goals/task5/final-id-scan.json) checked TASK-32116 through TASK-32120 and ADR-141 across **485 local branch/remote refs and 19 registered worktrees**, finding no conflicting filenames. This is a local snapshot without a fetch or reservation against future work; integration still requires a fresh reconciliation.
 
 Authority: [accepted ADR-141](../../../backlog/decisions/141-native-console-goal-runs.md), [design](../specs/2026-09-08-gnhf-inspired-goal-runs-design.md), [implementation plan](../plans/2026-09-08-gnhf-inspired-goal-runs.md), and [original seven-finding review](2026-09-08-goal-runs-preimplementation-review.md).
 
@@ -66,9 +68,15 @@ This gate also emitted existing invalid-escape warnings from `Tools/patch_tool_i
 
 ## Final whole-branch review
 
-The independent review at `2c63e578e1` found three functional gaps: editable fields could diverge from the saved request during launch validation; selected verifier invocation details were absent from model context; and additional source selections were never consumed by context or tools. It also carried the disabled tool-choice cleanup issue and found a blank separator before ADR-141 in the index table. All five findings are accepted for one fix wave. The retention-cap distinction was investigated and matched the specified evidence-per-goal and aggregate-payload limits.
+The [independent review record](2026-09-09-goal-runs-final-review.md) at `2c63e578e1` found three functional gaps: editable fields could diverge from the saved request during launch validation; selected verifier invocation details were absent from model context; and additional source selections were never consumed by context or tools. It also carried the disabled tool-choice cleanup issue and found a blank separator before ADR-141 in the index table. All five findings are accepted for one fix wave. The retention-cap distinction was investigated and matched the specified evidence-per-goal and aggregate-payload limits.
 
-Remaining: implement all five fixes, inspect the affected behavioral evidence and scoped re-review, finish Backlog/plan bookkeeping, then hand off the isolated branch with its integration constraints.
+Commit `525c61a944` locks all editable launch fields through validation and restores consistent controls after failure. Canonical skill owners now provide exact verifier calls in actual initial and later model requests. Selected source roots support existing permission-gated `fs_read`/`fs_list`; writes, relative paths and glob/grep remain primary-scoped. Root/ancestor identity checks reject source replacement during a wait, and source data does not activate project instructions. Both necessary ADR-index separators were removed without changing entries.
+
+The [affected gate](../qa/native-goals/task5/final-fix-affected.txt) returned **279 passed, 1 intentional live skip, 1 unchanged baseline failure**. Two later geometry checks and two strengthened validation-cleanup checks passed; counts overlap. Eight-file Ruff/format passed, and four touched legacy owners have no new lint diagnostics. The remaining test calls a review hook without its required `run_id`: its source and the hook signature are [identical to the preserved baseline](../qa/native-goals/task5/review-hook-baseline-proof.json), corroborating the earlier [actual baseline reproduction](../qa/native-goals/task5/review-hook-baseline-probe.txt). This affected gate is not globally green.
+
+Root inspected the regenerated deterministic trace: the initial and later requests include the selected exact invocation while objective prose omits it. The actual CLI still exits **7→0** across two increments/five calls, with the same verifier SHA-256, the exact retained `valid\n` file and one-line diff, changed source fingerprints and unchanged external sentinel. The normalized trace matches its retained raw-capture hash. Both historical local-model traces remain byte-for-byte unchanged; their objectives already repeated the invocation, so missing launch metadata does not explain away those failures. No additional model calls were made.
+
+Remaining: the one scoped fix-wave re-review, final Backlog/plan bookkeeping and integration handoff.
 
 ## Implementation decisions
 

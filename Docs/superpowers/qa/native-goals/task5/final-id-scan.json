@@ -1,0 +1,16 @@
+{
+  "scope": "Existing local branch/remote refs and registered worktree files only; no fetch, allocation or merge",
+  "refs_scanned": 485,
+  "worktrees_scanned": 19,
+  "missing_worktrees": [],
+  "expected": {
+    "TASK-32116": "backlog/tasks/task-32116 - Persist-native-goal-runs-and-recoverable-launch-intent.md",
+    "TASK-32118": "backlog/tasks/task-32118 - Checkpoint-goal-progress-and-verify-current-artifacts.md",
+    "TASK-32117": "backlog/tasks/task-32117 - Execute-one-bounded-native-goal-iteration-with-CLI-evidence.md",
+    "TASK-32120": "backlog/tasks/task-32120 - Expose-native-goal-controls-and-qualify-CLI-workflow.md",
+    "TASK-32119": "backlog/tasks/task-32119 - Continue-pause-and-recover-bounded-native-goals.md",
+    "ADR-141": "backlog/decisions/141-native-console-goal-runs.md"
+  },
+  "matches": 13,
+  "conflicts": []
+}

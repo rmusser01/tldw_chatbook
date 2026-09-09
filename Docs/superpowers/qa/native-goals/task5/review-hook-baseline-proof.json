@@ -1,0 +1,21 @@
+{
+  "baseline": "77bc58dc171c3dcd2178f4433d19a6ceb59b1e7b",
+  "test": "Tests/Chat/test_console_local_review_hook.py",
+  "test_byte_identical": true,
+  "test_sha256": "1a27ff2f7be0b419dffd62dd909ddeb8013710b91a36b49707aba29ec817b2b9",
+  "owner": "tldw_chatbook/Chat/console_chat_controller.py",
+  "baseline_required_positional": [
+    "calls",
+    "run_id"
+  ],
+  "current_required_positional": [
+    "calls",
+    "run_id"
+  ],
+  "signature_ast_identical": true,
+  "failing_test_call_line": 539,
+  "failing_test_passes_positional": 1,
+  "current_gate": "1 failed,279 passed,1 opt-in live skip",
+  "earlier_actual_baseline_probe": "/private/tmp/task2-baseline-review-probe.log:1 passed; exact baseline hook compiled and same test called, as recorded in task-2-report.md",
+  "qualification": "Source/signature comparison corroborates previously executed baseline reproduction; no new product test or model call."
+}
