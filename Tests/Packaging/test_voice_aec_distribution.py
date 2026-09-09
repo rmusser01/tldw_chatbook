@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import re
+import stat
 import subprocess
 import sys
 import tarfile
@@ -600,6 +601,110 @@ def test_wheel_checker_accepts_complete_platform_wheel(tmp_path: Path) -> None:
     wheel = _write_synthetic_wheel(tmp_path)
 
     assert checker.check_wheel(wheel, expected_version=APP_VERSION) == []
+
+
+def test_wheel_checker_accepts_empty_platform_directory_entries(tmp_path: Path) -> None:
+    checker = _load_script(WHEEL_CHECKER_PATH)
+    dist_info = "tldw_voice_aec-0.2.0.dist-info"
+    wheel = _write_synthetic_wheel(
+        tmp_path,
+        version="0.2.0",
+        extra_members=dict.fromkeys(
+            (
+                f"{dist_info}/",
+                f"{dist_info}/licenses/",
+                f"{dist_info}/licenses/vendor/",
+                f"{dist_info}/licenses/vendor/webrtc/",
+                "tldw_voice_aec/",
+                "tldw_voice_aec/provenance/",
+            ),
+            b"",
+        ),
+    )
+
+    assert checker.check_wheel(wheel, expected_version="0.2.0") == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../escape/",
+        "/absolute/",
+        "C:/absolute/",
+        "C:relative/",
+        "tldw_voice_aec\\bad/",
+        "./tldw_voice_aec/",
+        "tldw_voice_aec//provenance/",
+        "tldw_voice_aec/../escape/",
+        "./",
+    ],
+)
+def test_wheel_checker_rejects_unsafe_directory_paths(
+    tmp_path: Path, name: str
+) -> None:
+    checker = _load_script(WHEEL_CHECKER_PATH)
+    wheel = _write_synthetic_wheel(tmp_path, extra_members={name: b""})
+
+    assert "unsafe archive members" in "\n".join(
+        checker.check_wheel(wheel, expected_version=APP_VERSION)
+    )
+
+
+@pytest.mark.parametrize(
+    ("contents", "mode"),
+    [(b"hidden payload", stat.S_IFDIR), (b"", stat.S_IFLNK), (b"", stat.S_IFREG)],
+)
+def test_wheel_checker_rejects_non_directory_payload_or_metadata(
+    tmp_path: Path, contents: bytes, mode: int
+) -> None:
+    checker = _load_script(WHEEL_CHECKER_PATH)
+    wheel = _write_synthetic_wheel(tmp_path)
+    directory = zipfile.ZipInfo("tldw_voice_aec/hidden/")
+    directory.create_system = 3
+    directory.external_attr = (mode | 0o755) << 16 | 0x10
+    with zipfile.ZipFile(wheel, "a") as archive:
+        archive.writestr(directory, contents)
+
+    assert "unsafe archive members" in "\n".join(
+        checker.check_wheel(wheel, expected_version=APP_VERSION)
+    )
+
+
+@pytest.mark.parametrize(
+    "name", ["foreign-1.0.dist-info/", "tldw_voice_aec/nested.dist-info/"]
+)
+def test_wheel_checker_rejects_foreign_dist_info_directory(
+    tmp_path: Path, name: str
+) -> None:
+    checker = _load_script(WHEEL_CHECKER_PATH)
+    wheel = _write_synthetic_wheel(tmp_path, extra_members={name: b""})
+
+    assert "exact dist-info root" in "\n".join(
+        checker.check_wheel(wheel, expected_version=APP_VERSION)
+    )
+
+
+def test_wheel_checker_rejects_file_directory_collision(tmp_path: Path) -> None:
+    checker = _load_script(WHEEL_CHECKER_PATH)
+    wheel = _write_synthetic_wheel(
+        tmp_path, extra_members={"tldw_voice_aec/provenance/UPSTREAM.json/": b""}
+    )
+
+    assert "duplicate archive members" in "\n".join(
+        checker.check_wheel(wheel, expected_version=APP_VERSION)
+    )
+
+
+def test_wheel_checker_rejects_duplicate_directories(tmp_path: Path) -> None:
+    checker = _load_script(WHEEL_CHECKER_PATH)
+    wheel = _write_synthetic_wheel(tmp_path, extra_members={"tldw_voice_aec/": b""})
+    with zipfile.ZipFile(wheel, "a") as archive:
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            archive.writestr("tldw_voice_aec/", b"")
+
+    assert "duplicate archive members" in "\n".join(
+        checker.check_wheel(wheel, expected_version=APP_VERSION)
+    )
 
 
 @pytest.mark.parametrize(

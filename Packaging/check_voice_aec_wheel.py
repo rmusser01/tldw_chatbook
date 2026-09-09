@@ -8,8 +8,9 @@ from email.parser import BytesParser
 from email.policy import compat32
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import stat
 import sys
 import tarfile
 import tomllib
@@ -100,15 +101,24 @@ def _expected_version() -> str:
     return str(metadata["project"]["version"])
 
 
-def _unsafe_member(name: str) -> bool:
+def _unsafe_member(member: zipfile.ZipInfo) -> bool:
+    name = member.filename.removesuffix("/")
     path = PurePosixPath(name)
     return (
         not name
+        or name == "."
         or "\\" in name
         or path.is_absolute()
+        or bool(PureWindowsPath(name).drive)
         or ".." in path.parts
-        or "." in path.parts
-        or name.endswith("/")
+        or name != path.as_posix()
+        or (
+            member.filename.endswith("/")
+            and (
+                member.file_size != 0
+                or stat.S_IFMT(member.external_attr >> 16) not in (0, stat.S_IFDIR)
+            )
+        )
     )
 
 
@@ -204,10 +214,13 @@ def check_wheel(path: Path, *, expected_version: str | None = None) -> list[str]
 
     try:
         with zipfile.ZipFile(path) as archive:
-            names = archive.namelist()
-            if len(names) != len(set(names)):
+            members = archive.infolist()
+            names = [member.filename for member in members]
+            if len(names) != len({name.removesuffix("/") for name in names}):
                 errors.append("wheel contains duplicate archive members")
-            unsafe = sorted(name for name in names if _unsafe_member(name))
+            unsafe = sorted(
+                member.filename for member in members if _unsafe_member(member)
+            )
             if unsafe:
                 errors.append(f"wheel contains unsafe archive members: {unsafe}")
             files = {name for name in names if not name.endswith("/")}
@@ -215,7 +228,7 @@ def check_wheel(path: Path, *, expected_version: str | None = None) -> list[str]
             expected_dist_info = f"{PACKAGE_DIR}-{version}.dist-info"
             dist_info_markers = {
                 (name, index, part)
-                for name in files
+                for name in names
                 for index, part in enumerate(PurePosixPath(name).parts)
                 if ".dist-info" in part.lower()
             }
