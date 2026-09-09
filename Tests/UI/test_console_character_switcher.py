@@ -1540,3 +1540,13 @@ async def test_plain_f3_is_inert_under_open_switcher_and_logs_after_dismiss():
         await pilot.press("f3")
         await pilot.pause()
         assert app.posted_routes == ["logs"]
+
+
+def test_keyword_page_loader_has_one_controller_owner():
+    from tldw_chatbook.UI.Console_Modules.character_context import (
+        ConsoleCharacterContextController,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    assert not hasattr(ChatScreen, "_load_console_character_switcher_page")
+    assert callable(ConsoleCharacterContextController.keyword_page)
