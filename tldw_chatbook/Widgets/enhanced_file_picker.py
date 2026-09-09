@@ -22,7 +22,10 @@ from textual.timer import Timer
 from textual.widgets import Button, Input, Label, ListItem, ListView, OptionList, Static
 
 from ..Third_Party.textual_fspicker import Filters
-from ..Third_Party.textual_fspicker.base_dialog import FileSystemPickerScreen
+from ..Third_Party.textual_fspicker.base_dialog import (
+    FileSystemPickerScreen,
+    resolve_typed_directory,
+)
 from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
 from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryEntry
@@ -2557,47 +2560,6 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
     def _dir_nav(self) -> SearchableDirectoryNavigation:
         return self.query_one(SearchableDirectoryNavigation)
 
-    def _resolve_typed_directory(self, value: str) -> Union[Path, str]:
-        """Resolve a typed field value to an absolute directory, or an error.
-
-        Shared by Enter-to-navigate (``_on_dir_path_submit``) and
-        Select-to-confirm (``_select_viewed_directory``) so both actions
-        agree on what the typed text means (task-32122 AC#1): Select used
-        to ignore the field entirely and return whatever directory was
-        merely being browsed.
-
-        Returns:
-            The resolved absolute ``Path`` when it names an existing
-            directory, or an error string ready for ``_set_error`` when it
-            does not.
-        """
-        value = value.strip()
-        current = self._dir_nav().location
-        if not value or value == str(current):
-            # Unchanged from the directory being browsed (the field is kept
-            # in step with it -- see ``_sync_dir_path_input``): return that
-            # exact object rather than re-resolving its own string form.
-            # Symlinked locations (macOS "/tmp" -> "/private/tmp") would
-            # otherwise change the plain no-typing Select result.
-            return current
-        if "\x00" in value:
-            return "Path cannot contain null characters."
-        try:
-            target = MakePath.of(value).expanduser()
-            if not target.is_absolute():
-                target = self._dir_nav().location / target
-            target = target.resolve()
-        except (RuntimeError, OSError, ValueError) as error:
-            return str(error)
-        if target.is_dir():
-            return target
-        if target.exists():
-            # A real path that is not a directory is a different mistake
-            # than a nonexistent one; the vendored SelectDirectory
-            # distinguishes them too.
-            return f"Not a directory: {target.name}"
-        return f"Path not found: {value}"
-
     def _sync_dir_path_input(self, location: Path) -> None:
         try:
             self.query_one("#dir-path-input", Input).value = str(location)
@@ -2642,7 +2604,7 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
         value = event.value.strip()
         if not value:
             return
-        result = self._resolve_typed_directory(value)
+        result = resolve_typed_directory(value, self._dir_nav().location)
         if isinstance(result, Path):
             self._dir_nav().location = result
             return
@@ -2657,13 +2619,13 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
         merely being browsed -- silently discarding a path the user typed
         but never pressed Enter on (task-32122 AC#1). Resolving the field
         first, with an empty field falling back to the browsed directory
-        (``_resolve_typed_directory``'s own empty-value behavior, matching
+        (``resolve_typed_directory``'s own empty-value behavior, matching
         ``_sync_dir_path_input`` keeping the field in step with
         navigation), keeps the no-typing case unchanged.
         """
         event.stop()
         value = self.query_one("#dir-path-input", Input).value
-        result = self._resolve_typed_directory(value)
+        result = resolve_typed_directory(value, self._dir_nav().location)
         if isinstance(result, Path):
             self.dismiss(result=result)
             return

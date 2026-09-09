@@ -10,17 +10,19 @@ from pathlib import Path
 
 ##############################################################################
 # Textual imports.
-from typing import Union
-
 from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, Input, Label
 
 ##############################################################################
 # Local imports.
-from .base_dialog import ButtonLabel, FileSystemPickerScreen, resolve_default_location
+from .base_dialog import (
+    ButtonLabel,
+    FileSystemPickerScreen,
+    resolve_default_location,
+    resolve_typed_directory,
+)
 from .parts import DirectoryNavigation
-from .path_maker import MakePath
 
 
 ##############################################################################
@@ -90,40 +92,6 @@ class SelectDirectory(FileSystemPickerScreen):
         select_label = self._label(self._select_button, "Select")
         return f"Enter Open  ·  {select_label} use this folder"
 
-    def _resolve_typed_directory(self, value: str) -> Union[Path, str]:
-        """Resolve a typed field value to an absolute directory, or an error.
-
-        Shared by Enter-to-navigate (``_handle_path_input_submission``) and
-        Select-to-confirm (``_select_directory``) so both actions agree on
-        what the typed text means (task-32122 AC#1): Select used to ignore
-        the field entirely and return whatever directory was merely being
-        browsed.
-
-        Returns:
-            The resolved absolute ``Path`` when it names an existing
-            directory, or an error string ready for ``_set_error`` when it
-            does not.
-        """
-        value = value.strip()
-        current = self.query_one(DirectoryNavigation).location
-        if not value or value == str(current):
-            # Unchanged from the directory being browsed (the field is kept
-            # in step with it -- see ``_update_path_input_on_nav_change``):
-            # return that exact object rather than re-resolving its own
-            # string form. Symlinked locations (macOS "/tmp" ->
-            # "/private/tmp") would otherwise change the plain no-typing
-            # Select result.
-            return current
-        try:
-            target_path = MakePath.of(value).expanduser().resolve()
-        except RuntimeError as error:
-            return str(error)
-        if target_path.is_dir():
-            return target_path
-        if target_path.exists():
-            return f"Not a directory: {target_path.name}"
-        return f"Path not found: {value}"
-
     @on(DirectoryNavigation.Changed)
     def _update_path_input_on_nav_change(
         self, event: DirectoryNavigation.Changed
@@ -140,12 +108,9 @@ class SelectDirectory(FileSystemPickerScreen):
     def _handle_path_input_submission(self, event: Input.Submitted) -> None:
         """Handle submission of the path Input widget."""
         event.stop()
-        try:
-            result = self._resolve_typed_directory(event.value)
-        except PermissionError:
-            self._set_error(self.ERROR_PERMISSION_ERROR)
-            self.query_one("#path_input", Input).focus()
-            return
+        result = resolve_typed_directory(
+            event.value, self.query_one(DirectoryNavigation).location
+        )
         if isinstance(result, Path):
             # This will trigger DirectoryNavigation.Changed.
             self.query_one(DirectoryNavigation).location = result
@@ -165,14 +130,10 @@ class SelectDirectory(FileSystemPickerScreen):
             event: The button press event.
         """
         event.stop()
-        try:
-            result = self._resolve_typed_directory(
-                self.query_one("#path_input", Input).value
-            )
-        except PermissionError:
-            self._set_error(self.ERROR_PERMISSION_ERROR)
-            self.query_one("#path_input", Input).focus()
-            return
+        result = resolve_typed_directory(
+            self.query_one("#path_input", Input).value,
+            self.query_one(DirectoryNavigation).location,
+        )
         if isinstance(result, Path):
             self.dismiss(result=result)
             return

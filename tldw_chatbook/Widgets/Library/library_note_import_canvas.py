@@ -44,11 +44,17 @@ def _disabled_action_label(text: str, *, disabled: bool) -> str:
 def _bounded_source_name(name: str) -> str:
     """Keep one selected source name useful without dominating compact layouts.
 
-    Middle-elides (task-32122 Step 3) rather than truncating the tail, so a
-    folder's absolute path keeps its basename -- the name a user actually
-    picked -- intact instead of showing an unrecognizable path prefix.
+    A folder's absolute path (contains "/") middle-elides (task-32122 Step
+    3) so it keeps its basename -- the name a user actually picked --
+    intact instead of showing an unrecognizable path prefix. A bare
+    filename (the files list; no "/") has no basename/prefix split to
+    preserve, so `elide_path_middle` would fall through to keeping its
+    *tail* instead -- a silent behavior change for the files list (review
+    round 2 escalated minor). Head-truncate those as before.
     """
-    return elide_path_middle(name, budget=48)
+    if "/" in name:
+        return elide_path_middle(name, budget=48)
+    return name if len(name) <= 48 else f"{name[:47]}…"
 
 
 class _ImportBody(VerticalScroll):

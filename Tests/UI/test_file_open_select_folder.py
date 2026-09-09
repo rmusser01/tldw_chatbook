@@ -20,6 +20,7 @@ from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
 from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import Dialog, InputBar
+from tldw_chatbook.Third_Party.textual_fspicker.parts import DirectoryNavigation
 
 
 class _DialogHost(App[None]):
@@ -102,6 +103,46 @@ async def test_select_folder_with_empty_field_returns_viewed_directory(tmp_path)
 
     async with app.run_test() as pilot:
         await pilot.pause()
+        dialog.query_one("#select-current-folder", Button).press()
+        await pilot.pause()
+
+    assert app.result == tmp_path.resolve()
+
+
+@pytest.mark.asyncio
+async def test_select_folder_after_clicking_a_file_falls_back_to_browsed_directory(
+    tmp_path,
+):
+    """Important 1 (review round 2): a single click on a file pre-fills the
+
+    field with its basename (``file_dialog.py``'s ``_select_file``, so the
+    user can then press Open) -- Select folder must not mistake that for a
+    typed folder path and error with "Not a directory: notes.md" where it
+    used to just return the directory being browsed. Arrives via the same
+    OptionList selection path a real click uses (``action_select`` on the
+    highlighted row), not by setting the Input directly.
+    """
+    (tmp_path / "notes.md").write_text("x")
+    dialog = FileOpen(tmp_path, title="Import once", offer_select_folder=True)
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        nav = dialog.query_one(DirectoryNavigation)
+        for _ in range(20):
+            if nav.option_count > 0:
+                break
+            await pilot.pause()
+        index = next(
+            i
+            for i in range(nav.option_count)
+            if nav.get_option_at_index(i).location.name == "notes.md"
+        )
+        nav.highlighted = index
+        nav.action_select()
+        await pilot.pause()
+        assert _field(dialog).value == "notes.md"
+
         dialog.query_one("#select-current-folder", Button).press()
         await pilot.pause()
 

@@ -78,7 +78,7 @@ class FileOpen(BaseFileDialog):
         if not self._offer_select_folder:
             return ""
         open_label = self._label(self._select_button, "Open")
-        return f"Enter {open_label}  ·  Select folder use this folder"
+        return f"Enter {open_label}  ·  Select folder to use this folder"
 
     def _should_return(self, candidate: Path) -> bool:
         """Perform the final checks on the chosen file.

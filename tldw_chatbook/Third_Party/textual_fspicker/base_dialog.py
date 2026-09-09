@@ -54,6 +54,63 @@ def resolve_default_location(location: Union[str, Path]) -> Union[str, Path]:
 
 
 ##############################################################################
+def resolve_typed_directory(value: str, current: Path) -> Union[Path, str]:
+    """Resolve a typed field value to an absolute directory, or an error.
+
+    The single validation block shared by every folder-picker Select action:
+    Enter-to-navigate and Select-to-confirm across ``EnhancedSelectDirectory``
+    (``enhanced_file_picker.py``), the vendored ``SelectDirectory``, and
+    ``FileOpen(offer_select_folder=True)`` all call this one function
+    (task-32122 round 2) instead of keeping three copies that had already
+    drifted -- one resolved a relative path against the process cwd instead
+    of the browsed directory, one dropped the NUL-byte guard, and the
+    caught-exception width differed between them.
+
+    Args:
+        value: The raw field text. Trimmed of surrounding whitespace here;
+            callers that need to first decide whether a non-empty value
+            should even count as "typed" (e.g. it merely echoes a just-
+            clicked file's name) do that before calling this.
+        current: The directory currently being browsed -- the fallback for
+            an empty/unchanged value, and the base a relative typed value
+            resolves against.
+
+    Returns:
+        The resolved absolute ``Path`` when it names an existing directory,
+        or an error string ready for ``_set_error`` when it does not.
+    """
+    value = value.strip()
+    if not value or value == str(current):
+        # Unchanged from what's being browsed: return the exact object,
+        # not a re-resolved reconstruction (macOS "/tmp" -> "/private/tmp"
+        # would otherwise change the result of a plain, no-typing Select).
+        return current
+    if "\x00" in value:
+        return "Path cannot contain null characters."
+    try:
+        target = MakePath.of(value).expanduser()
+        if not target.is_absolute():
+            target = current / target
+        target = target.resolve()
+    except PermissionError:
+        # A friendly, errno-free message (matches
+        # FileSystemPickerScreen.ERROR_PERMISSION_ERROR) -- the generic
+        # `str(error)` branch below would otherwise leak a raw
+        # "[Errno 13] Permission denied: ..." to the user.
+        return FileSystemPickerScreen.ERROR_PERMISSION_ERROR
+    except (RuntimeError, OSError, ValueError) as error:
+        return str(error)
+    if target.is_dir():
+        return target
+    if target.exists():
+        # A real path that is not a directory is a different mistake than
+        # a nonexistent one; the vendored SelectDirectory distinguishes
+        # them too.
+        return f"Not a directory: {target.name}"
+    return f"Path not found: {value}"
+
+
+##############################################################################
 def _listing_column_headers() -> RenderableType:
     """Build the Name / Size / Modified header row for the listing.
 
@@ -502,23 +559,24 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             value = field.value.strip()
         except Exception:
             value = ""
-        if not value:
-            return dir_nav.location
-        if "\x00" in value:
-            return "Path cannot contain null characters."
-        try:
-            if value.startswith("~"):
-                target = MakePath.of(value).expanduser()
-            else:
-                target = (dir_nav.location / value)
-            target = target.resolve()
-        except (RuntimeError, OSError, ValueError) as error:
-            return str(error)
-        if target.is_dir():
-            return target
-        if target.exists():
-            return f"Not a directory: {target.name}"
-        return f"Path not found: {value}"
+        if value:
+            # A single click on a file fills this field with its basename
+            # (file_dialog.py's _select_file, so a click-then-Open flow
+            # works) -- that is not the user typing a folder path, so
+            # Select folder must not mistake it for one and error with
+            # "Not a directory: <file>" (review round 2, Important 1).
+            # Fall through to the browsed directory when the field merely
+            # echoes the highlighted entry.
+            highlighted = dir_nav.highlighted
+            option = (
+                dir_nav.get_option_at_index(highlighted)
+                if highlighted is not None
+                else None
+            )
+            location = getattr(option, "location", None)
+            if location is not None and value == location.name:
+                value = ""
+        return resolve_typed_directory(value, dir_nav.location)
 
     def _confirm_select_folder(self) -> None:
         """Resolve the typed field first, then the directory being viewed.
