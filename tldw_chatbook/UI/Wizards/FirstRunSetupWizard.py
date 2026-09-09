@@ -381,6 +381,14 @@ REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES: Mapping[str, str] = {
     wizard_state.STEP_SUMMARY: "diagnostics",
 }
 
+#: task-32140: the Summary step's "Write your first note" exit. Not a real
+#: tab id -- app.py's _continue_first_run_wizard_result rewrites it to
+#: TAB_LIBRARY with the LIBRARY_NAV_CONTEXT_NOTES_CREATE context, the same
+#: sentinel-then-rewrite shape TAB_LIBRARY itself uses for "Add your first
+#: document" (task-32072), just one level further since two different
+#: Library destinations both need to travel as one wizard exit_route.
+EXIT_ROUTE_LIBRARY_NOTES = "library_notes"
+
 
 def manual_settings_context_for_required_step(
     step_id: str,
@@ -7147,6 +7155,9 @@ class SummaryStep(SetupStep):
             # task-32072: the Summary never said where content lives, so a
             # finished setup handed the user no way to put a file anywhere.
             yield Button("Add your first document", id="setup-exit-library")
+            # task-32140: a local-first user who came for notes was told
+            # the only thing they could do needed an API key.
+            yield Button("Write your first note", id="setup-exit-library-notes")
             yield Button("Explore Home", id="setup-exit-home")
             yield Button("Review settings", id="setup-exit-settings")
 
@@ -7363,6 +7374,11 @@ class SummaryStep(SetupStep):
         from tldw_chatbook.Constants import TAB_LIBRARY
 
         self._finish(TAB_LIBRARY)
+
+    @on(Button.Pressed, "#setup-exit-library-notes")
+    def _exit_library_notes(self) -> None:
+        """Finish setup on Library's New note view (task-32140)."""
+        self._finish(EXIT_ROUTE_LIBRARY_NOTES)
 
     @on(Button.Pressed, "#setup-exit-home")
     def _exit_home(self) -> None:

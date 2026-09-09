@@ -58,7 +58,8 @@ past the model step asks for an explicit "Continue anyway".
 
 The Summary's exits are **Review provider setup**, **Add your first document**
 (lands on Library's Import canvas — this is where your content lives),
-**Explore Home**, and **Review settings**.
+**Write your first note** (lands on Library's New note view — no provider
+needed), **Explore Home**, and **Review settings**.
 
 The Summary also asks — once, default off — whether chatbook may check your
 configured providers' model lists online at startup. Whatever you choose is
@@ -77,3 +78,11 @@ as "configured" — never displayed.
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32072: the
 Summary now offers "Add your first document", which finishes setup on Library's
 Import canvas; the wizard previously never mentioned Library at all.)*
+
+*Verified against fix/library-notes-onboarding — 2026-09-09 (task-32140: the
+Summary offered no path into Notes for a local-first user without a
+provider — every exit pointed at provider setup or the generic Import
+canvas. Added "Write your first note", which finishes setup on Library's
+New note view directly. The Console's post-setup "Get started" card gained
+the matching "Write a note in Library" action, which needs no provider and
+stays available for the whole time the card blocks the composer.)*

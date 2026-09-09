@@ -1,10 +1,13 @@
 ---
 id: TASK-32140
 title: >-
-  First-run hand-off: the wizard Summary and Get started offer no start-with-notes path for a user without a provider
-status: To Do
-assignee: []
+  First-run hand-off: the wizard Summary and Get started offer no
+  start-with-notes path for a user without a provider
+status: Done
+assignee:
+  - '@Robert'
 created_date: '2026-09-08 21:39'
+updated_date: '2026-09-09 06:16'
 labels:
   - library
   - notes
@@ -23,6 +26,18 @@ Both assessors on a fresh profile: the Summary step's actions are provider setup
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The Summary step and the Get started card offer 'Write your first note' that lands in Library ▸ Notes ▸ New note
-- [ ] #2 Covered by a wizard test
+- [x] #1 The Summary step and the Get started card offer 'Write your first note' that lands in Library ▸ Notes ▸ New note
+- [x] #2 Covered by a wizard test
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a Write your first note button beside Add your first document on the wizard Summary step, and a sentinel exit_route (EXIT_ROUTE_LIBRARY_NOTES) that app.py rewrites to TAB_LIBRARY + LIBRARY_NAV_CONTEXT_NOTES_CREATE (same destination as the new_note quick action).\n2. Add a needs-no-provider Write a note in Library action to ConsoleSetupModal alongside the detected-server action, wired through WorkbenchActionRequested to the same Library New note route in ChatScreen.\n3. Add the label copy to console_onboarding_state.py.\n4. Write failing tests in Tests/UI/test_library_notes_wave_onboarding.py, then implement to green.\n5. Update First_Run_Setup.md and console.md; live-verify on the fresh profile.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added a 'Write your first note' button to the wizard Summary step beside 'Add your first document', wired to a new sentinel exit_route (EXIT_ROUTE_LIBRARY_NOTES in FirstRunSetupWizard.py) that app.py's _continue_first_run_wizard_result rewrites to TAB_LIBRARY + LIBRARY_NAV_CONTEXT_NOTES_CREATE -- the same destination the command-palette 'new_note' quick action already uses (Library Row CREATE_NOTE). Added a matching 'Write a note in Library' action to ConsoleSetupModal's Get started card, shown whenever the card is blocking (needs no provider, unlike the numbered steps), wired through a new WorkbenchActionRequested action id (CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION) into ChatScreen.on_console_workbench_action_requested, which posts the same NavigateToScreen. Copy constants (CONSOLE_SETUP_NOTES_ACTION_LABEL/_TOOLTIP) live in console_onboarding_state.py per its existing copy-constant pattern. Files: tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py, tldw_chatbook/app.py, tldw_chatbook/Widgets/Console/console_setup_modal.py, tldw_chatbook/Chat/console_onboarding_state.py, tldw_chatbook/UI/Screens/chat_screen.py, Docs/User_Guide/First_Run_Setup.md, Docs/User_Guide/console.md, Tests/UI/test_library_notes_wave_onboarding.py (5 new tests, TDD RED->GREEN). Live-verified on the fresh onboarding profile: wizard Summary -> Write your first note -> lands on Library/Notes/New note; Console Get started card (no provider) -> Write a note in Library -> same destination. AC#1's exact wording asks the Get started card to offer literally 'Write your first note'; the brief's task-7-brief.md gives the console-card copy as 'Write a note in Library' verbatim -- used that (matches the console surface's own voice; both land on the identical New note route), noting the wording divergence here since the backlog AC text and the brief disagree on the literal string.
+<!-- SECTION:NOTES:END -->
