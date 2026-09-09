@@ -484,3 +484,4 @@ the picker left open for an invalid path. Pinned in
 sweep after the Notes critique wave; the linked-folder status line reads
 "Linked · Local folder: \<folder\>", not "Linked — \<folder\>"; corrected
 here and in [Database notes](notes.md)).*
+
