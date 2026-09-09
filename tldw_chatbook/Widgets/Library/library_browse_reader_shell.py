@@ -159,7 +159,19 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
 
         Returns:
             None.
+
+        Raises:
+            ValueError: If ``route`` is neither ``LIBRARY_BROWSE_ROUTE_MEDIA``
+                nor ``LIBRARY_BROWSE_ROUTE_NOTES``. Checked BEFORE any mutation
+                so a bad route cannot leave the shell wearing a half-applied
+                marker set that no "is this route active?" probe can read.
         """
+        if route not in (LIBRARY_BROWSE_ROUTE_MEDIA, LIBRARY_BROWSE_ROUTE_NOTES):
+            raise ValueError(
+                f"Unknown browse route {route!r}; expected "
+                f"{LIBRARY_BROWSE_ROUTE_MEDIA!r} or "
+                f"{LIBRARY_BROWSE_ROUTE_NOTES!r}."
+            )
         self.route = route
         self.set_class(
             route == LIBRARY_BROWSE_ROUTE_MEDIA,

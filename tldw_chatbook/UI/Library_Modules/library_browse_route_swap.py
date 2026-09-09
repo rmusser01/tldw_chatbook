@@ -224,7 +224,7 @@ async def _adopt_library_browse_canvas(
     screen: "LibraryScreen",
     canvas_host: Vertical,
     route: str,
-) -> Widget:
+) -> bool:
     """Show the destination canvas, keeping the other route's resident.
 
     Mechanism C: a canvas already in the host is repainted in place through
@@ -233,7 +233,13 @@ async def _adopt_library_browse_canvas(
     that is neither is removed.
 
     Returns:
-        The destination child: the resident canvas, or the one just mounted.
+        True when the destination is showing current state -- a freshly
+        mounted canvas (nothing to repaint) or a resident one whose own
+        ``sync_state`` accepted the repaint. False when the resident repaint
+        FAILED: ``_sync_library_canvas`` was told not to take the whole-screen
+        fallback itself (``allow_screen_fallback=False``), so this Boolean is
+        the ONLY signal that the caller must. Swallowing it (Qodo #7) let a
+        failed return-switch report success and keep showing stale content.
     """
     list_canvas_id = _ROUTE_LIST_CANVAS_ID[route]
     resident = next(
@@ -257,16 +263,19 @@ async def _adopt_library_browse_canvas(
         await canvas_host.remove_children(stale)
     for child in canvas_host.children:
         child.display = child is destination
-    if resident is not None:
-        # The resident canvas has been off-route (and, by the route-ownership
-        # guard, deliberately un-synced) since the last visit, so switching
-        # back MUST repaint it from current state.
-        _sync_library_canvas(
-            screen,
-            LIBRARY_BROWSE_ROUTE_SYNC_KIND[route],
-            allow_screen_fallback=False,
-        )
-    return destination
+    if resident is None:
+        # A first-time mount shows freshly built state; nothing to repaint,
+        # so adoption is unconditionally current.
+        return True
+    # The resident canvas has been off-route (and, by the route-ownership
+    # guard, deliberately un-synced) since the last visit, so switching
+    # back MUST repaint it from current state. Propagate the repaint's own
+    # verdict: a False here is a resident canvas still showing stale content.
+    return _sync_library_canvas(
+        screen,
+        LIBRARY_BROWSE_ROUTE_SYNC_KIND[route],
+        allow_screen_fallback=False,
+    )
 
 
 async def swap_library_browse_route(
@@ -336,7 +345,14 @@ async def swap_library_browse_route(
             if route == LIBRARY_BROWSE_ROUTE_MEDIA
             else screen._notes_state.reader_layout
         )
-    await _adopt_library_browse_canvas(screen, canvas_host, route)
+    adopted = await _adopt_library_browse_canvas(screen, canvas_host, route)
+    if not adopted:
+        # The resident canvas refused its in-place repaint, and we suppressed
+        # its own whole-screen fallback (allow_screen_fallback=False). Report
+        # the swap as not done so ``_select_library_rail_row_after_source_
+        # admission`` takes its ``recompose()`` recovery, rather than leaving
+        # stale content behind a name-clean "success" (Qodo #7).
+        return False
     screen._apply_library_notes_stage_visibility()
     screen._apply_library_notes_footer_context()
     screen._hide_library_adaptive_reader_rail_collapse()

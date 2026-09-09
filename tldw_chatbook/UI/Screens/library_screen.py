@@ -20382,7 +20382,7 @@ class LibraryScreen(BaseAppScreen):
             # "Browse Media" press closed the pane the user had just opened.
             try:
                 media_shell_width = self.query_one(
-                    "#library-media-reader-shell"
+                    f"#{LIBRARY_BROWSE_READER_SHELL_ID}"
                 ).region.width
             except (NoMatches, QueryError):
                 media_shell_width = 0

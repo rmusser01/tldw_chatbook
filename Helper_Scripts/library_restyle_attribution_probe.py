@@ -374,7 +374,16 @@ async def main() -> None:
 
     _report(results)
     if os.environ.get("LIBRARY_RESTYLE_JSON"):
-        with open(os.environ["LIBRARY_RESTYLE_JSON"], "w", encoding="utf-8") as handle:
+        # Diagnostic-only (a dev-run probe, not shipped runtime), but the
+        # output path is environment-controlled, so bound it to the working
+        # tree: validate_path rejects ``..`` traversal and absolute-elsewhere
+        # targets before it is opened for write (Qodo #1).
+        from tldw_chatbook.Utils.path_validation import validate_path  # noqa: PLC0415
+
+        destination = validate_path(
+            os.environ["LIBRARY_RESTYLE_JSON"], os.getcwd(), allow_hidden=True
+        )
+        with open(destination, "w", encoding="utf-8") as handle:
             json.dump(results, handle, indent=1)
 
 
