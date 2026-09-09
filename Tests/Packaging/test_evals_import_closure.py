@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from Tests.Packaging.test_chat_persistence_import_closure import _run_isolated_python
@@ -16,8 +18,15 @@ from Tests.Packaging.test_chat_persistence_import_closure import _run_isolated_p
     ],
 )
 def test_evals_exports_are_lazy_and_preserve_canonical_identity(
-    tmp_path, name, module_name
-):
+    tmp_path: Path, name: str, module_name: str
+) -> None:
+    """Keep lazy public exports identical to their canonical definitions.
+
+    Args:
+        tmp_path: Isolated subprocess working directory.
+        name: Public evaluation export to resolve.
+        module_name: Evaluation module defining that export.
+    """
     result = _run_isolated_python(
         tmp_path,
         f"""
@@ -49,7 +58,12 @@ print('EVALS_EXPORTS_OK')
     assert "EVALS_EXPORTS_OK" in result.stdout
 
 
-def test_evaluation_normalizers_do_not_load_the_server_client(tmp_path):
+def test_evaluation_normalizers_do_not_load_the_server_client(tmp_path: Path) -> None:
+    """Keep normalizer imports independent of the deferred server client.
+
+    Args:
+        tmp_path: Isolated subprocess working directory.
+    """
     result = _run_isolated_python(
         tmp_path,
         """
