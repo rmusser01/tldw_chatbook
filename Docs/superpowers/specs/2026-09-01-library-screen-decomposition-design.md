@@ -412,14 +412,24 @@ a DOM-presence check — so it stays correct under residency for free.
 
 **But DOM presence is used as a route proxy elsewhere, and residency breaks
 it.** `#library-media-reader-shell` appears at **17** non-comment sites and
-`#library-media-canvas` at 5; several read presence as "the media route is
-active" (`_library_media_escape_label` returns `"back"` when the shell is
-absent; `library_notes_controller`'s `adaptive_media = bool(self.query(
-"#library-media-reader-shell"))`). Every one of those becomes permanently true
-under residency. Task 2 must convert the route-meaning ones to the
-`_library_selected_row_id` state check and leave the genuinely
-structural ones alone; this is the largest single piece of Task 2's work and it
-is not optional.
+`#library-media-canvas` at **7** — 5 as a query selector, plus **2 written as
+an id EQUALITY comparison** (`any(widget.id == "library-media-canvas" for
+widget in focused.ancestors)`, `library_screen.py:14306` and `:14327`). Several
+read presence as "the media route is active" (`_library_media_escape_label`
+returns `"back"` when the shell is absent; `library_notes_controller`'s
+`adaptive_media = bool(self.query("#library-media-reader-shell"))`). Every one
+of those becomes permanently true under residency. Task 2 must convert the
+route-meaning ones to the `_library_selected_row_id` state check and leave the
+genuinely structural ones alone; this is the largest single piece of Task 2's
+work and it is not optional.
+
+**Its census must not be a selector-string grep.** The two equality sites are
+*ancestor-walk* checks — "is the focused widget inside the media canvas" — which
+is precisely the route-proxy shape residency breaks (the focused widget can now
+sit inside a canvas that is resident but hidden), and a
+`grep '"#library-media-canvas"'` scores zero on both. This is recipe §3's
+fifth-spelling lesson arriving in a new costume: the same name, spelled as a
+comparison rather than a selector.
 
 **`canvas_sync` and the TASK-31880 blanket-`except` finding — a NEW failure mode,
 and the swallow must be narrowed.** Today `_sync_library_canvas(screen, "media")`
@@ -462,8 +472,11 @@ precondition: while `_select_library_rail_row_after_source_admission` awaits
    whole-screen seam — the two routes' structural delta is small and known
    (media wraps its panes in `LibraryMediaReaderShell`, a **subclass** of the
    `LibraryAdaptiveReaderShell` notes uses; notes adds
-   `#library-notes-source-strip` above the grid), and the nav bar, footer and
-   chrome are identical across them.
+   `#library-notes-source-strip` above the grid), and the nav bar and footer are
+   identical across them. **Screen chrome is not** — 6 mounts on the media route
+   against 11 on notes — and the 5-widget difference is exactly the Notes source
+   strip named in the previous clause, i.e. the one structural delta, not a
+   second one.
    **The rail is the constraint here, and it is not obvious from the outside.**
    `LibraryRail#library-rail` is a CHILD of the route's reader shell, not a
    sibling of it (`#library-shell-grid > LibraryMediaReaderShell >

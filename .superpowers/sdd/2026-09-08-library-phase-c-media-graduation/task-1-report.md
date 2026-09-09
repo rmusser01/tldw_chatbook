@@ -81,7 +81,8 @@ unmounts Button 40, Static 38, Horizontal 20, Vertical 15,
 
 Notes (switch): mounts Static 30, Button 21, NavigationButton 15,
 LibraryRailRowButton 15, Horizontal 10, Vertical 7,
-DestinationRailSectionHeader 5, + 10 singletons = 114; unmounts 121 across 19
+DestinationRailSectionHeader 5 (**= 103**) + 2 `LibraryAdaptiveReaderPaneGrip`
++ **9** singletons = **114**; unmounts 121 across 19
 classes, and its unmount list is the media route being destroyed
 (`LibraryMediaReaderShell`, `LibraryMediaViewer`, `LibraryMediaCanvas`,
 `LibraryMediaRowScroll` all appear once each).
@@ -307,14 +308,34 @@ Helper_Scripts probe and one SDD report; there is no mechanism by which it could
 move a media suite.
 
 **Flag for the ledger:** `test_library_selection_updates.py::test_tier1_toggle_
-falls_back_to_recompose_on_query_one_failure` is red at HEAD. That test asserts
-exactly the fallback behaviour the design record proposes to narrow, so Task 2
-should read it before touching `canvas_sync`; and the five
+falls_back_to_recompose_on_query_one_failure` is red at HEAD, but **not for the
+reason first reported here, and it is NOT in conflict with the design record.**
+Corrected after review:
+
+* It pins the blanket `except` in **`_apply_library_row_toggle`**
+  (`canvas_sync.py:351-357`) — it forces `query_one` to raise on the
+  `selected-count` lookup, which only that function performs. The record
+  proposes narrowing the blanket `except` in **`_sync_library_canvas`**
+  (`canvas_sync.py:741-795`). Two different functions that happen to share a
+  file. Task 2 has no phantom conflict to resolve here.
+* Its red is a **separate** assertion: the fallback pin
+  (`assert len(recompose_calls) == 1`) PASSES; the failure is the next line,
+  `assert screen._conversations_state.row_selection.is_selected("chat-2")`
+  (`test_library_selection_updates.py:291`), a selection-state assert unrelated
+  to either `except`. Verified by running the test alone.
+
+And the five
 `test_library_honesty_accessibility.py` reds sit in the file TASK-31880 just
 re-greened one test in — the rest of that file was already red and stayed so.
 
 ## 6. Notes, risks, and what did not get done
 
+* **The <= 25 mount ceiling was derived from a floor measured WITHOUT the
+  reader-shell id split resolved.** The spike toggled canvases inside an
+  already-correct shell; Task 2 step 1 has to resolve the shell split first, and
+  that may carry structural mounts the spike never saw. If 25 turns out tight,
+  **re-derive it from a fresh measurement and say so in the same commit** — do
+  not quietly raise it. (Recorded in the test's own docstring too.)
 * **Wall-clock projection is a floor, not a forecast.** A/C's 30 ms is what the
   mechanism costs on the canvas; a landed switch also re-applies the rail
   selection, header, footer context and focus. The acceptance test therefore
@@ -342,11 +363,17 @@ recipe §25 addendum) is the right place for it:
 > **A probe column that reads zero is not evidence of zero; check what the hook
 > actually intercepts.** `Helper_Scripts/library_click_probe.py` reported
 > `recompose 0` and `0 removes` on every Library rail click for four waves.
-> Both were instrument blind spots, not findings: the removes counter hooked
-> `App._unregister`, which is not Textual 8.2.8's prune path
-> (`Widget._message_loop_exit` is), and the recompose counter hooked
-> `refresh(recompose=True)` while the code under measurement awaited
-> `Widget.recompose()` directly. The `0` was promoted to a load-independent
+> Both were instrument blind spots, not findings — but they are blind in
+> DIFFERENT degrees, and saying so is the point:
+> the removes counter hooked `App._unregister`, which is not Textual 8.2.8's
+> prune path (`Widget._message_loop_exit` is), so it could never fire at all —
+> it has **zero callers** on any path. The recompose counter is narrower: it
+> hooks `refresh(recompose=True)` and correctly counts every refresh-driven
+> recompose; it is blind **specifically on the rail-switch path**, where the
+> screen awaits `Widget.recompose()` directly and bypasses `refresh` entirely.
+> A counter that cannot fire and a counter that misses one caller are different
+> defects, and the second is the more dangerous kind precisely because it is
+> right most of the time. The `0` was promoted to a load-independent
 > verdict column in recipe §25 and then written into phase C's success
 > condition ("re-click rows go to ~0 mounts with recompose still 0") —
 > a doctrine-level acceptance target resting on a hook that could not fire.
