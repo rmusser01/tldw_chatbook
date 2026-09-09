@@ -580,7 +580,10 @@ async def test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vau
             assert "Obsidian trash" in review
             assert "Obsidian template" in review
             assert "Failed (" not in review
-            assert "Library review · 4 keywords · 3 links." in review
+            assert (
+            "Library review · keywords project, ux, notes-review, lib-review "
+            "· 3 links." in review
+        )
 
             toggle.press()
             await _wait_for_condition(
@@ -617,3 +620,27 @@ async def test_a_plain_folder_offers_no_obsidian_toggle(
 
             assert not screen.query("#note-import-obsidian-mode")
             assert "Daily" in _review_text(screen)
+
+
+async def test_importing_a_vault_writes_notes_and_never_writes_to_the_vault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Import once copies an Obsidian vault without touching a byte of it."""
+    vault = _build_vault(tmp_path / "vault")
+    digest_before = _vault_tree_digest(vault)
+
+    with _import_ready_host(tmp_path, monkeypatch) as host:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-notes").press()
+            await _reach_import_review(screen, pilot, vault)
+
+            screen.query_one("#note-import-import", Button).press()
+            await _wait_for_selector(screen, pilot, "#note-import-receipt")
+
+            receipt = screen._library_note_import_controller.snapshot.receipt
+            assert receipt is not None
+            assert (receipt.imported, receipt.failed) == (6, 0)
+            assert _vault_tree_digest(vault) == digest_before

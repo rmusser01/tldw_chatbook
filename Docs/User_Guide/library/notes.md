@@ -490,19 +490,22 @@ With it on:
 - YAML frontmatter is read: `title` becomes the note title, and `tags` and
   `aliases` become keywords (there is no separate alias field, and keeping them
   as keywords is what makes the note findable by its alternate names). The
-  frontmatter block is removed from the note body.
-- A template placeholder such as `# {{date:YYYY-MM-DD}}` is never used as a
-  title; the file name is used instead.
+  frontmatter block is removed from the note body — unless it is the whole file,
+  in which case the note keeps it and still takes its title and keywords from it.
 - `[[wikilinks]]` and `[[link|alias]]` whose target is imported in the same
-  batch become note links; a link to anything else stays as plain text.
+  batch become note links; a link to anything else stays as plain text, and a
+  `[[link]]` written inside a code block or backticks is left alone.
 
 Turn the toggle off to import the vault exactly as any other folder — every
-directory walked, frontmatter left in the body, links left as text. Toggling
-re-runs the read-only check, so nothing is written either way, and Import once
-never modifies the vault on disk.
+directory walked, frontmatter left in the body, links left as text. One rule
+applies either way: a title that is only a template placeholder, such as a
+`# {{date:YYYY-MM-DD}}` heading, is never used, and the file name is used
+instead. Toggling re-runs the read-only check, so nothing is written either way
+and Import once never modifies the vault on disk; it does rebuild the review,
+so any per-item Skip/Create choices you had already made are reset.
 
-Review rows for new notes state what will be created — the resulting title and
-the keyword and link counts — before you approve anything.
+Review rows for new notes state what will be created — the resulting title, its
+keywords, and how many links it carries — before you approve anything.
 
 ## Common tasks
 

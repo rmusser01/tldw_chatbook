@@ -15,6 +15,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportBounds,
     ImportClassification,
     ParsedNotePayload,
+    rewrite_wikilinks,
 )
 from tldw_chatbook.Notes.note_import_planner import classify_import_batch
 
@@ -78,6 +79,19 @@ def _build_vault(root: Path) -> Path:
         "---\ntags:\n  - daily\n  - meeting\n---\n# 2026-09-07\n\nBody.\n",
     )
     _write(root, "Journal/Templated.md", "# {{date:YYYY-MM-DD}}\n\nBody.\n")
+    _write(
+        root,
+        "Journal/Properties only.md",
+        "---\ntitle: Properties only\ntags: [meta]\n---\n",
+    )
+    _write(
+        root,
+        "Journal/Snippets.md",
+        "# Snippets\n\n"
+        "Write `[[README]]` to link a note.\n\n"
+        "```python\nx = \"[[README]]\"\n```\n\n"
+        "A real link: [[README]].\n",
+    )
     return root
 
 
@@ -212,7 +226,7 @@ def test_the_review_shows_the_resulting_title_keywords_and_links(vault: Path) ->
     summary = _effect_summary(item)
 
     assert "Library review" in summary
-    assert "4 keywords" in summary
+    assert "keywords project, ux, notes-review, lib-review" in summary
     assert "3 links" in summary
 
 
@@ -267,3 +281,41 @@ def test_obsidian_mode_off_leaves_frontmatter_and_links_untouched(
     assert payload.keywords == ()
     assert payload.wikilinks == ()
     assert payload.content.startswith("---")
+
+
+def test_a_frontmatter_only_note_still_imports_with_its_metadata(
+    vault: Path,
+) -> None:
+    """An Obsidian Properties-only file must not become a failure."""
+    payload = _payloads(vault)["vault/Journal/Properties only.md"]
+
+    assert payload.title == "Properties only"
+    assert payload.keywords == ("meta",)
+    assert payload.content.startswith("---")
+
+
+def test_links_inside_code_spans_are_not_recorded(vault: Path) -> None:
+    """A `[[Target]]` in a fence or backticks is sample text, not a link."""
+    payload = _payloads(vault)["vault/Journal/Snippets.md"]
+
+    assert payload.wikilinks == ("README",)
+
+
+def test_links_inside_code_spans_are_never_rewritten(vault: Path) -> None:
+    """The rewrite leaves fenced and inline code exactly as written."""
+    payload = _payloads(vault)["vault/Journal/Snippets.md"]
+
+    rewritten = rewrite_wikilinks(payload, {"readme": "note-id-1"})
+
+    assert "`[[README]]`" in rewritten.content
+    assert 'x = "[[README]]"' in rewritten.content
+    assert "A real link: [README](note://note-id-1)." in rewritten.content
+
+
+def test_a_template_placeholder_is_rejected_with_the_toggle_off(
+    vault: Path,
+) -> None:
+    """The placeholder-title rule is unconditional, not an Obsidian-mode extra."""
+    payload = _payloads(vault, obsidian_mode=False)["vault/Journal/Templated.md"]
+
+    assert payload.title == "Templated"

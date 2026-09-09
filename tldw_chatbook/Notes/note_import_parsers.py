@@ -33,12 +33,13 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_REASON_LENGTH,
     MAX_IMPORT_TEMPLATE_NAME_LENGTH,
     MAX_IMPORT_TITLE_LENGTH,
-    WIKILINK,
+    WIKILINK_SCAN,
     ImportBounds,
     ImportClassification,
     ImportSourceKind,
     ParsedNotePayload,
     ProposedFolderMembership,
+    wikilink_target,
 )
 
 SUPPORTED_NOTE_EXTENSIONS = frozenset(
@@ -440,9 +441,13 @@ def _parse_text(
         markdown = extension in _MARKDOWN_EXTENSIONS
         metadata: Mapping[Any, Any] | None = None
         if obsidian_mode and markdown:
-            metadata, text = _split_frontmatter(text)
-            if not text.strip():
-                raise _ParseFailure("invalid_content")
+            metadata, body = _split_frontmatter(text)
+            # A note that is only frontmatter (an Obsidian Properties-only file,
+            # a templated daily note) still has to import: keep the original
+            # text as the body rather than turning a note this mode understands
+            # BETTER into a failure it did not have before.
+            if body.strip():
+                text = body
         stem = PurePosixPath(candidate.source.display_path).stem
         title = _frontmatter_title(metadata) or _text_title(text, stem, markdown)
         if len(title) > MAX_IMPORT_TITLE_LENGTH:
@@ -552,11 +557,15 @@ def _frontmatter_keywords(
 
 
 def _wikilinks(text: str) -> tuple[str, ...]:
-    """Return the note's non-embedded `[[targets]]` in first-use order."""
+    """Return the note's non-embedded `[[targets]]` in first-use order.
+
+    Anything inside a code span is sample text, not a link, and is skipped here
+    exactly as the executor skips it when rewriting.
+    """
     targets: list[str] = []
     seen: set[str] = set()
-    for match in WIKILINK.finditer(text):
-        target = match.group(1).strip()
+    for match in WIKILINK_SCAN.finditer(text):
+        target = wikilink_target(match)
         if not target or target in seen or len(target) > MAX_IMPORT_TITLE_LENGTH:
             continue
         seen.add(target)

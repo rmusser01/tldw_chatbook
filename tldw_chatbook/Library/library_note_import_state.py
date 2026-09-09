@@ -894,13 +894,20 @@ def _effect_summary(item: ImportPreviewItem) -> str:
         titles = ", ".join(_bounded_title(payload.title) for payload in item.payloads[:2])
         if count > 2:
             titles = f"{titles}, and {count - 2} more"
-        keywords = sum(len(payload.keywords) for payload in item.payloads)
+        keywords = tuple(
+            dict.fromkeys(
+                keyword for payload in item.payloads for keyword in payload.keywords
+            )
+        )
         links = sum(len(payload.wikilinks) for payload in item.payloads)
         parts = [
             f"Content: create {count} new {'note' if count == 1 else 'notes'}: {titles}"
         ]
         if keywords:
-            parts.append(f"{keywords} keyword{'' if keywords == 1 else 's'}")
+            shown = ", ".join(keywords[:4])
+            if len(keywords) > 4:
+                shown = f"{shown}, and {len(keywords) - 4} more"
+            parts.append(f"keywords {shown}")
         if links:
             parts.append(f"{links} link{'' if links == 1 else 's'}")
         return f"{' · '.join(parts)}."

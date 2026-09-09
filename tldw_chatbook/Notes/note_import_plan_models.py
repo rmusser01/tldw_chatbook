@@ -1,9 +1,12 @@
 """Immutable domain vocabulary for one-time Database Notes import plans.
 
 The records in this module describe a read-only preview. They deliberately carry
-no receipt fingerprints, persistence services, or execution behavior. Generic
-dataclass serialization such as :func:`dataclasses.asdict` is not safe for logs;
-use :meth:`NoteImportPlan.to_diagnostic` for the supported redacted projection.
+no receipt fingerprints and no persistence services. The one piece of behavior
+here is :func:`rewrite_wikilinks`, a pure text transform over one payload that
+both the parser and the executor need and that therefore cannot live in either.
+Generic dataclass serialization such as :func:`dataclasses.asdict` is not safe
+for logs; use :meth:`NoteImportPlan.to_diagnostic` for the supported redacted
+projection.
 """
 
 from __future__ import annotations
@@ -82,14 +85,27 @@ MAX_IMPORT_KEYWORD_LENGTH = 512
 MAX_IMPORT_ITEM_ID_LENGTH = 256
 """Absolute length ceiling for opaque preview item identifiers."""
 
-WIKILINK = re.compile(
-    r"(?<!!)\[\[([^\[\]|#^]+)(?:[#^][^\[\]|]*)?(?:\|([^\[\]]*))?\]\]"
+_CODE_SPAN = r"```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[^`\n]*`"
+
+WIKILINK_SCAN = re.compile(
+    rf"(?P<code>{_CODE_SPAN})"
+    r"|(?<!!)\[\[(?P<target>[^\[\]|#^]+)(?:[#^][^\[\]|]*)?"
+    r"(?:\|(?P<alias>[^\[\]]*))?\]\]"
 )
-"""One non-embedded `[[target]]`, `[[target#heading]]` or `[[target|alias]]`.
+"""One code span, or one non-embedded `[[target]]`/`[[target|alias]]`.
 
 The single definition of the Obsidian link grammar: the parser records targets
-with it and the executor rewrites the same spans with it.
+with it and the executor rewrites the same spans with it. Code spans are matched
+FIRST and on purpose -- a `[[Target]]` inside a fenced block or backticks is
+sample text, and rewriting it would corrupt the note.
 """
+
+
+def wikilink_target(match: re.Match[str]) -> str | None:
+    """Return the link target of one scan match, or None for a code span."""
+    if match.group("code") is not None:
+        return None
+    return (match.group("target") or "").strip() or None
 
 
 def wikilink_key(target: str) -> str:
@@ -104,7 +120,8 @@ def rewrite_wikilinks(
     """Return `payload` with resolvable `[[links]]` rewritten as note links.
 
     A target with no entry in `note_ids` — a note outside the batch, an
-    attachment, a heading-only link — is left exactly as the author wrote it.
+    attachment, a heading-only link — is left exactly as the author wrote it, and
+    so is anything inside a code span.
 
     Args:
         payload: One parsed note, whose `wikilinks` licence the rewrite.
@@ -117,14 +134,16 @@ def rewrite_wikilinks(
         return payload
 
     def _link(match: re.Match[str]) -> str:
-        target = match.group(1).strip()
+        target = wikilink_target(match)
+        if target is None:
+            return match.group(0)
         note_id = note_ids.get(wikilink_key(target))
         if note_id is None:
             return match.group(0)
-        label = (match.group(2) or "").strip() or target
+        label = (match.group("alias") or "").strip() or target
         return f"[{label}](note://{note_id})"
 
-    content = WIKILINK.sub(_link, payload.content)
+    content = WIKILINK_SCAN.sub(_link, payload.content)
     return payload if content == payload.content else replace(payload, content=content)
 
 
@@ -535,9 +554,13 @@ class ImportPreviewItem:
         """Reject classification, match, and action combinations that cannot run."""
         if self.classification in _NON_IMPORTABLE_CLASSIFICATIONS:
             if allowed_actions != (ImportAction.SKIP,):
-                raise ValueError("Unsupported and failed items must only allow Skip.")
+                raise ValueError(
+                    "Unsupported, skipped and failed items must only allow Skip."
+                )
             if self.match is not None:
-                raise ValueError("Unsupported and failed items cannot carry a match.")
+                raise ValueError(
+                    "Unsupported, skipped and failed items cannot carry a match."
+                )
             return
 
         if self.classification is ImportClassification.NEW:

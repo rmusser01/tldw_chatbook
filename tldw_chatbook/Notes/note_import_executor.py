@@ -1774,9 +1774,12 @@ def _wikilink_note_ids(approved: ApprovedNoteImportPlan) -> dict[str, str]:
         ) != 1:
             continue
         note_id = _deterministic_note_id(approved.approval_id, item.item_id, 0)
-        path = PurePosixPath(item.source.display_path)
+        parts = PurePosixPath(item.source.display_path).parts
         if item.source.kind is ImportSourceKind.DIRECTORY_MEMBER:
-            path = PurePosixPath(*path.parts[1:])
+            parts = parts[1:]
+        if not parts:
+            continue
+        path = PurePosixPath(*parts)
         for target in (path.with_suffix("").as_posix(), path.stem):
             key = wikilink_key(target)
             if not key or key in ambiguous:
