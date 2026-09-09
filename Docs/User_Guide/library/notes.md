@@ -305,8 +305,13 @@ both stay closed until you choose to reopen one.
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
 | "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. |
 
-With no notes at all, the list reads "No notes yet. Create one to see it
-here."
+With no notes at all, the list reads "No notes yet. Create your first note."
+above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
+solutions with Agent Lessons" above) is the only row showing, so a
+first-time user is never left staring at one unexplained folder with no
+other cue. While the library holds zero notes, that folder row itself also
+carries a one-line gloss: "Agent_Lessons — where Console agents file
+reusable lessons (empty)".
 
 ### Edit, Preview, and Info
 
@@ -693,3 +698,12 @@ New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
 rows with a visible cursor, the footer's "enter create note" follows the
 focused control, and Tab no longer leaves the Library screen for the
 navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*
+
+*Verified against fix/library-notes-onboarding — 2026-09-09 (task-32126:
+the empty-state line previously never rendered once the seeded
+Agent_Lessons folder existed, because the tree projection had a row and
+the "no rows" check never fired; the guide's copy also disagreed with the
+code's. Fixed to render "No notes yet. Create your first note." above the
+tree whenever the library holds zero notes, matching the code copy
+exactly, and to gloss the Agent_Lessons folder row while it does. Pinned
+in `Tests/Widgets/Library/test_library_notes_canvas.py`.)*
