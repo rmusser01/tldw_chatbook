@@ -5862,3 +5862,15 @@ the passing neighbors nor an escalated rerun that also fails certifies them.
 **What worked.** Select the latest runtime-owned observation for each launch-bound verifier first, then test its result, freshness and report reference. Preserve native observation order through durable storage. A valid evidence ID and an unchanged artifact do not make an earlier success authoritative over newer contradictory evidence.
 
 Independent review then used one script with two argument/input configurations and exposed a path-only manifest selector: the second invocation received the first check's manifest and could never become fresh. Test more than one configuration of the same executor; capture and resolution must agree on the full selected specification, and indistinguishable invocation definitions need explicit rejection or support.
+
+## Goal schema replacement must be atomic across concurrently opened handles (TASK-32119, 2026-09-09)
+
+The Task4 targeted run passed 221 tests but the existing concurrent goal-admission
+case failed while opening its second AgentRunsDB handle: `trigger
+goal_launch_immutable already exists`. The goal schema script unconditionally
+dropped and recreated that trigger in separate autocommitted statements, so two
+constructors could interleave them. Wrapping the goal schema script in one
+`BEGIN IMMEDIATE`/`COMMIT` transaction preserves the immutable-launch guard and
+serializes replacement. Making only `CREATE TRIGGER` conditional would hide the
+error while retaining a period without the guard. Concurrent admission evidence
+must include handle initialization as well as the later acceptance transaction.

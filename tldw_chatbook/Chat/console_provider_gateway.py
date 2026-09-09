@@ -350,12 +350,18 @@ def _automatic_generation(
         prepared.accounting.total_input_tokens,
         prepared.capacity.effective_response_tokens,
     )
+    from tldw_chatbook.LLM_Calls.provider_outcomes import PRE_EFFECT_ERRORS
+
     completed = False
+    pre_effect = False
     try:
         yield
         completed = True
+    except PRE_EFFECT_ERRORS:
+        pre_effect = True
+        raise
     finally:
-        actual = None
+        actual = 0 if pre_effect else None
         if completed and signals is not None:
             try:
                 actual = _automatic_budget_tokens(
@@ -696,6 +702,7 @@ class _QueueItem:
     # "no real status available" (a bare RuntimeError, say), which the
     # consumer maps to ChatProviderError's own upstream-error default.
     status_code: int | None = None
+    adapter_error: BaseException | None = None
 
     @classmethod
     def content(cls, text: str) -> "_QueueItem":
@@ -2343,6 +2350,10 @@ class ConsoleProviderGateway:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            from tldw_chatbook.LLM_Calls.provider_outcomes import PRE_EFFECT_ERRORS
+
+            if isinstance(exc, PRE_EFFECT_ERRORS):
+                raise
             status_code = getattr(exc, "status_code", 502)
             raise ChatProviderError(
                 safe_provider_error_copy(provider, exc),
@@ -2716,6 +2727,11 @@ class ConsoleProviderGateway:
                             )
                         )
             except BaseException as exc:
+                from tldw_chatbook.LLM_Calls.provider_outcomes import PRE_EFFECT_ERRORS
+
+                if isinstance(exc, PRE_EFFECT_ERRORS):
+                    enqueue(_QueueItem("error", adapter_error=exc))
+                    return
                 raw_status = getattr(exc, "status_code", None)
                 status_code = raw_status if isinstance(raw_status, int) else None
                 error_copy = _provider_error_copy_with_model_recovery(
@@ -2750,6 +2766,8 @@ class ConsoleProviderGateway:
                 if item.kind == "done":
                     break
                 if item.kind == "error":
+                    if item.adapter_error is not None:
+                        raise item.adapter_error
                     # F5: carry the real status the worker captured -- never
                     # re-derive it by parsing item.text back out (that text
                     # is redacted prose, not a machine-readable status).

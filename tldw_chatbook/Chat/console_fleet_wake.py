@@ -249,6 +249,7 @@ class ConsoleFleetWakeCoordinator:
         self._retry_timer = None
         self._delivery_tasks = set()
         self._recovery_task = None
+        self.recovery_result = None
         self._recovery_requested = False
         self._recovery_failure_reason: str | None = None
         self._recovery_ready = True
@@ -401,10 +402,15 @@ class ConsoleFleetWakeCoordinator:
         except Exception:  # noqa: BLE001 - bookkeeping and UI fail closed
             return False
 
+    @property
+    def automatic_primary_count(self) -> int:
+        goals = getattr(self._controller, "_goal_coordinator", None)
+        return len(self._active) + int(goals is not None and goals.primary_reserved)
+
     def _attempt(self, conversation_id):
         if not self._recovery_ready or conversation_id in self._active:
             return
-        if len(self._active) >= self.MAX_AUTOMATIC_PRIMARIES:
+        if self.automatic_primary_count >= self.MAX_AUTOMATIC_PRIMARIES:
             return
         with self._registry_lock:
             bucket = self._pending.get(conversation_id)
@@ -693,6 +699,7 @@ class ConsoleFleetWakeCoordinator:
         try:
             ledger = self._runs_db().automatic_work
             await asyncio.to_thread(ledger.recover, current_owner_id=self._owner_id)
+            self.recovery_result = ledger.recovery_result
             await asyncio.to_thread(self.seed_from_marks)
             with self._registry_lock:
                 pending = {cid: dict(bucket) for cid, bucket in self._pending.items()}

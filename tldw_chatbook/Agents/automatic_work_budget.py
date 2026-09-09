@@ -6,6 +6,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass, fields
 
 
+@dataclass(frozen=True)
+class RuntimeRecoveryResult:
+    """Body-free projection captured by the sole runtime startup transaction."""
+
+    owner_id: str
+    recovered_chains: tuple[str, ...]
+    goals: tuple[tuple[str, int, str], ...]
+
+
 class AutomaticWorkRefused(RuntimeError):
     """Admission refused with a stable reason, never a model or tool body."""
 

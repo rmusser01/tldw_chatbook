@@ -3344,6 +3344,18 @@ class ConsoleChatController:
             if origin is ConsoleSubmissionOrigin.GOAL_ITERATION
             else self._fleet_wake
         )
+        if not origin.automatic:
+            goals = getattr(self, "_goal_coordinator", None)
+            target = next(
+                (
+                    s
+                    for s in self.store.sessions()
+                    if s.id == (session_id or self.store.active_session_id)
+                ),
+                None,
+            )
+            if goals is not None and target is not None:
+                goals.manual_send(target.persisted_conversation_id)
         scope = nullcontext() if origin.automatic else manual_work_scope()
         try:
             with scope:
@@ -13334,6 +13346,9 @@ class ConsoleChatController:
         # this).
         previous_status = self.run_state_for(target).status
         self._run_states[target] = run_state
+        goals = getattr(self, "_goal_coordinator", None)
+        if goals is not None and run_state.status not in FEEDBACK_ACTIVE_RUN_STATUSES:
+            goals.notify_capacity()
         self.run_state_history_for(target).append(run_state.status)
         self._advance_lifecycle_revision(target)
         terminal_notification_eligible = self.activity_for(

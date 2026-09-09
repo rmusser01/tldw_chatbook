@@ -1033,8 +1033,13 @@ class ConsoleRuntime:
         controller, gateway = self._chat_controller, self._provider_gateway
         self.generation += 1
         if controller is not None:
+            goals = getattr(controller, "_goal_coordinator", None)
+            if goals is not None:
+                goals.close_admission()
             try:
                 await controller.shutdown()
+                if goals is not None:
+                    await goals.shutdown()
             except Exception:  # noqa: BLE001 - quit must not die on teardown
                 logger.opt(exception=True).warning(
                     "Console runtime: controller shutdown failed at dispose."

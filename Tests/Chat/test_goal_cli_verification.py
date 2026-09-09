@@ -140,8 +140,9 @@ async def test_real_native_skill_result_preserves_exit_independently_of_printed_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("scheduled", [False, True])
 async def test_cancel_waits_for_real_script_cleanup_and_keeps_late_evidence(
-    stores, monkeypatch, tmp_path
+    stores, monkeypatch, tmp_path, scheduled
 ):
     import asyncio
 
@@ -194,7 +195,11 @@ async def test_cancel_waits_for_real_script_cleanup_and_keeps_late_evidence(
     )
     controller._agent_bridge._skills_service = scope
     controller.set_pending_skill_script = lambda *args, **kwargs: None
-    task = asyncio.create_task(coordinator.dispatch_once(goal.id))
+    task = (
+        coordinator.start(goal.id)
+        if scheduled
+        else asyncio.create_task(coordinator.dispatch_once(goal.id))
+    )
     try:
         for _ in range(100):
             if marker.exists():
@@ -202,12 +207,20 @@ async def test_cancel_waits_for_real_script_cleanup_and_keeps_late_evidence(
             await asyncio.sleep(0.01)
         assert marker.exists()
         assert controller._agent_bridge.runtime_capacity.snapshot().tool_workers == 1
-        task.cancel()
+        if scheduled:
+            coordinator.service.stop(goal.id)
+        else:
+            task.cancel()
         await asyncio.sleep(0.03)
         assert not task.done()
         result = await task
-        assert len(result.tool_records) == 1
-        assert result.tool_records[0].result.stdout == "settled\n"
+        if scheduled:
+            assert result.status == "stopped"
+            evidence = coordinator.service.db.goal_runs.evidence(goal.id)
+            assert len(evidence) == 1 and evidence[0].stdout == "settled\n"
+        else:
+            assert len(result.tool_records) == 1
+            assert result.tool_records[0].result.stdout == "settled\n"
         assert controller._agent_bridge.runtime_capacity.snapshot().executions == ()
         assert len(calls) == 1
     finally:

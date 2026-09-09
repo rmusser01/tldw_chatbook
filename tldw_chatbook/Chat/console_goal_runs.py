@@ -1,4 +1,4 @@
-"""App-owned single native goal iteration; no repetition or completion inference."""
+"""App-owned bounded native goal continuation using service and ledger authority."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from tldw_chatbook.Agents.agent_models import (
@@ -36,7 +36,9 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.goal_run_service import GoalRunService
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
     from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
 
 
@@ -330,7 +332,7 @@ class GoalIterationAuthorization:
 
 
 class ConsoleGoalCoordinator:
-    """Dispatch one iteration using the runtime's shared audit and controller."""
+    """Schedule settled iterations using the runtime’s shared audit and controller."""
 
     def __init__(self, controller: ConsoleChatController, service: GoalRunService):
         self.controller, self.service = controller, service
@@ -340,6 +342,226 @@ class ConsoleGoalCoordinator:
         self._stop_requested = False
         self._reserved_conversation_id: str | None = None
         self._owner_id = controller.fleet_wake._owner_id
+        self._runner = None
+        self._running_goal = None
+        self._closed = False
+        self._projected_audit = None
+        self._wake = asyncio.Event()
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._dispatch_goal_id: str | None = None
+        self.service._control_listener = self._control_changed
+
+    @property
+    def primary_reserved(self) -> bool:
+        return self._reserved_conversation_id is not None
+
+    @property
+    def active_goal_id(self) -> str | None:
+        """Return the goal owning active execution, approval or a bounded wait."""
+        return self._running_goal or self._dispatch_goal_id
+
+    async def recover(self) -> tuple[GoalSnapshot, ...]:
+        """Observe/project the one shared startup audit without admitting work."""
+        if not await self.controller.fleet_wake.wait_for_recovery():
+            raise RuntimeError("history_unavailable")
+        audit = self.controller.fleet_wake.recovery_result
+        if audit is None:
+            return ()
+        result = await asyncio.to_thread(self.service.project_recovery, audit)
+        self._projected_audit = audit
+        return result
+
+    async def restore_session(
+        self, goal_id: str, *, app: Any, settings: ConsoleSessionSettings | None = None
+    ) -> ConsoleChatSession:
+        """Use normal persisted-tree hydration with stable identity and no navigation."""
+        from dataclasses import replace
+
+        from tldw_chatbook.Chat.console_conversation_hydration import (
+            apply_resume_settings_overrides,
+            hydrate_console_session,
+            load_console_conversation_tree,
+        )
+        from tldw_chatbook.Chat.console_session_settings import (
+            default_console_session_settings,
+        )
+
+        goal = self.service.get(goal_id)
+        if goal.request is None:
+            raise ValueError("goal_payload_removed")
+        existing = next(
+            (
+                s
+                for s in self.controller.store.sessions()
+                if s.id == goal.conversation_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.persisted_conversation_id != goal.conversation_id:
+                raise ValueError("conversation_identity_conflict")
+            return existing
+        tree = await load_console_conversation_tree(app, goal.conversation_id)
+        if tree is None:
+            raise ValueError("goal_conversation_missing")
+        settings = settings or default_console_session_settings(
+            getattr(app, "app_config", {})
+        )
+        settings = replace(
+            settings,
+            provider=goal.request.provider.provider,
+            model=goal.request.provider.model,
+        )
+        settings = apply_resume_settings_overrides(settings, tree["conversation"])
+        return hydrate_console_session(
+            app=app,
+            store=self.controller.store,
+            conversation_id=goal.conversation_id,
+            tree=tree,
+            settings=settings,
+            target_workspace_id=goal.request.binding.workspace_id,
+            session_id=goal.conversation_id,
+            activate=False,
+        )
+
+    def _control_changed(self, snapshot):
+        """The service may run on a DB thread; controller mutation stays on its loop."""
+        loop = self._event_loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._apply_control, snapshot)
+
+    def _apply_control(self, snapshot):
+        self._wake.set()
+        if snapshot.id == self.active_goal_id and snapshot.status in {
+            "stopping",
+            "stopped",
+        }:
+            self._stop_requested = True
+            if self._active is not None:
+                self.controller._signal_stop(session_id=self._active.session_id)
+
+    def start(self, goal_id: str) -> asyncio.Task[GoalSnapshot]:
+        """Start one runtime-owned chain; await the task to observe its next rest state."""
+        if self._closed or self.controller._disposed:
+            raise RuntimeError("runtime_unavailable")
+        if self._runner is not None and not self._runner.done():
+            if self._running_goal != goal_id:
+                raise ValueError("goal_active")
+            return self._runner
+        self._event_loop = asyncio.get_running_loop()
+        self._running_goal = goal_id
+        self._runner = asyncio.create_task(self._continue(goal_id))
+        return self._runner
+
+    async def _continue(self, goal_id: str):
+        try:
+            while not self._closed:
+                goal = await asyncio.to_thread(self.service.get, goal_id)
+                if goal.status != "ready":
+                    return goal
+                if goal.retry_at is not None:
+                    self._wake.clear()
+                    try:
+                        await asyncio.wait_for(
+                            self._wake.wait(), max(0.01, goal.retry_at - time.time())
+                        )
+                    except TimeoutError:
+                        pass
+                    if self._closed or self.service.get(goal_id).status != "ready":
+                        continue
+                    # Capacity notifications do not bypass a provider backoff.
+                    if (
+                        goal.retry_reason == "pre_effect_rate_limit"
+                        and time.time() < goal.retry_at
+                    ):
+                        continue
+                    self.service.clear_wait(goal_id)
+                result = await self.dispatch_once(goal_id)
+                if result.reason_code == "primary_capacity":
+                    self.service.defer(goal_id, reason="primary_capacity", delay=1)
+                    continue
+                if result.attempt_id:
+                    attempt = await asyncio.to_thread(
+                        self.ledger.read_goal_attempt,
+                        result.attempt_id,
+                        owner_id=self._owner_id,
+                    )
+                    if attempt.state in {"accepted", "review_required"}:
+                        try:
+                            await asyncio.to_thread(self.service.checkpoint, result)
+                        except Exception:  # noqa: BLE001 - never replay to replace a lost checkpoint
+                            return await asyncio.to_thread(
+                                self.service.checkpoint_failed, goal_id
+                            )
+                    elif result.reason_code:
+                        self.service._state(
+                            self.service.get(goal_id), "paused", result.reason_code
+                        )
+                else:
+                    current = self.service.get(goal_id)
+                    if current.status == "ready":
+                        self.service._state(
+                            current,
+                            "paused",
+                            result.reason_code or "goal_preflight_refused",
+                        )
+                goal = await asyncio.to_thread(
+                    self.service.db.goal_runs.settle_control, goal_id
+                )
+                if goal.status != "ready":
+                    return goal
+                if (
+                    result.termination_reason
+                    == RunTerminationReason.PRE_EFFECT_RATE_LIMIT
+                ):
+                    self.service.defer(
+                        goal_id,
+                        reason="pre_effect_rate_limit",
+                        delay=min(30, 2 ** (goal.iteration_count - 1)),
+                    )
+                elif (
+                    result.termination_reason == RunTerminationReason.PREFLIGHT_REFUSED
+                ):
+                    return self.service.pause(goal_id)
+            return self.service.get(goal_id)
+        finally:
+            self._running_goal = None
+
+    def notify_capacity(self) -> None:
+        """Wake the single runtime waiter; provider retry time remains authoritative."""
+        loop = self._event_loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._wake.set)
+
+    def close_admission(self) -> None:
+        """Synchronously fence continuation before controller shutdown drains workers."""
+        self._closed = True
+        if self.active_goal_id is not None:
+            self.service.stop(self.active_goal_id)
+
+    async def shutdown(self) -> None:
+        self.close_admission()
+        if self._runner is not None:
+            await asyncio.shield(self._runner)
+
+    def manual_send(self, conversation_id: str | None) -> None:
+        """An explicit manual instruction pauses only this conversation’s successors."""
+        with self.service.db.connection() as conn:
+            row = conn.execute(
+                "SELECT id FROM goal_runs WHERE conversation_id=? AND status IN ('ready','pause_requested')",
+                (conversation_id,),
+            ).fetchone()
+        if row:
+            self.service.pause(row[0])
+
+    def _manual_priority(self, conversation_id: str) -> bool:
+        probe = getattr(self.controller, "wake_user_priority_probe", None)
+        return any(
+            self.controller.prompt_queue_coordinator.controls_generation(session.id)
+            or (callable(probe) and probe(session.id))
+            for session in self.controller.store.sessions()
+            if session.persisted_conversation_id == conversation_id
+        )
 
     def owns_conversation(self, conversation_id: str | None) -> bool:
         """Protect the owning conversation even through a second hydrated UI alias."""
@@ -385,6 +607,8 @@ class ConsoleGoalCoordinator:
         if not self.authorizes(authorization, session_id):
             raise PermissionError("goal authority is no longer live")
         authorization.check_binding()
+        if self._manual_priority(authorization.goal.conversation_id):
+            raise AutomaticWorkRefused("primary_capacity")
         authorization.acceptance_started = True
         accepted = await asyncio.to_thread(
             self.ledger.accept_goal_iteration,
@@ -402,7 +626,9 @@ class ConsoleGoalCoordinator:
         """Cancellation requests Stop and waits for the owning cleanup path."""
         if self._dispatching:
             return GoalIterationResult(goal_id, 0, None, None, None, "goal_active")
+        self._event_loop = asyncio.get_running_loop()
         self._dispatching = True
+        self._dispatch_goal_id = goal_id
         self._stop_requested = False
         task = asyncio.create_task(self._dispatch_owned(goal_id))
         try:
@@ -417,6 +643,7 @@ class ConsoleGoalCoordinator:
                         self.controller._signal_stop(session_id=self._active.session_id)
         finally:
             self._dispatching = False
+            self._dispatch_goal_id = None
 
     async def _dispatch_owned(self, goal_id: str) -> GoalIterationResult:
         from tldw_chatbook.Agents.agent_service import _coerce_autowake_enabled
@@ -443,6 +670,15 @@ class ConsoleGoalCoordinator:
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "history_unavailable"
             )
+        audit = self.controller.fleet_wake.recovery_result
+        if audit is not None and audit is not self._projected_audit:
+            await asyncio.to_thread(self.service.project_recovery, audit)
+            self._projected_audit = audit
+            goal = await asyncio.to_thread(self.service.get, goal_id)
+            if goal.status != "ready":
+                return GoalIterationResult(
+                    goal_id, 0, None, None, None, "goal_not_ready"
+                )
         session = next(
             (
                 s
@@ -470,8 +706,10 @@ class ConsoleGoalCoordinator:
                 s.id in busy and s.persisted_conversation_id == goal.conversation_id
                 for s in self.controller.store.sessions()
             )
+            or self.controller.fleet_wake.automatic_primary_count
+            >= self.controller.fleet_wake.MAX_AUTOMATIC_PRIMARIES
             or len(busy) >= max(0, self.controller.max_parallel_runs - 1)
-            or self.controller.prompt_queue_coordinator.controls_generation(session.id)
+            or self._manual_priority(goal.conversation_id)
         ):
             return GoalIterationResult(goal_id, 0, None, None, None, "primary_capacity")
         self._reserved_conversation_id = goal.conversation_id

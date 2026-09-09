@@ -1085,6 +1085,8 @@ class AutomaticWorkLedger:
         Known consumed counts remain known. Late usage may improve accounting,
         but cannot grant the old owner new execution authority.
         """
+        from tldw_chatbook.Agents.automatic_work_budget import RuntimeRecoveryResult
+
         _identity(current_owner_id)
         with self.transaction() as conn:
             # Revoke even completed owners: their surviving child callbacks
@@ -1114,4 +1116,21 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
                 [(chain_id,) for chain_id in chains],
             )
+            goals = tuple(
+                (
+                    r["id"],
+                    r["revision"],
+                    "recovery_required"
+                    if r["chain_id"] in chains or r["status"] == "recovery_required"
+                    else "paused",
+                )
+                for r in conn.execute(
+                    "SELECT g.* FROM goal_runs g WHERE g.status NOT IN ('completed','removed','closed','stopped','awaiting_result_review') "
+                    "AND EXISTS (SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=g.id AND a.state!='aborted')"
+                )
+            )
+            audit = RuntimeRecoveryResult(
+                current_owner_id, tuple(sorted(chains)), goals
+            )
+        self.recovery_result = audit
         return len(chains)

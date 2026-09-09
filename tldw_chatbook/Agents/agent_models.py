@@ -201,6 +201,8 @@ class RunTerminationReason(str, Enum):
     PERMISSION_REFUSED = "permission_refused"
     AUTHORITY_CHANGED = "authority_changed"
     UNKNOWN_EFFECT = "unknown_effect"
+    PRE_EFFECT_RATE_LIMIT = "pre_effect_rate_limit"
+    PRE_EFFECT_PERMANENT = "pre_effect_permanent"
     PREFLIGHT_REFUSED = "preflight_refused"
 
 

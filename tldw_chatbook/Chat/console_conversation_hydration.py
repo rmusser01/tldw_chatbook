@@ -331,6 +331,8 @@ def hydrate_console_session(
     settings: ConsoleSessionSettings | None,
     target_scope_type: str | None = None,
     target_workspace_id: str | None = None,
+    session_id: str | None = None,
+    activate: bool = True,
 ) -> Any:
     """Create and activate a Console session from a persisted tree.
 
@@ -417,6 +419,8 @@ def hydrate_console_session(
         else None
     )
     session = store.restore_persisted_session(
+        session_id=session_id,
+        activate=activate,
         title=title,
         workspace_id=workspace_id,
         persisted_conversation_id=target,

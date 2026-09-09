@@ -1204,6 +1204,8 @@ class ConsoleChatStore:
         character_name: str | None = None,
         ephemeral: bool = False,
         remote_active: bool = False,
+        session_id: str | None = None,
+        activate: bool = True,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -1268,6 +1270,8 @@ class ConsoleChatStore:
                     raw_project_context
                 )
         session = self.create_session(
+            session_id=session_id,
+            activate=activate,
             title=title,
             workspace_id=workspace_id,
             settings=settings,

@@ -172,7 +172,7 @@ def test_v16_upgrade_preserves_legacy_report_and_exact_launch(stores, standalone
         with reopened.connection() as conn:
             assert (
                 conn.execute("SELECT max(version) FROM schema_version").fetchone()[0]
-                == 17
+                == AgentRunsDB._CURRENT_SCHEMA_VERSION
             )
             assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:

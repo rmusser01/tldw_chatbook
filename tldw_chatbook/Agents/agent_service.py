@@ -4672,6 +4672,10 @@ class AgentService:
             )
         except Exception as exc:  # noqa: BLE001 — a run never raises out
             from tldw_chatbook.Chat.provider_failures import describe_stream_failure
+            from tldw_chatbook.LLM_Calls.provider_outcomes import (
+                PreEffectPermanentError,
+                PreEffectRateLimitError,
+            )
 
             # The runtime did not return its counter. The synthesized
             # outcome's default zero cannot stand in for unknown spend.
@@ -4681,7 +4685,13 @@ class AgentService:
             # instead — this summary becomes user-facing failure copy.
             outcome = RunOutcome(
                 status=RUN_ERROR,
-                termination_reason=RunTerminationReason.UNKNOWN_EFFECT,
+                termination_reason=(
+                    RunTerminationReason.PRE_EFFECT_RATE_LIMIT
+                    if isinstance(exc, PreEffectRateLimitError)
+                    else RunTerminationReason.PRE_EFFECT_PERMANENT
+                    if isinstance(exc, PreEffectPermanentError)
+                    else RunTerminationReason.UNKNOWN_EFFECT
+                ),
                 steps=[
                     AgentStep(
                         index=0,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
@@ -382,6 +383,23 @@ class GoalProvisioning(GoalModel):
     workspace_id: Identity
 
 
+class GoalHistoryEntry(GoalModel):
+    """Body-free bounded history index; private content is loaded on selection."""
+
+    id: str
+    conversation_id: str
+    revision: int
+    status: str
+    pause_reason: str | None
+    updated_at: float
+
+
+class RecoveryResolution(str, Enum):
+    """Human closure preserves uncertainty; no replay/refund proof is accepted."""
+
+    CLOSE_UNCERTAIN = "close_uncertain"
+
+
 class GoalSnapshot(GoalModel):
     id: Identity
     launch_id: Identity
@@ -393,6 +411,10 @@ class GoalSnapshot(GoalModel):
         "starting",
         "ready",
         "paused",
+        "pause_requested",
+        "stopping",
+        "stopped",
+        "closed",
         "awaiting_result_review",
         "recovery_required",
         "completed",
@@ -401,6 +423,8 @@ class GoalSnapshot(GoalModel):
     iteration_count: int
     pause_reason: str | None
     request: GoalRequest | None
+    retry_at: float | None = None
+    retry_reason: str | None = None
     checkpoints: tuple[GoalCheckpoint, ...] = ()
     reports: tuple[GoalReport, ...] = ()
     accounting: AutomaticWorkSnapshot

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 SCHEMA = """
+BEGIN IMMEDIATE;
 CREATE TABLE IF NOT EXISTS goal_runs (
     id TEXT PRIMARY KEY,
     launch_id TEXT NOT NULL UNIQUE,
@@ -36,6 +37,11 @@ CREATE TABLE IF NOT EXISTS goal_runs (
     pause_reason TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS goal_waits (
+    goal_id TEXT PRIMARY KEY REFERENCES goal_runs(id),
+    retry_at REAL NOT NULL,
+    reason TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS goal_iterations (
     id TEXT PRIMARY KEY,
@@ -78,7 +84,7 @@ CREATE TRIGGER goal_launch_immutable
 BEFORE UPDATE OF launch_id, payload_hash, request_json, conversation_id, chain_id ON goal_runs
 WHEN OLD.launch_id IS NOT NEW.launch_id OR OLD.payload_hash IS NOT NEW.payload_hash
  OR (OLD.request_json IS NOT NEW.request_json AND NOT (NEW.request_json='' AND NEW.status='removed'
-     AND OLD.status IN ('completed','paused','awaiting_result_review')
+     AND OLD.status IN ('completed','paused','awaiting_result_review','stopped')
      AND NOT EXISTS (SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id
          WHERE i.goal_id=OLD.id AND a.state IN ('prepared','accepted','review_required'))))
  OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.chain_id IS NOT NEW.chain_id
@@ -89,7 +95,7 @@ UPDATE goal_reports SET payload_json = json_remove(json_set(payload_json,
  '$.evidence_ids', json(COALESCE(json_extract(payload_json,'$.evidence_refs'),'[]')),
  '$.completion_recommended', json('false')), '$.draft', '$.evidence_refs')
  WHERE json_valid(payload_json) AND (json_type(payload_json,'$.draft') IS NOT NULL OR json_type(payload_json,'$.evidence_refs') IS NOT NULL);
-
+COMMIT;
 """
 
 
@@ -166,6 +172,56 @@ class GoalRunsStore:
             if row is None:
                 raise ValueError("unknown_goal")
             return self._snapshot(conn, row)
+
+    def control(self, goal_id: str, *, stop: bool = False) -> GoalSnapshot:
+        """Close successor admission without releasing the execution owner."""
+        with self.db.automatic_work.transaction() as conn:
+            goal = self.get(goal_id)
+            if goal.status in {
+                "removed",
+                "completed",
+                "closed",
+                "stopped",
+                "recovery_required",
+            }:
+                return goal
+            active = conn.execute(
+                "SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id "
+                "WHERE i.goal_id=? AND a.state IN ('prepared','accepted')",
+                (goal_id,),
+            ).fetchone()
+            state = (
+                ("stopping" if active else "stopped")
+                if stop
+                else ("pause_requested" if active else "paused")
+            )
+            if goal.status == "stopping":
+                state = "stopping"
+            if goal.status == state:
+                return goal
+            conn.execute(
+                "UPDATE goal_runs SET status=?,pause_reason=?,revision=revision+1,updated_at=? WHERE id=?",
+                (state, "user_stop" if stop else "user_pause", time.time(), goal_id),
+            )
+            return self.get(goal_id)
+
+    def settle_control(self, goal_id: str) -> GoalSnapshot:
+        """Finalize controls only after the coordinator has drained physical work."""
+        with self.db.automatic_work.transaction() as conn:
+            goal = self.get(goal_id)
+            if goal.status not in {"pause_requested", "stopping"}:
+                return goal
+            active = conn.execute(
+                "SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=? AND a.state IN ('prepared','accepted','review_required')",
+                (goal_id,),
+            ).fetchone()
+            if active:
+                return goal
+            conn.execute(
+                "UPDATE goal_runs SET status=?,revision=revision+1 WHERE id=?",
+                ("stopped" if goal.status == "stopping" else "paused", goal_id),
+            )
+            return self.get(goal_id)
 
     def set_provisioning(
         self,
@@ -355,6 +411,11 @@ class GoalRunsStore:
             except ValueError:
                 report = IterationReport()
                 error = "malformed_report"
+            if result.termination_reason in (
+                RunTerminationReason.PRE_EFFECT_RATE_LIMIT,
+                RunTerminationReason.PRE_EFFECT_PERMANENT,
+            ):
+                error = None  # a local adapter rejection produced no model report
             current = resolve_runtime_evidence(goal, result)
             retained = self._evidence(conn, goal.id)
             # Capacity was reserved before effects; keep only bounded private copies.
@@ -417,11 +478,28 @@ class GoalRunsStore:
                 RunTerminationReason.AUTOMATIC_LIMIT,
                 RunTerminationReason.PERMISSION_REFUSED,
                 RunTerminationReason.AUTHORITY_CHANGED,
+                RunTerminationReason.PRE_EFFECT_PERMANENT,
+                RunTerminationReason.CANCELLED,
             ):
                 decision = decision.model_copy(
                     update={
                         "action": "pause",
                         "reason": "iteration_" + result.termination_reason.value,
+                    }
+                )
+            if (
+                not uncertain
+                and result.termination_reason
+                == RunTerminationReason.PRE_EFFECT_RATE_LIMIT
+            ):
+                decision = decision.model_copy(
+                    update={
+                        "no_progress_count": prior.decision.no_progress_count
+                        if prior
+                        else 0,
+                        "reason": "pre_effect_retry_exhausted"
+                        if failed_count >= 3
+                        else "pre_effect_rate_limit",
                     }
                 )
             if not uncertain and decision.action == "continue":
@@ -437,6 +515,27 @@ class GoalRunsStore:
                     decision = decision.model_copy(
                         update={"action": "pause", "reason": "goal_budget_exhausted"}
                     )
+            if (
+                not uncertain
+                and decision.action == "continue"
+                and result.termination_reason
+                == RunTerminationReason.PRE_EFFECT_RATE_LIMIT
+            ):
+                decision = decision.model_copy(
+                    update={"reason": "pre_effect_rate_limit"}
+                )
+            if not uncertain and goal.status in {
+                "pause_requested",
+                "stopping",
+                "stopped",
+                "paused",
+            }:
+                decision = decision.model_copy(
+                    update={
+                        "action": "pause",
+                        "reason": goal.pause_reason or "user_pause",
+                    }
+                )
             artifact_digest = hashlib.sha256(
                 json.dumps(
                     [
@@ -485,6 +584,8 @@ class GoalRunsStore:
                 if decision.action == "pause"
                 else decision.action
             )
+            if not uncertain and goal.status in {"stopping", "stopped"}:
+                state = "stopped"
             conn.execute(
                 "UPDATE goal_runs SET status=?,pause_reason=?,revision=revision+1,updated_at=? WHERE id=?",
                 (state, decision.reason, time.time(), goal.id),
@@ -543,7 +644,8 @@ class GoalRunsStore:
                 (row["chain_id"],),
             ).fetchone()
             if (
-                row["status"] not in ("paused", "completed", "awaiting_result_review")
+                row["status"]
+                not in ("paused", "completed", "awaiting_result_review", "stopped")
                 or active
                 or uncertain
             ):
@@ -553,6 +655,7 @@ class GoalRunsStore:
                 "goal_checkpoints",
                 "goal_reports",
                 "goal_payload_reservations",
+                "goal_waits",
             ):
                 conn.execute(f"DELETE FROM {table} WHERE goal_id=?", (goal_id,))
             conn.execute(
@@ -588,6 +691,17 @@ class GoalRunsStore:
                 "SELECT count(*) FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=? AND a.accepted_at IS NOT NULL",
                 (row["id"],),
             ).fetchone()[0],
+            retry_at=(
+                wait[0]
+                if (
+                    wait := conn.execute(
+                        "SELECT retry_at,reason FROM goal_waits WHERE goal_id=?",
+                        (row["id"],),
+                    ).fetchone()
+                )
+                else None
+            ),
+            retry_reason=wait[1] if wait else None,
             request=GoalRequest.model_validate_json(row["request_json"])
             if row["status"] != "removed"
             else None,
