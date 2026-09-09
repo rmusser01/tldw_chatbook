@@ -6,7 +6,9 @@ Tasks 32177, 32179. See ``backlog/tasks/task-32177*.md`` and
 
 from __future__ import annotations
 
+import ast
 import inspect
+from pathlib import Path
 
 import pytest
 from textual.widgets import Button
@@ -128,3 +130,39 @@ def test_parse_browser_timestamp_is_exposed_publicly():
         "_parse_browser_timestamp name"
     )
     assert "parse_browser_timestamp" in source
+
+
+# --- task-32179: duplicate screen method -------------------------------------
+
+
+def test_seed_local_source_snapshot_from_cache_is_defined_exactly_once():
+    """Python method resolution silently kept only the SECOND of two
+    same-named definitions in the class body, leaving the first dead. Count
+    top-level defs by name via AST (independent of runtime shadowing) and
+    confirm the surviving definition is the real cache-applying
+    implementation (accepts ``now``), not the old no-arg stub."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    source_path = Path(inspect.getsourcefile(LibraryScreen))
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    class_node = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "LibraryScreen"
+    )
+    definitions = [
+        node
+        for node in class_node.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_seed_local_source_snapshot_from_cache"
+    ]
+    assert len(definitions) == 1, (
+        f"Expected exactly one _seed_local_source_snapshot_from_cache "
+        f"definition, found {len(definitions)}"
+    )
+
+    sig = inspect.signature(LibraryScreen._seed_local_source_snapshot_from_cache)
+    assert "now" in sig.parameters, (
+        "The surviving definition must be the real cache-applying "
+        "implementation (accepts `now`), not the dead no-arg stub"
+    )

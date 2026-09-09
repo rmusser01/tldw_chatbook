@@ -9340,44 +9340,6 @@ class LibraryScreen(BaseAppScreen):
         # (see the method's own docstring).
         self._seed_local_source_snapshot_from_cache()
 
-    def _seed_local_source_snapshot_from_cache(self) -> None:
-        """Apply the app-scoped snapshot cache before this screen mounts.
-
-        Called from both ``__init__`` and ``restore_state`` (task-15459) --
-        the app calls both on a freshly constructed, not-yet-mounted
-        instance before ``switch_screen`` mounts it (see ``restore_state``'s
-        own docstring), so seeding here is what lets a warm revisit's FIRST
-        ``compose_content`` already render the previous visit's data instead
-        of the "Loading…" placeholder -- rather than composing once with
-        that placeholder and then being forced into an immediate second,
-        explicit ``refresh(recompose=True)`` from ``on_mount`` to correct it
-        (that fallback still exists there, for the cache-miss/expired case
-        this seed does not cover).
-
-        Mirrors ``on_mount``'s own freshness check
-        (``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``) so a stale cache is never
-        instant-applied here either.
-
-        Safe to call this early: ``_apply_local_source_snapshot`` only
-        touches the DOM (recompose / rail sync) when ``self.is_mounted`` is
-        True, which is never the case at either call site, so a hit is a
-        pure attribute assignment with no recompose or widget-query side
-        effects.
-        """
-        cached_snapshot = getattr(
-            self.app_instance, "_library_source_snapshot_cache", None
-        )
-        cached_stamp = getattr(
-            self.app_instance, "_library_source_snapshot_cache_stamp", None
-        )
-        if (
-            cached_snapshot is None
-            or cached_stamp is None
-            or time.monotonic() - cached_stamp >= LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
-        ):
-            return
-        self._apply_local_source_snapshot(*cached_snapshot)
-
     def _file_notes_active(self) -> bool:
         """Return whether the retained File Notes workspace owns the canvas."""
         return (
