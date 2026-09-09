@@ -159,7 +159,9 @@ The next request receives the immutable objective/criteria, the latest accepted 
 | Pause requested | Finish the current increment, persist its result, admit no successor. |
 | Stop requested | Stop admission immediately and request cooperative cancellation. Show Stopping until local owned work actually exits; keep late evidence on the original attempt. |
 | Screen navigation | Execution survives; view detaches. Headless permission handling remains the existing fail-closed behavior. |
-| Restart | Inspect durable attempts before scheduling. Uncertain accepted work requires review; never automatically replay it. Even cleanly checkpointed goals await explicit Resume in the first release. |
+| Restart | Inspect durable attempts before scheduling. Uncertain accepted work requires review; never automatically replay it. Cleanly checkpointed goals require explicit Resume before another increment. Existing settled result review remains available without dispatch. |
+
+A retryable no-effect classification requires a trusted adapter's local before-dispatch gate. The first release does not infer that proof from a remote HTTP 429, `ChatRateLimitError`, or error text. Unqualified remote failures retain conservative usage/effect treatment. Proof about one rejected call cannot refund earlier helper work or an already accepted iteration; typed permanent local rejection does not retry.
 
 Initial goal limits are **3 accepted iterations, 32 model calls, 500,000 budget tokens, 8,192 maximum output tokens per call, 900 elapsed seconds, and zero goal subagents**. Each iteration also narrows the native `RunBudget` to **8 model turns, 64 steps and 240 elapsed seconds**, bounded by remaining chain allowance and stricter applicable executor limits. The shared chain counts helper calls as well. Reusing the ordinary Console turn defaults would let one iteration consume the whole goal allowance before a checkpoint. Runtime budget exits need typed reasons; the current `RunOutcome.status='stuck'` plus prose is insufficient for safe continuation decisions.
 
