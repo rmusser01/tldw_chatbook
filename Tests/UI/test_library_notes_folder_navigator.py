@@ -65,6 +65,9 @@ from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Library_Modules.screen_support_types import (
+    _LibraryNotesRestoreGuard,
+)
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 
@@ -1066,6 +1069,145 @@ async def test_external_note_deep_link_without_preferred_placement_uses_locator_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "superseded_field",
+    (
+        None,
+        "navigation_generation",
+        "tree_topology_epoch",
+        "tree_lifecycle_generation",
+        "focus_intent_generation",
+        "scroll_intent_generation",
+    ),
+)
+async def test_locator_deferred_exact_scroll_keeps_every_captured_owner(
+    superseded_field: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The receipt scroll retry runs only while every captured owner is current.
+
+    Args:
+        superseded_field: Generation to invalidate before the deferred callback.
+        monkeypatch: Pytest patch helper for the mounted-canvas callback seam.
+    """
+
+    class _ReceiptLocatorService(_BranchService):
+        async def locate_note_tree_placement(self, **_kwargs):
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.unfiled("loose"),
+                note_id="loose",
+                membership_id=None,
+                path=(),
+                placement_offset=0,
+            )
+
+    fake = _branch_screen_fake(_ReceiptLocatorService())
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_sync_library_notes_tree_canvas_if_present",
+        lambda _self, **kwargs: fake._sync_library_notes_tree_canvas_if_present(
+            **kwargs
+        ),
+    )
+    fake._notes_state.scroll_intent_generation = 7
+    callbacks = []
+    focus_calls = []
+    scroll_calls = []
+    fake.call_after_refresh = lambda callback, *args: callbacks.append(
+        (callback, args)
+    )
+    fake._restore_library_notes_focus_identity = lambda identity, guard=None: (
+        focus_calls.append((identity, guard)) or True
+    )
+    fake._notes_controller = SimpleNamespace(
+        _restore_library_notes_scroll_offset=lambda identity, guard=None: (
+            scroll_calls.append((identity, guard))
+        )
+    )
+    guard = _LibraryNotesRestoreGuard(scroll_generation=7)
+
+    located = await LibraryScreen._locate_library_notes_tree_target(
+        fake,
+        note_id="loose",
+        focus_scroll_offset=(0, 6),
+        restore_guard=guard,
+    )
+
+    assert located
+    assert len(focus_calls) == 1
+    assert len(callbacks) == 1
+    if superseded_field is not None:
+        setattr(
+            fake._notes_state,
+            superseded_field,
+            getattr(fake._notes_state, superseded_field) + 1,
+        )
+    callback, args = callbacks.pop()
+    callback(*args)
+    assert scroll_calls == ([] if superseded_field is not None else focus_calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("focus_scroll_offset", "restore_succeeds"),
+    ((None, True), ((0, 6), False)),
+)
+async def test_locator_skips_exact_scroll_retry_without_owned_success(
+    focus_scroll_offset: tuple[int, int] | None,
+    restore_succeeds: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ordinary locators and failed focus restores schedule no scroll retry.
+
+    Args:
+        focus_scroll_offset: Optional receipt-owned scroll position.
+        restore_succeeds: Whether the explicit focus target survived the sync.
+        monkeypatch: Pytest patch helper for the mounted-canvas callback seam.
+    """
+
+    class _ReceiptLocatorService(_BranchService):
+        async def locate_note_tree_placement(self, **_kwargs):
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.unfiled("loose"),
+                note_id="loose",
+                membership_id=None,
+                path=(),
+                placement_offset=0,
+            )
+
+    fake = _branch_screen_fake(_ReceiptLocatorService())
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_sync_library_notes_tree_canvas_if_present",
+        lambda _self, **kwargs: fake._sync_library_notes_tree_canvas_if_present(
+            **kwargs
+        ),
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+    callbacks = []
+    fake.call_after_refresh = lambda callback, *args: callbacks.append(
+        (callback, args)
+    )
+    fake._restore_library_notes_focus_identity = (
+        lambda *_args, **_kwargs: restore_succeeds
+    )
+
+    located = await LibraryScreen._locate_library_notes_tree_target(
+        fake,
+        note_id="loose",
+        focus_scroll_offset=focus_scroll_offset,
+    )
+
+    assert located
+    assert callbacks == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("blocked_stage", ("folders", "placements"))
 @pytest.mark.parametrize("late_failure", (False, True))
 async def test_superseded_locator_cannot_apply_blocked_containing_range(
@@ -1408,6 +1550,10 @@ async def test_topology_receipt_reloads_full_contiguous_range_and_clamps_shrink(
     fake._restore_library_notes_focus_identity = lambda identity: (
         restored_focus.append(identity) or True
     )
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    fake._notes_controller = SimpleNamespace(
+        _restore_library_notes_scroll_offset=lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
         lambda *_args, then=None, **_kwargs: then() if then is not None else None,
@@ -1517,6 +1663,10 @@ async def test_topology_receipt_reloads_cumulative_filter_range_and_duplicate_sc
     fake._restore_library_notes_focus_identity = lambda identity: (
         restored_focus.append(identity) or True
     )
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    fake._notes_controller = SimpleNamespace(
+        _restore_library_notes_scroll_offset=lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
         lambda *_args, then=None, **_kwargs: then() if then is not None else None,
@@ -1607,6 +1757,10 @@ async def test_topology_receipt_clamps_nonzero_branch_range_after_total_shrink(
     fake.query_one = lambda *_args, **_kwargs: SimpleNamespace()
     fake._restore_library_notes_focus_identity = lambda identity: (
         restored_focus.append(identity) or True
+    )
+    fake.call_after_refresh = lambda callback, *args: callback(*args)
+    fake._notes_controller = SimpleNamespace(
+        _restore_library_notes_scroll_offset=lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",

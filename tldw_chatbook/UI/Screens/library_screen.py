@@ -16430,9 +16430,8 @@ class LibraryScreen(BaseAppScreen):
         focus_generation = (
             getattr(self._notes_state, "focus_intent_generation", 0) if focus else None
         )
-        self._notes_state.navigation_status = (
-            "Locating note…" if note_id else "Locating folder…"
-        )
+        navigation_status = "Locating note…" if note_id else "Locating folder…"
+        self._notes_state.navigation_status = navigation_status
         self._notes_state.navigation_focus_intent = focus
         LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
@@ -16612,22 +16611,24 @@ class LibraryScreen(BaseAppScreen):
             semantic_role=role,
             scroll_offset=focus_scroll_offset,
         )
+        restore_identity = self._restore_library_notes_focus_identity
+        guard_args = () if restore_guard is None else (restore_guard,)
+        def restore_focus() -> bool | None:
+            """Restore focus now and its exact scroll after layout settles."""
+            if not current() or restore_identity(identity, *guard_args) is False:
+                return False
+            if focus_scroll_offset is not None:
+                controller = self._notes_controller
+                restore_scroll = controller._restore_library_notes_scroll_offset
+                retry_scroll = partial(restore_scroll, identity, restore_guard)
+                self.call_after_refresh(lambda: current() and retry_scroll())
+            return None
 
-        def guard() -> bool:
-            return current()
-
-        restore_focus = partial(self._restore_library_notes_focus_identity, identity)
-        if restore_guard is not None:
-            restore_focus = partial(
-                self._restore_library_notes_focus_identity,
-                identity,
-                restore_guard,
-            )
         LibraryScreen._sync_library_notes_tree_canvas_if_present(
             self,
             then=restore_focus,
             notes_focus_identity=identity,
-            deferred_guard=guard,
+            deferred_guard=current,
         )
         return True
 

@@ -3676,3 +3676,31 @@ After the bounded step 147/150 repairs are verified and saved, integrate fetched
 native qualification is intentionally deferred until that integrated source is
 stable; there is no claim that targeted controls replace it. Final-head checks,
 review and protected merge remain open.
+
+Step 147's topology-scroll repair is now ready for integrated qualification.
+It restores explicit locator focus synchronously, then schedules one scroll-only
+after-refresh retry for a receipt-owned offset, retaining the existing captured
+navigation/topology/lifecycle/focus and optional scroll guard at both boundaries.
+Independent review exposed eager scroll-owner lookup and callback-arity drift;
+four existing receipt controls reproduced the first issue. The correction keeps
+the original one/two-argument binding, exact-False veto and conditional scroll
+lookup. Three explicit-offset fakes expose only the new scroll collaborator;
+ordinary/failed-focus controls deliberately have no controller.
+
+Final focused locator/receipt group: 13 passed, 113 deselected, three warnings,
+4.03s (`/private/tmp/pr2427-plan147-final-compat-green.log`), after the four-case
+RED (`/private/tmp/pr2427-plan147-compat-red.log`). Complete wave-list: 27 passed,
+three warnings, 6.11s (`/private/tmp/pr2427-plan147-final-wave-list-green.log`).
+Exact Screen ratchet: two passed, three deselected, 0.62s
+(`/private/tmp/pr2427-plan147-final-cap-green.log`), 31,689 lines/1,200 methods,
+unchanged ceilings. Scoped Ruff/whitespace and independent rereview are clear.
+Complete folder/native qualification is still held for the integrated dev base.
+
+The separate two-Back rerun passes one and fails one in 21.30s
+(`/private/tmp/pr2427-back-diagnostic.log`). The failing parameter switches to
+the delayed-filter case but has the identical Filter-focus/list-zero symptom.
+This establishes timing sensitivity across both variants, not a fixed outcome
+from the locator repair. All original return assertions remain intact. After
+rebase, observation-only callback tracing may attribute receipt capture, guard
+expiry, pending release and late Filter focus without adding sleeps or changing
+production policy.
