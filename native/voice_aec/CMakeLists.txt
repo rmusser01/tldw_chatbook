@@ -113,6 +113,7 @@ endif()
 # Select exactly the branch for this build; never glob additional source files.
 list(FILTER WEBRTC_SOURCES EXCLUDE REGEX "_mips\\.(cc|c)$")
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")
+  list(FILTER WEBRTC_SOURCES EXCLUDE REGEX "common_audio/resampler/sinc_resampler_sse\\.cc$")
   list(FILTER WEBRTC_SOURCES EXCLUDE REGEX "ooura_fft_sse2\\.cc$")
   list(FILTER WEBRTC_SOURCES EXCLUDE REGEX "common_audio/.+_armv7\\.S$")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i.86)$")

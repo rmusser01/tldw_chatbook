@@ -213,6 +213,7 @@ native/voice_aec/vendor/webrtc/common_audio/resampler/push_sinc_resampler.h
 native/voice_aec/vendor/webrtc/common_audio/resampler/resampler.cc
 native/voice_aec/vendor/webrtc/common_audio/resampler/sinc_resampler.cc
 native/voice_aec/vendor/webrtc/common_audio/resampler/sinc_resampler.h
+native/voice_aec/vendor/webrtc/common_audio/resampler/sinc_resampler_sse.cc
 native/voice_aec/vendor/webrtc/common_audio/ring_buffer.c
 native/voice_aec/vendor/webrtc/common_audio/ring_buffer.h
 native/voice_aec/vendor/webrtc/common_audio/signal_processing/auto_corr_to_refl_coef.c
@@ -476,10 +477,14 @@ native/voice_aec/vendor/webrtc/system_wrappers/source/metrics.cc
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/LICENSE
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/attributes.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/config.h
+native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/atomic_hook.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/identity.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/inline_variable.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/invoke.h
+native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/raw_logging.cc
+native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/raw_logging.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/throw_delegate.h
+native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/log_severity.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/macros.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/optimization.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/policy_checks.h
@@ -487,6 +492,7 @@ native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/port.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/memory/memory.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/meta/type_traits.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/strings/string_view.h
+native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/types/bad_optional_access.cc
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/types/bad_optional_access.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/types/internal/optional.h
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/types/optional.h

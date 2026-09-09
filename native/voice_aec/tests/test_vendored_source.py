@@ -70,6 +70,38 @@ OOURA_SOURCE_SHA256 = "8a07c7cffe3471fbbd9b734cf658f7d0ed28904e4f828179dbebf6505
 OOURA_LICENSE_SHA256 = (
     "efa6b38d923e14333047a48580043d366dc51e5d0ebd7d658fa341ad3aafb576"
 )
+SUPPORT_FILES = {
+    "common_audio/resampler/sinc_resampler_sse.cc": (
+        2242,
+        "5decba680f2e20113dfa9fbaf523669bc75dc3b019f8d65835992f482cde6ed4",
+        "f6a24d0a0e0d34174732e68a91f83204605fab22",
+    ),
+    "third_party/abseil-cpp/absl/base/internal/atomic_hook.h": (
+        5955,
+        "46c4806d83be6c0beaf5429db526dbd03893870d816caac5ab5b6229b5fd2420",
+        "803e9059761cfe112031342fbd4c5eef940483bc",
+    ),
+    "third_party/abseil-cpp/absl/base/internal/raw_logging.cc": (
+        7626,
+        "131dda9bfd959377f0cd2c020a29c2ca20cc88f85941794bff4513340598c2fb",
+        "878fe6c6c2cc969802c757031ab4f2c8ec9c790b",
+    ),
+    "third_party/abseil-cpp/absl/base/internal/raw_logging.h": (
+        8935,
+        "412d89f77aeb071a90ee62290a1d601587d9243529a38b7f7895f69d98e3dd18",
+        "6a4c093603f0eaa64f22144706c617e0fac99faa",
+    ),
+    "third_party/abseil-cpp/absl/base/log_severity.h": (
+        2601,
+        "538307f78a6319bdffbb13cc197fed59ffb144c02444b5485eaf27d87211490d",
+        "5a1d5576ce7bc5da307ae822637770d8f246ddb2",
+    ),
+    "third_party/abseil-cpp/absl/types/bad_optional_access.cc": (
+        1227,
+        "ee36f3b6f3cdb43e9a4e035accafae1ff0ad486a0cee30a356baf247bdce93ff",
+        "a791c7c21da8759ef65776a49747a2d785fa3b88",
+    ),
+}
 DEFINES = {
     "common": ["WEBRTC_APM_DEBUG_DUMP=0", "WEBRTC_ENABLE_PROTOBUF=0"],
     "macos": ["WEBRTC_MAC", "WEBRTC_POSIX"],
@@ -129,7 +161,7 @@ def test_upstream_metadata_pins_exact_official_revision() -> None:
     assert metadata["import_timestamp"] == COMMIT_TIMESTAMP
     assert metadata["roots"] == BROAD_ROOTS
     assert metadata["file_allowlist"] == FILE_ALLOWLIST
-    assert metadata["compile_closure_file_count"] == 316
+    assert metadata["compile_closure_file_count"] == 322
     assert metadata["compiler_defines"] == DEFINES
     assert metadata["license_path"] == "LICENSE"
     assert metadata["patent_notice_path"] == "PATENTS"
@@ -565,7 +597,7 @@ def test_custom_vendor_output_uses_an_adjacent_notices_path(
     }
 
 
-def test_compile_closure_contains_exactly_316_files() -> None:
+def test_compile_closure_contains_exactly_322_files() -> None:
     metadata = _metadata()
     entries = {relative_path for _, relative_path in _manifest()}
     non_closure = {
@@ -579,7 +611,7 @@ def test_compile_closure_contains_exactly_316_files() -> None:
         "third_party/abseil-cpp/LICENSE",
     }
 
-    assert len(entries - non_closure) == 316
+    assert len(entries - non_closure) == 322
     assert metadata["compile_closure_file_count"] == len(entries - non_closure)
 
 
@@ -603,6 +635,51 @@ def test_compile_closure_excludes_unapproved_api_implementations() -> None:
     assert not (VENDOR_ROOT / "api/task_queue").exists()
 
 
+@pytest.mark.parametrize("relative", SUPPORT_FILES)
+def test_support_dependencies_are_exact_pinned_sources(relative: str) -> None:
+    path = VENDOR_ROOT / relative
+    assert path.is_file(), relative
+    size, digest, blob = SUPPORT_FILES[relative]
+    source = path.read_bytes()
+    assert len(source) == size
+    assert hashlib.sha256(source).hexdigest() == digest
+    assert hashlib.sha1(f"blob {size}\0".encode() + source).hexdigest() == blob
+    tool = _load_tool()
+    assert tool._pristine_manifest_entries(VENDOR_ROOT)[relative] == digest
+    if relative.endswith(".cc"):
+        assert relative in tool.COMPILE_SOURCE_ALLOWLIST
+
+
+def test_support_addition_preserves_all_316_pristine_entries() -> None:
+    old_ledger = b"".join(
+        line
+        for line in PRISTINE_MANIFEST_PATH.read_bytes().splitlines(keepends=True)
+        if line.decode().rstrip("\n").split("  ", 1)[1] not in SUPPORT_FILES
+    )
+    assert len(old_ledger.splitlines()) == 316
+    assert hashlib.sha256(old_ledger).hexdigest() == (
+        "596ddbb3291fc5fd432376ef4bdfee6fed67bd999709638d68436f2b1ef041a4"
+    )
+
+
+def test_sinc_sse_source_is_excluded_only_from_arm64_branch() -> None:
+    cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    arm64, x86 = cmake.split(
+        'if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")', 1
+    )[1].split("elseif", 1)
+    x86 = x86.split("else()", 1)[0]
+    relative = "common_audio/resampler/sinc_resampler_sse.cc"
+    for branch, excluded in ((arm64, True), (x86, False)):
+        patterns = re.findall(r'EXCLUDE REGEX "([^"]+)"', branch)
+        assert (
+            any(
+                re.search(pattern.replace("\\\\", "\\"), relative)
+                for pattern in patterns
+            )
+            is excluded
+        )
+
+
 def test_cpu_feature_implementation_is_exact_pinned_compile_source() -> None:
     relative = "system_wrappers/source/cpu_features.cc"
     tool = _load_tool()
@@ -621,7 +698,8 @@ def test_cpu_feature_implementation_is_exact_pinned_compile_source() -> None:
     old_ledger = b"".join(
         line
         for line in PRISTINE_MANIFEST_PATH.read_bytes().splitlines(keepends=True)
-        if not line.endswith(f"  {relative}\n".encode())
+        if line.decode().rstrip("\n").split("  ", 1)[1]
+        not in {*SUPPORT_FILES, relative}
     )
     assert hashlib.sha256(old_ledger).hexdigest() == (
         "e9a42c702eea0c1b0faa6aa0d11ba8b501c7c052f18ee837a77923f81e12314c"
@@ -831,11 +909,12 @@ def test_pristine_manifest_is_independently_anchored_and_complete() -> None:
 
     assert PRISTINE_MANIFEST_PATH.is_file()
     assert _sha256(PRISTINE_MANIFEST_PATH) == tool.PRISTINE_MANIFEST_SHA256
-    assert len(tool._pristine_manifest_entries(VENDOR_ROOT)) == 316
+    assert len(tool._pristine_manifest_entries(VENDOR_ROOT)) == 322
 
 
 @pytest.mark.parametrize(
-    "relative_path", ["rtc_base/checks.h", "system_wrappers/source/cpu_features.cc"]
+    "relative_path",
+    ["rtc_base/checks.h", "system_wrappers/source/cpu_features.cc", *SUPPORT_FILES],
 )
 def test_vendor_verifier_rejects_rehashed_undeclared_source_edit(
     tmp_path: Path,
@@ -887,7 +966,7 @@ def test_abseil_provenance_pins_exact_deps_revision_and_subtree() -> None:
     assert dependency["path"] == "third_party/abseil-cpp"
     assert dependency["license_path"] == "third_party/abseil-cpp/LICENSE"
     assert dependency["license_sha256"] == ABSEIL_LICENSE_SHA256
-    assert len(dependency["vendored_tree"]) == 40
+    assert dependency["vendored_tree"] == "305085097eb6e5f3fe48baa59519a7faaa62eedd"
     assert _sha256(VENDOR_ROOT / dependency["license_path"]) == ABSEIL_LICENSE_SHA256
     assert (
         _load_tool().git_tree_object_id(VENDOR_ROOT / dependency["path"])

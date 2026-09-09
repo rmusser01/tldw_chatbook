@@ -19,6 +19,12 @@ from tldw_chatbook.Audio import voice_process_lifetime
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_PATH_LIST = _PROJECT_ROOT / "Packaging/speculative_voice_source_paths.txt"
 _REQUIRED_CURRENT_SCOPE = {
+    "native/voice_aec/vendor/webrtc/common_audio/resampler/sinc_resampler_sse.cc",
+    "native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/atomic_hook.h",
+    "native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/raw_logging.cc",
+    "native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/raw_logging.h",
+    "native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/log_severity.h",
+    "native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/types/bad_optional_access.cc",
     "native/voice_aec/vendor/webrtc/system_wrappers/source/cpu_features.cc",
     "tldw_chatbook/DB/migrations/chachanotes_v68_to_v69_console_trace_source_pin.sql",
     "Tests/Chat/test_console_runtime_lazy_voice.py",
