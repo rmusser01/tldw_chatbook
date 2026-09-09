@@ -619,6 +619,43 @@ async def test_a_notes_refresh_from_outside_the_editor_still_recomposes():
         gates.release_all()
 
 
+@pytest.mark.asyncio
+async def test_a_notes_refresh_never_overwrites_the_keywords_being_typed():
+    """Review of #2531: the keyword boxes are editable fields too.
+
+    The first pass protected the title and the body only, so a refresh landing
+    while the reader typed keywords rebuilt the pane under them and
+    `apply_session_state` re-assigned the snapshot's (older) keyword text over
+    what they had just typed.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            keywords = screen.query_one("#library-note-keywords", Input)
+            keywords.focus()
+            await pilot.pause()
+            await _type(pilot, "retro")
+
+            _sync_library_canvas(screen, "notes")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert screen.query_one("#library-note-keywords", Input) is keywords, (
+                "the focused keyword box must not be rebuilt under the reader"
+            )
+            assert keywords.value == "retro"
+            assert keywords.has_focus, (
+                f"focus was reset mid-typing to {screen.focused!r}"
+            )
+    finally:
+        gates.release_all()
+
+
 # --- task-32063: one status line, one header, one toast ------------------
 
 
@@ -726,6 +763,30 @@ async def test_graduation_notice_fires_when_the_compact_rail_gives_way():
 
 
 @pytest.mark.asyncio
+async def test_graduation_notice_fires_for_a_new_profile_that_never_saw_starter():
+    """Review of #2531: a new profile is stamped UNKNOWN and paints compact.
+
+    Evidence that finds content aggregates straight to GRADUATED without ever
+    settling on STARTER, so requiring STARTER silenced the notice for exactly
+    the user whose hidden tools had just appeared.
+    """
+    app = _build_test_app()
+    sent = _graduation_notifications(app)
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "lifecycle"
+    ] = "unknown"
+    screen = LibraryScreen(app)
+    assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+
+    screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
+    screen._apply_graduation_notice(LibraryLifecycle.UNKNOWN)
+
+    assert sent == [
+        ("Library tools are now available.", {"severity": "information"})
+    ]
+
+
+@pytest.mark.asyncio
 async def test_graduation_notice_is_a_toast_and_not_a_second_canvas_line():
     """task-32063 AC: the notice IS a toast -- one event, one surface.
 
@@ -799,6 +860,51 @@ def test_chunking_lab_escape_returns_to_the_library_canvas() -> None:
         for binding in ChunkingLabScreen.BINDINGS
     }
     assert "escape" in keys
+
+
+@pytest.mark.asyncio
+async def test_chunking_lab_escape_leaves_from_the_focused_sample_editor(
+    tmp_path, monkeypatch
+) -> None:
+    """Review of #2531: the binding existed but vetoed itself where it matters.
+
+    The Lab's sample area is a `TextArea` and is the first thing focused, so
+    the guard that kept Escape for focused text controls left the reader stuck
+    in the full-screen tool -- the opposite of the documented promise.
+    """
+    from Tests.UI.test_chunking_lab_screen import settle_lab
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
+
+    monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: tmp_path)
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+
+    async with app.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(app)
+        await app.push_screen(screen)
+        await screen.wait_until_ready()
+        await settle_lab(app, screen, pilot)
+
+        sample = screen.query_one("#lab-sample-text", TextArea)
+        sample.focus()
+        await pilot.pause()
+        assert sample.has_focus
+
+        routed: list[str] = []
+        post_message = app.post_message
+
+        def _record(message):
+            if isinstance(message, NavigateToScreen):
+                routed.append(message.screen_name)
+            return post_message(message)
+
+        monkeypatch.setattr(app, "post_message", _record)
+
+        await pilot.press("escape")
+        await settle_lab(app, screen, pilot)
+
+        assert routed == [screen.return_route]
 
 
 # --- task-32069: rail search clear, and three Study rows ----------------
@@ -900,3 +1006,37 @@ async def test_get_started_steps_are_live_controls_that_unlock_in_sequence():
 
         hint = str(screen.query_one("#library-hub-steps-hint", Static).renderable)
         assert "Import a file" in hint and hint.endswith(".")
+
+
+def test_use_it_in_console_unlocks_on_a_selection_not_on_bare_results() -> None:
+    """Review of #2531: the step unlocked on results the user had not picked.
+
+    Staging refuses without a selected result, so the seemingly available
+    control answered with the staging refusal instead of opening Console.
+    """
+    from types import MappingProxyType
+
+    from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
+
+    app = _build_test_app()
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "lifecycle"
+    ] = "starter"
+    screen = LibraryScreen(app)
+    row = LibraryRagResultRow(
+        result_id="r1",
+        title="Retro notes",
+        snippet="snippet",
+        score=0.9,
+        source_id="src-1",
+        chunk_id="chunk-1",
+        citations=(),
+        provenance=MappingProxyType({"source_type": "notes"}),
+    )
+    screen._rag_search_state.results = (row,)
+    screen._rag_search_state.selected_result_id = ""
+
+    assert screen._library_landing_canvas_state().search_result_selected is False
+
+    screen._rag_search_state.selected_result_id = "r1"
+    assert screen._library_landing_canvas_state().search_result_selected is True

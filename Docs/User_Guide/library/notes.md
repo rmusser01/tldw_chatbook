@@ -323,8 +323,9 @@ somewhere else while you were editing, a banner appears: "This note
 changed elsewhere — Overwrite saves your text; Reload discards it." —
 pick **Overwrite** or **Reload**.
 
-While the title or body has keyboard focus, nothing repaints the editor
-underneath you: a refresh that arrives mid-sentence — a save landing, the
+While any editor field — the title, the body, or either keyword box — has
+keyboard focus, nothing repaints the editor underneath you: a refresh that
+arrives mid-sentence — a save landing, the
 first note reaching the list, the Library graduating to its full rail — leaves
 the editor alone, so keystrokes never land in the wrong box and focus never
 jumps away as you type or after you move to another field. The next refresh
@@ -640,3 +641,8 @@ alone, and a snapshot that is a keystroke behind no longer rewrites the
 focused field — measured live, a title and body typed within ~0.4 s used to be
 stored as one scrambled title with an empty body. task-32061 re-checked on a
 fresh profile: the list pane survives the first note's Escape.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (review of
+PR #2531: the keyword boxes get the same protection as the title and body — a
+refresh landing while you type keywords no longer rebuilds the editor or
+rewrites the box from an older snapshot.)*

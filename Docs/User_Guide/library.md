@@ -239,7 +239,7 @@ visible stage so its controls remain on-screen. Escape (or the
 | **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
 | **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is never offered after graduation. |
 | **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. |
-| **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from. |
+| **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
 | **▾** / **▸** (section headers) | Open or collapse that rail section. |
 
 ### Browse rows
@@ -731,3 +731,11 @@ canvas; the three Study rows are one row each. task-32072: Get started's
 task-32063's graduation notice is now the toast and nothing else — the
 in-canvas line that repeated it is gone, so one event has one surface and
 nothing is added to the canvas a reader is working in.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (review of
+PR #2531: Escape leaves the Chunking Lab from its focused sample editor too,
+not only with focus outside a text field; Get started's **Use it in Console**
+unlocks on a *selected* search result and otherwise says "run Find it and pick
+one."; and the graduation toast also reaches a brand-new profile, whose
+lifecycle goes straight from `unknown` to graduated without settling on
+Starter.)*
