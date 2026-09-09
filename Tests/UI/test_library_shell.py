@@ -5624,7 +5624,7 @@ def _assert_task6_production_bounds(screen: LibraryScreen, *panes) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("terminal_width", "expected_rail_width"),
-    ((100, 24), (80, 24), (60, None)),
+    ((100, 29), (80, 29), (60, None)),
 )
 async def test_library_production_width_matrix_graduated_startup_landing(
     terminal_width: int,
@@ -5672,11 +5672,11 @@ async def test_library_production_width_matrix_graduated_startup_landing(
 @pytest.mark.parametrize(
     ("terminal_width", "expected_content_width", "expected_rail_width"),
     (
-        (235, 231, 34),
-        (170, 166, 31),
-        (120, 116, 24),
-        (100, 100, 24),
-        (80, 80, 24),
+        (235, 231, 39),
+        (170, 166, 36),
+        (120, 116, 29),
+        (100, 100, 29),
+        (80, 80, 29),
         (60, 60, None),
     ),
 )
@@ -5726,7 +5726,7 @@ async def test_library_production_width_matrix_ordinary(
         (235, 231, 0, False, True),
         (170, 166, 0, False, True),
         (120, 116, 0, False, True),
-        (100, 100, 0, False, True),
+        (100, 100, 0, False, False),
         (80, 80, 0, False, False),
         (60, 60, 0, False, False),
     ),
@@ -5777,7 +5777,7 @@ async def test_library_production_width_matrix_adaptive_work_owned(
 
 @pytest.mark.parametrize(
     ("raw_width", "expected_width"),
-    ((1, 24), (99, 48), ("wide", 31), (None, 31)),
+    ((1, 24), (99, 48), ("wide", 36), (None, 36)),
 )
 def test_library_production_width_matrix_normalizes_persisted_custom_widths(
     raw_width: object,
@@ -5835,7 +5835,7 @@ def test_library_production_width_matrix_normalizes_persisted_custom_widths(
         (235, 231, (False, True), 56),
         (170, 166, (False, True), 56),
         (120, 116, (False, True), 56),
-        (100, 100, (False, True), 42),
+        (100, 100, (False, False), 0),
         (80, 80, (False, False), 0),
         (60, 60, (False, False), 0),
     ),
@@ -5919,10 +5919,10 @@ async def test_library_production_width_matrix_custom_preferences(
         screen._sync_library_notes_reader_layout_from_shell(priority="library")
         await pilot.pause()
         priority = adaptive.effective_layout
-        if expected_content_width >= saved_width + 98:
+        if expected_content_width >= saved_width + 108:
             priority_open = (True, True)
             priority_library_width = saved_width
-            priority_items_width = 40
+            priority_items_width = 50
             expected_priority = None
         else:
             priority_open = (True, False)
@@ -6142,12 +6142,19 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
             (153, (False, True, 0, 56, 83)),
             (154, (False, True, 0, 56, 84)),
             (120, (False, True, 0, 56, 50)),
-            (100, (False, True, 0, 42, 48)),
+            # Notes reserves 10 grip cells, 50 Items cells, and 48 Work cells.
+            (108, (False, True, 0, 50, 48)),
+            (107, (False, False, 0, 0, 97)),
+            (100, (False, False, 0, 0, 90)),
             (80, (False, False, 0, 0, 70)),
             (60, (False, False, 0, 0, 50)),
             (64, (False, False, 0, 0, 54)),
             (101, (False, False, 0, 0, 91)),
-            (102, (False, True, 0, 44, 48)),
+            (102, (False, False, 0, 0, 92)),
+            # Reopening requires four extra cells beyond the 108-cell floor.
+            (108, (False, False, 0, 0, 98)),
+            (111, (False, False, 0, 0, 101)),
+            (112, (False, True, 0, 54, 48)),
             (153, (False, True, 0, 56, 83)),
             (154, (False, True, 0, 56, 84)),
             (170, (False, True, 0, 56, 100)),

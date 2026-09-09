@@ -14108,3 +14108,16 @@ and early returns, and keep another same-path client live to prove cleanup does
 not stop its system. Native all-FD identities also exposed an unlinked test-app
 lock missed by a SQLite-suffix-only scan. A passing suite, missing pathname or
 one empty SQLite snapshot does not establish that every resource was released.
+
+### PR 2427: a rebase can make a controlled timing regression vacuous
+
+On 2026-09-09, upstream correctly removed queued FTS backfill from the ordinary
+boot census's required immediate workers. The rebased delayed-recovery variant
+still passed, but now sampled before its held backfill started and no longer
+tested the bounded-wait repair. An explicit returned-start assertion failed.
+Requiring FTS only inside that controlled child's wait restored the intended
+coverage without changing the ordinary required set. Both boot files passed
+19 tests; removing only the wait loop through an in-memory test mutation failed
+the backfill assertion again. When a rebase changes a test's prerequisite set,
+prove the controlled adverse path is still observed, not merely that the test
+remains green.

@@ -362,6 +362,10 @@ def test_boot_worker_and_thread_starts_stay_within_the_allowlist(
         ready = "        # Settle window:"
         assert setup in _CENSUS_SCRIPT and ready in _CENSUS_SCRIPT
         script = _CENSUS_SCRIPT.replace(setup, setup + """
+    global expected_workers
+    expected_workers |= {
+        ("_backfill_chachanotes_messages_fts", "chachanotes-fts-backfill")
+    }
     release_recovery = threading.Event()
     real_recovery = app.ensure_actor_pack_recovery
 
@@ -376,6 +380,10 @@ def test_boot_worker_and_thread_starts_stay_within_the_allowlist(
     records = _boot_and_census(tmp_path)
 
     started_workers = {(w["name"], w["group"]) for w in records["workers"]}
+    if delayed_recovery:
+        assert (
+            "_backfill_chachanotes_messages_fts", "chachanotes-fts-backfill"
+        ) in started_workers, "The controlled delayed backfill was never observed"
     started_threads = {
         (
             _normalize_thread_name(t["name"] or ""),
