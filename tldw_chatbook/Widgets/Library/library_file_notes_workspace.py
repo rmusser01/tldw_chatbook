@@ -257,6 +257,10 @@ _SESSION_GIT_MUTATION_BUSY = "Git operation in progress; structural actions are 
 #: task-32055: a folder change waits this long before it gives up. Read at
 #: call time (never bound as a default argument) so tests can shorten it.
 ROOT_CHANGE_TIMEOUT_SECONDS = 30.0
+#: How often the scan thread looks up from waiting for the service lock to
+#: ask whether its attempt has been abandoned. Short enough to be invisible
+#: beside a folder change, long enough not to spin.
+SERVICE_LOCK_POLL_SECONDS = 0.05
 ROOT_CHANGE_CANCELLED_COPY = "Folder change cancelled · previous folder kept"
 ROOT_CHANGE_TIMEOUT_COPY = (
     "Folder change timed out · previous folder kept. "
@@ -5361,6 +5365,13 @@ class LibraryFileNotesWorkspace(Vertical):
         uninterruptible syscall (a dead network mount) makes the NEXT
         change report a timeout instead of queueing behind it silently.
 
+        That bound is the CALLER's deadline, not a second one down here
+        (review round 2): abandoning an attempt sets its cancel flag, and
+        ``Keep waiting`` extends the deadline that decides when to abandon.
+        A worker-side timeout of its own ended the change a moment after
+        the user asked for more time. A caller that passes no flag has
+        nobody to abandon it, so it keeps a bound of its own.
+
         Args:
             service: Service bound to the candidate root.
             cancel_event: This attempt's own cancel flag, or None when the
@@ -5370,13 +5381,20 @@ class LibraryFileNotesWorkspace(Vertical):
             The candidate root's scan result.
 
         Raises:
-            ScanCancelled: If this attempt was abandoned mid-scan.
+            ScanCancelled: If this attempt was abandoned, waiting for the
+                lock or mid-scan.
             _ServiceLockBusy: If an earlier operation still holds the lock
-                when the deadline for this one expires.
+                after ``ROOT_CHANGE_TIMEOUT_SECONDS``, for a caller that
+                cannot abandon this attempt.
         """
         should_cancel = None if cancel_event is None else cancel_event.is_set
-        if not self._service_lock.acquire(timeout=ROOT_CHANGE_TIMEOUT_SECONDS):
-            raise _ServiceLockBusy()
+        deadline = monotonic() + ROOT_CHANGE_TIMEOUT_SECONDS
+        while not self._service_lock.acquire(timeout=SERVICE_LOCK_POLL_SECONDS):
+            if should_cancel is not None:
+                if should_cancel():
+                    raise ScanCancelled()
+            elif monotonic() >= deadline:
+                raise _ServiceLockBusy()
         try:
             return service.scan(
                 should_cancel=should_cancel,

@@ -929,6 +929,73 @@ async def test_a_scan_that_ignores_its_cancel_still_bounds_the_next_change(
 
 
 @pytest.mark.asyncio
+async def test_keep_waiting_also_extends_the_wait_for_the_shared_lock(
+    lock_holding_root_change, monkeypatch
+) -> None:
+    """Review round 2 (Qodo finding 6): one clock for one wait.
+
+    The worker thread had a second, fixed deadline of its own on the
+    service lock. Keep waiting moved only the coroutine's deadline, so a
+    change queued behind a scan parked in an uninterruptible syscall --
+    the one case the extra budget exists for -- still died a moment after
+    the user asked for more time.
+    """
+    old_root, wedged_root, small_root, install_blocked_scan = (
+        lock_holding_root_change
+    )
+    blocked = install_blocked_scan(cooperative=False)
+    monkeypatch.setattr(workspace_module, "ROOT_CHANGE_TIMEOUT_SECONDS", 1.5)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
+    try:
+        async with _production_workspace_context(workspace, size=(235, 52)) as pilot:
+            workspace._root_selected(wedged_root)
+            await _wait_until(
+                pilot,
+                lambda: blocked.started.is_set(),
+                "the wedging scan never started",
+            )
+            await _wait_until(
+                pilot,
+                lambda: workspace._structural_wait is None,
+                "the first folder change never hit its deadline",
+                attempts=300,
+            )
+
+            # The wedged thread still owns the lock, so this change queues
+            # behind it -- and the user chooses to keep waiting.
+            workspace._root_selected(small_root)
+            await _wait_until(
+                pilot,
+                lambda: workspace._structural_wait is not None,
+                "the queued folder change never published its wait",
+            )
+            assert workspace.extend_root_change_deadline()
+            await _wait_until(
+                pilot,
+                lambda: workspace._root_change_extension is None,
+                "the first deadline never consumed the granted extension",
+                attempts=300,
+            )
+            # Past the original deadline (where the worker's own timeout
+            # used to fire) and still well inside the granted one.
+            for _ in range(15):
+                await pilot.pause(0.02)
+
+            blocked.release.set()
+            await _wait_until(
+                pilot,
+                lambda: workspace.root == small_root.resolve(),
+                "the extended folder change gave up on the lock anyway",
+                attempts=300,
+            )
+    finally:
+        blocked.release.set()
+        await workspace.shutdown()
+        replica.close()
+
+
+@pytest.mark.asyncio
 async def test_abandoning_one_attempt_never_cancels_another_attempts_scan(
     tmp_path, monkeypatch
 ) -> None:
