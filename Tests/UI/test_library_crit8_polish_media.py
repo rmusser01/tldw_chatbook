@@ -47,6 +47,11 @@ from tldw_chatbook.Library.library_conversation_reader_state import (
     ConversationMessageView,
     ConversationReaderState,
 )
+from tldw_chatbook.Library.library_media_reader_state import (
+    MEDIA_READER_LAYOUT_PROFILE,
+    normalize_media_reader_preferences,
+    resolve_media_reader_layout,
+)
 from tldw_chatbook.Library.library_pager_state import build_library_pager_display
 from tldw_chatbook.Library.library_prompts_state import (
     PromptListRow,
@@ -740,3 +745,31 @@ async def test_media_below_64_columns_shows_the_items_list_and_a_way_back() -> N
 
         for media_id in tuple(service.detail_release):
             service.release(media_id)
+
+
+@pytest.mark.parametrize("width", (10, 20, 30, 33))
+def test_the_below_64_media_stage_keeps_the_list_below_its_own_minimum(
+    width: int,
+) -> None:
+    """Qodo review of PR #2528: the list-first stage refused widths under 34.
+
+    The branch gated itself on the Items pane still fitting its ordinary
+    32-cell floor, so a shell narrower than ``floor + both grips`` fell back
+    to exactly the empty Reader the branch exists to prevent -- and the
+    "‹ Library" control, whose predicate requires an open Items pane, stayed
+    hidden with it. Reachability outranks the floor down here: the list takes
+    whatever is left after the grips.
+    """
+    preferences = normalize_media_reader_preferences({})
+    grips = 2 * MEDIA_READER_LAYOUT_PROFILE.grip_width
+
+    layout = resolve_media_reader_layout(width, preferences, reader_has_item=False)
+
+    assert layout.items_open is True
+    assert layout.library_open is False
+    assert layout.items_width == min(
+        max(MEDIA_READER_LAYOUT_PROFILE.list_min_width, preferences.items_width),
+        width - grips,
+    )
+    assert layout.items_width > 0
+    assert layout.items_width + layout.reader_width + grips == width

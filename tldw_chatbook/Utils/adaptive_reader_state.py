@@ -379,7 +379,7 @@ def resolve_adaptive_reader_layout(
         and preferences.items_open
         and profile.list_first_when_empty
         and width < LIBRARY_EMERGENCY_WIDTH
-        and width - grip_width >= profile.list_min_width
+        and width > grip_width
     ):
         # task-32065: below the width that seats a list beside the work pane,
         # dropping the list leaves a pane with NOTHING in it as the whole
@@ -394,6 +394,14 @@ def resolve_adaptive_reader_layout(
         # pane is deliberately dropped and focus evacuates to its grip, and
         # three tests pin that. Below the floor nothing else is on screen at
         # all, which is the case this branch exists for.
+        #
+        # NOT bounded below by ``list_min_width`` (Qodo review of PR #2528):
+        # gating on the list still fitting its ordinary floor handed widths
+        # under ``floor + both grips`` straight back to the empty Reader --
+        # and to a hidden "‹ Library" control, whose predicate wants an open
+        # Items pane. Down here reachability outranks the floor, so the list
+        # takes whatever the grips leave; only a width that cannot seat the
+        # grips themselves declines.
         items_width = min(
             max(profile.list_min_width, preferences.items_width),
             width - grip_width,

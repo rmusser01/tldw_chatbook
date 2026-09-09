@@ -13,8 +13,6 @@ from textual.events import DescendantFocus
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Static
 
-from tldw_chatbook.Widgets.glyph_fallback import ascii_glyph_mode
-
 from tldw_chatbook.Prompt_Management.prompt_variables import (
     PromptApplicationDestination,
     PromptVariableApplication,
@@ -22,6 +20,7 @@ from tldw_chatbook.Prompt_Management.prompt_variables import (
     compile_prompt_variables,
     validate_prompt_application_guards,
 )
+from tldw_chatbook.Widgets.glyph_fallback import ascii_glyph_mode
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 

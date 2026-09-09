@@ -6501,7 +6501,12 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-rail-return")
     def handle_library_media_rail_return(self, event: Button.Pressed) -> None:
-        """Reopen the Library pane through the grip's own seam (task-32065)."""
+        """Reopen the Library pane through the grip's own seam (task-32065).
+
+        Args:
+            event: The ``Button.Pressed`` from the "‹ Library" control; stopped
+                here so the canvas-action handlers do not also see it.
+        """
         event.stop()
         self.post_message(PaneToggleRequested("library"))
 
