@@ -195,13 +195,32 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
         (no focus evacuation, no automatic pane-reopen focus), which is
         exactly what a composed shell gets.
 
+        **A route that has never resolved a layout has nothing to adopt.** Its
+        stored value is the all-zero default, and applying it closes both
+        panes -- which phase-C task 2.5 measured on the FIRST Notes switch as
+        two ``disabled`` flips at 23 ms and two more when the real resolver
+        landed at 76 ms: **205 of that switch's 463 ``Stylesheet.apply`` calls
+        and 41 ms of restyle** (``Widget.disabled`` is a pseudo-class, so each
+        flip restyles the pane's whole subtree), on top of a ~50 ms flash of a
+        collapsed shell nobody asked for. The reset above still happens, so
+        the resolver that follows -- the swap schedules it, and the canvas
+        sync calls it -- still gets the initial-mount branch and its
+        application is the FIRST one, instead of the third.
+
+        The all-zero test is this codebase's existing spelling of "never
+        resolved": the six ``_sync_library_*_reader_layout_from_shell``
+        resolvers each drop ``previous`` on exactly this condition.
+
         Args:
-            layout: The destination route's resolved layout.
+            layout: The destination route's resolved layout, or its all-zero
+                default when that route has not been resolved yet.
 
         Returns:
             None.
         """
         self._applied_layout = None
+        if not (layout.reader_width or layout.library_width or layout.items_width):
+            return
         self.sync_layout(layout)
 
     async def swap_work(self, work: Widget) -> None:

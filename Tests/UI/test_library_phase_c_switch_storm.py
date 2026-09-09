@@ -228,6 +228,55 @@ async def test_route_switch_does_not_restyle_the_whole_shell_subtree(
 
 
 @pytest.mark.asyncio
+async def test_first_entry_into_a_route_does_not_collapse_then_reopen_its_panes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route's first switch must not apply a placeholder layout first.
+
+    Measured before this pin, on the FIRST Notes switch (the arm with the
+    fewest mounts and the worst block time): ``adopt_route_layout`` applied
+    the destination route's STORED layout, which for a route that has never
+    resolved one is ``(closed, closed, 0, 0)`` -- so both panes were closed
+    and ``disabled`` at 23 ms and reopened at 76 ms when the real resolver
+    landed. ``Widget.disabled`` is a pseudo-class, so each flip restyles that
+    pane's whole subtree: **205 of the switch's 463 apply calls, 41 ms**, plus
+    a ~50 ms flash of a collapsed shell.
+
+    The pin is on the RAIL and CANVAS-HOST subtree restyles because that is
+    what the flips cost; the layout itself is pinned by the adaptive-shell
+    width matrix, which this must not disturb.
+    """
+    host = _seeded_host()
+    counter = _SubtreeRestyleCounter()
+    counter.install(monkeypatch)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _open_library(host, pilot)
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_MEDIA)
+
+        counter.armed = True
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_NOTES)
+        counter.armed = False
+        measured = {
+            "rail": counter.count("library-rail"),
+            "canvas host": counter.count("library-canvas"),
+        }
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        notes_canvas = screen.query_one("#library-notes-canvas")
+        assert notes_canvas.display
+        # The panes must end up OPEN, which is the half a "never apply a
+        # layout" regression would satisfy while breaking the screen.
+        assert not screen.query_one("#library-rail").disabled
+        assert not screen.query_one("#library-canvas").disabled
+
+    assert measured == {"rail": 0, "canvas host": 0}, (
+        "the first entry into a route still collapses and reopens its panes: "
+        f"{measured} pane-subtree restyles"
+    )
+
+
+@pytest.mark.asyncio
 async def test_switching_away_does_not_rebuild_the_canvas_being_left() -> None:
     """The outgoing canvas keeps its children -- nobody would ever see them.
 
