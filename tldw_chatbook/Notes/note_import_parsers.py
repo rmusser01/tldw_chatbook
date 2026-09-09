@@ -65,6 +65,8 @@ _MESSAGES = {
     "max_total_bytes_exceeded": "The selected sources are too large in total.",
     "invalid_utf8": "This source is not valid UTF-8 text.",
     "invalid_content": "This source could not be parsed as notes.",
+    "empty_source": "Empty file — nothing to import.",
+    "not_a_note": "Not a note file (app configuration).",
     "empty_structured_source": "This source does not contain any notes.",
     "too_many_notes": "This source contains too many notes.",
     "too_many_keywords": "A note in this source contains too many keywords.",
@@ -72,6 +74,12 @@ _MESSAGES = {
     "destination_not_allowed": "A folder import already defines its destination.",
     "invalid_destination": "The destination folder path is not valid.",
     "selection_changed": "The discovered source set changed before parsing.",
+}
+
+# task-32130: every other parse failure stays FAILED.
+_FAILURE_CLASSIFICATIONS = {
+    "empty_source": ImportClassification.EMPTY,
+    "not_a_note": ImportClassification.SKIPPED,
 }
 
 
@@ -168,9 +176,14 @@ class ImportParseIssue:
             raise TypeError("source_path must be a Path.")
         if not isinstance(self.classification, ImportClassification) or (
             self.classification
-            not in {ImportClassification.UNSUPPORTED, ImportClassification.FAILED}
+            not in {
+                ImportClassification.UNSUPPORTED,
+                ImportClassification.SKIPPED,
+                ImportClassification.EMPTY,
+                ImportClassification.FAILED,
+            }
         ):
-            raise ValueError("classification must be unsupported or failed.")
+            raise ValueError("classification must be a non-importable outcome.")
         if (
             not isinstance(self.reason_code, str)
             or not self.reason_code
@@ -341,7 +354,12 @@ def parse_import_sources(
         except _ParseFailure as error:
             issues.append(
                 _issue(
-                    candidate, bounds, ImportClassification.FAILED, error.reason_code
+                    candidate,
+                    bounds,
+                    _FAILURE_CLASSIFICATIONS.get(
+                        error.reason_code, ImportClassification.FAILED
+                    ),
+                    error.reason_code,
                 )
             )
         except (
@@ -401,9 +419,10 @@ def _parse_text(
     text: str,
     bounds: ImportBounds,
 ) -> tuple[ParsedNotePayload, ...]:
+    # task-32130: an empty source is empty whatever its extension.
+    if not text.strip():
+        raise _ParseFailure("empty_source")
     if extension in {".txt", ".text", ".rst", ".md", ".markdown"}:
-        if not text.strip():
-            raise _ParseFailure("invalid_content")
         title = PurePosixPath(candidate.source.display_path).stem
         if extension in {".md", ".markdown"}:
             for line in text.splitlines()[:10]:
@@ -446,7 +465,8 @@ def _structured_payloads(
     if len(records) > bounds.max_notes_per_file:
         raise _ParseFailure("too_many_notes")
     if not all(isinstance(record, Mapping) for record in records):
-        raise _ParseFailure("invalid_content")
+        # A well-formed document that holds no note record is configuration.
+        raise _ParseFailure("not_a_note")
     return tuple(_payload_from_mapping(record, bounds) for record in records)
 
 
@@ -461,6 +481,9 @@ def _payload_from_mapping(
         for aliases in (_TITLE_ALIASES, _CONTENT_ALIASES, _KEYWORD_ALIASES)
     ):
         raise _ParseFailure("invalid_content")
+    if not any(alias in record for alias in _CONTENT_ALIASES):
+        # No note body at all: configuration, not a malformed note.
+        raise _ParseFailure("not_a_note")
     content_value = record.get("content", record.get("body"))
     if not isinstance(content_value, str) or not content_value.strip():
         raise _ParseFailure("invalid_content")

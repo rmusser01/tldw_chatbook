@@ -2930,6 +2930,39 @@
     LibraryNoteFolderTargetDialog #library-note-folder-target-actions { height: auto; align-horizontal: right; }
 
 
+/* ===== WIDGET: LibraryNoteImportCanvas (Widgets/Library/library_note_import_canvas.py) ===== */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    /* task-32135: one review row is one line -- path, effect and destination
+       beside the controls that change them. */
+
+
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */
 
 

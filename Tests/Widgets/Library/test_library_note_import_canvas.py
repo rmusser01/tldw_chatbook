@@ -234,6 +234,8 @@ async def test_checking_state_names_work_and_offers_cancel() -> None:
         ("changed_repeat", "Changed repeat"),
         ("uncertain_match", "Uncertain match"),
         ("unsupported", "Unsupported"),
+        ("skipped", "Skipped"),
+        ("empty", "Empty"),
         ("failed", "Failed"),
     ),
 )
@@ -251,7 +253,8 @@ async def test_review_groups_every_planner_classification(
     async with app.run_test(size=(80, 28)) as pilot:
         await pilot.pause()
         assert label in _plain(app.query_one(".note-import-group-heading", Static))
-        assert "draft.md" in _plain(app.query_one(".note-import-item-name", Static))
+        # task-32135: name, effect and destination now share one row.
+        assert "draft.md" in _plain(app.query_one(".note-import-row-text", Static))
 
 
 async def test_collision_review_exposes_three_explicit_choices_and_name_input() -> None:
@@ -525,7 +528,10 @@ async def test_valid_opaque_item_id_never_becomes_a_dom_identifier() -> None:
     assert (message.item_id, message.action) == ("item:1.2", "skip")
 
 
-class _ProductionCssCanvasApp(App[None]):
+class _ProductionCssCanvasApp(ConsolidatedCSSApp):
+    # The real app registers the consolidated widget defaults through
+    # `_get_default_css`; a bare `App` under-approximates it and would size
+    # the one-line review rows differently from production (task-32135).
     CSS_PATH = TldwCli.CSS_PATH
 
     def __init__(self, snapshot: LibraryNoteImportSnapshot) -> None:
@@ -544,11 +550,11 @@ class _ProductionCssCanvasApp(App[None]):
 async def test_review_is_scrollable_and_paints_next_action_at_60_columns() -> None:
     items = tuple(
         _item(item_id=f"item-{index}", name=f"draft [{index}].md")
-        for index in range(1, 9)
+        for index in range(1, 25)
     )
     snapshot = _snapshot(
         phase="review",
-        status_line="Review 8 items before import.",
+        status_line="Review 24 items before import.",
         preview_items=items,
         can_import=True,
         import_disabled_reason="",
@@ -806,7 +812,10 @@ async def test_review_item_shows_source_target_membership_and_content_effect() -
     )
     async with app.run_test(size=(70, 24)) as pilot:
         await pilot.pause()
-        text = "\n".join(_plain(widget) for widget in app.query(".note-import-quiet"))
+        text = "\n".join(
+            _plain(widget)
+            for widget in app.query(".note-import-row-text, .note-import-quiet")
+        )
         assert "Existing note: Draft" in text
         assert "replace existing content" in text
         assert "Imported / Alpha" in text

@@ -143,3 +143,37 @@ async def test_chooser_header_names_no_relationship_before_one_is_chosen() -> No
 
     assert "Lasting sync" not in copy
     assert "Add from files" in copy
+
+
+# --- task-32130 -----------------------------------------------------------
+
+
+async def test_receipt_discloses_every_skipped_path_and_reason() -> None:
+    """The receipt names the skipped files instead of only counting them."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="receipt",
+            status_line="Import completed.",
+            receipt_line="61 imported · 0 updated · 11 skipped · 0 failed",
+            receipt_detail="Import finished · 61 notes created · 11 files skipped",
+            skipped_count=2,
+            skipped_items=(
+                ("vault/.obsidian/app.json", "Not a note file (app configuration)."),
+                ("vault/Inbox/Untitled.md", "Empty file — nothing to import."),
+            ),
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        disclosure = app.query_one("#note-import-skipped", Collapsible)
+        assert "Skipped (2)" in str(disclosure.title)
+        rows = "\n".join(
+            _plain(row) for row in disclosure.query(".note-import-skipped-row")
+        )
+        assert "vault/.obsidian/app.json" in rows
+        assert "Not a note file (app configuration)." in rows
+        assert "Empty file — nothing to import." in rows
+        assert "61 notes created" in _plain(
+            app.query_one("#note-import-receipt-detail", Static)
+        )
