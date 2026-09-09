@@ -30,8 +30,9 @@ Wide (Media)
 
 Narrow (Media)
 
-+›+›+ Reader -------------------------------------------------------+
-| both pane grips remain reachable; Reader gets the available width |
++›+ Items ----------------------------------+›+ Reader -------------+
+| ‹ Library                                  | Select a media item  |
+| filter · type · sort · item rows           | to read it here.     |
 ```
 
 Media's two grips are one column each — the `‹` (open pane) and `›`
@@ -79,7 +80,15 @@ list uses the width that frees up:
   11.
 - **The navigation rail joins Media at 112 columns.** Below that the screen
   shows Items and the Reader only, and the Items pane itself collapses below
-  88 columns.
+  88 columns — except below **64 columns with nothing open in the Reader**,
+  where the list is all there is to show: Items stays, the Reader keeps what
+  is left for its placeholder, and a **‹ Library** (or **< Library** with
+  ASCII glyphs) control at the top of the Items pane returns to the rail.
+  It is the only width that shows that control; opening an item hands the
+  width back to the Reader as usual. Going back to the rail gives it the
+  width while you are there — selecting **Media** again returns to the list
+  and its **‹ Library** control, so the two are a round trip rather than a
+  one-way door.
 
 *Verified against fix/media-crit6-layout — 2026-09-07 (task-31979: the
 empty-reader widening. Pinned in tests at 235x52 and 100x30 — with no item
@@ -137,9 +146,9 @@ text carries the term already shows you why it is there and says nothing
 extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
 wide CJK characters, or five flag emoji) to keep the line short — the cut
 counts a flag by the two columns it paints and never leaves half of one, so
-the row frame does not drift. It can still be too long for a narrow Items pane: at the
-pane's narrowest the row clips mid-term at the pane edge, and a row that is
-both analysed and a keyword hit can clip at the default width too. The
+the row frame does not drift. It can still be too long for a narrow Items pane:
+at the pane's narrowest the row ends in an ellipsis mid-term, and a row that is
+both analysed and a keyword hit can run out of room at the default width too. The
 Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
 full stored keyword but drops a dangling half-flag so that surface's frame
 does not drift either (the edit form still prefills the stored keyword
@@ -431,7 +440,9 @@ harness, not re-verified live.)*
 
 Its header is deliberately short: **‹ Back**, the title, the action row, and
 the mode row — five rows above the reading surface, border included. A byline
-row appears only when the item actually has an author or a URL, and an
+row appears only when the item actually has an author or a URL — an author
+stored as the literal "Unknown", which is what most local imports write when
+a file names none, counts as no author and paints no byline — and an
 identity line ("Server item · not in local Media list") only for a server
 item a local Media list cannot show. The mode row is the only label for the
 open mode; no section header repeats it. Body text wraps at a reading measure
@@ -446,12 +457,13 @@ still spans the pane.
   characters, using the same renderer as Notes' own "Preview". Press
   "Raw" to see the plain source instead. A rendered heading starts in the
   same column as the prose beneath it. Any item with content but no
-  markdown gets no toggle, whatever its media type; that slot reads
-  "No Markdown formatting to render — showing the stored text" instead of
-  going silently blank — it names what THIS item has, so a plain-prose
-  transcript is not told that rendering is "for transcripts". An item with no stored content shows no such note — the
-  box already says "No stored content." and there is no rendered view to
-  explain away. Below the toggle (or directly
+  markdown gets no toggle, whatever its media type; **Info** then carries the
+  one-line reason, "No Markdown formatting to render — showing the stored
+  text", so the reading surface is not banner-ed with it on every open — it
+  names what THIS item has, so a plain-prose transcript is not told that
+  rendering is "for transcripts". An item with no stored content shows no such
+  note anywhere — the box already says "No stored content." and there is no
+  rendered view to explain away. Below the toggle (or directly
   above Content for everything else) is a "Search content…" box — its
   placeholder reads "Search content (raw text)…" whenever the toggle is
   present, since search always matches the raw stored text regardless of
@@ -487,8 +499,10 @@ still spans the pane.
   press "Add highlight". Each saved highlight shows the quote with a
   color swatch, its color/note details, and a "✕ Delete" button.
 - **Info** — metadata and provenance: backend-qualified ID, original source,
-  stored representation, preview status, and the representation **Use in
-  Console** will send. The Items catalogue is local-only. A finished server
+  stored representation, preview status, the representation **Use in
+  Console** will send, and — for an item with content that has no Markdown —
+  the "No Markdown formatting to render — showing the stored text" line that
+  explains why Read offers no Rendered|Raw toggle. The Items catalogue is local-only. A finished server
   import may open one read-only compatibility detail labelled **Server item ·
   not in local Media list**; it does not become a local Items row.
 - **Primary toolbar**:
@@ -615,7 +629,15 @@ while its pager stays visible underneath it. The pager always states the exact
 range, total, and page: with 45 conversations it reads **"1-20 of 45 · Page 1
 of 3"**, then **"21-40 of 45 · Page 2 of 3"**, and finally **"41-45 of 45 ·
 Page 3 of 3"**. Previous and Next show a visible reason when unavailable, such
-as "Already on the first page." or "No more results."
+as "Already on the first page." or "No more results." A list that fits one page
+shows only its range ("1-2 of 2") — the page counter, those reasons and the
+Previous/Next controls all return the moment a second page exists, exactly as
+on the Media list.
+
+The reader above names the open conversation by **title**, not by its stored
+id ("Loaded Design review notes · 30 of 30 messages · complete."), and each
+message is headed with its sender and the same compact age the list uses
+("user · 27m"), never a raw timestamp.
 
 Filtering searches the **full conversation source before paging**, so a match
 on the oldest page is still found; clearing the filter returns to unfiltered
@@ -695,8 +717,10 @@ setting**; it supplies one bundle of **staged context** for the next send.
 
 ### Delete selected media items
 1. In **Media**, click "Select", check the rows you want to remove.
-2. Click "Delete selected" — the strip becomes "Delete N selected items?
-   This moves them to trash." with "Delete" / "Cancel".
+2. Click "Delete selected" — the strip becomes "Delete N selected items? You
+   can undo right away, or restore later from Trash." with "Delete" /
+   "Cancel". The sentence wraps inside the Items pane at every width,
+   including its narrowest.
 3. Click "Delete" to confirm (or "Cancel" to back out without deleting
    anything). The rows disappear and the rail's "Media N" count drops
    immediately; the items are trashed, not permanently destroyed.
@@ -720,11 +744,12 @@ stop, and the footer drops its `esc` chip there rather than advertise a key
 that does nothing.
 Where the Library pane is collapsed but the Items pane still shows the list
 (verified at 100x30) the "‹ Back" control returns you to the list, and so
-does Escape from the Items row. Below 88 columns both panes are
+does Escape from the Items row. Between 64 and 88 columns both panes are
 collapsed: the control and the key still register the exit, but nothing on
 screen changes yet — the Reader keeps painting the item it had, and `]`/`[`
-stop working until you re-enter Media from the rail. A follow-up will open
-the Items pane on that exit.
+stop working until you re-enter Media from the rail. Below 64 columns, with
+nothing open in the Reader, the Items pane is the stage instead (see the
+layout tour above).
 **F6** cycles Library → Items → the Reader's content box, which draws a
 heavy border while it holds focus, so the state is visible in a plain-text
 capture and not by colour alone (no overlay, so the text stays readable).
@@ -933,6 +958,35 @@ including the receipt string above. Added the Analysis tab's
 description (AC#5) — it was previously undocumented. Verified in
 real-screen tests for the choice row's painted text and its scope-change
 invalidation.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32060:
+**s** now enters Select mode from any focused Items row, in every layout
+that shows the list beside the Reader — it used to be inert (and drop its
+footer chip) wherever the Reader still had a real exit, e.g. the
+Library-collapsed layout at 100x30. The bulk-delete confirm sentence also
+wraps instead of clipping at the Items pane's narrowest, which is 32 cells,
+not the 36 the list canvas used to claim.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32065: at
+60x24 the Media stage now paints the Items list plus a **‹ Library** control
+instead of an empty Reader between two collapsed-pane grips; the control
+returns to the rail and comes back when the rail is collapsed again — all three
+live in tmux at 60x24. task-32067: the conversation reader says "Loaded 🚀
+Launch checklist · 5 of 5 messages · complete." and heads messages "user · 4h",
+and a 6-of-6 list's pager reads "1-6 of 6" with no page counter and no
+Previous/Next. task-32068: a plain PDF whose stored author is the literal
+"Unknown" paints no byline, and its "No Markdown formatting to render" line is
+in Info — both live at 100x30. task-32070: after a rail search at 235x52 the
+footer is one row, and select mode lists "space toggle selection | s done
+selecting" the moment it is entered.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32065,
+fix round 2: the below-64 reset above is bounded to that band. At an
+ordinary width (100 columns, say) Library and Items do not always both fit
+beside the Reader either, so opening Library with its own grip can close
+Items the same way — a deliberate choice, not the below-64 emergency. The
+round-1 fix cleared that choice too on the next "Browse Media" press; it now
+survives re-entry at ordinary widths, and only resets below 64 columns.)*
 
 *Verified against fix/library-crit8-recovery-copy — 2026-09-08 (task-32056:
 "Open in Console" moved from the bottom of the reader into its header beside

@@ -303,13 +303,16 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # divide the REAL width, so the canvas must be bounded like the
         # viewer already is.
         self.styles.width = "1fr"
-        # task-30043: 36, not 40 -- the 3-pane shell actually allots this
-        # pane ~37 visible cells, so a 40-cell floor overflowed the slot and
-        # silently clipped the rightmost ~3 cells of every child (live: the
-        # armed-confirm copy wrapped at 40 and rendered "restore later from
-        # Tr"). The floor only exists to bound the 13fr resolution trap
-        # below; 36 keeps that while letting the canvas fit its real slot.
-        self.styles.min_width = 36
+        # task-32060: and NO min-width. task-30043 lowered this floor from 40
+        # to 36 because a floor above the slot overflows it and clips every
+        # child instead of ellipsizing -- but 36 has the same defect one step
+        # down: the Items pane spends 4 cells on its own padding, so a 36-cell
+        # pane hands this canvas 32 and the resolver's real floor (a 32-cell
+        # pane, ITEMS_MIN_WIDTH) hands it 28. At the floor the armed
+        # bulk-delete sentence was cut mid-word ("Delete 2 selected items?
+        # You c") and keyword rows lost their ellipsis. The floor existed only
+        # to bound the 13fr trap described above, and the `1fr` that replaced
+        # it is bounded by the pane already, so there is nothing left to floor.
 
     def sync_state(
         self,
@@ -622,8 +625,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Build the "Analyze" bulk action (task-28007 AC#4).
 
         Rides its OWN row rather than joining Clear/Export/Review: those
-        three already measure 33 of the pane's 36 cells (`min_width` above),
-        so a fourth 13-cell action clipped every label on that row. Same
+        three already measure 33 of the ~36 cells a narrow Items pane hands
+        this canvas, so a fourth 13-cell action clipped every label on that
+        row. Same
         multi-row grammar the danger row uses. When no analysis provider is
         configured the resolver's own sentence replaces the F-018 tooltip,
         so the disabled control says WHY, not just that it is off (AC#5's

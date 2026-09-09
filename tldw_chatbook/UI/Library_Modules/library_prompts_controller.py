@@ -1246,8 +1246,17 @@ class LibraryPromptsController:
                 if self._library_prompt_select_mode
                 else "#library-prompts-sort"
             )
-            fallback = self.query_one(fallback_id, Button)
-            if not fallback.disabled:
+            try:
+                fallback: Button | None = self.query_one(fallback_id, Button)
+            except (NoMatches, QueryError):
+                # task-32067 (fix round 1): a one-page result renders NO pager
+                # controls at all, so the sibling this falls back to is ABSENT,
+                # not merely disabled. Without this the focused Next button
+                # vanished with the page it belonged to and focus went nowhere
+                # -- the same dead end the disabled branch below exists to
+                # prevent, so it takes the same landing.
+                fallback = None
+            if fallback is not None and not fallback.disabled:
                 fallback.focus()
             elif pager_fallback_id:
                 self.query_one("#library-prompts-filter", Input).focus()

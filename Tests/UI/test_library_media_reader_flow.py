@@ -2997,8 +2997,9 @@ async def test_non_markdown_article_says_why_the_rendered_toggle_is_absent():
 
     A non-Markdown ``article``/``document`` simply dropped the
     Rendered|Raw strip, so the reader of a plain article had no way to
-    know whether a rendered view existed at all. The slot now carries a
-    one-line note instead of nothing -- text only, no control.
+    know whether a rendered view existed at all. The note answers that --
+    text only, no control. task-32068 moved it into Info, where a fact
+    about the item belongs, instead of banner-ing every read.
     """
     host = _article_host()
     async with host.run_test(size=(235, 52)) as pilot:
@@ -3008,6 +3009,8 @@ async def test_non_markdown_article_says_why_the_rendered_toggle_is_absent():
         assert viewer.viewer.media_type == "article"
         assert not viewer.viewer.is_markdown
 
+        screen.query_one("#library-media-reader-select-info", Button).press()
+        await pilot.pause()
         note = screen.query_one("#library-media-content-mode-note", Static)
         assert str(note.content) == RENDERED_VIEW_NOTE
         # Text only: the slot gains no control.
@@ -3052,7 +3055,8 @@ async def test_any_non_markdown_item_with_content_says_why_rendered_is_absent(
 
     A ``plaintext``/``video`` item whose content fails the Markdown sniff
     got the same silent blank slot the note was written to replace.
-    Painted, because the whole point is what the reader sees.
+    Painted, because the whole point is what the reader sees. task-32068:
+    the slot is the Info tab's, not the reading surface's.
     """
     host = _typed_host(media_type, _FIND_COPY_CONTENT)
     async with host.run_test(size=(235, 52)) as pilot:
@@ -3062,6 +3066,8 @@ async def test_any_non_markdown_item_with_content_says_why_rendered_is_absent(
         assert viewer.viewer.media_type == media_type
         assert not viewer.viewer.is_markdown
 
+        screen.query_one("#library-media-reader-select-info", Button).press()
+        await pilot.pause()
         note = screen.query_one("#library-media-content-mode-note", Static)
         # Type-neutral copy (batch-3 review ruling 1): it says why THIS item
         # has no rendered view, not which types one is for -- the old

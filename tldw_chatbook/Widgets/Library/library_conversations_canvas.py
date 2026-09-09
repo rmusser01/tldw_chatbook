@@ -302,22 +302,34 @@ class LibraryConversationsCanvas(
         page_copy = pager.page_copy if pager is not None else self.canvas.page_copy
         previous_reason = pager.previous_reason if pager is not None else ""
         next_reason = pager.next_reason if pager is not None else ""
-        disabled_reasons = tuple(
-            dict.fromkeys(
-                reason
-                for disabled, reason in (
-                    (previous_disabled, previous_reason),
-                    (next_disabled, next_reason),
+        # task-32067: Media's one-page rule (task-28016 + task-31237), applied
+        # here. A list that fits one page has nowhere to page to, so "Page 1
+        # of 1", the boundary reasons and the two dead "○ Previous ○ Next"
+        # forms are noise; the item range stays and everything returns the
+        # moment a second page exists. A Retry still needs its row.
+        single_page = pager is not None and pager.single_page
+        retry_visible = pager is not None and pager.retry_visible
+        disabled_reasons = (
+            ()
+            if single_page
+            else tuple(
+                dict.fromkeys(
+                    reason
+                    for disabled, reason in (
+                        (previous_disabled, previous_reason),
+                        (next_disabled, next_reason),
+                    )
+                    if disabled and reason
                 )
-                if disabled and reason
             )
         )
         with Vertical(
             id="library-conversations-pager",
             classes="library-source-pager",
         ):
+            status_parts = (range_copy,) if single_page else (range_copy, page_copy)
             yield Static(
-                " · ".join(copy for copy in (range_copy, page_copy) if copy),
+                " · ".join(copy for copy in status_parts if copy),
                 id="library-conversations-page-status",
                 classes="library-source-pager-status",
                 markup=False,
@@ -329,6 +341,8 @@ class LibraryConversationsCanvas(
                     classes="library-source-pager-status",
                     markup=False,
                 )
+            if single_page and not retry_visible:
+                return
             with Horizontal(classes="library-source-pager-controls"):
                 previous = Button(
                     library_disabled_action_label("Previous", previous_disabled),
