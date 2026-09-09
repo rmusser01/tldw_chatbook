@@ -382,6 +382,42 @@ async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
         assert str(status.renderable) != "Draft — not saved yet"
 
 
+@pytest.mark.asyncio
+async def test_keyword_only_edit_through_info_clears_the_draft_status():
+    """PR #2547 review (Qodo finding 5): the main keywords field's handler
+    clears ``_library_note_pending_blank_gc_id`` before autosaving, but the
+    sibling Info (Context) properties field's handler did not -- so a user
+    who opened Info on a fresh blank note and typed only a keyword there
+    could autosave while the status kept claiming nothing was saved.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await pilot.press("n")
+        blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        blank.press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        status = screen.query_one("#library-note-status", Static)
+        assert str(status.renderable) == "Draft — not saved yet"
+
+        screen.query_one("#library-note-context", Button).press()
+        await pilot.pause()
+
+        context_keywords = screen.query_one("#library-note-context-keywords", Input)
+        context_keywords.value = "todo"
+        context_keywords.post_message(Input.Changed(context_keywords, "todo"))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert str(status.renderable) != "Draft — not saved yet", (
+            "A keyword-only edit through Info left the note reading as an "
+            "unsaved draft"
+        )
+
+
 # --- task-32138: ctrl+n and n both work on the landing and inside Notes ----
 
 
