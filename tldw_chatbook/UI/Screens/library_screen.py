@@ -25362,6 +25362,15 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_import_check(self, event: LibraryNoteImportCanvas.CheckRequested) -> None:
         return self._notes_controller.handle_library_note_import_check(event)
 
+    @on(LibraryNoteImportCanvas.ObsidianModeToggled)
+    def handle_library_note_import_obsidian_mode(self, event: LibraryNoteImportCanvas.ObsidianModeToggled) -> None:
+        """Delegate the vault-reading toggle to the notes controller.
+
+        Args:
+            event: The canvas toggle carrying the requested `enabled` mode.
+        """
+        return self._notes_controller.handle_library_note_import_obsidian_mode(event)
+
     @on(LibraryNoteImportCanvas.CollisionNameChanged)
     def handle_library_note_import_collision_name(self, event: LibraryNoteImportCanvas.CollisionNameChanged) -> None:
         return self._notes_controller.handle_library_note_import_collision_name(event)

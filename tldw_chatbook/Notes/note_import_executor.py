@@ -9,6 +9,7 @@ import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from uuid import UUID, uuid4, uuid5
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
@@ -39,9 +40,12 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_KEYWORDS_PER_NOTE,
     ImportAction,
     ImportPreviewItem,
+    ImportSourceKind,
     ParsedNotePayload,
     ProposedFolderMembership,
     RootCollisionChoice,
+    rewrite_wikilinks,
+    wikilink_key,
 )
 from tldw_chatbook.Notes.note_import_receipts import (
     EffectTransition,
@@ -995,6 +999,7 @@ class NoteImportExecutor:
                 )
             membership_effects_by_item.setdefault(effect.item_id, []).append(effect)
         items_by_id = {item.item_id: item for item in snapshot.items}
+        note_ids_by_wikilink = _wikilink_note_ids(approved)
         items = approved.plan.items
         for batch_start in range(0, len(items), self._batch_size):
             if cancel_event is not None and cancel_event.is_set():
@@ -1010,6 +1015,7 @@ class NoteImportExecutor:
                 self._execute_item(
                     approved,
                     item=item,
+                    note_ids_by_wikilink=note_ids_by_wikilink,
                     payload_effects=payload_effects_by_item.get(item.item_id, {}),
                     membership_effects=tuple(
                         membership_effects_by_item.get(item.item_id, ())
@@ -1253,6 +1259,7 @@ class NoteImportExecutor:
         folder_bindings: dict[str, str],
         folder_failures: dict[tuple[str, ...], _ExecutionFailure],
         recovering_interruption: bool,
+        note_ids_by_wikilink: dict[str, str] | None = None,
     ) -> None:
         if item.selected_action is ImportAction.SKIP:
             self._receipts.transition_item(
@@ -1280,6 +1287,9 @@ class NoteImportExecutor:
 
         if item.selected_action is ImportAction.CREATE_NEW:
             for payload_index, payload in enumerate(item.payloads):
+                # Obsidian links resolve to the ids this same batch will mint, so
+                # the note is written linked once instead of rewritten later.
+                payload = rewrite_wikilinks(payload, note_ids_by_wikilink or {})
                 effect = payload_effects.get(payload_index)
                 if effect is None:
                     raise ImportReceiptTransitionError(
@@ -1746,6 +1756,38 @@ def _deterministic_note_id(
     payload_index: int,
 ) -> str:
     return str(uuid5(UUID(approval_id), f"note:{item_id}:{payload_index}"))
+
+
+def _wikilink_note_ids(approved: ApprovedNoteImportPlan) -> dict[str, str]:
+    """Map the batch's link keys to the note ids its new notes will be given.
+
+    Every single-note source this plan creates is addressable the two ways
+    Obsidian addresses it: by its vault-relative path without the extension and
+    by its bare file name. A name two sources share resolves to neither, so an
+    ambiguous link stays literal rather than pointing at a guess.
+    """
+    note_ids: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for item in approved.plan.items:
+        if item.selected_action is not ImportAction.CREATE_NEW or len(
+            item.payloads
+        ) != 1:
+            continue
+        note_id = _deterministic_note_id(approved.approval_id, item.item_id, 0)
+        parts = PurePosixPath(item.source.display_path).parts
+        if item.source.kind is ImportSourceKind.DIRECTORY_MEMBER:
+            parts = parts[1:]
+        if not parts:
+            continue
+        path = PurePosixPath(*parts)
+        for target in (path.with_suffix("").as_posix(), path.stem):
+            key = wikilink_key(target)
+            if not key or key in ambiguous:
+                continue
+            if note_ids.setdefault(key, note_id) != note_id:
+                ambiguous.add(key)
+                del note_ids[key]
+    return note_ids
 
 
 def _allows_existing_root(

@@ -1,13 +1,13 @@
 {
   "_comment": "Boot-parsed CSS byte census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "total": 743638,
+  "total": 743660,
   "per_source": {
     "screen_agentic_console.tcss": 107016,
     "screen_css_scoped.tcss": 15216,
     "screen_css_self.tcss": 2769,
     "tldw_cli_modular.tcss": 415496,
     "widget_defaults_scoped.tcss": 95415,
-    "widget_defaults_self.tcss": 107726
+    "widget_defaults_self.tcss": 107748
   },
   "per_segment": {
     "screen_agentic_console.tcss::(whole file)": 107016,
@@ -186,7 +186,7 @@
     "widget_defaults_self.tcss::LibraryEmergencyReturn (Widgets/Library/library_emergency_return.py)": 195,
     "widget_defaults_self.tcss::LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py)": 314,
     "widget_defaults_self.tcss::LibraryNoteFolderTargetDialog (Widgets/Library/library_note_folder_dialog.py)": 320,
-    "widget_defaults_self.tcss::LibraryNoteImportCanvas (Widgets/Library/library_note_import_canvas.py)": 2239,
+    "widget_defaults_self.tcss::LibraryNoteImportCanvas (Widgets/Library/library_note_import_canvas.py)": 2261,
     "widget_defaults_self.tcss::LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py)": 319,
     "widget_defaults_self.tcss::LibraryScreen (UI/Screens/library_screen.py)": 1762,
     "widget_defaults_self.tcss::LogsWindow (UI/Logs_Window.py)": 111,

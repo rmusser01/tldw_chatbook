@@ -22,7 +22,7 @@ fills the center of the screen.
 ```text
 Wide (Media)
 
-+ Library ----+‹+ Items ------+‹+ Reader ---------------------------+
++ Library ----+<---+ Items ------+<---+ Reader ---------------------------+
 | Browse       | Filter        | title · source · date              |
 | Media        | item rows     | Find · Read later · Use in Console |
 | ...          | ...           | Read · Analysis · Highlights · Info|
@@ -30,14 +30,13 @@ Wide (Media)
 
 Narrow (Media)
 
-+›+ Items ----------------------------------+›+ Reader -------------+
++--->+ Items ----------------------------------+--->+ Reader -------------+
 | ‹ Library                                  | Select a media item  |
 | filter · type · sort · item rows           | to read it here.     |
 ```
 
-Media's two grips are one column each — the `‹` (open pane) and `›`
-(collapsed pane) above. Conversations, Skills and Collections use the same
-one-column grips; Notes, File Notes and Prompts keep the wider `+--->+` grip.
+Every Library reader uses two full-height, five-column collapse controls.
+The full width is clickable, including the space around the arrows.
 
 Media has three stable roles:
 
@@ -49,21 +48,16 @@ Media has three stable roles:
 - **Reader** — a permanent reading surface. Selecting another row updates
   Reader in place; the Items list is not replaced.
 
-Library and Items each have a full-height grip. On Media, Conversations,
-Skills and Collections the grip is **one column** and paints **`‹`** to
-collapse the pane to its left and **`›`** to expand it; Notes, File Notes and
-Prompts keep the five-column **`<---`** / **`--->`** grip. Because the screen
-holds back exactly the columns a grip paints, the narrow grip also moves the
-width at which the navigation rail joins: on Conversations it now appears at
-110 columns (was 118) and on Skills and Collections at 114 (was 122). The
-grips are clickable and keyboard-operable. Reader has no grip and never
-collapses. Your manual pane choices are remembered. If the terminal is too
-narrow, the screen temporarily collapses Library first and then Items;
-widening the terminal restores the remembered layout instead of saving the
-temporary responsive state.
+Library and Items each have a full-height, five-column grip. **`<---`**
+collapses the pane to its left and **`--->`** expands it. The grips support
+clicks, Enter, and Space. Reader has no grip and never collapses. Your manual
+pane choices are remembered.
 
-On Media nothing sits between the panes but those two one-cell grips, and the
-list uses the width that frees up:
+The default Library and Items columns prefer five and ten extra cells,
+respectively. At narrower widths those additions yield before the screen
+collapses Library, then Items. This preserves the earlier collapse boundaries
+with the five-column controls. Widening restores the preferred widths without
+rewriting your settings. Explicitly reopening a pane takes effect immediately.
 
 - **The Items column grows with the terminal.** Once the Reader is
   comfortable the surplus is split between them, up to a 56-cell ceiling, so
@@ -154,7 +148,7 @@ full stored keyword but drops a dangling half-flag so that surface's frame
 does not drift either (the edit form still prefills the stored keyword
 verbatim).
 
-*Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
+*Historical verification (grip sizes and thresholds superseded by the five-column restoration, TASK-32184). Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
 Skills and Collections opened live at 235x52. Each painted one-cell `‹` grips
 — the Library grip at columns 37 on two rows, the Items grip at column 78 on
 one — and no `<---`/`--->` run appeared anywhere on the three surfaces.
@@ -559,10 +553,9 @@ displaced the tab row and body by 19 rows behind ~16 blank ones. The
 button paints "More ▴" while open and "More" once closed, and focus stays
 on it across both toggles. AC#1/AC#2 layout numbers -- the 56-cell Items
 ceiling and its 46 painted title characters at 235x52, 15 items in a
-52-row terminal, the one-cell grips, and the 112- and 88-column
-thresholds -- are the resolver's own answers and the painted pins that
-hold them, cross-checked against the live captures in the task 1 and
-task 2 reports.)*
+52-row terminal, the then-one-cell grips, and the then-112- and 88-column
+thresholds were cross-checked against that revision. Grip sizes and collapse
+thresholds are superseded by the five-column restoration (TASK-32184).)*
 
 ### Review sets
 

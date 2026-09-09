@@ -39,9 +39,6 @@ MEDIA_READER_LAYOUT_PROFILE = AdaptiveReaderLayoutProfile(
     # the LIST rather than an empty Reader (60x24 showed neither a list nor a
     # way back to the rail).
     list_first_when_empty=True,
-    # task-31633 AC#2: one cell per grip, not five. Ten dead columns flanked
-    # the Items pane, so the widest terminal painted the narrowest list.
-    grip_width=1,
 )
 normalize_media_reader_preferences = normalize_adaptive_reader_preferences
 
