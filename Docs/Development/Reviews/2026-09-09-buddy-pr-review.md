@@ -106,3 +106,17 @@ A separate source reviewer inspected all eleven dispositions, current fixes, fro
 ## Final dev update
 
 Dev advanced once more to `8aa2211f2b78fcb35c9d1d3db6e15d5f1978da0a` while publication was being verified. A second rebase completed without conflicts; range-diff confirms all three Buddy commits replayed unchanged. The new base adds independent Library structural-wait handling. Fresh Buddy management journeys, entry points, conversation modals and actual startup census passed **45 tests in83.26s**; imports remain973/973. The diagnostic inventory verifies again without regeneration. These checks cover the navigation/startup intersection with the new base rather than claiming another full affected-suite run.
+
+## Published startup-budget correction
+
+The Linux/Python3.12 Perf Guard then reported975modules against973: scheduler_heartbeat and emergency_stop were imported by the first scheduler tick before UI readiness. A controlled slow warm boot reproduced the same pair and count locally, with real import-parent traces. The existing coroutine worker now starts after `_ui_ready`, immediately before the existing deferred startup sweep, preserving its app loop, exclusivity, group and dispatch-before-reconciliation ordering. The setup guard rejects admission after an early quit or shutdown request; startup failure also leaves the worker absent. Scheduler and emergency-stop implementations, budget constants and snapshots are unchanged.
+
+All18existing boot guards pass locally (973/973 ready modules,636/660 imported modules,803870/804000CSS bytes). The broader affected startup/scheduler/heartbeat/emergency-stop group passed154cases with4failures; all4new regressions pass. The four failures reproduce identically with the HEAD app loaded after pytest profile isolation and unchanged existing tests/other production modules: a6second worker test waits through a7second splash, two Watchlists fixtures violate the per-source active-run UNIQUE constraint, and one fixture expects a new fetch while another run is still active. This is a controlled HEAD-app comparison, not a pristine whole-repository run. Those separate tests were not modified.
+
+Both changed Python files compile; the new test passes Ruff/formatter, app.py introduces no lint or formatting changes on edited ranges, and diagnostic inventory verification passes without regeneration. No full local suite or local Linux execution is claimed. The synthetic2second stalled mount still counts974from a separate preexisting Console character-context background import; the fix removes the reported scheduler race and does not claim the entire startup graph is timing-independent.
+
+Independent review approved the scheduler deferral with no Critical or Important findings. Frozen hashes match, lifecycle ordering and early-exit/shutdown ownership remain sound; the review retains the stated broader-test and residual slow-mount limits.
+
+## Latest-base publication check
+
+Dev subsequently advanced to `c4a7b1911f14181faa471eb1ea209cfdeed98226` with Library count/read documentation. Rebase preserved all four Buddy commits; only the generated diagnostic summary conflicted. Both reviewed statement sets are retained (1351 TASK-492 /7669 TASK-494 calls), and the checker verifies the result. Scheduler source/test hashes remain identical to independent review. The final-base boot/lifecycle group passed22tests in69.62s at973/973; final Buddy management/entry journeys passed4tests before the independent Library rebase. No budgets were changed.

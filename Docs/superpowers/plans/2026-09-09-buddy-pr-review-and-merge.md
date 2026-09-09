@@ -25,3 +25,7 @@ Verify all eleven Chatbook Qodo comments and correct confirmed validation, block
 ## Root integration
 
 Confirm latest dev and rebase, retaining independent conflict additions. Run required derived checks after source is frozen, verify new PR head/checks/Qodo state, then merge only once the requested gates are met. The explicit user request authorizes rebase, lease-protected feature-branch updates and merge; no merge to a different base or administrative bypass.
+
+## Task 2 — published startup-budget regression
+
+The latest Linux/Python3.12 Perf Guard reports975modules at UIready against the973pin; the additions are Scheduling.scheduler_heartbeat and emergency_stop. Local final-base checks report973. Diagnose the startup timing/import boundary, obtain a controlled reproduction or independent cause evidence, and correct the cost without raising the budget or masking the census. Existing ADR-097 governs startup ratchets; no new ADR. Implementer owns the smallest source/test delta, root owns task/docs/artifacts/publication. Run focused startup/lifecycle regressions and changed-scope static checks, then freeze and independently review before pushing.

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 19:33'
-updated_date: '2026-09-09 02:49'
+updated_date: '2026-09-09 03:20'
 labels:
   - buddy
   - console
@@ -29,12 +29,13 @@ Speak scoped responses serially and verify the complete Chatbook Buddy journey b
 - [x] #4 Targeted integration and compact/normal terminal journeys verify management, conversation and workspace behavior.
 - [x] #5 User documentation and a server port contract capture shipped behavior and limitations; no server implementation is claimed.
 - [x] #6 All Qodo findings have verified fixes or evidence-backed dispositions and targeted regressions on rebased dev; derived artifact and schema allowlist checks pass.
+- [x] #7 The published Linux boot-budget failure is reproduced or explained with evidence and corrected without raising the startup budget; focused startup checks and independent review pass.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no new ADR. ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md. Reason: review corrections within the approved Buddy ownership and runtime contracts. Follow Docs/superpowers/plans/2026-09-09-buddy-pr-review-and-merge.md; root owns integration, PR checks and merge.
+ADR required: no new ADR. ADR paths: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md and backlog/decisions/097-boot-budget-ratchets.md. Reason: maintain the approved Buddy boundary and existing startup budget. Complete Task2 in Docs/superpowers/plans/2026-09-09-buddy-pr-review-and-merge.md before final publication/merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -55,4 +56,6 @@ Final review fixes: exact saved-binding promotion/restoration, immutable run-own
 Docs/User_Guide/buddies.md and console/buddy-conversation.md explain management, exact follow, workspace defaults, dictation, consent, pause/skip/mute and restart limits. Docs/superpowers/specs/2026-09-08-buddy-server-port-contract.md records the later authenticated server contract; no server implementation is part of this change. ADR-139 is the ownership/lifecycle contract and its headless interaction amendment. Testing lessons record source stability, genuine cold startup and modal composition timing. All approved Chatbook tasks are complete; changes remain on the isolated codex/buddy-console-management branch for review.
 
 September 9 rebase/Qodo follow-up complete under ADR-139 and canonical settings contract ADR-095. All 11 Qodo comments have verified fixes or source-backed dispositions. Fixed central archive/form validation, bounded paged Buddy reads, transaction and migration guards, question-first Skip and reserved import provenance; collection-sized hydration reads now precede UI-thread publication with late authority checks. 362 affected tests and20 post-format/census tests pass, actual UI-ready imports973/973;19 changed files add no Ruff/formatter findings. Independent review found no Important/Critical issues. Root repaired the2 Buddy SQL allowlist entries and reviewed diagnostic statements before regenerating the inventory; all6 derived checks pass. User guide documents pagination. Full evidence: Docs/Development/Reviews/2026-09-09-buddy-pr-review.md. Publication and remote CI/merge are the remaining integration steps; no full local suite or real provider/audio claimed.
+
+Published Linux startup race reproduced with actual scheduler import traces. Deferred the existing coroutine scheduler worker until UI-ready, preserving its loop/group/exclusivity and ordering before startup reconciliation, with early-quit/shutdown/failure guards. All4new lifecycle regressions and18boot guards pass (973/973 UIready; no budget/snapshot changes). Broader154pass/4fail; all4failures reproduce with HEAD app and unchanged tests/other production modules, documented precisely. New-test lint/format and app differential static checks pass; diagnostic inventory verifies unchanged. Independent review approved with no Important/Critical findings. Existing ADR097 applies; Docs/Development/Reviews/2026-09-09-buddy-pr-review.md records evidence and residual unrelated slow-mount character-search sensitivity.
 <!-- SECTION:NOTES:END -->

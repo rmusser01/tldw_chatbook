@@ -15320,18 +15320,6 @@ class TldwCli(
             name="recover_inflight_transfers",
         )
 
-        # Start the background scheduler loop for reminders and scheduled tasks.
-        # A COROUTINE worker, never thread=True: scheduled watchlist checks
-        # dispatch from this loop, and the watchlists in-flight guard
-        # (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is lock-free on
-        # the invariant that every check entrant runs on the app's one event
-        # loop. Moving dispatch off-loop needs a lock there.
-        self.scheduler_worker = self.run_worker(
-            self.scheduler_loop.run(),
-            exclusive=True,
-            group="scheduling",
-        )
-
         # TASK-22215: the two FTS backfills (task-688 subscription_items,
         # task-21100 messages) used to start HERE, before first paint, next
         # to the scheduler. They are whole-table re-tokenizations that
@@ -16328,6 +16316,10 @@ class TldwCli(
 
     async def _post_mount_setup(self) -> None:
         """Operations to perform after the main UI is expected to be fully mounted."""
+        # A delayed setup callback must not admit startup work after quit.
+        # Textual exit() sets _exit before ShutdownRequest sets our flag.
+        if self._shutting_down or self._exit:
+            return
         post_mount_start = time.perf_counter()
         self.loguru_logger.info(
             "App _post_mount_setup: Binding Select widgets and populating dynamic content..."
@@ -16505,6 +16497,22 @@ class TldwCli(
 
             # Final memory usage
             log_resource_usage()
+
+        # The first scheduler tick loads emergency-stop and heartbeat support.
+        # Start only after `_ui_ready`: launching in on_mount let its queue
+        # reads finish during slow UI setup and spend first-frame budget
+        # nondeterministically (ADR-097).
+        # Start the background scheduler loop for reminders and scheduled tasks.
+        # A COROUTINE worker, never thread=True: scheduled watchlist checks
+        # dispatch from this loop, and the watchlists in-flight guard
+        # (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is lock-free on
+        # the invariant that every check entrant runs on the app's one event
+        # loop. Moving dispatch off-loop needs a lock there.
+        self.scheduler_worker = self.run_worker(
+            self.scheduler_loop.run(),
+            exclusive=True,
+            group="scheduling",
+        )
 
         self._schedule_deferred_startup_work()
 
@@ -16934,7 +16942,7 @@ class TldwCli(
 
         Scoped by the boundary ``_wire_watchlists_and_notifications_services``
         captured when it opened the database, so this cannot fail a row the
-        scheduler -- started earlier, in ``on_mount`` -- launched moments ago
+        scheduler -- started earlier in post-mount setup -- launched moments ago
         (Qodo review of PR #1972). No boundary means no sweep: leaving a row
         wedged is recoverable on the next launch, failing a live one is not.
         """
