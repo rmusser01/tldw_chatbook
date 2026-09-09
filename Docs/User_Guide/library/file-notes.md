@@ -53,11 +53,13 @@ Using compact **Back to navigator** does not reset it.
   instead.
 - **Library navigation** (left of the workspace) — the same Library rail as
   the rest of the screen, so you can leave for Media, Prompts or Skills
-  without going back through Notes first. Its grip collapses it. The rail is
-  there before a folder is linked too — the file list and the editor are what
-  wait for a folder, not the rail. On compact terminals (under about 120
-  columns) the rail is collapsed whether or not a folder is linked, so the
-  empty state takes the full canvas width there.
+  without going back through Notes first. The rail is there before a folder
+  is linked too — the file list and the editor are what wait for a folder,
+  not the rail — but its collapse grip arrives with the folder, so before
+  linking the rail is simply always open. Once linked, the grip collapses
+  it. On compact terminals (under about 120 columns) the rail is collapsed
+  whether or not a folder is linked, so the empty state takes the full
+  canvas width there.
 - **Folder link row** (top) — before setup the status reads "Choose a notes
   folder." with buttons **Details** and **Choose folder…**, and the line
   under it explains the mode: "Folder files edits Markdown files in a folder
@@ -508,3 +510,10 @@ waiting** / **Choose another** now size to their labels and **Details** /
 **Change…** stand down for the duration of the change. **Use \<folder\>**
 reads `[file_notes] root` first and the legacy `[notes] sync_directory`
 second.)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32180
+review round 1: a folder change started from the unlinked empty state kept
+the empty state's hug-your-own-width status, so at 60 columns **Keep
+waiting** and **Choose another** were pushed off the row. The busy line now
+elides in that state too. The pre-link Library rail has no collapse grip;
+the grip arrives with the folder.)*

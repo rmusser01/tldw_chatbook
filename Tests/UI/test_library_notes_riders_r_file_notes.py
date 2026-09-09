@@ -90,14 +90,26 @@ async def test_compact_folder_files_paints_no_shell_before_linking() -> None:
     replica.close()
 
 
+@pytest.mark.parametrize("start_linked", [True, False], ids=["linked", "unlinked"])
 @pytest.mark.asyncio
 async def test_the_slow_wait_row_keeps_every_control_on_pane_at_60_columns(
     blocked_root_change,  # noqa: F811  (the imported fixture, by name)
+    start_linked,
 ) -> None:
-    """task-32180 AC1: the busy row's geometry, pinned where it was tightest."""
+    """task-32180 AC1: the busy row's geometry, pinned where it was tightest.
+
+    Both starting states, because they take different CSS paths: the
+    ``-empty-root`` class gives the status ``width: auto`` so the empty
+    state's short prompt hugs its button (task-2850), and a wait line
+    wearing that class hugs its own full length and shoves the decision
+    controls off the row (fix round 1). task-32173 made the unlinked case
+    reachable in the first place.
+    """
     old_root, new_root, blocked = blocked_root_change
     replica = FileNotesReplica(":memory:")
-    workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
+    workspace = LibraryFileNotesWorkspace(
+        root=old_root if start_linked else None, replica=replica
+    )
     async with _production_workspace_context(workspace, size=COMPACT) as pilot:
         wait = await _start_blocked_root_change(pilot, workspace, blocked, new_root)
         wait.started_at -= 5.0

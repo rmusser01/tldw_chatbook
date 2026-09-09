@@ -2727,7 +2727,14 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_status_summary = self._root_status_detail
             status.tooltip = None
             status.update(self._root_status_summary)
-            status.set_class(self._root is None, "-empty-root")
+            # Never the empty state's hug (fix round 1): task-2850's
+            # ``width: auto`` is for the short "Choose a notes folder."
+            # prompt, and a wait line wearing it hugs its own full length
+            # instead of eliding -- which pushed Keep waiting and Choose
+            # another off a 60-column row whenever the change started from
+            # an unlinked state. Same reasoning as the ``_root is None``
+            # branch below, which already excludes its own reason line.
+            status.set_class(False, "-empty-root")
             # task-32180: the row belongs to the wait's own three controls
             # while it runs. Details would open a dialog showing this very
             # line, and Change… is disabled for the whole transition while
