@@ -796,8 +796,16 @@ class LibraryFileNotesWorkspace(Vertical):
         width: auto;
     }
 
+    /* task-32180: every optional control in the folder row, not just the
+       two it shipped with. Textual's Button default is ``min-width: 16``,
+       so "Cancel" reserved 16 cells and the row's three wait controls ran
+       11 cells off the right edge of a 60-column terminal. */
     #file-notes-root-details,
-    #file-notes-choose-root {
+    #file-notes-choose-root,
+    #library-structural-wait-cancel,
+    #file-notes-root-keep-waiting,
+    #file-notes-root-choose-another,
+    #file-notes-use-sync-folder {
         width: auto;
         min-width: 0;
         height: 1;
@@ -2608,26 +2616,33 @@ class LibraryFileNotesWorkspace(Vertical):
         return f"{wait.label}… · {progress}"
 
     def _configured_sync_folder(self) -> Path | None:
-        """Return the folder ``[notes] sync_directory`` names, when usable.
+        """Return the configured notes folder to offer by name, when usable.
 
         task-32136: a user who already configured a notes folder should be
         offered it by name instead of being sent to a file picker that
         opens on their home directory.
 
-        The setting is config-derived input, so it goes through
+        task-32180: ``[file_notes] root`` -- the key this mode itself writes
+        on every successful folder change -- is read first; the legacy
+        ``[notes] sync_directory`` (TASK-21112 calls it that) stays the
+        fallback for a profile that has never linked a folder here.
+
+        Both are config-derived input, so they go through
         ``path_validation`` (review round 2) rather than straight to
         ``is_dir()``: a relative spelling would otherwise resolve against
         whatever directory the app was launched from.
         """
-        raw = get_cli_setting("notes", "sync_directory", None)
-        if not isinstance(raw, str) or not raw.strip():
-            return None
-        try:
-            return validate_existing_absolute_directory(
-                Path(raw).expanduser()
-            )
-        except (OSError, ValueError):
-            return None
+        for section, key in (("file_notes", "root"), ("notes", "sync_directory")):
+            raw = get_cli_setting(section, key, None)
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            try:
+                return validate_existing_absolute_directory(
+                    Path(raw).expanduser()
+                )
+            except (OSError, ValueError):
+                continue
+        return None
 
     def _sync_body_panes(self) -> None:
         """Keep the Library rail; make only the file panes wait for a folder.
@@ -2713,8 +2728,13 @@ class LibraryFileNotesWorkspace(Vertical):
             status.tooltip = None
             status.update(self._root_status_summary)
             status.set_class(self._root is None, "-empty-root")
-            details.display = self._root is not None
-            choose.display = True
+            # task-32180: the row belongs to the wait's own three controls
+            # while it runs. Details would open a dialog showing this very
+            # line, and Change… is disabled for the whole transition while
+            # Choose another does exactly its job -- two dead controls that
+            # pushed Choose another 11 cells off a 60-column row.
+            details.display = False
+            choose.display = False
             self._render_status_channels()
             self.call_after_refresh(self._fit_root_status)
             return
@@ -6410,6 +6430,25 @@ class LibraryFileNotesWorkspace(Vertical):
         generation makes the abandoned run's late results stale, so it can
         never commit the folder it was still scanning.
 
+        Invariant (task-32180): **every** way a folder change ends early
+        arrives here, and nothing else releases the previous scan's hold on
+        ``_service_lock``. Three call sites reach it: the deadline and the
+        ``CancelledError`` branch of ``_change_root_with_deadline``, and
+        the ``StructuralWait.cancel`` partial that Cancel, Escape, the back
+        cue, the navigation flush and ``Choose another`` all go through. A
+        re-entrant folder change arrives by the second of those: the worker
+        is ``exclusive=True`` in the ``file-notes-root-change`` group, so
+        picking a second folder cancels the first worker.
+
+        What it is NOT: synchronous. Textual's exclusive-worker cancel
+        delivers ``CancelledError`` on a later loop turn, so the new
+        attempt's ``set_root`` can reach ``_scan_for_root`` while the
+        abandoned scan still holds the lock. That overlap is covered, not
+        avoided: ``_scan_for_root`` polls the lock and gives up only on
+        THIS attempt's cancel flag, so the new attempt simply waits out
+        the microseconds the old one needs to notice its flag. Do not
+        write an assertion here claiming the previous attempt is already
+        finished -- it usually is not.
         """
         task.cancel()
         # task-32121: the asyncio cancel never reached the scan THREAD,

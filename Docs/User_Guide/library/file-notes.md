@@ -61,8 +61,8 @@ Using compact **Back to navigator** does not reset it.
 - **Folder link row** (top) — before setup the status reads "Choose a notes
   folder." with buttons **Details** and **Choose folder…**, and the line
   under it explains the mode: "Folder files edits Markdown files in a folder
-  on disk, in place. Nothing is copied into the Library." When
-  `[notes] sync_directory` is set, a **Use \<folder\>** button offers that
+  on disk, in place. Nothing is copied into the Library." When a notes
+  folder is already configured, a **Use \<folder\>** button offers that
   folder directly. Once linked, the status becomes "Linked · Local folder:
   \<folder\>" (or "Checking · Local folder: …" / "Offline · Local folder: …"
   when the folder can't be verified) and the button relabels to
@@ -97,16 +97,20 @@ Using compact **Back to navigator** does not reset it.
 |---|---|
 | **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. Type into the **Folder path** field and either press Enter (browses into it) or click **Select** (uses it right away, without needing Enter first); an invalid path shows an inline reason and leaves the picker open |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
-| **Cancel** (folder change) | Appears beside **Change…** only while a folder change is running. Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
+| **Cancel** (folder change) | Replaces **Details** and **Change…** for as long as a folder change is running. Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
 | **Choose another** (folder change) | Appears with **Keep waiting**. Abandons the change, keeps the folder you already had, and reopens the folder picker in one step |
-| **Use \<folder\>** | Appears only before a folder is linked, and only when `[notes] sync_directory` names an existing folder by absolute path in config.toml. Links that folder without opening the picker |
+| **Use \<folder\>** | Appears only before a folder is linked, and only when a configured folder still exists. It reads `[file_notes] root` — the key **Choose folder…** writes — and falls back to the legacy `[notes] sync_directory`; either must name an existing folder by absolute path in config.toml. Links that folder without opening the picker |
 
 While a folder change runs, the folder line reads `Changing folder…`. If it
 is still going after about three seconds it starts reporting how far the
 scan has got — `Changing folder… · 1,240 entries so far` (or `· still
 working` before the first count) — and **Keep waiting** and **Choose
-another** appear beside **Cancel**. After 30 seconds the change gives up on
+another** appear beside **Cancel**. Those three are the whole row while the
+change runs: **Details** and **Change…** step aside, because **Details**
+would only repeat the line you are already reading and **Change…** is
+inert until the change ends, which is what **Choose another** is for.
+After 30 seconds the change gives up on
 its own and the folder line itself reads "Folder change timed out · previous
 folder kept. Try again or choose a different folder." That reason stays on
 the folder line until you start another folder change or open a file.
@@ -498,4 +502,9 @@ is painted on the folder line rather than only in the editor's status line.
 the Library rail is now shown inside Folder files before a folder is linked,
 not only after — the file list and the editor are what wait for a folder. On
 terminals under about 120 columns the rail stays collapsed either way, which
-is unchanged.)*
+is unchanged. task-32180: at 60 columns the slow-folder-change row kept
+**Choose another** 11 cells off the right edge; **Cancel** / **Keep
+waiting** / **Choose another** now size to their labels and **Details** /
+**Change…** stand down for the duration of the change. **Use \<folder\>**
+reads `[file_notes] root` first and the legacy `[notes] sync_directory`
+second.)*

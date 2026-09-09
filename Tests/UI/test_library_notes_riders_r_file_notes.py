@@ -2,7 +2,10 @@
 
 task-32136 shipped "Folder files is a mode of Notes" only after a folder is
 linked -- ``#file-notes-body`` was display-gated on a linked root, so the
-empty state dropped to a full-width onboarding step with no rail.
+empty state dropped to a full-width onboarding step with no rail. task-32180
+collects the loose ends of the wave-1 wait work: the busy row's geometry was
+never pinned below 120 columns, and ``Use <folder>`` only ever read the
+legacy ``[notes] sync_directory`` key.
 """
 
 from __future__ import annotations
@@ -13,6 +16,12 @@ from textual.widgets import Button
 # Stubs first in the local group: it registers the optional MLX modules the
 # application imports below would otherwise probe.
 import Tests.UI._optional_module_stubs  # noqa: F401
+import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module
+from Tests.UI.test_library_crit8_waits import (  # noqa: F401
+    _busy_row_cancel_labels,
+    _start_blocked_root_change,
+    blocked_root_change,
+)
 from Tests.UI.test_library_file_notes_workspace import (
     _production_workspace_context,
     _wait_until,
@@ -77,5 +86,90 @@ async def test_compact_folder_files_paints_no_shell_before_linking() -> None:
         assert not any(pane.display for pane in _shell_panes(workspace))
         assert workspace.query_one("#file-notes-empty-purpose").display
         assert workspace.query_one("#file-notes-choose-root", Button).display
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_the_slow_wait_row_keeps_every_control_on_pane_at_60_columns(
+    blocked_root_change,  # noqa: F811  (the imported fixture, by name)
+) -> None:
+    """task-32180 AC1: the busy row's geometry, pinned where it was tightest."""
+    old_root, new_root, blocked = blocked_root_change
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
+    async with _production_workspace_context(workspace, size=COMPACT) as pilot:
+        wait = await _start_blocked_root_change(pilot, workspace, blocked, new_root)
+        wait.started_at -= 5.0
+        workspace._record_root_scan_progress(
+            1240, generation=workspace._root_generation
+        )
+        workspace._update_root_surface()
+        await pilot.pause()
+        await pilot.pause()
+
+        row = workspace.query_one("#file-notes-root-row")
+        visible = [button for button in row.query(Button) if button.display]
+        assert [str(button.label) for button in visible] == [
+            "Cancel",
+            "Keep waiting",
+            "Choose another",
+        ]
+        off_pane = [
+            (str(button.label), button.region)
+            for button in visible
+            if button.region.right > row.region.right
+            or button.region.x < row.region.x
+            or button.region.width == 0
+        ]
+        assert off_pane == [], f"row={row.region!r}"
+        # task-32121 AC5 holds at this width too.
+        assert _busy_row_cancel_labels(workspace) == ["Cancel"]
+        # The row still says what it is doing.
+        status = workspace.query_one("#file-notes-root-status")
+        assert status.region.width > 0
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_use_folder_offers_the_modern_file_notes_root(
+    tmp_path, monkeypatch
+) -> None:
+    """task-32180 AC2: the key this mode itself writes is offered first."""
+    modern = tmp_path / "modern-vault"
+    modern.mkdir()
+    legacy = tmp_path / "legacy-sync"
+    legacy.mkdir()
+
+    def both_keys(section, key=None, default=None):
+        if (section, key) == ("file_notes", "root"):
+            return str(modern)
+        if (section, key) == ("notes", "sync_directory"):
+            return str(legacy)
+        return default
+
+    monkeypatch.setattr(workspace_module, "get_cli_setting", both_keys)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _production_workspace_context(workspace, size=WIDE) as pilot:
+        await pilot.pause()
+        assert workspace._configured_sync_folder() == modern
+        button = workspace.query_one("#file-notes-use-sync-folder", Button)
+        assert button.display
+        assert str(button.label) == "Use modern-vault"
+
+        # The legacy key is still the fallback for a profile that never
+        # linked a folder in this mode.
+        monkeypatch.setattr(
+            workspace_module,
+            "get_cli_setting",
+            lambda section, key=None, default=None: (
+                str(legacy) if (section, key) == ("notes", "sync_directory") else None
+            ),
+        )
+        workspace._update_root_surface()
+        await pilot.pause()
+        assert str(button.label) == "Use legacy-sync"
     await workspace.shutdown()
     replica.close()
