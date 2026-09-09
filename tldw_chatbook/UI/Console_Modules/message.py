@@ -110,6 +110,7 @@ from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 import asyncio
 import inspect
 import os
+import threading
 import uuid
 
 from loguru import logger
@@ -1046,16 +1047,19 @@ class ConsoleMessageController:
                 group="console-canvas-auto-open",
             )
 
-        call_from_thread = getattr(self._canvas_app, "call_from_thread", None)
-        if callable(call_from_thread):
-            try:
-                call_from_thread(schedule)
-                return
-            except Exception as exc:  # noqa: BLE001 - fall back to UI-thread schedule
-                logger.debug(
-                    f"Canvas auto-open thread handoff failed: {type(exc).__name__}"
-                )
-        schedule()
+        app = self._canvas_app
+        if threading.get_ident() == getattr(app, "_thread_id", None):
+            self._screen.call_later(schedule)
+            return
+        call_from_thread = getattr(app, "call_from_thread", None)
+        if not callable(call_from_thread):
+            return
+        try:
+            call_from_thread(schedule)
+        except Exception as exc:  # noqa: BLE001 - auto-open is best-effort
+            logger.debug(
+                f"Canvas auto-open thread handoff failed: {type(exc).__name__}"
+            )
 
     async def _open_console_canvas_block(self, reference: Any, source: str) -> Any:
         """Import one authorized HTML block and open its native preview."""

@@ -114,6 +114,29 @@ conversation + Canvas + revision capability for iframe navigation, consumes
 it on load, and refuses top-level navigation. Generated code receives no
 reusable browser-session credential.
 
+### JSON request-body deadline amendment (2026-09-09, TASK-31932)
+
+Every Canvas JSON body read has a fixed 30-second total deadline, separate
+from body-size admission and later authority/bridge work. Partial or trickled
+bodies do not renew it. Expiry cancels the read and produces the existing
+source-free refusal envelope with HTTP 408 and a non-reusable connection;
+the security-header wrapper must preserve that close instruction. Complete
+UTF-8/JSON parsing, maximum-size rejection, and external cancellation retain
+their existing semantics. Native and served routes share this boundary.
+
+PR #2427 review demonstrated that an incomplete chunked body could otherwise
+retain the handler indefinitely. Thirty seconds is a generous finite delivery
+window consistent with the existing short-lived boot/action capabilities, not
+the separate two-second control RPC or five-minute confirmation deadline.
+There is no new configuration knob. An idle/keepalive timeout cannot bound an
+active body read; an inactivity timeout would let a trickling client renew it.
+
+The response disallows connection reuse, not an instantaneous transport-close
+guarantee. aiohttp may perform its existing bounded lingering drain after the
+408 (10 seconds in the installed 3.13.5 runtime). That separate server cleanup
+policy remains unchanged; neither global runner settings nor private transport
+internals are modified to implement this handler deadline.
+
 ### WebAssembly engine dependency and security addendum
 
 The reviewed V1 candidate is accepted for the worker implementation and real-

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 17:14'
-updated_date: '2026-09-06 17:38'
+updated_date: '2026-09-09 10:52'
 labels: []
 dependencies: []
 ---
@@ -18,9 +18,9 @@ Preserve the reviewed test repairs and newly landed dev behavior while making PR
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The PR contains latest dev with all reviewed behavior preserved and no unresolved rebase conflicts.
-- [ ] #2 Review-created Backlog collisions are renumbered with upstream identities and historical evidence paths preserved.
-- [ ] #3 Affected complete-file tests and derived artifact checks pass without weakening contracts or raising screen size limits.
+- [x] #1 The PR contains latest dev with all reviewed behavior preserved and no unresolved rebase conflicts.
+- [x] #2 Review-created Backlog collisions are renumbered with upstream identities and historical evidence paths preserved.
+- [x] #3 Affected complete-file tests and derived artifact checks pass without weakening contracts or raising screen size limits.
 - [ ] #4 Qodo findings and required checks on the final revision are handled before normal merge.
 - [x] #5 Newly landed character-navigation test fixtures finalize only their own resources, with all seven cases passing and no retained SQLite descriptors under native attribution.
 - [x] #6 New dev boot-worker warning probes retain their owned Loguru sinks for the mounted observation window, and newly attributed worker/smoke fixtures finalize exact owned resources.
@@ -230,10 +230,15 @@ Step 88 diagnostic refinement: ordinary `sys.stdout` redirection alone still pro
 97. Verify e38cbb Qodo comments3967103308/3967103315 with real-SQLite transaction-state and quoted-filename privacy RED controls. Wrap only the persisted one-row Console message probe in the existing transaction context; preserve native-store reads and fail-closed menu eligibility. Redact fully quote-delimited local paths before the conservative bare-path matcher, preserving surrounding quotes/prose and covering POSIX/Windows names with spaces and reader-visible retry failures. Run complete menu/media owner files and unchanged architectural caps before publication/replies. ADR required: no. ADR path: N/A. Reason: routine existing transaction/privacy contract repairs, no new authority, storage or UX policy.
 98. Native descriptor identity tracing additionally finds a retained, unlinked factory-owned advisory instance-lock handle after the exact app's runtime/database cleanup. If it remains after Chroma disposal, register only the importing-module builder product's existing `_instance_lock_status.handle.close` on its established auxiliary resource stack; do not alter production process-lifetime locking or unlink any lock. First add real lock-handle RED controls retaining foreign owners through normal and failed teardown; qualify existing shared-fixture fault/foreign tests and the complete Settings cohort with native final descriptors. ADR required: no. ADR path: N/A. Reason: end the test-owned app's exact handle lifetime at fixture teardown, not a new production lock or cleanup policy.
 99. Complete boot qualification passes but two synchronous, unmounted stagger-policy fixtures attempt a real Textual interval timer with no running loop, creating an unawaited coroutine before the expected loop error is caught. Add RED assertions for successful reconcile-timer registration and shutdown cancellation, then replace only each fixture-owned app's `set_interval` with the existing recorded/stoppable timer-token pattern. Preserve real admission/reconciliation logic, original cap/order assertions and the mounted real-timer case; do not suppress warnings or change production scheduling. ADR required: no. ADR path: N/A. Reason: repair the test harness's missing event-loop precondition while strengthening its timer contract.
+100. Qodo on 95dc817a46 reports unsafe worker-thread Canvas fallback, unbounded partial JSON body reads, and missing client-close failure cause. Trace the first two through their actual thread/HTTP owners and existing contracts before deciding fixes. For close diagnostics, add a RED sink-level control and include only a schema-sanitized exception-class token using the existing metadata helper, preserving best-effort return behavior and excluding exception values/tracebacks that can contain private paths or user content. Review the changed diagnostic statement and regenerate its inventory only after explicit privacy review. ADR required: no for this diagnostic repair. ADR path: N/A. Reason: use the established bounded metadata contract, not broaden logging authority. Assess the request deadline separately against the existing Canvas ADR before implementation.
+101. Add a total 30-second deadline around the existing bounded complete Canvas body read, preserving incomplete-read EOF handling, size rejection, UTF-8/JSON validation and external cancellation. Expiry returns the existing source-free HTTP 408 refusal with connection reuse disabled; preserve that flag through the security-header middleware, which currently replaces HTTP exceptions. Add controlled stalled/trickled stream RED tests and a real numeric-loopback gateway/middleware 408 plus complete-body positive control, preserving security headers and exact server/client teardown. Do not change aiohttp's separately bounded lingering cleanup or global server settings. Qualify complete request-body, gateway and relevant served/security files. ADR required: yes, amend existing ADR. ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md (JSON request-body deadline amendment). Reason: explicitly document the new bounded transport refusal contract before implementation; no new authority or browser capability.
+102. Keep Canvas auto-open on the application thread: queue known-owning-thread work through the existing Screen call_later pattern, otherwise use App.call_from_thread and drop a missing or rejected handoff without inline fallback. Preserve committed Canvas state and manual opening. Add controlled real-worker rejection tests and positive owning-thread/accepted-handoff controls while retaining exact same-session browser suppression. Qualify the complete controller file and unchanged architecture caps. ADR required: no. ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md. Reason: enforce the existing application-loop-affine publication and best-effort browser-open contract, not introduce a new thread policy.
+103. Independent review flags that the new thread-dispatch tests create full test apps without importing the established exact-owner resource fixtures. Attribute their terminal native handles before changing the harness, then reuse only the existing fixture import pattern and qualify the complete controller test file with native final descriptors. Preserve foreign owners, all behavior assertions and runtime source; do not add global cleanup or a new resource mechanism. ADR required: no. ADR path: N/A. Reason: established test-owner disposal, not a production lifetime policy.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Steps 90/91 repair the proven committed-save/blank-GC ordering through existing
 coordinator destructive admission, then revalidate the exact session and blank
 provenance before a version-checked delete. Intervening authored drafts follow
@@ -271,3 +276,26 @@ scoped lint, unchanged caps, independent reviews and derived preflight pass.
 No new ADR, dependency, storage/lock policy or expanded cleanup authority.
 Detailed RED/GREEN/native evidence is in the reconciliation report. Publication,
 exact-head review/CI and normal protected merge remain the final gates.
+
+Steps 100–102 address the next three Qodo findings. The index cleanup warning
+uses an existing sanitized exception-class token without raw values/tracebacks.
+Canvas JSON reads have a fixed 30-second total deadline; source-free 408 replies
+preserve security headers and disable connection reuse. The new transport
+contract is documented in ADR-121's JSON request-body deadline amendment.
+Canvas auto-open follows the existing app-thread handoff pattern and drops
+missing/rejected worker handoffs without inline UI work. No new dispatch owner,
+dependency, configuration knob or raised cap is introduced.
+
+Complete verification passes 47 RAG, 116 gateway/served-security, 25 controller,
+71 Screen/delegate-cap and 65 strict provenance/architecture tests. Controlled
+RED cases establish each repair; independent production reviews are clear.
+Changed-file Ruff, whitespace and all seven derived-artifact checks pass.
+The diagnostic statement was explicitly privacy-reviewed before regeneration.
+Step 103 resolves the review-discovered test-app ownership gap through the
+existing exact-owner fixtures, preserving the send test's database attachment.
+Final native complete-controller qualification passes 25 tests in 20.22s,
+with zero SQLite/instance-lock retention and unchanged runtime bytes. Independent
+review clears the test-owner correction. Publication and exact-head review/CI
+remain open before normal protected merge. See the reconciliation report for
+exact logs and prior completed cohorts.
+<!-- SECTION:NOTES:END -->

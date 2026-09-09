@@ -2627,3 +2627,76 @@ Fresh combined six-file resource qualification passes **84 tests, 2 dependency
 warnings in 5.45s** (`/private/tmp/pr2427-resources-final.log`). All scoped repairs
 are ready for publication; task completion still requires the published head's
 review/checks and verified normal merge.
+
+### September 9 — Qodo follow-up on 95dc817a46 (steps 100–102)
+
+Published head `95dc817a46a5cf7b176c33f8552528aa80b8428c` now has green
+PR Fast Lane, Perf Guard, derived artifacts and all applicable platform checks.
+Live dev remains `a36fc6133c69f77b8b14596a59918de34261f8ef`, already included.
+Qodo added three actionable findings; these are new review work, not continuing
+failures of the previously qualified resource or boot repairs.
+
+Step 100 makes failed index-client retirement diagnosable by its sanitized
+exception class, using the existing persistent-metadata helper. Raw exception
+values and tracebacks remain excluded because they can disclose private paths
+or user content. Two real Loguru sink controls first failed and then passed;
+three complete RAG files pass **47 tests, 2 dependency warnings in 0.88s**.
+Independent review confirms no expanded logging authority and exact sink cleanup.
+Evidence: `/private/tmp/pr2427-close-cause-{red,green}.log`.
+
+Step 101 bounds the existing complete, size-limited JSON body read with a fixed
+**30-second absolute deadline**, not a renewable inactivity timeout. Expiry is
+the existing source-free HTTP 408 refusal, with connection reuse disabled and
+that flag preserved through the sanitizing security middleware. ADR-121's new
+JSON request-body deadline amendment records this transport contract before
+implementation. External cancellation, EOF handling, UTF-8/JSON validation and
+size limits are preserved. No global runner policy or aiohttp private API changes.
+
+Controlled stalled/trickled streams produced **4 RED failures**; real loopback
+HTTP then reproduced the missing response, and an intermediate deadline-only
+fix reproduced middleware loss of connection-close policy. Five complete body,
+gateway and served-security files now pass **116 tests, 3 dependency warnings
+in 3.09s**. The real HTTP control asserts sanitized 408/security headers, no
+canary disclosure, and a subsequent complete request using the unconsumed boot
+capability. Exact clients, writer and gateway close in `finally`. Evidence:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-canvas-body-deadline.CKNoPY/`.
+
+Step 102 uses the existing app-thread identity boundary: the known owner queues
+with `Screen.call_later`; other callers use `App.call_from_thread`, with no inline
+fallback after a missing or rejected handoff. Already-committed Canvas state is
+unaffected and manual opening remains available. Current settlement is already
+application-loop-affine under ADR-121; this hardens a permissive fallback rather
+than claiming all production settlement previously ran on background threads.
+The existing diagnostic text and same-session browser suppression are preserved.
+Three controlled failures reproduce the old unsafe/incorrect dispatch; four
+focused controls then pass, including real worker threads and accepted dispatch
+back to the owner. The complete controller file passes **25 tests**; independent
+production review is clear. Logs: `/private/tmp/pr2427-qodo-canvas-{red,green,full-final}.log`.
+
+Original Screen/delegate caps pass **71 tests** and four complete strict
+provenance/architecture files pass **65 tests, 5 warnings in 14.26s**. No census
+location update or raised cap was necessary. Changed-file Ruff and whitespace
+checks pass. The added sanitized warning was explicitly reviewed before generated
+inventory refresh; the other diagnostic change is re-indentation only, with no
+changed message or interpolated fields. Logs:
+`/private/tmp/pr2427-qodo-canvas-caps.log`,
+`/private/tmp/pr2427-qodo102-caps.log`, and
+`/private/tmp/pr2427-qodo102-diagnostics-review.log`.
+
+Independent test review additionally flagged exact app-resource ownership in
+the new worker controls. Step 103 reuses the existing two exact-owner fixtures
+and makes the send test's existing builder/database attachment visible to that
+module-local owner. It does not change shared fixtures or production cleanup.
+Complete native requalification passes **25 tests, 3 warnings in 20.22s**, exit
+0, with no retained SQLite or instance-lock handles after each test or at final
+observation. Only the pytest-asyncio session selector footprint remains (one
+kqueue/two sockets, besides standard streams). Frozen runtime/test hashes match;
+independent review clears the ownership correction. Native evidence:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-qodo-canvas-native-final2.dT1EGz/fd_identity.jsonl`.
+
+All seven derived checks pass, including 3,684 collision-free task files,
+115 tables, 282 index census rows and 67 plan pins. Final preflight log:
+`/private/tmp/pr2427-qodo102-preflight.log`. Scoped Ruff and whitespace checks
+remain green after the test-owner correction. Publication and the new exact
+head's review/checks precede normal protected merge. No repository-wide sweep
+or all-descriptor-zero claim is made.

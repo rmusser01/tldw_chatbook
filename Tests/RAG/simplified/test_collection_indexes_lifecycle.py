@@ -17,6 +17,36 @@ def _run_operation(operation: str, path: Path):
     return indexes.delete_index(path, "legacy")
 
 
+@pytest.mark.parametrize("exception_type", [PermissionError, RuntimeError])
+def test_client_close_reports_safe_exception_kind(
+    exception_type: type[Exception],
+) -> None:
+    """Identify cleanup failure kinds without exposing exception payloads.
+
+    Args:
+        exception_type: Distinct failure kind that must remain diagnosable.
+    """
+    records = []
+    sink = indexes.logger.add(lambda message: records.append(message.record))
+    try:
+        indexes._close_client(
+            SimpleNamespace(
+                close=Mock(
+                    side_effect=exception_type(
+                        "private-payload /Users/example/secret-index.sqlite"
+                    )
+                )
+            )
+        )
+    finally:
+        indexes.logger.remove(sink)
+    assert len(records) == 1
+    assert exception_type.__name__ in records[0]["message"]
+    assert "private-payload" not in records[0]["message"]
+    assert "/Users/example" not in records[0]["message"]
+    assert records[0]["exception"] is None
+
+
 @pytest.mark.parametrize("operation", ["list", "adopt", "delete"])
 @pytest.mark.parametrize(
     "outcome",
