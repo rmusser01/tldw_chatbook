@@ -2248,7 +2248,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             search_labels["settings-appearance-library-media-library-open"]
             == "Shared Library rail"
         )
-        assert "Automatic: 3:13, bounded to 24–34 cells." in visible
+        assert "Automatic: 3:13 plus five, bounded to 29–39 cells." in visible
         assert "Custom: preferred 24–48 cells" in visible
         assert "keep 40 content cells" in visible
         assert "Adaptive readers may collapse panes" in visible
@@ -2285,7 +2285,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             screen.query_one(
                 "#settings-appearance-library-notes-files-tree-width", Input
             ).value
-            == "40"
+            == "50"
         )
 
         await pilot.click("#settings-save-category")
@@ -2297,25 +2297,25 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             "future_shared": "keep",
             "library_open": True,
             "custom_widths_enabled": False,
-            "library_width": 31,
+            "library_width": 36,
         },
         "media_reader": {
             "items_open": True,
-            "items_width": 40,
+            "items_width": 50,
         },
-        "collections_reader": {"items_open": True, "items_width": 40},
-        "conversations_reader": {"items_open": True, "items_width": 40},
+        "collections_reader": {"items_open": True, "items_width": 50},
+        "conversations_reader": {"items_open": True, "items_width": 50},
         "notes_reader": {
             "items_open": True,
-            "items_width": 40,
+            "items_width": 50,
             "files_tree_open": True,
-            "files_tree_width": 40,
+            "files_tree_width": 50,
         },
-        "prompts_reader": {"items_open": True, "items_width": 40},
+        "prompts_reader": {"items_open": True, "items_width": 50},
         "skills_reader": {
             "future_skills": "keep",
             "items_open": True,
-            "items_width": 40,
+            "items_width": 50,
         },
     }
     assert app._library_reader_layout_refresh_generation == 1
