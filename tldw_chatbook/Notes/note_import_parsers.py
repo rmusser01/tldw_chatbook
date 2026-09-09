@@ -55,6 +55,8 @@ _CSV_RESERVED_HEADERS = frozenset(
 )
 _MARKDOWN_EXTENSIONS = frozenset({".md", ".markdown"})
 _FRONTMATTER_KEYS = ("tags", "aliases")
+_ALIAS_KEYWORD_PREFIX = "alias: "
+"""Marks a keyword that came from `aliases:` rather than from `tags:`."""
 _MAX_FRONTMATTER_LINES = 200
 _MAX_WIKILINKS_PER_NOTE = 200
 _TEMPLATE_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
@@ -558,8 +560,10 @@ def _frontmatter_keywords(
 
     Aliases are alternate titles in Obsidian and there is no separate note
     metadata store here, so they are kept as keywords: the note stays findable by
-    them and they are visible in Info. Unusable metadata yields no keywords
-    rather than failing the whole note.
+    them and they are visible in Info. They carry an ``alias:`` prefix so a
+    reader can still tell an alternate name from a tag the author chose
+    (task-32178). Unusable metadata yields no keywords rather than failing the
+    whole note.
     """
     if metadata is None:
         return ()
@@ -570,8 +574,12 @@ def _frontmatter_keywords(
             values = _keywords(metadata.get(key), bounds)
         except _ParseFailure:
             continue
-        for keyword in values:
-            if keyword.casefold() in seen:
+        for value in values:
+            keyword = value if key == "tags" else f"{_ALIAS_KEYWORD_PREFIX}{value}"
+            if (
+                len(keyword) > MAX_IMPORT_KEYWORD_LENGTH
+                or keyword.casefold() in seen
+            ):
                 continue
             seen.add(keyword.casefold())
             keywords.append(keyword)

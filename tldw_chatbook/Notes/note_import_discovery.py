@@ -252,8 +252,7 @@ def discover_import_sources(
         obsidian_mode: Whether a detected Obsidian vault's own folders
             (``.obsidian/``, ``.trash/`` and ``Templates/``) are skipped with a
             reason instead of walked. It has no effect on a folder that is not a
-            vault, and none at all on the Windows adapter, which never reports a
-            detected vault.
+            vault. Both platform strategies honour it (task-32178).
 
     Returns:
         An immutable description of admitted sources and safe failures.
@@ -272,6 +271,7 @@ def discover_import_sources(
         return discover_windows_sources(
             paths,
             bounds,
+            obsidian_mode=obsidian_mode,
             filesystem=_windows_filesystem(),  # type: ignore[arg-type]
         )
     return _discover_import_sources_posix(paths, bounds, obsidian_mode=obsidian_mode)

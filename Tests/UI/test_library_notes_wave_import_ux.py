@@ -502,8 +502,8 @@ async def test_group_actions_say_they_only_change_this_page() -> None:
 def test_the_canvas_takes_its_non_importable_set_from_the_planner_enum() -> None:
     """task-32176: one source of truth for what cannot be imported."""
     from tldw_chatbook.Notes.note_import_plan_models import (
-        ImportClassification,
         NON_IMPORTABLE_CLASSIFICATIONS,
+        ImportClassification,
     )
     from tldw_chatbook.Widgets.Library import library_note_import_canvas
 

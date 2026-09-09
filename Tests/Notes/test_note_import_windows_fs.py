@@ -1000,3 +1000,80 @@ def test_windows_descriptor_cleanup_propagates_interruptions_after_closing_all(
 
     assert filesystem.closed_pins == [2, 1]
     assert filesystem.live_pins == {}
+
+
+# --- task-32178: Obsidian vaults through the Windows adapter ---------------
+
+
+def _windows_vault(tmp_path: Path) -> Path:
+    root = tmp_path / "vault"
+    for relative, text in (
+        (".obsidian/app.json", '{"livePreview": true}'),
+        (".trash/Old idea.md", "# Old idea\n"),
+        ("Templates/Daily.md", "# {{date}}\n"),
+        ("Projects/Library review.md", "# Library review\n"),
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return root
+
+
+def test_windows_adapter_detects_a_vault_and_skips_its_own_folders(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vault handling must not stop at the POSIX walker (task-32178)."""
+    root = _windows_vault(tmp_path)
+    _force_windows_adapter(monkeypatch, FakeWindowsFilesystem())
+
+    discovery = discover_import_sources([root], _bounds(), obsidian_mode=True)
+
+    assert discovery.vault_detected is True
+    assert {skip.display_path: skip.reason_code for skip in discovery.skips} == {
+        "vault/.obsidian": "obsidian_config",
+        "vault/.trash": "obsidian_trash",
+        "vault/Templates": "obsidian_template",
+    }
+    for skip in discovery.skips:
+        assert "Obsidian" in skip.user_message
+    assert tuple(
+        candidate.source.display_path for candidate in discovery.candidates
+    ) == ("vault/Projects/Library review.md",)
+    assert discovery.failures == ()
+
+
+def test_windows_adapter_leaves_a_vault_alone_with_the_toggle_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off means the pre-task walk over every folder, vault or not."""
+    root = _windows_vault(tmp_path)
+    _force_windows_adapter(monkeypatch, FakeWindowsFilesystem())
+
+    discovery = discover_import_sources([root], _bounds(), obsidian_mode=False)
+
+    admitted = {candidate.source.display_path for candidate in discovery.candidates}
+    assert discovery.vault_detected is True
+    assert discovery.skips == ()
+    assert "vault/.obsidian/app.json" in admitted
+    assert "vault/Templates/Daily.md" in admitted
+
+
+def test_windows_adapter_never_treats_a_plain_folder_as_a_vault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A folder called Templates outside a vault still imports."""
+    root = tmp_path / "Notes"
+    (root / "Templates").mkdir(parents=True)
+    (root / "Templates" / "Daily.md").write_text("# Daily\n", encoding="utf-8")
+    _force_windows_adapter(monkeypatch, FakeWindowsFilesystem())
+
+    discovery = discover_import_sources([root], _bounds(), obsidian_mode=True)
+
+    assert discovery.vault_detected is False
+    assert discovery.skips == ()
+    assert "Notes/Templates/Daily.md" in {
+        candidate.source.display_path for candidate in discovery.candidates
+    }

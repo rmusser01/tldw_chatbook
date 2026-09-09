@@ -226,16 +226,25 @@ def test_the_review_shows_the_resulting_title_keywords_and_links(vault: Path) ->
     summary = _effect_summary(item)
 
     assert "Library review" in summary
-    assert "keywords project, ux, notes-review, lib-review" in summary
+    assert "keywords project, ux, alias: notes-review, alias: lib-review" in summary
     assert "3 links" in summary
 
 
 def test_frontmatter_supplies_the_title_keywords_and_aliases(vault: Path) -> None:
-    """Frontmatter title wins over the first heading and tags become keywords."""
+    """Frontmatter title wins over the first heading and tags become keywords.
+
+    An alias is an alternate *name*, not a tag, so it keeps an ``alias:``
+    prefix and stays tellable apart in Info (task-32178).
+    """
     payload = _payloads(vault)["vault/Projects/Library review.md"]
 
     assert payload.title == "Library review"
-    assert payload.keywords == ("project", "ux", "notes-review", "lib-review")
+    assert payload.keywords == (
+        "project",
+        "ux",
+        "alias: notes-review",
+        "alias: lib-review",
+    )
     assert not payload.content.startswith("---")
     assert payload.content.startswith("# Ignored heading")
 

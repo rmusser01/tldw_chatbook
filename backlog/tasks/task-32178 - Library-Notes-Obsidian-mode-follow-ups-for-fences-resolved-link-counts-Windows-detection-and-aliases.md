@@ -3,10 +3,10 @@ id: TASK-32178
 title: >-
   Library Notes: Obsidian mode follow-ups for fences, resolved-link counts,
   Windows detection, and aliases
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-09 09:16'
-updated_date: '2026-09-09 09:16'
+updated_date: '2026-09-09 17:25'
 labels:
   - library
   - notes
@@ -44,10 +44,56 @@ rider carries only the implementation choice.
 <!-- AC:BEGIN -->
 - [x] #1 The fence scanner handles an unterminated ``` fence without
   rewriting wikilinks past it
-- [ ] #2 The import receipt reports a "N links resolved" count
-- [ ] #3 Obsidian vault detection works through the Windows discovery
+- [x] #2 The import receipt reports a "N links resolved" count
+- [x] #3 Obsidian vault detection works through the Windows discovery
   adapter, or the review records an explicit "not supported on Windows"
   decision
-- [ ] #4 Aliases are distinguishable from tags at the storage or display
+- [x] #4 Aliases are distinguishable from tags at the storage or display
   layer, or the guide records the decision to keep them merged
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. AC#2: share the wikilink key derivation in note_import_plan_models (one source for the executor's id map and a resolved-link count), project the count at settle time beside latest_skipped_items and print 'N links resolved' on the receipt line. No durable-ledger column: the receipt view is session state, following the latest_skipped_items precedent.
+2. AC#3: implement vault detection and the vault-root skips in the Windows adapter, unit-tested through the injected filesystem seam; drop the guide's 'Not on Windows' caveat.
+3. AC#4: store aliases as 'alias: <name>' keywords so they are distinguishable from tags; guide says so.
+4. Docs stamp, live verify, backlog notes.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#1 landed in the PR #2549 review round; the other three here.
+
+AC#2 — "N links resolved" on the receipt. The link-key grammar moved into
+note_import_plan_models as `creatable_wikilink_keys`, so the executor's
+id map and the new `resolved_wikilink_count` cannot drift apart; the executor's
+_wikilink_note_ids is now that map plus deterministic ids. The count is captured
+at settle time into `latest_resolved_links` and projected as `resolved_links`,
+exactly the way task-32130's `latest_skipped_items` captures the receipt's
+skipped rows. Deviation from the brief, deliberately: no durable-ledger column.
+The receipt view is session state (revisit_latest_receipt reads the in-memory
+snapshot), the count is a pure function of the approved plan, and the private
+receipt schema is census-validated against frozen canonical statements — a v3
+migration to carry one line of copy would be the expensive way to get the same
+sentence. The line only appears on a COMPLETED receipt, where failed == 0, so
+it can never over-report links whose target note was not written.
+
+AC#3 — implemented rather than documented as unavailable. The Windows adapter
+now carries the same three state fields and reuses the shared
+`_obsidian_skip_reason` / `_add_skip` / `OBSIDIAN_MARKER_DIRECTORY`, and the
+dispatcher passes obsidian_mode through to it. Three tests drive it through the
+injected FakeWindowsFilesystem seam, so they run on this host: detection plus
+the three skips, toggle-off parity, and a plain folder that is not a vault. The
+guide's "Not on Windows" paragraph is gone.
+
+AC#4 — an `aliases:` entry is stored as `alias: <name>`, so Info shows which
+keywords are alternate names and which are the author's tags, while the name
+still matches a keyword search. Over-long values are dropped rather than
+breaking the keyword ceiling.
+
+Files: note_import_plan_models.py, note_import_executor.py,
+note_import_parsers.py, note_import_windows_fs.py, note_import_discovery.py,
+library_note_import_state.py, four test files, Docs/User_Guide/library/notes.md.
+<!-- SECTION:NOTES:END -->

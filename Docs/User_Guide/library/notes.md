@@ -561,10 +561,8 @@ it settles. **Last import** reopens the same-session receipt afterward.
 If the folder you chose holds an `.obsidian/` directory, the review shows an
 **Obsidian vault** toggle, on by default, and one line saying what it does.
 
-**Not on Windows.** Vault detection runs in the POSIX discovery pass only, so
-on Windows a vault imports as an ordinary folder: no toggle appears, the vault's
-own folders are walked, frontmatter stays in the body and wikilinks stay as
-text. Tracked as task-32178.
+Windows works the same way: the Windows discovery adapter detects the vault and
+skips its own folders exactly as the POSIX one does.
 
 With it on:
 
@@ -573,9 +571,12 @@ With it on:
   rather than one row per file inside them.
 - YAML frontmatter is read: `title` becomes the note title, and `tags` and
   `aliases` become keywords (there is no separate alias field, and keeping them
-  as keywords is what makes the note findable by its alternate names). The
-  frontmatter block is removed from the note body — unless it is the whole file,
-  in which case the note keeps it and still takes its title and keywords from it.
+  as keywords is what makes the note findable by its alternate names). An alias
+  is an alternate *name*, not a tag, so it is stored as `alias: <name>` — in
+  Info you can tell the two apart, and searching for the name still finds the
+  note. The frontmatter block is removed from the note body — unless it is the
+  whole file, in which case the note keeps it and still takes its title and
+  keywords from it.
 - `[[wikilinks]]` and `[[link|alias]]` whose target is imported in the same
   batch become note links; a link to anything else stays as plain text, and a
   `[[link]]` written inside a code block or backticks is left alone.
@@ -591,7 +592,10 @@ and Import once never modifies the vault on disk; it does rebuild the review,
 so any per-item Skip/Create choices you had already made are reset.
 
 Review rows for new notes state what will be created — the resulting title, its
-keywords, and how many links it carries — before you approve anything.
+keywords, and how many links it carries — before you approve anything. When the
+import finishes, the receipt adds how many of those links actually resolved
+("Import finished · 59 notes created · 12 links resolved"); links to notes
+outside the batch stayed as text and are not counted.
 
 ## Common tasks
 
@@ -934,3 +938,9 @@ group bulk actions say **Skip all on this page** / **Create all on this page**;
 a structured source that fails names the record or row that failed; and
 **Update existing** on an unchanged repeat now updates the note instead of
 aborting the run with no receipt.)*
+
+*Verified against fix/library-notes-r-import — 2026-09-09 (task-32178: the
+receipt counts the Obsidian links it resolved; the Windows discovery adapter
+now detects a vault and skips `.obsidian/`, `.trash/` and `Templates/` like the
+POSIX one, so the "Not on Windows" caveat is gone; and an `aliases:` entry is
+stored as `alias: <name>` so it is distinguishable from a tag.)*

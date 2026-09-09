@@ -719,3 +719,64 @@ class NoteImportPlan:
             proposed_folder_count=len(self.proposed_folder_paths),
             items=diagnostic_items,
         )
+
+
+def creatable_wikilink_keys(plan: NoteImportPlan) -> dict[str, str]:
+    """Map every link key this plan can resolve to the item that will own it.
+
+    Each single-note source the plan creates is addressable the two ways
+    Obsidian addresses it: by its vault-relative path without the extension and
+    by its bare file name. A name two sources share resolves to neither, so an
+    ambiguous link stays literal rather than pointing at a guess.
+
+    Args:
+        plan: The reviewed plan whose selected actions decide what exists.
+
+    Returns:
+        Comparable link keys mapped to the ``item_id`` that will create them.
+    """
+    item_ids: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for item in plan.items:
+        if item.selected_action is not ImportAction.CREATE_NEW or len(
+            item.payloads
+        ) != 1:
+            continue
+        parts = PurePosixPath(item.source.display_path).parts
+        if item.source.kind is ImportSourceKind.DIRECTORY_MEMBER:
+            parts = parts[1:]
+        if not parts:
+            continue
+        path = PurePosixPath(*parts)
+        for target in (path.with_suffix("").as_posix(), path.stem):
+            key = wikilink_key(target)
+            if not key or key in ambiguous:
+                continue
+            if item_ids.setdefault(key, item.item_id) != item.item_id:
+                ambiguous.add(key)
+                del item_ids[key]
+    return item_ids
+
+
+def resolved_wikilink_count(plan: NoteImportPlan) -> int:
+    """Count the `[[links]]` this plan will rewrite as note links.
+
+    A link to a note outside the batch, an attachment or a heading is left as
+    the author wrote it, so it is not counted (task-32178).
+
+    Args:
+        plan: The reviewed plan the receipt is about to report on.
+
+    Returns:
+        How many recorded links resolve to a note the same plan creates.
+    """
+    keys = creatable_wikilink_keys(plan)
+    if not keys:
+        return 0
+    return sum(
+        wikilink_key(link) in keys
+        for item in plan.items
+        if item.selected_action is ImportAction.CREATE_NEW
+        for payload in item.payloads
+        for link in payload.wikilinks
+    )
