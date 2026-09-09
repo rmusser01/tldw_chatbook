@@ -52,4 +52,6 @@ Two existing tests pinned the old five-line layout and were updated: the classif
 Live at 235x52 the first review page paints 25 rows (19 New + 1 Unsupported + 5 Skipped) on one screen, against the AC's 15.
 
 Files: Widgets/Library/library_note_import_canvas.py (+ regenerated css/widget_defaults_{self,scoped}.tcss), UI/Library_Modules/library_note_import_controller.py, Tests/Widgets/Library/test_library_note_import_canvas.py, Tests/UI/test_library_notes_wave_import_ux.py, Docs/User_Guide/library/notes.md. Caps 05/06.
+
+Review addendum (Qodo findings 3, 9): `set_group_action` now converts the classification to its enum at the seam, so an unknown group is refused with the shipped failure notice instead of silently changing nothing. Measured at 60 and 80 columns, an uncertain or update-existing row pushed its trailing buttons entirely outside the body; **Confirm this match**, **Replace note content** and **Add folder placement** moved onto their own line under the row, and a test asserts every review button lies inside the body's content region at 60x24. A New source is still one line.
 <!-- SECTION:NOTES:END -->
