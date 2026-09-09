@@ -64,9 +64,9 @@ example this constructor's shape mirrors):
    ``_library_lookup_error``, ``_library_notes_focus_intent_generation`` --
    Notes-subsystem, not Conversations -- ``_library_selected_row_id`` --
    the recipe's own canonical ≥2-subsystems example -- and
-   ``_selected_conversation_id``, a per-source "currently selected"
-   field shared with ``_media_state.selected_media_id``/``_selected_note_id``
-   in the screen's save/restore and cross-source-navigation plumbing, never
+   ``_selected_conversation_id``, a per-source "currently selected" field
+   shared with ``_media_state.selected_media_id``/
+   ``_notes_state.selected_note_id`` in the save/restore plumbing, never
    exclusively Conversations' despite its name). Every one of the latter
    group is read-only inside this cluster -- confirmed by checking each
    assignment site in ``library_screen.py`` falls outside the 21 moved
@@ -200,7 +200,7 @@ class LibraryConversationReaderController:
                 last error copy, same shell-wide scope and read-only use as
                 ``library_loaded_accessor`` immediately above.
             notes_focus_intent_generation_accessor: Reads ``LibraryScreen.
-                _library_notes_focus_intent_generation`` -- the Notes
+                _notes_state.focus_intent_generation`` -- the Notes
                 subsystem's find/focus-intent generation counter, reused by
                 Conversations' own deferred-Find-focus fence
                 (``_finish_library_conversation_find_focus``,
@@ -218,7 +218,7 @@ class LibraryConversationReaderController:
             selected_conversation_id_accessor: Reads ``LibraryScreen.
                 _selected_conversation_id`` -- a per-source "currently
                 selected" field parallel to ``_media_state.selected_media_id``/
-                ``_selected_note_id`` in the screen's save/restore and
+                ``_notes_state.selected_note_id`` in the save/restore and
                 cross-source-navigation plumbing; despite its name, never
                 exclusively Conversations-reader-owned. Read-only here.
         """

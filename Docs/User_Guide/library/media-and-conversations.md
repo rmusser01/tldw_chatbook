@@ -102,12 +102,15 @@ than showing a now-absent item. A filter that still has matches moves the
 Reader to its first result instead. Undoing a delete re-adds the row, which
 opens normally again.
 
-*Verified against fix/media-crit7-readerdesync — 2026-09-08 (task-32043:
-app-test pins at 170x48 — opening an item then applying a 0-result filter, and
-bulk-deleting the open item, both leave the Reader on its no-selection
-placeholder; the crit6 empty-reader widening, three-pane ladder, scroll-
-restore and bulk-delete Undo pins stay green. Confirmed in tests, not
-re-verified live.)*
+*Verified against fix/media-crit8-gaps — 2026-09-08 (task-32086: a 0-result
+filter now repaints the MOUNTED Reader placeholder, not just the session —
+task-32043 cleared the state but the canvas-scoped Items sync left the sibling
+viewer painting the filtered-out document (critique #8 caps 07/65). App-test
+pin at 170x48 drives the live auto-follow path (a filter with a hit, then
+narrowing to zero) and asserts the Reader repaints its empty placeholder;
+the task-32043 session pins, bulk-delete, and filter-restore pins stay green.
+Live-verified in tmux at 235x52: filter to a hit, then narrow to zero — the
+Reader falls back to "Select a media item to read it here.".)*
 
 **Row markers.** An item's second row says what it is and how old it is, and
 adds **· analysed** when that item already carries an analysis — so you can
@@ -136,7 +139,11 @@ wide CJK characters, or five flag emoji) to keep the line short — the cut
 counts a flag by the two columns it paints and never leaves half of one, so
 the row frame does not drift. It can still be too long for a narrow Items pane: at the
 pane's narrowest the row clips mid-term at the pane edge, and a row that is
-both analysed and a keyword hit can clip at the default width too.
+both analysed and a keyword hit can clip at the default width too. The
+Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
+full stored keyword but drops a dangling half-flag so that surface's frame
+does not drift either (the edit form still prefills the stored keyword
+verbatim).
 
 *Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
 Skills and Collections opened live at 235x52. Each painted one-cell `‹` grips

@@ -40,6 +40,29 @@ def test_console_audio_limit_guidance_uses_the_safe_recovery_action():
 
 
 @pytest.mark.parametrize(
+    "code,recovery,expected",
+    [
+        ("request_invalid", "shorten_text", "shorten the text"),
+        ("audio_response_invalid", "use_wav", "WAV"),
+    ],
+)
+def test_console_audio_recovery_does_not_retry_the_same_invalid_request(
+    code, recovery, expected
+):
+    error = TTSOperationError(
+        code=code,
+        message="PRIVATE provider content must remain hidden",
+        retryable=False,
+        operation_id="fixture",
+        recovery_action=recovery,
+    )
+    copy = TTSEventHandler._tts_error_copy(error)
+    assert expected in copy
+    assert "PRIVATE" not in copy
+    assert "retry" not in copy.lower()
+
+
+@pytest.mark.parametrize(
     "copy", [STTSEventHandler._generation_error_copy, TTSEventHandler._tts_error_copy]
 )
 @pytest.mark.parametrize(

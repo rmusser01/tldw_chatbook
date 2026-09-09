@@ -190,7 +190,7 @@ async def test_file_notes_owner_settles_before_mounted_library_replica() -> None
 
     async with app.run_test(size=(140, 40)) as pilot:
         screen = await _wait_for_library(app, pilot)
-        screen._library_file_notes_workspace = workspace
+        screen._notes_state.file_notes_workspace = workspace
 
     assert owner.shutdown_calls == 1
     assert workspace.shutdown_calls == 1
@@ -387,7 +387,7 @@ async def test_app_shutdown_settles_retained_child_after_forced_workspace_unmoun
 
     async with app.run_test(size=(140, 40)) as pilot:
         screen = await _wait_for_library(app, pilot)
-        screen._library_file_notes_workspace = workspace
+        screen._notes_state.file_notes_workspace = workspace
         status_waiter = service.start_status(
             binding,
             (_change(1, "modified", "note.md"),),
@@ -434,7 +434,7 @@ async def test_app_owner_first_retained_commit_shutdown_precedes_replica_teardow
 
     async with app.run_test(size=(140, 40)) as pilot:
         screen = await _wait_for_library(app, pilot)
-        screen._library_file_notes_workspace = workspace
+        screen._notes_state.file_notes_workspace = workspace
         waiter = service.start_commit(binding, review.handle)
         await asyncio.wait_for(
             runner.commit_started.wait(),
@@ -561,7 +561,7 @@ async def test_push_shutdown_settles_owner_before_replica_teardown(
 
     async with app.run_test(size=(140, 40)) as pilot:
         screen = await _wait_for_library(app, pilot)
-        screen._library_file_notes_workspace = workspace
+        screen._notes_state.file_notes_workspace = workspace
         if phase == "preflight":
             assert (await service.start_push_review(binding)).state == "ready"
             waiter = _authorize_current_push(service, binding)

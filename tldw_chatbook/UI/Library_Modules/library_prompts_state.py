@@ -294,7 +294,7 @@ class LibraryPromptsState:
     # -- without this, opening a prompt would immediately mark it dirty
     # even though the user never typed anything. Re-armed via
     # ``call_after_refresh`` after every prompt-editor (re)compose,
-    # mirroring ``_library_note_editor_armed``.
+    # mirroring notes' own ``_notes_state.editor_armed``.
     editor_armed: bool = False
 
     # Placeholder defaults only -- the shared reader-preferences

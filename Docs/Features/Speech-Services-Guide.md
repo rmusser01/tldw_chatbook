@@ -50,6 +50,23 @@ The TTS Playground allows you to experiment with different voices and settings:
 - **Format**: Choose output format (MP3, WAV, etc.)
 - **Provider Settings**: Adjust provider-specific parameters
 
+### Output formats and playback
+
+WAV, MP3, AAC, FLAC, and Opus output is delivered as one complete audio file,
+including replies generated in several chunks. AAC uses an ADTS container.
+Encoded conversions require the optional audio conversion dependencies and FFmpeg.
+If a generated clip exceeds a backend's buffering limit, shorten the text.
+
+Raw PCM output is signed 16-bit little-endian audio. Kokoro, Chatterbox, Higgs,
+ElevenLabs, AllTalk, and the official OpenAI endpoint declare 24 kHz mono PCM.
+A custom OpenAI-compatible endpoint does not inherit that rate automatically.
+Speech Lab keeps the original PCM file for export and creates a temporary WAV
+for playback when the sample rate is known. Unknown-rate PCM can be exported;
+choose WAV from the provider for playback.
+
+On macOS, Opus/Ogg playback uses **FFplay** (included with FFmpeg). If FFplay
+is unavailable, choose WAV or another format supported by the system player.
+
 ### TTS Settings
 
 Configure default TTS options:
@@ -698,31 +715,25 @@ draft.
 pipeline) can play some responses live through the audio device instead of
 waiting on a finished file.
 
-*What streams today.* Only the audio.cpp adapter's response is eligible —
-its complete PCM16-WAV body validates as a playable stream. tldw_chatbook
-still writes that response to a temporary artifact exactly as before, but
-the instant it validates, playback moves to the live device and the
-now-redundant temp file is discarded immediately instead of being kept for
-file-based playback. That makes playback interruptible at the device — a
-new capture or a new utterance cuts audio within roughly two audio blocks
-instead of waiting on a file — and leaves nothing on disk to replay or
-export for that turn. Latency to first sound is unchanged: audio.cpp still
-delivers one complete WAV per request, not incremental chunks, so there is
-no "starts talking sooner" win here, only the interruptibility one.
+*What streams today.* A complete, validated PCM16-WAV response (including
+native audio.cpp) can use the live sink. Explicitly selected raw PCM can also
+stream when the response declares its sample rate: Kokoro, Chatterbox, Higgs,
+ElevenLabs, AllTalk, and official OpenAI responses now provide that metadata.
+Custom OpenAI-compatible PCM responses with an unknown rate remain ineligible.
+The default spoken-feedback format is unchanged; selecting a provider does not
+automatically switch the request to PCM. TASK-1880's caller-scoped format
+selection remains separate work.
 
-*What still falls back byte-identically to the pre-streaming path* — same
-temp file, same file-based playback, same everything:
+Complete WAV delivery still waits for generation to finish before playback.
+Raw PCM can begin while supported backends deliver samples. The live sink
+makes playback interruptible at the device rather than waiting on a player
+process. A new capture or utterance cuts audio within roughly two audio blocks.
 
-- Every legacy-bridge provider (openai, elevenlabs, kokoro, chatterbox,
-  alltalk, higgs, ...) — that bridge never populates a response sample
-  rate, and without one the sink cannot open. Unblocking these is a filed,
-  three-leg follow-up (TASK-1880) (plumb a sample rate onto legacy-bridge responses,
-  add a caller-scoped raw-PCM request option, and add a PCM-safe legacy
-  fallback) — none of it has shipped yet, so do not expect these providers
-  to stream.
-- Any compressed format (MP3, Opus, AAC, FLAC).
-- `sounddevice` not installed, or the sink otherwise unavailable.
-- A device failure at open or mid-stream.
+*What uses file playback.* Compressed formats (MP3, Opus, AAC, FLAC), unavailable
+`sounddevice`, and device failures use the file-player path. Known-rate raw PCM
+is wrapped in a temporary WAV for that fallback; its original response and
+Speech Lab export stay PCM. Unknown-rate PCM is refused for playback instead
+of being handed to a file player as an untyped byte stream.
 
 *Numbers.* Playback becomes audible once 300 ms of audio is buffered; an
 interrupting stop reaches silence within 2 audio blocks — about 40 ms at

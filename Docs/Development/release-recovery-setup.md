@@ -14,9 +14,34 @@ Missing optional features do not mean Chatbook is broken. They mean the user has
 | --- | --- | --- | --- | --- |
 | RAG and retrieval | `embeddings_rag` | `pip install -e ".[embeddings_rag]"` | `pip install "tldw_chatbook[embeddings_rag]"` | Library Search/RAG |
 | Media ingestion and transcription | `audio`, `video`, `pdf`, `ebook` | `pip install -e ".[audio,video,pdf,ebook]"` | `pip install "tldw_chatbook[audio,video,pdf,ebook]"` | Library import/media |
+| Local Chatterbox speech | `chatterbox` | `pip install -e ".[chatterbox]"` | `pip install "tldw_chatbook[chatterbox]"` | Speech Lab and Speak replies |
 | MCP integration | `mcp` | `pip install -e ".[mcp]"` | `pip install "tldw_chatbook[mcp]"` | MCP destination |
 | Local inference | `local_vllm`, `local_mlx`, `local_transformers` | `pip install -e ".[local_vllm]"` | `pip install "tldw_chatbook[local_vllm]"` | Console/provider setup |
 | Web access | `web` | `pip install -e ".[web]"` | `pip install "tldw_chatbook[web]"` | Web/browser serving |
+
+## Chatterbox installation and recovery
+
+Install the `chatterbox` extra in the environment that runs Chatbook, using the
+source or packaged command above. It requires Chatterbox 0.1.7 or newer to avoid
+older releases' `pkuseg` source-build failure. The `chatterbox` and `all-tools`
+extras also include a temporary `setuptools<82` runtime requirement for Perth's
+watermarker; the core install has neither requirement.
+
+If an older installation reports `No module named 'pkg_resources'`, or model
+loading fails with `'NoneType' object is not callable` inside Perth, repair that
+environment with:
+
+```bash
+python -m pip install "chatterbox-tts>=0.1.7" "setuptools<82"
+```
+
+Perth 1.0.1 uses `pkg_resources` to locate its bundled watermarker assets but
+does not declare that dependency. It catches the failed import, so importing
+Chatterbox alone can succeed while loading a model fails. Setuptools
+[removed `pkg_resources` in version 82](https://setuptools.pypa.io/en/latest/history.html#v82-0-0).
+Remove the compatibility cap when the supported Perth release replaces this
+import and declares its runtime dependencies, after verifying a fresh extra
+install can import the watermarker and locate its bundled assets.
 
 ## Standalone MCP recovery contract
 

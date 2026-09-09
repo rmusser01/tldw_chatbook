@@ -33,16 +33,23 @@ from Tests.UI.test_library_shell import _painted_text
 
 def _fake(select_mode):
     fake = SimpleNamespace(
-        _library_notes_select_mode=select_mode,
-        _library_notes_row_selection=RowSelection("notes"),
-        _selected_note_id="",
+        # (wave-8 task 3) `_library_note_dirty` is NOT a `LibraryNotesState`
+        # field -- it is one of the five projection `@property` members task 2
+        # left screen-resident -- and the three counters are test-local, so
+        # all four stay flat. They were moved above the field run so its
+        # nesting stayed mechanical.
         _library_note_dirty=False,
         _refreshed=0,
         _opened=[],
         _flushed=0,
-        _library_notes_view="list",
-        # task-15790: production gained this in-flight guard; stale double.
-        _library_notes_mutation_in_flight=False,
+        _notes_state=SimpleNamespace(
+            select_mode=select_mode,
+            row_selection=RowSelection("notes"),
+            selected_note_id="",
+            view="list",
+            # task-15790: production gained this in-flight guard; stale double.
+            mutation_in_flight=False,
+        ),
     )
     fake._library_notes_mutation_fenced = lambda: False
     return fake
@@ -60,15 +67,15 @@ async def test_notes_row_select_mode_toggles_and_does_not_open_editor():
     fake._flush_library_note_save = _flush
     ev = SimpleNamespace(button=SimpleNamespace(note_id="n9"), stop=lambda: None)
     await LibraryScreen.handle_library_notes_row(fake, ev)
-    assert fake._library_notes_row_selection.is_selected("n9")
-    assert fake._library_notes_view == "list"  # editor NOT opened
+    assert fake._notes_state.row_selection.is_selected("n9")
+    assert fake._notes_state.view == "list"  # editor NOT opened
     assert fake._refreshed == 1
 
 
 @pytest.mark.asyncio
 async def test_rejected_note_navigation_keeps_previous_tree_identity():
     fake = _fake(False)
-    fake._library_notes_tree_selected_placement_id = "placement-old"
+    fake._notes_state.tree_selected_placement_id = "placement-old"
 
     async def _flush():
         return NoteFlushOutcome(NoteFlushOutcomeKind.VALIDATION_VETO)
@@ -81,8 +88,8 @@ async def test_rejected_note_navigation_keeps_previous_tree_identity():
 
     await LibraryScreen.handle_library_notes_row(fake, ev)
 
-    assert fake._library_notes_tree_selected_placement_id == "placement-old"
-    assert fake._library_notes_view == "list"
+    assert fake._notes_state.tree_selected_placement_id == "placement-old"
+    assert fake._notes_state.view == "list"
 
 
 @pytest.mark.asyncio
@@ -108,7 +115,7 @@ async def test_permanent_navigator_tasks_respect_dirty_draft_veto(
 ):
     action = Mock()
     fake = _fake(False)
-    fake._library_notes_view = "editor"
+    fake._notes_state.view = "editor"
     fake._library_notes_mutation_fenced = lambda: False
     setattr(fake, controller_attr, SimpleNamespace(**{action_name: action}))
 
@@ -120,14 +127,14 @@ async def test_permanent_navigator_tasks_respect_dirty_draft_veto(
 
     await getattr(LibraryScreen, handler_name)(fake, event)
 
-    assert fake._library_notes_view == "editor"
+    assert fake._notes_state.view == "editor"
     action.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_notes_export_selected_scope():
     fake = _fake(True)
-    fake._library_notes_row_selection.select_all(["n2", "n1"])
+    fake._notes_state.row_selection.select_all(["n2", "n1"])
 
     async def _open(s):
         fake._opened.append(s)
@@ -164,22 +171,22 @@ def test_notes_select_all_uses_unique_note_ids_visible_in_folder_tree():
         fake, SimpleNamespace(stop=lambda: None)
     )
 
-    assert fake._library_notes_row_selection.ids == frozenset({"n1", "n2"})
+    assert fake._notes_state.row_selection.ids == frozenset({"n1", "n2"})
 
 
 def test_tree_selection_is_not_pruned_by_unrelated_legacy_note_page(monkeypatch):
     fake = _fake(True)
-    fake._library_notes_row_selection.select_all(["tree-note"])
-    fake._library_notes_filter_records = None
+    fake._notes_state.row_selection.select_all(["tree-note"])
+    fake._notes_state.filter_records = None
     fake._local_source_records = {"notes": ({"id": "legacy-note"},)}
     fake._local_source_counts = {"notes": 200}
-    fake._library_notes_sort = "newest"
-    fake._library_notes_filter = ""
-    fake._library_notes_sort_choices_visible = False
-    fake._library_notes_notice = ""
+    fake._notes_state.sort = "newest"
+    fake._notes_state.filter = ""
+    fake._notes_state.sort_choices_visible = False
+    fake._notes_state.notice = ""
     fake._library_notes_tree_error = ""
     fake._library_notes_tree_loading = False
-    fake._library_note_delete_receipt = None
+    fake._notes_state.delete_receipt = None
     fake._library_notes_operation_for_active_region = lambda: None
     fake._build_library_notes_tree_projection = lambda: LibraryNotesTreeProjection(
         rows=(
@@ -204,7 +211,7 @@ def test_tree_selection_is_not_pruned_by_unrelated_legacy_note_page(monkeypatch)
 
     LibraryScreen._build_library_notes_state(fake)
 
-    assert fake._library_notes_row_selection.ids == frozenset({"tree-note"})
+    assert fake._notes_state.row_selection.ids == frozenset({"tree-note"})
 
 
 # -- F-018: "Export selected" explains its disabled state -----------------
@@ -243,7 +250,13 @@ class _NotesCanvasApp(ConsolidatedCSSApp):
 class _DuplicatePlacementNotesCanvasApp(App):
     def __init__(self):
         super().__init__()
-        self._library_notes_row_selection = RowSelection("notes")
+        # (wave-8 task 3) `row_selection` is a `LibraryNotesState` field now,
+        # and `_apply_library_row_toggle` resolves it through the DOTTED path
+        # `_notes_state.row_selection`. This duck-typed stand-in is not a
+        # `LibraryScreen`, so it carries the state object itself -- the same
+        # shape the media analogue in `test_library_honesty_accessibility.py`
+        # took at wave-7 task 3.
+        self._notes_state = SimpleNamespace(row_selection=RowSelection("notes"))
 
     def compose(self):
         state = LibraryNotesListState(
@@ -283,7 +296,7 @@ async def test_toggling_duplicate_placement_updates_every_visible_checkbox():
     app = _DuplicatePlacementNotesCanvasApp()
     async with app.run_test() as pilot:
         rows = list(app.query(".library-notes-row"))
-        app._library_notes_row_selection.toggle("n1")
+        app._notes_state.row_selection.toggle("n1")
 
         _apply_library_row_toggle(app, "notes", rows[0], "n1")
         await pilot.pause()
@@ -344,7 +357,11 @@ async def test_notes_export_label_holds_its_column_across_the_first_selection():
     would be rebuilt unpadded.
     """
     app = _PaintableNotesCanvasApp(selected_count=0)
-    app._library_notes_row_selection = RowSelection("notes")
+    # (wave-8 task 3) Same shape as `_DuplicatePlacementNotesCanvasApp` above:
+    # `row_selection` is a `LibraryNotesState` field reached through the DOTTED
+    # `_notes_state.row_selection` path, and this duck-typed stand-in is not a
+    # `LibraryScreen`, so it carries the state object itself.
+    app._notes_state = SimpleNamespace(row_selection=RowSelection("notes"))
 
     async with app.run_test(size=(120, 30)) as pilot:
         export = app.query_one("#library-notes-export-selected", Button)
@@ -352,7 +369,7 @@ async def test_notes_export_label_holds_its_column_across_the_first_selection():
         before = _painted_word_column(app, export, "Export")
 
         row = app.query(".library-notes-row").first(Button)
-        app._library_notes_row_selection.toggle("n1")
+        app._notes_state.row_selection.toggle("n1")
         _apply_library_row_toggle(app, "notes", row, "n1")
         await pilot.pause()
 
