@@ -28,8 +28,23 @@ class ImportClassification(str, Enum):
     CHANGED_REPEAT = "changed_repeat"
     UNCERTAIN_MATCH = "uncertain_match"
     UNSUPPORTED = "unsupported"
+    # task-32130 / task-32129: an empty file, an application config file and an
+    # Obsidian vault's own config, trash or templates are neither unsafe nor
+    # unsupported; reporting them as FAILED was dishonest.
     SKIPPED = "skipped"
+    EMPTY = "empty"
     FAILED = "failed"
+
+
+_NON_IMPORTABLE_CLASSIFICATIONS = frozenset(
+    {
+        ImportClassification.UNSUPPORTED,
+        ImportClassification.SKIPPED,
+        ImportClassification.EMPTY,
+        ImportClassification.FAILED,
+    }
+)
+"""Classifications that carry no payload and may only be skipped."""
 
 
 class ImportAction(str, Enum):
@@ -412,18 +427,9 @@ _DEFAULT_ACTIONS = {
     ImportClassification.UNCERTAIN_MATCH: ImportAction.CREATE_NEW,
     ImportClassification.UNSUPPORTED: ImportAction.SKIP,
     ImportClassification.SKIPPED: ImportAction.SKIP,
+    ImportClassification.EMPTY: ImportAction.SKIP,
     ImportClassification.FAILED: ImportAction.SKIP,
 }
-
-
-_NON_IMPORTABLE_CLASSIFICATIONS = frozenset(
-    {
-        ImportClassification.UNSUPPORTED,
-        ImportClassification.SKIPPED,
-        ImportClassification.FAILED,
-    }
-)
-"""Classifications that carry no payload and only ever allow Skip."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -555,11 +561,11 @@ class ImportPreviewItem:
         if self.classification in _NON_IMPORTABLE_CLASSIFICATIONS:
             if allowed_actions != (ImportAction.SKIP,):
                 raise ValueError(
-                    "Unsupported, skipped and failed items must only allow Skip."
+                    "Unsupported, skipped, empty and failed items must only allow Skip."
                 )
             if self.match is not None:
                 raise ValueError(
-                    "Unsupported, skipped and failed items cannot carry a match."
+                    "Unsupported, skipped, empty and failed items cannot carry a match."
                 )
             return
 

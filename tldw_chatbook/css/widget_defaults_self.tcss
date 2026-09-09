@@ -2626,10 +2626,6 @@
         overflow-y: auto;
     }
 
-    LibraryNoteImportCanvas #notes-import-review-options {
-        height: auto;
-    }
-
     LibraryNoteImportCanvas Static,
     LibraryNoteImportCanvas Input,
     LibraryNoteImportCanvas Button {
@@ -2638,7 +2634,9 @@
 
     LibraryNoteImportCanvas .note-import-group-heading {
         text-style: bold;
-        margin-top: 1;
+        width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     LibraryNoteImportCanvas .note-import-item-name {
@@ -2652,6 +2650,48 @@
     LibraryNoteImportCanvas .note-import-error {
         color: $text-error;
         text-style: bold;
+    }
+
+    /* task-32135: one review row is one line -- path, effect and destination
+       beside the controls that change them. */
+    /* An empty container defaults to 1fr and would push every group to the
+       bottom of the body when no vault is detected and the toggle is absent. */
+    LibraryNoteImportCanvas #notes-import-review-options {
+        height: auto;
+    }
+
+    LibraryNoteImportCanvas .note-import-row {
+        height: 1;
+        width: 1fr;
+    }
+
+    LibraryNoteImportCanvas .note-import-group-row {
+        height: 1;
+        width: 1fr;
+        margin-top: 1;
+    }
+
+    LibraryNoteImportCanvas .note-import-row-text {
+        width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    LibraryNoteImportCanvas .note-import-row-destination {
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    LibraryNoteImportCanvas .note-import-row-action {
+        width: auto;
+        min-width: 6;
+        margin-left: 1;
+    }
+
+    LibraryNoteImportCanvas .note-import-skipped-row {
+        height: auto;
+        color: $text-muted;
     }
 
 
