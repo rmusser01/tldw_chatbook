@@ -1,5 +1,5 @@
 ---
-id: TASK-32108
+id: TASK-32136
 title: Preserve Loguru capture sinks across app mount
 status: Done
 assignee:
@@ -61,3 +61,9 @@ On 2026-09-08 the user explicitly approved moving this review-only record from
 TASK-32014 to TASK-32108, preserving upstream Meetings ServerDiarizer TASK-32014.
 The fresh all-ref/worktree census found maximum TASK-32107. Original dates,
 completed implementation notes, and historical evidence remain unchanged.
+
+On 2026-09-09, landed Buddy qualification TASK-32108 on dev9faf96d9f8
+required this unmerged review record to move to TASK-32136. The fresh census
+across 1,027 local/remote refs and all registered worktrees found maximum
+TASK-32135. Only the review identity and active references move; landed IDs,
+original dates, implementation notes and historical evidence stay unchanged.

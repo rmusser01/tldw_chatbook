@@ -32235,6 +32235,7 @@ async def test_library_note_compact_deep_link_intent_opens_notes_stage(
 
 @pytest.mark.asyncio
 async def test_library_note_wide_deep_link_back_clears_explicit_intent() -> None:
+    """Escape returns to Library; resizing must not replay the old deep link."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     screen = LibraryScreen(app)
@@ -32251,14 +32252,24 @@ async def test_library_note_wide_deep_link_back_clears_explicit_intent() -> None
         await pilot.pause()
         assert screen._notes_state.stage == "rail"
         assert screen._notes_state.explicit_stage_intent is False
-        assert getattr(screen.focused, "id", None) == "library-notes-filter"
+        assert getattr(screen.focused, "id", None) == "library-row-browse-notes"
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
-        assert screen._notes_state.stage == "notes"
-        assert screen.query_one("#library-rail").display is False
-        assert screen.query_one("#library-canvas").display is True
-        assert getattr(screen.focused, "id", None) == "library-notes-filter"
+        assert screen._notes_state.stage == "rail"
+        assert screen._notes_state.explicit_stage_intent is False
+        assert screen.query_one("#library-rail").display is True
+        assert screen.query_one("#library-canvas").display is False
+        assert getattr(screen.focused, "id", None) == "library-row-browse-notes"
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.stage == "notes"
+            and screen.query_one("#library-canvas").display
+            and not screen.query_one("#library-rail").display,
+            message="Explicit Notes activation did not reenter the compact stage.",
+        )
 
 
 @pytest.mark.asyncio

@@ -340,6 +340,10 @@ class ConsoleSettingsDurabilityController:
         owner = self._console_settings_durability_owner()
         admission = owner.try_acquire()
         if admission is None:
+            store.abandon_roleplay_projection_plan(plan)
+            if self._console_roleplay_repair_plan is plan:
+                self._console_roleplay_repair_plan = None
+                self._console_roleplay_repair_inflight_generation = 0
             return
         persistence_task = owner.launch(
             admission,

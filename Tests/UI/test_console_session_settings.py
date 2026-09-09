@@ -8801,6 +8801,111 @@ async def test_roleplay_writer_startup_failure_releases_fork_transition(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("repair_target", ("rejected", "unrelated"))
+async def test_roleplay_closed_owner_releases_only_rejected_plan(
+    repair_target: str,
+) -> None:
+    """Release rejected work without clearing another plan's repair ownership.
+
+    Args:
+        repair_target: Whether the repair marker belongs to the rejected plan
+            or the unrelated plan that must remain usable.
+    """
+    class Persistence:
+        def __init__(self) -> None:
+            self.writes: list[tuple[str, str]] = []
+
+        def create_message(self, **kwargs):
+            return f"msg-{kwargs['conversation_id']}"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **kwargs):
+            self.writes.append(("system", kwargs["system_prompt"]))
+            return True
+
+        def update_message_content(self, **kwargs):
+            self.writes.append(("message", kwargs["content"]))
+            return True
+
+    app = _build_test_app()
+    console = ChatScreen(app)
+    controller = console._settings_durability
+    store = console._ensure_console_chat_store()
+    persistence = Persistence()
+    store.persistence = persistence
+    plans = {}
+    greetings = {}
+    for target in ("rejected", "unrelated"):
+        session = store.create_session(
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp", model="model-a", system_prompt="Speak with Alpha."
+            ),
+            assistant_kind="character",
+            assistant_id="1",
+            character_id=1,
+            character_name="Alraune",
+            ephemeral=True,
+        )
+        session.persisted_conversation_id = f"conv-{target}"
+        greeting = store.seed_character_roleplay(
+            session.id,
+            system_template="Speak with {{user}}.",
+            greeting_template="Hello {{user}}.",
+            global_default="Alpha",
+        )
+        assert greeting is not None
+        greetings[target] = greeting
+        plan = store.prepare_session_roleplay_projection_refresh(
+            session.id, global_default="Bravo", force_persistence=True
+        )
+        assert plan is not None and plan.fork_transition_token is not None
+        plans[target] = plan
+        assert store.fork_eligibility(greeting.id).eligible is False
+    persistence.writes.clear()
+    rejected = plans["rejected"]
+    unrelated = plans["unrelated"]
+    controller._console_roleplay_repair_plan = plans[repair_target]
+    controller._console_roleplay_repair_inflight_generation = 1
+    owner = controller._console_settings_durability_owner()
+    await owner.close_and_drain()
+    assert owner.accepting is False
+
+    await controller._refresh_console_roleplay_projections(rejected)
+
+    assert persistence.writes == []
+    assert owner.tasks == set()
+    assert controller._console_roleplay_writer_task is None
+    assert store._roleplay_fork_transition_leases == {
+        unrelated.fork_transition_token: unrelated.session_id
+    }
+    assert store._fork_source_transitions == {unrelated.session_id: 1}
+    assert store.fork_eligibility(greetings["rejected"].id).eligible is True
+    assert store.fork_eligibility(greetings["unrelated"].id).eligible is False
+    assert controller._console_roleplay_repair_plan is (
+        None if repair_target == "rejected" else unrelated
+    )
+    assert controller._console_roleplay_repair_inflight_generation == (
+        0 if repair_target == "rejected" else 1
+    )
+    assert controller._console_roleplay_repair_generation == 0
+    assert getattr(app, "_console_roleplay_repair_consumed_generation", 0) == 0
+
+    app.console_settings_durability_owner = (
+        settings_durability_module.ConsoleSettingsDurabilityOwner()
+    )
+    controller._sync_console_identity_surfaces = lambda: None
+    await controller._refresh_console_roleplay_projections(unrelated)
+    await app.console_settings_durability_owner.close_and_drain()
+
+    assert persistence.writes == [("system", "Speak with Bravo.")]
+    assert store._roleplay_fork_transition_leases == {}
+    assert store._fork_source_transitions == {}
+    assert store.fork_eligibility(greetings["unrelated"].id).eligible is True
+
+
+@pytest.mark.asyncio
 async def test_cancelled_unmounted_drain_finishes_latest_plan(
     monkeypatch,
 ) -> None:

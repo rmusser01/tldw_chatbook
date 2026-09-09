@@ -214,7 +214,7 @@ were moved. Upstream identities and original dates/history remain intact:
 | Historical review ID | Current review ID | Subject |
 | --- | --- | --- |
 | TASK-31759 (intermediate TASK-32013, TASK-32040) | TASK-32110 | Assistant-turn production stylesheet harness |
-| TASK-31901 (intermediate TASK-32014) | TASK-32108 | Loguru capture sink lifetime |
+| TASK-31901 (intermediate TASK-32014, TASK-32108) | TASK-32136 | Loguru capture sink lifetime |
 | TASK-31902 (intermediate TASK-32015) | TASK-32109 | Deferred Chunking Lab imports |
 
 Historical IDs and evidence paths above remain incident references, not current
@@ -2091,3 +2091,92 @@ repairs and fixture alignment within accepted contracts, with no new boundary,
 dependency, privacy change or relaxed cap. The complete **856-case** native
 Library rerun on the repaired checkpoint, current-head Qodo review, live-base
 freshness and required GitHub checks remain merge gates. This is not a merge claim.
+
+### Wave-thirteen final native result and current review (2026-09-09 UTC)
+
+The complete repaired-source native run at `acaa89025033fd8cde2a9b8dbcf24d9539f875ac`
+finished **855 passed, 1 failed, 10 warnings in 1389.30s**, exit 1, final
+**`sqlite_paths: []`**. Source identity and terminal evidence are in
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave13-final-native.UHGtuL`.
+No connection patches or forced garbage collection were used; the source freeze
+has ended. This is not a passing complete-file result.
+
+The sole failure, `test_library_note_wide_deep_link_back_clears_explicit_intent`,
+also fails independently (**1 failed in 3.56s**,
+`/private/tmp/pr2427-wave13-deeplink-red.log`). It expected Escape to focus the
+Notes filter and a later resize to replay the Notes stage. The existing action
+explicitly returns to the selected Library row and clears the stage intent,
+consistent with ADR-086 and the existing compact Back tests. The previous late
+automatic filter restore had concealed that contract. Corrected the wide focus
+and subsequent compact rail/visibility assertions, retaining exact targets and
+adding explicit Notes reactivation proof. No Library production change was made.
+The full deep-link/Back/late-focus/compact-stage group passes **13 tests, 843
+deselected, 3 warnings in 15.03s**
+(`/private/tmp/pr2427-wave13-deeplink-cohort.log`).
+
+Qodo posted five new findings on this head: export canonical-path validation,
+real requests-stack coverage, row-actions import separation and parameter docs,
+and roleplay plan lease cleanup when durability admission is closed. Step 83
+records bounded RED/GREEN work; verification and published replies remain open.
+The required derived-artifact GitHub check passed on `acaa890250`, but fresh dev
+advanced to `9faf96d9f86b98916a54d7a895e3c0411fefc912`: Buddy qualification documents,
+artifacts, a test file and its task, with no production changes. That upstream
+task reuses the unmerged Loguru review task's 32108 ID. Preserve the landed Buddy
+ID; re-sweep and move only the review task before the next publication, following
+the existing user-authorized review-only renumbering policy. No merge claim yet.
+
+Publication identity census: all 1,027 local/remote refs and all registered
+worktrees agree on maximum TASK-32135. The review-only Loguru record moves
+32108 to **32136**, with its original dates, completed notes and append-only
+renumbering provenance retained. The landed Buddy TASK-32108 and its literal
+artifact paths remain untouched; historical report mappings remain provenance.
+
+Current-head Qodo repairs:
+
+- Markdown export retains existing lexical rejection, then validates the chosen
+  filename against its explicitly selected parent with the central canonical
+  validator. Both mkdir and file opening receive the returned path. Hidden
+  destinations remain permitted as before; stable final symlinks outside the
+  chosen parent are rejected. This is not race-proof filesystem confinement.
+  Real-file RED: **7 failed, 3 passed**
+  (`/private/tmp/pr2427-export-red.r408cv/results-corrected.xml`); complete new
+  export controls plus conversation action menu: **28 passed, 3 warnings in
+  39.77s** (`/private/tmp/pr2427-export-green.qp9kh7/results.xml`). The two
+  row-actions import/docstring findings are also corrected.
+- Rejected roleplay durability admission now abandons that exact prepared plan
+  and clears inflight repair state only if it owns the same plan. The two RED
+  controls found the leaked token; an intermediate one-pass/one-fail control
+  separately proved matching repair-state cleanup. Both final controls pass
+  while preserving and successfully persisting a second session's unrelated
+  plan. Complete session-settings, durability-controller and owner files:
+  **437 passed, 3 warnings in 247.67s**
+  (`/private/tmp/pr2427-roleplay-lease-full.log`).
+- Requests factory timeout coverage now uses an actual loopback HTTP server,
+  real session/request stack, omitted and explicit timeouts, and deterministic
+  session/server/thread cleanup. A controlled factory-bypass mutation fails;
+  the complete trust file passes **39 tests**. HTTP proves transport/factory
+  behavior, not TLS certificate validation, which remains separately tested.
+  There is no existing external production caller of this factory; no new
+  caller was invented just to meet the review's wording.
+
+Complete owner/ratchet group: **134 passed, 3 warnings in 6.61s**
+(`/private/tmp/pr2427-qodo-new-owners.log`). Complete derived-checker tests:
+**74 passed, 2 warnings in 0.77s**
+(`/private/tmp/pr2427-wave14-id-checkers.log`). Derived preflight passes
+(`/private/tmp/pr2427-qodo-new-preflight.log`). Independent cross-review found
+no blocker in the export, exact-plan cleanup, real transport test or corrected
+deep-link assertions. Latest-dev integration and final-head qualification remain.
+
+Final privacy review found that the central validator's default logging would
+add selected/resolved path details to rejection logs. An active real Loguru
+capture canary proves that regression (**10 passed, 1 failed**); enabling its
+existing `redact_paths=True` option preserves bounded diagnostics and a safe
+user notification without changing the accepted path set. Complete export
+controls now **11 passed, 2 warnings**
+(`/private/tmp/pr2427-export-privacy.T4B39H/{red,green}.xml`). The trust test's
+server context also owns the socket if thread startup fails; final complete
+trust file **39 passed, 2 warnings in 1.44s**
+(`/private/tmp/pr2427-tls-trust-final.log`). Final roleplay controls after their
+parameter-docstring addition **2 passed, 417 deselected, 3 warnings in 2.90s**
+(`/private/tmp/pr2427-roleplay-lease-final.log`). Scoped Ruff and whitespace
+checks pass on all changed Python files.
