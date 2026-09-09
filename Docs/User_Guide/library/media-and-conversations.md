@@ -934,3 +934,12 @@ different. Measured: the whole-screen rebuild is gone and per-switch widget
 churn more than halves (179 -> 81 mounts on a switch back into Media). The
 switch's *perceived* pause is unchanged so far — what remains of it is the
 canvas repaint, tracked separately.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-08 (Library
+phase C, task 2.5: the rail switch between **Browse Media** and **Browse
+Notes** is now roughly twice as fast to settle — the main thread blocks for
+55–73 ms where it blocked for 97–148 ms, measured paired on one machine, six
+runs per side. **One visible change, and it is a removal**: the first time you
+open a route in a session, the Library and Items panes no longer collapse and
+snap back open a moment later. Nothing else on this page moves; the switch is
+cheaper and steadier, not different.)*

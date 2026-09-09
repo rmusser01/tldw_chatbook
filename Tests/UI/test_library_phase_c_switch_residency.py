@@ -60,25 +60,36 @@ Measured by instrumenting every ``sync_state`` call with the canvas's
                           canvas is still HIDDEN, superseded before it is
                           ever shown) + 37 across the rebuilds after it
 
-So a media switch-back carries **three** canvas rebuilds, not two, and one of
-them belongs to the route being LEFT. The ceilings below are the measured
-maximum plus ~11%. What they replace: 114-179 mounts and 121-176 unmounts,
-plus one whole-screen recompose, per switch.
+So a media switch-back carried **three** canvas rebuilds, not two, and one of
+them belonged to the route being LEFT. That measurement set the 90/95 pair;
+what those replaced was 114-179 mounts and 121-176 unmounts, plus one
+whole-screen recompose, per switch.
 
-**The remaining MOUNTS are the redundant sync storm, not the mechanism.** The
-design record scoped that out of Task 2 and predicted this pin would not depend
-on it; that prediction was wrong, and this paragraph is the correction. Every
-mount left above is a canvas rebuild; the mechanism's own cost is the 7-widget
-structural delta. When the storm is fixed, LOWER these numbers -- they are a
-ratchet, and the design carrier remains ``_MAX_WHOLE_SCREEN_RECOMPOSES``.
+**Lowered again 2026-09-08 by task 2.5 (the sync storm): 90/95 -> 69/74.**
+Task 2's paragraph here said "when the storm is fixed, LOWER these numbers --
+they are a ratchet", and this is that lowering. Two of the three rebuilds are
+gone: the OUTGOING canvas is no longer repainted on the way out
+(``_supersede_library_notes_navigation`` renders only when the press stays on
+Notes) and a resident canvas is no longer repainted while hidden
+(``canvas_sync._library_resident_canvas_awaits_display``). What remains is the
+destination's own repaint, which residency cannot avoid. Freshly measured on
+THIS test, three consecutive runs, identical every time:
+
+    notes (switch)        26 mounts / 2 unmounts
+    media (switch-back)   62 mounts / 67 unmounts
+
+The ceilings are that maximum plus ~11%, the same formula the 90/95 pair used.
 
 **Mounts are not the same as restyle cost, and this pin only claims mounts.**
-Measured on the same runs: the 1st Notes switch does 26 mounts and no canvas
-rebuild at all, yet runs **459** ``Stylesheet.apply`` calls, while a Media
-switch-back does 77-81 mounts and runs **405-421**. Apply count is therefore
-NOT proportional to mounts, and a large part of the restyle is full-tree work
-this pin does not measure and residency does not remove. Do not read a green
-result here as "the switch is cheap".
+Task 2 measured the 1st Notes switch at 26 mounts, zero canvas rebuilds and
+**459** ``Stylesheet.apply`` calls -- more than a 77-81-mount Media
+switch-back's 405-421 -- which is why this paragraph exists. Task 2.5
+attributed those applies by trigger
+(``Helper_Scripts/library_restyle_attribution_probe.py``) and removed the
+three biggest originators, so the same two switches now run **64** and **135**
+applies. The warning stands regardless: apply count is not proportional to
+mounts, so a green result here still does not by itself mean "the switch is
+cheap". The wall-clock evidence for that claim lives in the design record.
 
 ## Every count here is an upper bound, so the liveness assertions are load-bearing
 
@@ -115,11 +126,13 @@ from tldw_chatbook.Library.library_shell_state import (
 #: A rail-mode switch may not rebuild the whole screen. This is the pin the
 #: design record turns on; see the module docstring.
 _MAX_WHOLE_SCREEN_RECOMPOSES = 0
-#: Per-switch widget mounts/unmounts. Re-derived from measurement when Task 2
-#: landed (see "Where the thresholds come from"); was 25, from a spike floor
-#: that repainted no canvas. Before phase C: 114-179 mounts, 121-176 unmounts.
-_MAX_SWITCH_MOUNTS = 90
-_MAX_SWITCH_UNMOUNTS = 95
+#: Per-switch widget mounts/unmounts. Re-derived TWICE from measurement, both
+#: times under the design record's ceiling-provenance clause: 25 (Task 1's
+#: spike floor, which repainted no canvas) -> 90/95 (Task 2, the resident
+#: canvas) -> 69/74 (Task 2.5, the sync storm). Before phase C: 114-179
+#: mounts, 121-176 unmounts.
+_MAX_SWITCH_MOUNTS = 69
+_MAX_SWITCH_UNMOUNTS = 74
 
 
 class _SwitchCounters:

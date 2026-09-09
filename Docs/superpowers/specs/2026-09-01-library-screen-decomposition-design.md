@@ -766,3 +766,155 @@ the restyle follows is exactly the inference this section had to retract.
 * **TASK-31521 composition: confirmed by test**, not only by the spike.
   Suspend and resume leave the resident set and which member of it is showing
   untouched.
+
+---
+
+## Implementation addendum — phase C task 2.5, the sync storm (2026-09-08)
+
+**Status:** landed. Commits `497bc5f8e`, `ed6979710`, `030aea02c` on
+`feat/library-phase-c-resident-canvas`. This section closes the paragraph
+above that ends "the freeze is not yet fixed — with the remaining cost only
+partly attributed". It is now attributed, and the freeze on both switch arms
+is roughly halved.
+
+### 1. The attribution measurement, which the task opened with
+
+The record above ranked its leads by MOUNTS and admitted it could not rank
+the restyle. The instrument that could:
+`Helper_Scripts/library_restyle_attribution_probe.py` wraps the five Textual
+entry points that reach `Stylesheet.apply` — `App._register` (mount),
+`App.update_styles` (a class or pseudo-class flip, which restyles the flipped
+node's ENTIRE subtree), `Screen._update_focus_styles`, `App.refresh_css`,
+`Widget._cover` — plus the internal multiplier inside `apply` itself
+(`_process_component_classes` runs a nested apply per component class), and
+attributes every apply to its trigger AND to the first application frame
+outside `textual/`. The last part is what makes it actionable: a count says
+restyle is expensive, an originator names the line.
+
+Measured on the task's start commit (`4e84a77fb` = task 2 as landed), per
+switch:
+
+| switch | applies | restyle | apply_route (2 class flips) | sync_layout (`disabled`) | mount | other |
+|---|---|---|---|---|---|---|
+| media (switch-back) | 423 | 86 ms | **238 (56%), 43 ms** | 0 | 89 (21%) | 96 |
+| notes (switch), 1st | 463 | 92 ms | 192 (41%), 36 ms | **205 (44%), 41 ms** | 30 (6%) | 36 |
+| notes (switch), later | 333 | 65 ms | **206 (62%), 34 ms** | 0 | 74 (22%) | 53 |
+
+**The table overturned the leads' ordering.** Leads 1 and 2 (the two wasted
+canvas rebuilds) are mount-side, and mounts are 6–22% of the applies. The
+single largest originator on all three arms was `LibraryBrowseReaderShell.
+apply_route` — the marker-class seam this very design record introduced —
+running TWO full-subtree restyles of the whole Library, 96–119 applies each,
+for two classes **no stylesheet rule anywhere references**. Second was
+`LibraryAdaptiveReaderShell.sync_layout`'s `pane.disabled = not open`
+(`disabled` is a pseudo-class, so it restyles the pane's subtree too), which
+fired four times on a first Notes switch: both panes closed at 23 ms and
+reopened at 76 ms.
+
+### 2. What landed, in the order the table ranked it
+
+1. **`apply_route` flips its markers with `update=False`** (`497bc5f8e`).
+   Textual's own "do not restyle" flag. The premise — that the markers are
+   query markers, not style hooks — is not assumed but pinned:
+   `test_route_marker_classes_have_no_stylesheet_rules` reads the PARSED
+   stylesheet (widget `DEFAULT_CSS` counts, so grepping `css/` would not do)
+   and fails the moment a rule starts depending on one, which is the signal to
+   restore a single coalesced restyle. Removed 192–238 applies per switch.
+2. **The outgoing-canvas rebuild** (`ed6979710`).
+   `_supersede_library_notes_navigation()` renders only when the rail press
+   STAYS on Notes. It ran two statements before the destination row was set,
+   so the route-ownership guard still saw Notes as the owner — the guard was
+   right, the ordering was the bug. 21 of 81 mounts.
+3. **The pre-display hidden rebuild** (`ed6979710`). Second half of the
+   residency guard: `canvas_sync._library_resident_canvas_awaits_display`
+   refuses a sync for a canvas parked hidden in `#library-canvas`. Safe
+   because showing a resident canvas is exactly what repaints it
+   (`_adopt_library_browse_canvas`), and the route swap is the only writer of
+   a browse canvas's `display`. 25 of 62 mounts, five sync calls.
+4. **The placeholder layout** (`030aea02c`). `adopt_route_layout` applied the
+   destination route's STORED layout, which for a never-resolved route is the
+   all-zero default — so a route's first entry closed both panes and reopened
+   them ~50 ms later when the real resolver landed. A route with no resolved
+   layout has nothing to adopt; the `_applied_layout` reset still happens, so
+   the resolver that follows still gets `sync_layout`'s initial-mount branch
+   and its application is now the first one instead of the third.
+
+Two moves the record had already measured as useless were NOT repeated (an
+equality short-circuit in `sync_state`; removing any of the first three
+coalesced sync calls), and nothing in the attribution table overturned that
+measurement.
+
+### 3. Acceptance — the felt-freeze evidence
+
+Recipe §9 pairing: ONE scratch worktree at a fixed path (`/private/tmp/
+phasec-storm`) with one venv, arms selected by `git switch --detach` between
+runs so both are measured from the same checkout location; interleaved and
+order-swapped (`base mine mine base base mine mine base base mine mine base`);
+**n = 6 per arm**. Medians, with the full block range:
+
+| interaction | block before | block after | cpu | restyle | applies | mounts |
+|---|---|---|---|---|---|---|
+| media (switch-back) | 97 ms (95–107) | **55 ms (51–65)** | 149 → 86 ms | 87 → 33 ms | 423 → 135 | 77 → 60 |
+| notes (switch) | 148 ms (140–152) | **73 ms (68–78)** | 139 → 69 ms | 97 → 21 ms | 463 → 64 | 26 → 26 |
+| media (switch-in) | 133 ms | 130 ms | — | — | 537 → 534 | 177 |
+| media (re-click) | 65 ms | 63 ms | — | — | 129 | 60 |
+| notes (re-click) | 47 ms | 49 ms | — | — | 89 | 38 |
+
+**The block ranges of the two arms do not overlap**, which is what task 2's
+result could not claim: there, the two arms' ranges were the same band.
+Against the program's founding number — the 139–380 ms freeze in the plan's
+Goal, and the 264–485 ms settle band recipe §25 closed on — a Library
+rail-mode switch now blocks the main thread for 55–73 ms.
+
+Unchanged on purpose: `media (switch-in)` is the ordinary-route entry, which
+still takes the whole-screen recompose (it is not a resident-shell switch),
+and the two re-click rows move within their own spread.
+
+Acceptance pin `Tests/UI/test_library_phase_c_switch_residency.py` lowered
+90/95 → **69/74** mounts/unmounts, freshly derived from three identical runs
+of that test (26/2 notes, 62/67 media) plus the same ~11% headroom the
+previous pair used. Four new structural pins in
+`Tests/UI/test_library_phase_c_switch_storm.py`, each written red with the
+measured number in its docstring: no shell-subtree restyle per switch, no
+outgoing-canvas rebuild, no hidden-canvas repaint, no collapse-then-reopen on
+a route's first entry — plus a stylesheet-independence guard and a
+two-modules-agree guard for the duplicated resident-canvas id set.
+
+### 4. The double destination rebuild — measured, and deliberately kept
+
+The plan asked this task to decide between **paint-retained-then-patch**
+(today: the swap's adopt-sync paints the retained list immediately, the browse
+worker's result patches it a frame later) and **render-once-when-worker-lands**
+(skip the adopt paint), on perceived latency versus wasted work — with numbers
+if the measurement was cheap. It was, so here it is. Option A was implemented
+as a throwaway (the adopt-sync call short-circuited) and probed three times
+against the landed tree:
+
+| media (switch-back) | mounts | block |
+|---|---|---|
+| paint-retained-then-patch (landed) | 62 | 55 ms (51–65, n=6) |
+| render-once-when-worker-lands | 58, 62, 62 | 51, 52, 57 ms |
+
+**Option A buys nothing measurable.** The reason is the effect the record
+already documented for the first three coalesced sync calls: repaints coalesce
+by FRAME, not by call, so removing one of the two syncs that land in the same
+frame removes a call and not a rebuild. The 58 in the first run did not
+reproduce.
+
+And it is not merely neutral — it is unsafe in one direction this task's own
+guard created. With hidden repaints refused, the adopt-sync is the ONLY thing
+that shows a result that arrived while the canvas was hidden, and on the
+measured timeline the notes tree worker lands at ~15 ms while the swap
+displays the canvas at ~74 ms. Under option A that result would never be
+painted. So: kept, decided by measurement rather than by preference.
+
+### 5. What is left, measured rather than guessed
+
+At 135 and 64 applies per switch the restyle is no longer the dominant
+bucket. What remains on a media switch-back is 89 mount-proportional applies
+(the destination canvas's own repaint, which residency cannot avoid — it has
+been off-route since the last visit) and ~46 from small compose-time class
+flips inside the rebuilt rows. The next lever would be the canvas widgets
+themselves painting in place rather than recomposing their whole child list —
+a canvas-widget design change, not a storm fix, and not required for this
+task's acceptance.
