@@ -425,7 +425,8 @@ TASK-32089-labelled commit: `_sync_library_canvas` gains an explicit
 **route-ownership guard** (sync only the canvas whose kind owns
 `_library_selected_row_id`) ahead of the `try`, and the blanket `except` is
 narrowed so a genuinely unexpected failure raises instead of being converted
-into a whole-screen recompose.
+into a whole-screen recompose. Without that guard, residency silently redirects
+the sync storm onto invisible canvases.
 
 *The dispatcher's OTHER known hazard is untouched by residency.* Whether
 `_sync_library_canvas` is handed a screen or a controller as its `screen`
@@ -438,9 +439,6 @@ dispatcher — conversations, ingest, media, notes, prompts, rag_search, skills 
 and **all seven reference `_library_selected_row_id`**, which is exactly why it,
 and not a DOM query, is the right predicate for the route-ownership guard. That
 guard must be written to read through whichever receiver it is given.
-
-Without the guard, residency silently doubles
-the sync storm onto invisible canvases.
 
 ### Decision
 
@@ -492,9 +490,10 @@ Lazy residency bounds the cost to visited routes and its one-time entry cost
   — that was the surprise — but the re-mount re-composes, so it costs 29 mounts
   + 29 unmounts and 17 ms of widget construction per switch, landing at block
   60 ms / cpu 64 ms: **2× worse than A/C on every column** while also depending
-  on re-mounting a widget after `remove()`, which Textual documents as final and
-  could change in any 8.x release. Rejected on measured cost first, support
-  second.
+  on re-mounting a widget after `remove()`, whose docstring reads "Remove the
+  Widget from the DOM (effectively deleting it)" — no contract that a deleted
+  widget may return, so nothing stops any 8.x release from closing it. Rejected
+  on measured cost first, unsupportedness second.
 * **A, eager residency of every canvas.** Identical on the switch, strictly
   worse at rest, and unbounded across eleven canvas kinds.
 * **Optimising the CSS restyle instead.** It is the largest bucket (39% of
