@@ -113,7 +113,7 @@ def test_workflow_is_one_branch_only_read_only_fresh_macos_job() -> None:
     }
     setup = _step("Set up exact Python")
     assert setup["uses"] == "actions/setup-python@v5"
-    assert setup["with"] == {"python-version": "3.12.11"}
+    assert setup["with"] == {"python-version": "3.12.10"}
 
 
 def test_workflow_runs_only_the_exact_serial_nodes_and_retains_narrow_evidence() -> (
