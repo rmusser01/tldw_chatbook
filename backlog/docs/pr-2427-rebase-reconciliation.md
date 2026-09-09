@@ -3080,3 +3080,51 @@ inventories and pytest exit statuses must be inspected before qualification is
 claimed. No whole-repository sweep or forced cleanup is used. The PR had zero
 unresolved review threads immediately before publication; new published-head
 reviews/checks and normal protected merge still remain.
+
+### Four-file native owner qualification complete
+
+Session 50549 completed with exit 0: **237 passed, three warnings in 352.71s**
+(`/private/tmp/pr2427-approved-native-owners.log`). The final native inventory
+contains **zero SQLite and zero instance-lock descriptors**. Seven descriptors
+remain: three standard streams, one kqueue/two sockets matching the independently
+established pytest footprint, and the legitimate process-lifetime faulthandler
+stream. Full final/result records are in
+`$TMPDIR/pr2427-approved-native-owners.qgdsoO/fd_identity.jsonl`; no forced cleanup
+or GC was performed. This closes the complete-file qualification gap for the
+four resource-owner files; it is not a claim about the remaining cohort.
+
+The separate 1345-test Library cohort (session 35769) is still progressing on
+unchanged runtime/test sources. At the 2026-09-09 15:35 UTC check, PR head is
+still `29cbccec2b`, no review threads are unresolved, completed required jobs
+pass, and PR Fast Lane remains in progress. No merge has been attempted.
+
+At 15:42 UTC all published-head CI jobs are complete and passing (two conditional
+jobs skipped), with zero unresolved review threads. Dev meanwhile advanced to
+`0bb47a570e` through PR #2550 (Library column widths and boot census sentinels),
+making the PR DIRTY again. The ongoing 1345-test cohort remains on its frozen
+source head; do not rebase or alter that evidence mid-run. After completion,
+reconcile the width projection/defaults, overlapping populated-Reader fixture,
+ordinary rail assertions and boot-census sentinel contract. Then rerun the
+affected width/boot/Library gates on the new head; current CI/local results do
+not qualify that future rebase. No merge attempt or protection bypass occurred.
+
+### Complete frozen Library qualification (2026-09-09 17:02 UTC)
+
+Session 35769 finished with exit 0: **1344 passed, one existing skip, 13 warnings
+in 5508.50s** (`/private/tmp/pr2427-approved-native-library.log`). The skip is the
+pre-existing TASK-32070 Search/RAG keyboard ownership case. Final native receipt
+`$TMPDIR/pr2427-approved-native-library.vs8f54/fd_identity.jsonl` contains only
+three standard streams and the legitimate process-lifetime faulthandler stream:
+**zero SQLite, zero instance locks and no other retained native descriptors**.
+Together with the four-file owner cohort, frozen affected-file evidence is
+**1581 passed, one existing skip**. No source changed during either run, no forced
+cleanup/GC was used, and all original lifecycle/resource assertions remain.
+
+All 16 affected files and the separately completed 54 guard/residency tests are
+qualified on runtime `d034c2d9c9`. Source freeze is now released. Latest fetched
+dev is `e574c81d22`: the known PR #2550 width/boot changes plus PR #2541 Watchlists
+Feed Items widening. Save this evidence, reconcile that churn, then verify the
+changed width/boot/Watchlists owners and integration-sensitive Library tests.
+ADR required: no new ADR. Existing ADR-086 and the upstream Watchlists width
+design govern; this is integration of accepted upstream behavior, not a new
+layout policy. Final publication/review/CI and protected merge remain open.
