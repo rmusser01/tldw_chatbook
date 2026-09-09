@@ -87,6 +87,12 @@ checks. Existing-file Ruff findings decreased from 129 to 126, with no added
 code/message findings; this is not a claim of repository-wide lint cleanliness.
 No full test-suite sweep was run.
 
+Rebased verification against dev `80f29a9a1dcd9307662714233c65605e4c517b11`
+passed 302 tests with one optional skip. The one failing census had counted the
+wheel's generated `build/lib` copy as an extra runtime owner. Moving that owned
+build tree outside the checkout made its rerun pass: all 303 targeted tests
+passed across the run and this rerun, without changing production or the guard.
+
 Official model repository: `hexgrad/Kokoro-82M`, revision
 `f3ff3571791e39611d31c381e3a41a3af07b4987`. Checkpoint SHA-256:
 `496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4`.
