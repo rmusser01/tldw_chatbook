@@ -63,7 +63,71 @@ The constructor audit also required lazy creation behind the existing gateway re
 3. Enforce LF checkout for the native pinned source/manifest/patch scope through existing nested `.gitattributes`, not repository-wide line-ending changes. Verify a temporary Git checkout with `core.autocrlf=true` preserves closure bytes using file-only checks.
 4. Fix cibuildwheel `{project}` test paths to repository-root-relative `native/voice_aec/tests/test_binding.py` and `Tests/Packaging/test_voice_aec_installed_wheel.py`, including any duplicate configuration. Test the command/path contract without executing installed-wheel test scripts locally.
 5. Run only file-level verifier/packaging regressions and static checks. Preserve exact companion/app version 0.2.0, qualification/build-identity JSON and release controls. Commit explicit files; report all local limits and required automatic hosted CI evidence in `task-4-report.md`.
+6. Final combined review identified that the preserved schema-69 source-pin SQL
+   dependency was missing from the exact source inventory. Add that one existing
+   migration path and a required-scope regression after demonstrating RED; do not
+   change its SQL or broaden inventory roots. Recheck only the affected file-level
+   inventory guard, then obtain the same reviewer's focused fix verification.
 
 ## Final root-owned handoff
 
 After scoped reviews, run one proportionate joined software gate covering changed seams and obtain a final read-only combined review. Refresh dev/PR/comments and account for any changes. Push the same branch with explicit force-with-lease, reply to each inline finding with the fix or grounded explanation, and resolve only addressed threads. Observe normal automatic checks; diagnose failures before more tests or changes. Record exact final head/check status and leave PR 2504 OPEN and UNMERGED. Preserve worktrees and recoverable evidence.
+
+## Local verification checkpoint — 2026-09-08
+
+The final documentation-only dev update `03d1b253c8de9d22408ae93845937ae89c893fcb`
+was integrated by a clean four-commit rebase. The resulting implementation head
+is `e1f02fc98de3838d8d6a52db13936d8719a1f5fb`; its only delta from the preceding
+reviewed tree is the 27 upstream Library documentation/Backlog additions.
+Both earlier refresh checkpoints and the original published head remain backed up.
+
+All four scoped reviews approved their changes. Task 4 adds a second independently
+hash-pinned `<stddef.h>` patch and native-only LF checkout attributes; its full
+verifier reverses both patches against all 315 immutable pristine source hashes.
+The Windows-style checkout test includes an actual CRLF control and loads the
+verifier from that checkout. Both cibuildwheel test paths now resolve from the
+repository root. Source/lint inventories retain the schema-70 paths and lazy-owner
+test; no inventory roots, runtime limits, versions or release controls were relaxed.
+
+Fresh root verification at that implementation head:
+
+- Joined changed-seam gate: **41 passed**, zero skips, 26.22 seconds. Covers
+  schema-69 source pins plus schema-70 voice provenance, deleted-owner draft and
+  attachment refusal, lazy owners/preview, actual visible factory with a fake
+  child and all four exit modes, hard-off legacy selection, sealed trace import,
+  unused quit, file-only native checkout/workflow/inventory checks, and fake TTS.
+- Boot gate: **17 passed**, zero skips, 37.37 seconds. Measured own imports
+  **646/660**, UI-ready **972/973**, and CSS **803655/804000**. All nine voice
+  modules remain cold; budgets, snapshots and worker identities are unchanged.
+- Ruff passed 23 follow-up Python paths (excluding unchanged boot-import debt in
+  `app.py`); eight scoped formatting checks passed. Index census remains
+  **293 declarations / 293 rows / 78 pinned**. Strict source digest is
+  `867029fee6a25da2d3eeceb73d382089307a4c7421d70c60cd7a3640b1d78f70`.
+
+The joined run has three existing dependency warnings; the boot run has seven
+warnings including three intentional budget reports and an existing datetime
+deprecation. Neither result is a full-suite or pristine-warning claim. Exact
+selectors, intermediate RED/GREEN results and review reports remain under
+`.superpowers/sdd/2026-09-08-voice-pr-2504-followup/`. Historical counts above
+retain their original checkpoints and are not summed with these final runs.
+
+The original feature HEAD, its binary diff and all 19 unrelated dirty paths are
+unchanged. Packaged build identity and all-platform hard-off qualification bytes
+retain their original hashes. No local native compilation/loading, live audio,
+provider/model request, hardware qualification, repetition, soak, installation or
+full sweep occurred. Hosted native build/installed-wheel proof remains for normal
+automatic PR CI. Final combined review, push and remote handoff follow this local
+checkpoint; merging remains explicitly prohibited.
+
+The final combined review found one source-identity gap and no other blocking
+issues. Commit `4eca1a38a6e2674a14ddc1bcbff195fd2d9f3e75` adds dev's preserved
+schema-69 source-pin SQL to the exact inventory and its required-scope regression
+(two files, two lines). The guard failed for that missing path before the fix and
+then passed in 0.95 seconds; scoped lint/format passed. This does not modify SQL,
+runtime behavior or packaged authority. The earlier source digest belongs only to
+its stated implementation checkpoint; the inventory and task-note changes require
+a new clean committed digest at publication.
+
+The final reviewer's focused re-review approved `4eca1a38a6` and closed the sole
+P2 with no remaining findings. No tests were repeated for review. The publication
+step now updates the existing PR and observes automatic CI; no merge is authorized.

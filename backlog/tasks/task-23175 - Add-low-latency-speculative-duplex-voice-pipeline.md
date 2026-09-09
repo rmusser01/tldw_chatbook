@@ -706,6 +706,35 @@ build/load, app/audio, provider/model, hardware, soak, install or config change
 was performed; original dirty worktrees and packaged hard-off authority remain
 unchanged.
 
+## PR #2504 follow-up — local completion checkpoint
+
+Rebased the complete reviewed net tree onto dev `03d1b253c8` while retaining
+backups and all newer dev behavior. At implementation `e1f02fc98d`, the three
+validated PR findings are corrected: deleted-session refusal preserves captured
+draft/attachment identity without hiding an internal KeyError; import grouping
+and transcript helper documentation are fixed. The other three architectural
+suggestions were answered with call-path evidence and dismissed by the reviewer.
+
+Lazy voice owners, registry and preview restore UI-ready **972/973** without
+raising budgets. Native portability uses a declared second size_t-header patch,
+scoped LF checkout and corrected repository-root wheel test paths; all original
+pristine/license/qualification anchors remain intact. Four scoped reviews
+approved. Fresh root gates passed **41 integration cases** and **17 boot cases**;
+source/lint, index and diagnostic checks pass. Existing dependency/formatter
+limitations remain explicit in the follow-up plan; historical counts are not
+relabelled as current evidence.
+
+Governing ADRs are unchanged; see
+`Docs/superpowers/plans/2026-09-08-voice-pr-2504-followup.md` for exact checkpoints
+and evidence boundaries. No hardware/audio, provider/model, local native build or
+execution, full suite, soak, install, release or merge occurred. Final combined
+review caught one omitted source-pin SQL dependency in the digest inventory;
+the two-line inventory/regression fix at `4eca1a38a6` passed RED/GREEN and focused
+re-review. No review findings remain open locally. Remote CI/handoff remains
+pending at this local checkpoint. Keep this
+task In Progress and release criteria unchecked; the user requires the PR remain
+OPEN and UNMERGED pending a later merge decision.
+
 ## Renumbering provenance
 
 This task was initially created as `TASK-23113`. It was renumbered before its first
