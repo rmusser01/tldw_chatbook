@@ -1102,6 +1102,8 @@ def run_agent_loop(
     restored_calls: list[ToolCall] | None = None
     restore_history_start: int | None = None
     recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
+    last_failed_tool = ""
+    consecutive_tool_failures = 0
     context_trace_reserved = False
     current_call_correlation = ""
 
@@ -2396,6 +2398,7 @@ def run_agent_loop(
             # at all (`parse_tool_call`), so a name-keyed verdict must still stop
             # every matching call or the MCP gate silently opens.
             if continuation_checkpoint is not None and verdict != "proceed":
+                consecutive_tool_failures = 0
                 refusal_result = ToolResult.blocked(verdict)
                 continuation_cap = (
                     min(budget.max_tool_result_chars, 16_000)
@@ -2904,3 +2907,25 @@ def run_agent_loop(
                     return continuation_error()
             else:
                 _append_tool_result(messages, call, content)
+
+            if tool_outcome == TOOL_OUTCOME_FAILED:
+                consecutive_tool_failures = (
+                    consecutive_tool_failures + 1
+                    if call.name == last_failed_tool
+                    else 1
+                )
+                last_failed_tool = call.name
+            else:
+                consecutive_tool_failures = 0
+            if consecutive_tool_failures >= LOOP_DETECTION_N:
+                # The settled result is already recorded; _outcome retains
+                # the last coherent boundary if this splits a native batch.
+                add(
+                    STEP_ERROR,
+                    summary=(
+                        f"Agent stopped: {call.name} failed "
+                        f"{consecutive_tool_failures} times in a row. "
+                        "Check the tool error before retrying, or use a different tool."
+                    ),
+                )
+                return _outcome(RUN_STUCK)

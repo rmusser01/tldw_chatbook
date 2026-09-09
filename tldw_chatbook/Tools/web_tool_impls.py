@@ -1232,9 +1232,9 @@ def web_search(
     English in/out, moderate safesearch, no advanced filters). Each result
     block is bounded to SEARCH_RESULT_MAX_BYTES and the whole output to
     SEARCH_TOTAL_MAX_BYTES (both UTF-8 byte budgets), so the provider's
-    32 KiB byte fitting never triggers on search output. Backend failures
-    and error envelopes return an error string rather than raising (legacy
-    tool contract); only invalid arguments raise LocalToolError.
+    32 KiB byte fitting never triggers on search output. Backend failures,
+    error envelopes, and malformed responses raise LocalToolError so the
+    provider records a failed tool outcome.
 
     Successful results are cached for SEARCH_CACHE_TTL_SECONDS keyed by
     the post-coercion (engine, normalized query, count) — identical
@@ -1246,7 +1246,7 @@ def web_search(
     Backend/source provenance is attached per call, outside the cached body.
 
     Raises:
-        LocalToolError: if ``query`` or the selected backend is invalid.
+        LocalToolError: if the query/backend is invalid or the search fails.
     """
     if not isinstance(query, str) or not query.strip():
         raise LocalToolError("[invalid-args] query must be a non-empty string")
@@ -1288,6 +1288,11 @@ def web_search(
     # module cheap to import and let tests monkeypatch the source attribute.
     from ..Web_Scraping.WebSearch_APIs import perform_websearch
 
+    failure = (
+        f"[search-failed] web search via {engine!r} failed. "
+        "Stop repeating searches with this backend until it is available or configured. "
+        "Use another configured search engine or ask the user to configure one. Reason: "
+    )
     try:
         results = perform_websearch(
             search_engine=engine,
@@ -1306,29 +1311,21 @@ def web_search(
             search_result_language=None,
             sort_results_by=None,
         )
-    except Exception as exc:  # noqa: BLE001 — backend failure is a result string, not an exception
+    except Exception as exc:  # noqa: BLE001 — normalize the backend error contract
         logger.warning(f"web_search backend failure via {engine!r}: {exc}")
-        return with_backend(f"[search-failed] web search via {engine!r} failed: {exc}")
+        raise LocalToolError(with_backend(f"{failure}{exc}")) from exc
 
     if not isinstance(results, dict):
-        return with_backend(
-            f"No results found or unexpected response format from {engine!r} "
-            f"(raw: {str(results)[:500]})"
-        )
+        raise LocalToolError(with_backend(f"{failure}unexpected response format"))
     # A well-formed envelope can still carry a failure: surface THAT reason.
     reason = results.get("processing_error") or results.get("error")
     if reason:
-        return with_backend(
-            f"[search-failed] web search via {engine!r} reported an error: {reason}"
-        )
+        raise LocalToolError(with_backend(f"{failure}{reason}"))
     if not isinstance(results.get("results"), list):
-        return with_backend(
-            f"No results found or unexpected response format from {engine!r} "
-            f"(raw: {str(results)[:500]})"
-        )
-    items = [
-        item if isinstance(item, dict) else {} for item in results["results"][:count]
-    ]
+        raise LocalToolError(with_backend(f"{failure}unexpected response format"))
+    items = results["results"][:count]
+    if any(not isinstance(item, dict) for item in items):
+        raise LocalToolError(with_backend(f"{failure}unexpected response format"))
     if not items:
         return with_backend(f"No results found for {query!r} via {engine!r}.")
 
@@ -1361,8 +1358,7 @@ def web_search(
         total_bytes += separator_bytes + block_bytes
     output = "\n\n".join(blocks)
     # The ONE cacheable point (design doc ruling 1): only the genuine
-    # success-blocks output is stored — never the [search-failed] strings,
-    # the unmarked malformed-response strings, or the confirmed-empty
+    # success-blocks output is stored — never failures or the confirmed-empty
     # message (a transient zero must not pin for the TTL).
     _search_cache_put(cache_key, output)
     return with_backend(output)

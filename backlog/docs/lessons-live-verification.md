@@ -1,5 +1,21 @@
 # Lessons: verifying against the real thing
 
+## A healthy local model does not prove capture or tool outcomes (TASK-32188–32191)
+
+**2026-09-09.** The llama.cpp server answered uncaptured messages while captured
+tool runs failed: visible planning text before a valid tool fence disagreed with
+the trace classifier. Saved COMPLETE provider calls still belonged to a FAILED,
+empty assistant response, so a successful uncaptured follow-up did not establish
+that the next captured send could recover. Reproduce through the real Console
+controller, inspect both call and assistant closure, and test a cold captured
+successor after the uncaptured turn.
+
+The same investigation received HTTP 202 from DuckDuckGo containing a challenge
+form. The backend reported no matches, and other backend error strings became
+successful ToolResults. Check the actual backend response and structured outcome
+through the provider/runtime boundary. Vary retry arguments in the regression:
+an identical-call loop test alone misses repeated execution failures.
+
 ## Check the target platform's exact interpreter build before pinning CI
 
 **TASK-32160 Task14, 2026-09-08.** A fresh macOS ARM64 evidence job pinned the

@@ -1540,6 +1540,12 @@ Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired
 `ingest_media` placeholder.
 
+Missing credentials, backend errors, and DuckDuckGo anti-bot challenges produce
+failed tool results. Check the reported error and configure an available search
+engine before retrying. A successful search with no matches remains a normal
+empty result. Three consecutive failures from the same tool stop the run, even
+when the query or search engine changes.
+
 ### Library media chunk tools
 
 Console agents get five `library_*` tools for reading ingested media by its
@@ -1834,12 +1840,11 @@ Setting it to 0 removes the ceiling but not Stop: cancellation is still
 polled every 0.5 s while a tool runs, so pressing Stop interrupts the wait
 (even though the tool's own thread may finish in the background).
 
-**Setting the token budget to 0 means unlimited, and costs you your only
-safety net.** The loop detector only catches a tool called repeatedly with
-*identical* arguments; a loop that varies anything — an incrementing offset,
-a slightly reworded query — walks straight past it. At a 2,000-turn cap the
-token budget is the last thing standing between a stuck agent and an
-unbounded bill.
+**Setting the token budget to 0 means unlimited.** Loop detection stops repeated
+identical calls and three consecutive failures from the same tool, including
+calls with changing arguments. A successful call or a different tool resets
+the failure count. Loops that keep returning successful results with changing
+arguments can still continue, so keep a token budget to bound spending.
 
 **If you lower the step budget, lower it deliberately.** A tool round costs
 3 steps (think, call, result) and the closing reply costs 1, so N turns need

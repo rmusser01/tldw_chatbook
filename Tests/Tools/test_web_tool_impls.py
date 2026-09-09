@@ -1426,16 +1426,14 @@ def test_search_backend_exception_not_cached(fetch_env, monkeypatch):
         raise RuntimeError("provider down")
 
     _patch_search(monkeypatch, boom)
-    out = web_tool_impls.web_search("flaky")
-    assert out.startswith("[search-failed]")
-    web_tool_impls.web_search("flaky")
+    for _ in range(2):
+        with pytest.raises(LocalToolError, match=r"\[search-failed\].*provider down"):
+            web_tool_impls.web_search("flaky")
     assert len(calls) == 2  # second call re-invoked the backend
 
 
 def test_search_error_envelope_and_malformed_not_cached(fetch_env, monkeypatch):
-    """Design doc ruling 1 shapes (ii) and (iii): the unmarked
-    malformed-response string and the [search-failed] envelope string are
-    both transient-failure shapes — neither may pin for the TTL."""
+    """Backend and malformed failures must not pin for the cache TTL."""
     payloads = iter([
         {"error": "quota exceeded"},        # (iii) envelope error
         "not a dict at all",                # (ii) non-dict
@@ -1443,8 +1441,10 @@ def test_search_error_envelope_and_malformed_not_cached(fetch_env, monkeypatch):
     ])
     calls = []
     _patch_search(monkeypatch, lambda **kw: (calls.append(kw), next(payloads))[1])
-    assert "[search-failed]" in web_tool_impls.web_search("recovering")
-    assert "unexpected response format" in web_tool_impls.web_search("recovering")
+    with pytest.raises(LocalToolError, match=r"\[search-failed\].*quota exceeded"):
+        web_tool_impls.web_search("recovering")
+    with pytest.raises(LocalToolError, match="unexpected response format"):
+        web_tool_impls.web_search("recovering")
     assert "R1" in web_tool_impls.web_search("recovering")
     assert len(calls) == 3  # nothing was cached until the genuine success
 
@@ -1498,8 +1498,9 @@ def test_search_cache_logs_never_carry_query_text(fetch_env, monkeypatch, capsys
     sink_id = _logger.add(lambda m: records.append(str(m)), level="DEBUG")
     try:
         web_tool_impls.web_search(secret)          # miss + store
-        web_tool_impls.web_search(secret)          # hit
-        web_tool_impls.web_search(secret + " v2")  # failure path (logs engine only)
+        web_tool_impls.web_search(secret)  # hit
+        with pytest.raises(LocalToolError):
+            web_tool_impls.web_search(secret + " v2")  # failure path
     finally:
         _logger.remove(sink_id)
     assert not any(secret in r for r in records), records

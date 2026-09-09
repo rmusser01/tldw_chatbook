@@ -1093,9 +1093,9 @@ AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
             "turn, so spend grows quadratically: 25M is typically reached "
             "around turn 250. Sub-agents each get this same ceiling rather "
             "than a share of it, so one message's worst case is about 3x "
-            "it. 0 = unlimited, which removes your only runaway-spend "
-            "backstop: the loop detector only catches calls repeated with "
-            "identical arguments."
+            "it. 0 = unlimited. Loop detection stops identical repeated "
+            "calls and three consecutive failures from the same tool; "
+            "successful calls with changing arguments can still loop."
         ),
     ),
     AgentBudgetField(
