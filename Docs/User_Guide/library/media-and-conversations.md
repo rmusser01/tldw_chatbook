@@ -933,7 +933,8 @@ re-stamped rather than edited because the switch is now cheaper, not
 different. Measured: the whole-screen rebuild is gone and per-switch widget
 churn more than halves (179 -> 81 mounts on a switch back into Media). The
 switch's *perceived* pause is unchanged so far — what remains of it is the
-canvas repaint, tracked separately.)*
+canvas repaint, tracked separately. (That "so far" was closed by task 2.5,
+the next stamp: the perceived pause is now roughly halved.)*
 
 *Verified against feat/library-phase-c-resident-canvas — 2026-09-08 (Library
 phase C, task 2.5: the rail switch between **Browse Media** and **Browse
@@ -955,3 +956,11 @@ nothing about how these controls look or behave moved. What changed is which
 part of the code answers the press, which also closes a phase-C hazard: a
 control on the Media list you have switched away from can no longer act on
 your behalf.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-09 (Library
+phase C, task 4 — graduation close: **no production or on-screen change; this
+is the net result.** Switching the rail between **Browse Media** and **Browse
+Notes** blocks the main thread for **51–78 ms** where the pre-phase-C screen
+blocked for the 139–380 ms freeze the redesign set out to remove — measured
+base-vs-current on one machine, six interleaved runs per side. Media has
+graduated to a resident canvas; nothing on this page moved.)*

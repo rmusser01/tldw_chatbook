@@ -12610,3 +12610,42 @@ still not evidence. Sample size is what separates "this branch broke it" from
 The prior reports' "load flake, passes in isolation" was also too generous a
 characterisation: this test fails in isolation too, roughly one run in eight,
 on an unchanged tree.
+
+## A probe column that reads zero is not evidence of zero — a counter that has never been non-zero has never been tested (phase C task 1, landed task 4, 2026-09-09)
+
+`Helper_Scripts/library_click_probe.py` printed `recompose 0` and `0 removes`
+on every Library rail-mode switch for FOUR decomposition waves. Recipe §25
+promoted `recompose 0` to a load-independent verdict column and wrote "recompose
+still 0" into phase C's success condition. Both zeros were instrument blind
+spots, not findings — and they were blind in DIFFERENT degrees, which is the
+part worth keeping:
+
+* **The `removes` counter could never fire at all.** It hooked
+  `App._unregister`, which is **not** Textual 8.2.8's prune path — a node
+  finalises its own removal in `Widget._message_loop_exit`
+  (`self.app._registry.discard`). `App._unregister` has zero callers anywhere.
+  A media switch actually unmounts ~176 widgets; the probe reported 0 forever.
+* **The `recompose` counter was right almost everywhere and wrong exactly where
+  it mattered.** It hooks `refresh(recompose=True)` and correctly counts every
+  refresh-driven recompose — but the rail-switch path awaits `Widget.recompose()`
+  DIRECTLY (`_select_library_rail_row_after_source_admission`, the `if not
+  replaced:` arm), bypassing `refresh`, so the hook cannot see it. Every rail
+  switch ran exactly one whole-screen recompose while the column read 0. This is
+  the more dangerous defect precisely because the counter is trustworthy on
+  every other path.
+
+Discovered only by writing a SECOND instrument
+(`Helper_Scripts/library_switch_teardown_probe.py`) that measured the same two
+quantities a different way — hooking `_message_loop_exit` and counting
+`Widget.recompose()` directly — and got a different answer (1 recompose, 176
+unmounts). Task 1's review confirmed it three ways; phase C task 4 annotated
+recipe §25's baseline in place (a `†` correction, not a rewrite) so the blind
+spot stays visible, and closed the founding freeze against the corrected
+instrument (recipe §26, spec graduation record).
+
+The rule: **before trusting a counter, provoke the event it claims to count and
+confirm the counter moves.** A column that has only ever printed the same value
+across every run it was cited in has not been validated — it has been assumed.
+And when one counter of a probe is proven blind, audit the others: the same
+probe's two zero-columns were blind for two different reasons, and only one was
+caught by noticing the other.

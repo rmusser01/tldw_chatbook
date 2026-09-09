@@ -1025,3 +1025,133 @@ canvas-origin rows the screen still owns. Notably, the existing pin
 `test_hidden_resident_media_canvas_does_not_process_row_presses` stayed GREEN
 throughout the hazard, because `.library-media-row` is one of the deferred
 20: the old pin could not have caught this.
+
+---
+
+## Graduation record — phase C, media: the founding freeze, closed (2026-09-09)
+
+**Status:** media has graduated. This is the close of the first phase-C
+graduation and the payoff the whole eight-wave extraction program was the
+precondition for. `feat/library-phase-c-resident-canvas`, four tasks landed on
+top of `7e81ed55d` (the wave-8 merge into `dev`); HEAD `b2ccbca09`.
+
+### The before/after — one authoritative table
+
+The freeze metric is the teardown probe's `block`: the longest single
+main-thread stall on a rail-mode switch, measured by
+`Helper_Scripts/library_switch_teardown_probe.py` (the instrument task 1
+landed, which hooks `Widget.recompose()` directly and `_message_loop_exit` for
+unmounts — the two things the pre-phase-C `library_click_probe.py` baseline in
+recipe §25 could not see). Every cell is traceable to a task and a commit; the
+`base` and `now` rows are task 4's definitive probe (below), the intermediate
+rows are each task's own §9 pair.
+
+| stage | commit(s) | media switch-back block | notes switch block | whole-screen recompose | mounts (media / notes) |
+|---|---|---|---|---|---|
+| **base (pre-phase-C)** | `7e81ed55d` | **93 ms** (86–95) | **140 ms** (126–149) | **1** | 179 / 114 |
+| task 2 — structural cause removed | `7b4a7e289..5fc35f1fa` | 98 (unchanged) | 147 (unchanged) | **0** | 81 / 26 |
+| task 2.5 — felt freeze halved | `497bc5f8e..4645e4c8c` | **55** (51–65) | **73** (68–78) | 0 | 60 / 26 |
+| task 3 — region ownership (routing-only) | `480eadbba`, `cad52260b` | 50–55 (in band) | 67–82 (in band) | 0 | 58 / 26 |
+| **now** | `b2ccbca09` | **51 ms** (49–53) | **78 ms** (66–79) | **0** | 58 / 26 |
+
+**The program's founding number, stated plainly:** the Library rail-mode
+switch that the design doc opened on as a 139–380 ms main-thread freeze now
+stalls the main thread for **51–78 ms**, with the one whole-screen recompose
+per switch eliminated (**1 → 0**) and the mount storm cut **7× on media**
+(179 → 58) and **4× on notes** (114 → 26). Task 1 removed nothing (it decided
+the mechanism and wrote the failing acceptance test — zero production);
+task 2 removed the STRUCTURAL cause but not the felt freeze (the block did not
+move — its own prediction, corrected); task 2.5 halved the felt freeze after
+an attribution measurement overturned the plan's lead ordering; task 3 rode
+region ownership after the motivating change and shrank the screen
+`32351 / 1259` → `32178 / 1243` (−173 lines / −16 methods, all in task 3).
+
+### The definitive-probe acceptance evidence
+
+Task 4's graduation probe, recorded here as the graduation's acceptance
+evidence: ONE scratch worktree at a fixed path, `tldw_chatbook/` reverted
+between `7e81ed55d` (base) and `b2ccbca09` (HEAD) so both arms sit at the same
+checkout location per recipe §9; **interleaved and order-swapped**
+(`b m m b b m m b b m m b`); **n = 6 per arm**. Medians with full block ranges:
+
+| rail-mode switch | block base → now | cpu base → now | mounts base → now | unmounts base → now | recompose |
+|---|---|---|---|---|---|
+| media (switch-back) | 93 ms (86–95) → **51 ms (49–53)** | 382 → 140 ms | 179 → 58 | 176 → 63 | 1 → **0** |
+| notes (switch) | 140 ms (126–149) → **78 ms (66–79)** | 363 → 162 ms | 114 → 26 | 121 → 2 | 1 → **0** |
+
+**The block ranges do not overlap on either arm** (media gap 33 ms, notes gap
+47 ms). The base arm reproduced task 1's pre-phase-C teardown numbers to the
+digit (177 mounts / 1 recompose on media switch-in; 114 / 1 on notes switch;
+179 / 1 on media switch-back), which is what confirms the revert-only-
+`tldw_chatbook/` protocol measured the true base and not a hybrid. Unchanged on
+purpose: `media (switch-in)` is the ordinary-route ENTRY (not a resident-shell
+switch), still 1 recompose / 177 mounts on both arms.
+
+### The instrument correction this graduation carried
+
+Recipe §25's published phase-C baseline reported `recompose 0` on the switch
+rows and made "recompose still 0" phase C's success condition — on a probe
+column that is **instrument-blind on the rail-switch path** (`LibraryScreen`
+awaits `Widget.recompose()` directly, bypassing the `refresh(recompose=True)`
+the click probe hooks), beside a `removes` column with **zero callers in
+Textual 8.2.8**. Task 1 found this and its review confirmed it three ways;
+task 4 annotated the affected column in §25 in place (the `†` correction) and
+landed the doctrine lesson in `lessons-testing-evidence.md`. The `1 → 0`
+recompose in the tables above is measured by the instrument that hooks
+`Widget.recompose()` directly, so it is a real zero, not the blind column's.
+Recipe §26 is the full close-out.
+
+## Notes-graduation readiness
+
+Notes is the next phase-C graduation candidate. What the media graduation
+leaves it, and what it must earn fresh:
+
+**Transfers — the mechanism is subsystem-neutral.**
+
+* **The resident-shell mechanism.** ONE `LibraryBrowseReaderShell` mounted
+  once and kept resident across mode switches, canvases toggled by
+  `display`/marker class rather than torn down and remounted
+  (`UI/Library_Modules/library_browse_route_swap.py`). The Notes canvas is
+  already a child of the same `#library-canvas` host and the same shell, so
+  notes residency is the same swap path media already uses — no new mechanism.
+* **The marker-class route model.** A route-neutral shell id
+  (`#library-browse-reader-shell`) plus per-route marker classes
+  (`.library-media-route` / `.library-notes-route`) written by the single
+  `apply_route` seam, with `set_class(..., update=False)` because the markers
+  are query markers no stylesheet references (guarded by
+  `test_route_marker_classes_have_no_stylesheet_rules`). The notes marker
+  already exists and is already flipped by `apply_route`.
+* **The guards, all four.** The dual-receiver canvas-sync guards; the
+  route-ownership guard (an off-route sync is refused, not repainted) and its
+  refusal-direction test; the hidden-canvas guard (a resident-but-hidden
+  canvas is not repainted before it is shown) and its two-modules-agree pin;
+  and the same-node `@on`-before-`on_message` dispatch rule (a guard on a
+  region widget must live in a seam its own `@on` handlers call, not in an
+  `on_<message>` method that merely runs later — `lessons-textual.md`).
+* **The suspend/resume ruling.** TASK-31521's screen-reuse machinery composes
+  with residency (DOM-neutral across a suspend/resume cycle), pinned by
+  `test_suspend_and_resume_keep_the_resident_set_and_its_selection`.
+
+**Does NOT transfer — notes must run its own evidence.**
+
+* **No row-geometry message.** Media's 16 migrated rows include
+  `LibraryMediaRowGeometryChanged`; notes has no analogue (zero Notes-side
+  posters by grep — recorded in the Notes canvas gate docstring). Notes'
+  canvas-origin/deferred/permanent census must be taken FROM SOURCE (compose
+  and post sites, never handler names), exactly as task 3 did for media's 79
+  rows — the media split (16 / 20 / 43) does not predict the notes split.
+* **A fresh deferred-body audit.** Media's 20 deferred rows are blocked on a
+  phase-A body extraction; notes' own deferred set, if any, has its own
+  blockers and must be enumerated in the notes region-ownership test file.
+* **The sync-storm shape differed, so re-measure it.** Media's storm was an
+  outgoing-canvas rebuild plus a pre-display hidden rebuild; notes' worst arm
+  was a first-entry placeholder-layout collapse (both panes closed then
+  reopened ~50 ms later) — a DIFFERENT originator that task 2.5's attribution
+  table separated for the two subsystems. A notes graduation must OPEN with
+  the attribution measurement (`Helper_Scripts/library_restyle_attribution_
+  probe.py`, `apply` calls by trigger), not assume media's leads.
+* **The remaining lever is a canvas-widget change, not a storm fix.** After
+  task 2.5 the residual per-switch cost is the destination canvas's own
+  single repaint (its `sync_state` recomposing its whole child list); painting
+  in place is a canvas-widget design change and would apply to both subsystems
+  independently.
