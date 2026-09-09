@@ -419,7 +419,7 @@ def _library_resident_canvas_awaits_display(canvas: Widget) -> bool:
     syncs every resident canvas at the moment it displays it, and the route
     swap is the only writer that leaves a browse canvas **hidden and alive**.
     Three other sites do write ``child.display = False`` over canvas-host
-    children (``library_screen.py:10345``, ``:10516``, ``:10963``) -- each one
+    children (``library_screen.py:10341``, ``:10512``, ``:10959``) -- each one
     microseconds before ``remove_children`` on the same tuple, so the canvas
     they hide does not survive to be refused, and any sync landing in that
     window is caught by the projection-depth block below the refusal and

@@ -7422,7 +7422,7 @@ for the click-freeze fix. The numbers phase C will be measured against, from
 > (`Helper_Scripts/library_switch_teardown_probe.py`, which counts BOTH
 > `Widget.recompose()` and `refresh(recompose=True)` and hooks
 > `_message_loop_exit` for unmounts) reads **1 whole-screen recompose** on
-> exactly the three switch rows, reproduced base-vs-HEAD by phase-C task 4's
+> exactly the four switch rows, reproduced base-vs-HEAD by phase-C task 4's
 > definitive probe (§26). The `full-update`, `nodes` and `mounts` columns
 > are sound; the annotation is scoped to `recompose` on the switch path.
 > Not rewritten in place — annotated — so this baseline stays comparable and
@@ -7495,8 +7495,9 @@ parametrized or mutation-verified for a reason.
 decomposition program. **This section is that target's close for the first
 subsystem to graduate — media.** It is the payoff the eight-wave program was
 the precondition for, and it is stated the way §25 states the wave trajectory:
-one authoritative table, every number traceable to a task and a commit, all
-re-measured at the close rather than carried over from a report.
+one authoritative table, every number traceable to a task and a commit — the
+base and now rows re-measured at the close by task 4's definitive probe, the
+intermediate rows carried from each task's own §9 pair rather than re-run.
 
 Branch `feat/library-phase-c-resident-canvas` off `7e81ed55d` (the wave-8
 merge into `dev`). Phase C was FOUR tasks — a mechanism spike (task 1), the
@@ -7562,8 +7563,10 @@ fixing.** Second, region ownership (task 3) rode AFTER the motivating change
 and only as far as residency forced it: of media's 79 `@on` rows, **16
 migrated, 20 deferred (blocked on a phase-A body extraction), 43 permanent** —
 a three-way census, not the two-way one the doctrine's wording implies. The
-screen shrank `32351 / 1259` → **`32178 / 1243`** (−173 lines / −16 methods)
-across the phase, all of it in task 3.
+screen shrank `32351 / 1259` → **`32178 / 1243`** across the phase. The −173
+lines land in three stages — task 2 −109 (32351 → 32242), task 2.5 −1
+(→ 32241), task 3 −63 (→ 32178); the −16 methods are all task 3 (the count
+held at 1259 through task 2.5, then 1259 → 1243).
 
 ### The doctrine correction phase C carried back
 

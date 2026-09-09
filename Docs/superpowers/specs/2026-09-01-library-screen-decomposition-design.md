@@ -1064,7 +1064,10 @@ task 2 removed the STRUCTURAL cause but not the felt freeze (the block did not
 move — its own prediction, corrected); task 2.5 halved the felt freeze after
 an attribution measurement overturned the plan's lead ordering; task 3 rode
 region ownership after the motivating change and shrank the screen
-`32351 / 1259` → `32178 / 1243` (−173 lines / −16 methods, all in task 3).
+`32351 / 1259` → `32178 / 1243`. The −173 lines land in three stages —
+task 2 −109 (32351 → 32242), task 2.5 −1 (→ 32241), task 3 −63 (→ 32178);
+the −16 methods are all task 3 (the class held 1259 methods through task 2.5,
+then 1259 → 1243).
 
 ### The definitive-probe acceptance evidence
 

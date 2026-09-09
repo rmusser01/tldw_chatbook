@@ -50,8 +50,10 @@ load-independent verdict: recompose **1 → 0** on both; mounts **179 → 58**
 purpose: `media (switch-in)` is the ordinary-route ENTRY (not a resident-shell
 switch), still 1 recompose / 177 mounts on both arms.
 
-Screen shrink across the phase: `32351 / 1259` → `32178 / 1243`
-(−173 lines / −16 methods, all in task 3).
+Screen shrink across the phase: `32351 / 1259` → `32178 / 1243`. The −173
+lines split across three stages — task 2 −109 (32351 → 32242), task 2.5 −1
+(→ 32241), task 3 −63 (→ 32178); the −16 methods are all task 3 (1259 held
+through task 2.5, then 1259 → 1243).
 
 ## B. The recipe correction phase C carried (the §25 instrument bug)
 
@@ -187,7 +189,7 @@ being the documented `tier1_toggle` pre-existing red).
 | `test_library_media_characterization.py`, `test_library_notes_characterization.py` | green | green |
 | `test_library_canvas_sync_defects.py` | green | green |
 | `test_library_canvas_scoped_sync.py` | 1 failed (`test_notes_per_click_updates_keep_screen_and_canvas_identity`) | pre-existing (tasks 2/2.5/3) |
-| `./scripts/preflight.sh` | **all checks pass, zero drift** | green — no new diagnostic statement, no CSS change, no schema change, no duplicate task id (3468 task files) |
+| `./scripts/preflight.sh` | **all checks pass, zero drift** | green — no new diagnostic statement, no CSS change, no schema change, no duplicate task id (3470 task files) |
 
 ### The media battery (19 files + `test_library_multiselect_media.py`)
 

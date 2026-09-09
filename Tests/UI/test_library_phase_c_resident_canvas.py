@@ -38,7 +38,10 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
 )
-from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
+from tldw_chatbook.UI.Library_Modules.canvas_sync import (
+    _library_resident_canvas_awaits_display,
+    _sync_library_canvas,
+)
 
 
 async def _settle(pilot, passes: int = 40, delay: float = 0.01) -> None:
@@ -106,9 +109,15 @@ async def test_hidden_resident_media_canvas_does_not_process_row_presses() -> No
 async def test_off_route_media_sync_is_refused_rather_than_repainting() -> None:
     """TASK-32089: the dispatcher refuses a canvas its route does not own.
 
-    Mutation check for this pin: delete the guard in
-    ``canvas_sync._sync_library_canvas`` and the call returns True, having
-    rebuilt the hidden canvas's children.
+    This pins the COMPOSED refusal, not the route-ownership guard
+    (``_library_canvas_kind_owns_route``) in isolation. Here the off-route
+    media canvas is ALSO hidden, so since task 2.5 the display half
+    (``_library_resident_canvas_awaits_display``, checked in the media branch)
+    refuses first: deleting the ownership guard alone still returns False and
+    reds nothing. The isolating pin for the ownership guard is
+    ``test_ownership_guard_alone_refuses_a_displayed_off_route_sync`` below,
+    which reconstructs the one window -- off-route but still displayed -- that
+    only the ownership guard covers.
     """
     app = _build_test_app()
     _seed_conversations(
@@ -132,6 +141,53 @@ async def test_off_route_media_sync_is_refused_rather_than_repainting() -> None:
         # disguise: the resident set is untouched.
         assert screen.query("#library-notes-canvas")
         assert screen.query_one("#library-notes-canvas").display
+
+
+@pytest.mark.asyncio
+async def test_ownership_guard_alone_refuses_a_displayed_off_route_sync() -> None:
+    """I1 isolating pin: the one refusal only ``_library_canvas_kind_owns_route``
+    covers.
+
+    ``test_off_route_media_sync_is_refused_rather_than_repainting`` above cannot
+    isolate the route-ownership guard: its off-route media canvas is also
+    hidden, so the display half refuses first. This reconstructs the
+    outgoing-displayed window the ownership guard alone catches -- a resident
+    canvas that is off-route (the route owns Notes) yet still DISPLAYED, as the
+    outgoing canvas is for the tens of ms before the swap hides it. With
+    ``display`` True the display half returns False, so the ownership guard is
+    the only refusal left.
+
+    Mutation check: make ``_library_canvas_kind_owns_route`` ``return True`` and
+    THIS pin reds -- the sync proceeds and rebuilds the displayed canvas's
+    children -- while the hidden-canvas pin above stays green.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _enter_media_then_notes(host, pilot)
+
+        media_canvas = screen.query_one("#library-media-canvas")
+        # Force the outgoing-displayed window: off-route (the route owns Notes)
+        # but still shown, so the display half cannot be what refuses.
+        media_canvas.display = True
+        assert not _library_resident_canvas_awaits_display(media_canvas), (
+            "precondition: a displayed canvas must not trip the display half"
+        )
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES, (
+            "precondition: the route must own Notes, not the media canvas"
+        )
+
+        before = [id(child) for child in media_canvas.children]
+        assert _sync_library_canvas(screen, "media") is False
+        await _settle(pilot, passes=10)
+
+        assert [id(child) for child in media_canvas.children] == before, (
+            "the off-route sync rebuilt the displayed canvas's children"
+        )
 
 
 @pytest.mark.asyncio
