@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:15'
-updated_date: '2026-09-07 09:51'
+updated_date: '2026-09-09 03:12'
 labels:
   - canvas
   - v2
@@ -50,4 +50,6 @@ Reason: Qualification and admission of the exact approved immutable profile unde
 
 <!-- SECTION:NOTES:BEGIN -->
 Release gate BLOCKED; task remains In Progress. Corrected candidate selection passed 1350 tests with 2 optional browser skips (578.29s), but final admitted selection failed 4 tests (1346 passed, 2 skips, 539.80s). Restored V2 executable=false and default_diagram_profile=null; no admission claim. Snapshot-refusal fixture now uses a deliberately distinct fixed test-only revoked policy. Bounded diagnostics captured owned Python child SIGBUS in SQLite WAL recovery/frame lookup and Console trace-maintenance SQL; cause is not proven environmental or Canvas-specific, and earlier untraced failures are not retroactively attributed. No shared DB/security/native dependency fix was attempted. Final disabled/profile/offline reproduction selection: 77 passed, 1 existing dependency warning, no skips, 5.85s. Packaging/source closure, CI Chromium installation, immutable identity/policy reproduction, actual same-origin durable-source restart with parent/all children stopped, explicit V1 recovery, real unsent repair, bounded resources and useful browser fixtures are recorded in Docs/Canvas/V2_VERIFICATION.md. ADR124 clarifies catalog-only policy and bounded trusted selection reconciliation; manifest metadata-only identity is 17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466, with executable/library/V1 bytes unchanged. AC2 remains open until final release workflow failures are resolved. Independent review and separately authorized SQLite concurrency investigation are required.
+
+The SQLite prerequisite is now Done with reviewed acceptance closeout at Docs/superpowers/reviews/2026-09-08-sqlite-acceptance-closeout.md. The missing paired actual Canvas measurement passed five samples per arm and independent fix-only review; full workflow median36.834s current vs34.186s baseline (+7.75%), with stated limits. This only permits resuming the existing Task8 qualification: AC2 remains open, V2 disabled, prior admitted1346-pass/4-fail run stays failed. No candidate/admitted suite or V2 admission was performed by SQLite closeout. Before reproducibility runs, revalidate pinned input availability; the earlier runtime archive cache was empty on preflight, not passing evidence. No PR/push/rebase/merge action here.
 <!-- SECTION:NOTES:END -->

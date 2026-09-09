@@ -698,7 +698,7 @@ assert completed.stderr == b""
 
 The test defines `installed_entry` by inspecting the built wheel's installed files, and creates `hostile_cwd` under `tmp_path`. Exercise a real prepare and fixed TTS initialization too; successful close alone does not prove the full import closure is packaged. Instrument imports in the test-owned child harness, not through a new production diagnostics operation.
 - [x] Run installed-wheel RED/GREEN tests and verify no imports of app/config/providers/keyring/loguru/Textual startup or user files. Confirm the approved Python3.12 minimum, native policy availability and actual macOS POSIX behavior; report unavailable OS/interpreter coverage explicitly, never as passing Windows/Linux qualification.
-- [ ] Run the complete affected storage selection:
+- [x] Run the complete affected storage selection:
 
 ```bash
 ../../.venv/bin/python -m pytest -q --tb=short \
@@ -731,7 +731,7 @@ The test defines `installed_entry` by inspecting the built wheel's installed fil
   Tests/Performance/test_screen_preimport_payload_budget.py
 ```
 
-- [ ] Benchmark identical synthetic workloads against the immutable baseline in a separate temporary checkout, never move this worktree's HEAD. Measure full helper launch/batch, threaded app startup, TTS metadata-only open, repeated proof rechecks, peak live helpers/FDs and real child readiness. Keep existing performance ceilings unchanged, including the 972-module UI-ready ceiling governed by ADR-097 (`backlog/decisions/097-boot-budget-ratchets.md`); read its measurement/exception rules before interpreting a breach. The earlier 21.34ms bare-interpreter median is only a historical launch floor.
+- [x] Benchmark identical synthetic workloads against the immutable baseline in a separate temporary checkout, never move this worktree's HEAD. Measure full helper launch/batch, threaded app startup, TTS metadata-only open, repeated proof rechecks, peak live helpers/FDs and real child readiness. Keep existing performance ceilings unchanged, including the 972-module UI-ready ceiling governed by ADR-097 (`backlog/decisions/097-boot-budget-ratchets.md`); read its measurement/exception rules before interpreting a breach. The earlier 21.34ms bare-interpreter median is only a historical launch floor.
 - [x] Run the exact previously failed actual-child nodes using their existing candidate fixtures:
 
 ```bash
@@ -744,9 +744,9 @@ The test defines `installed_entry` by inspecting the built wheel's installed fil
 ```
 
 Preserve the existing source-free child fault/lifecycle captures. Do not reinterpret a disconnect as successful refusal, weaken fail-closed transport, disable maintenance, or silently rerun a crash until it disappears. Diagnose each failure on its evidence.
-- [ ] Run final static/format checks on the explicit changed files and `git diff --check`. Obtain independent review of the whole TASK-31942 correction, including terminal shutdown evidence and all source/descriptor owners, not only the last test commit.
-- [ ] Add concise implementation notes and exact evidence to TASK-31942 only after implementation/review. Check each AC and mark Done via Backlog CLI only if all gates pass; otherwise keep In Progress and document the precise failing gate. Record relevant hard-won lessons with their incident. Commit qualification/docs as `test(db): qualify lock-safe SQLite helper integration`.
-- [ ] Hand back to Task 8 of `Docs/superpowers/plans/2026-09-06-chatbook-canvas-v2-mermaid-implementation.md`. Rerun its full required candidate/admitted qualification and independent reviews under that plan. Do not enable V2 as part of this correction commit or claim the previously admitted 1,346-pass/4-fail run was green.
+- [x] Run final static/format checks on the explicit changed files and `git diff --check`. Obtain independent review of the whole TASK-31942 correction, including terminal shutdown evidence and all source/descriptor owners, not only the last test commit.
+- [x] Add concise implementation notes and exact evidence to TASK-31942 only after implementation/review. Check each AC and mark Done via Backlog CLI only if all gates pass; otherwise keep In Progress and document the precise failing gate. Record relevant hard-won lessons with their incident. Commit qualification/docs as `test(db): qualify lock-safe SQLite helper integration`.
+- [x] Hand back to Task 8 of `Docs/superpowers/plans/2026-09-06-chatbook-canvas-v2-mermaid-implementation.md`. Its full required candidate/admitted qualification and independent reviews remain under that separate plan, not completed by this handoff. Do not enable V2 as part of this correction commit or claim the previously admitted 1,346-pass/4-fail run was green.
 
 **Task 7 partial checkpoint — 2026-09-08:** Test/documentation implementation
 `4af790d46` and import-audit fix `73692f21c` passed task-scoped independent
@@ -1678,6 +1678,106 @@ remain nonzero. [Task15 evidence](../reviews/2026-09-08-sqlite-no-new-static-deb
 records the gate and warning limits. AC16 only is closed; original final ACs,
 platform/optional qualification and V2-disabled status remain unchanged.
 
+### Task 16: Complete the missing paired actual Canvas-child measurement
+
+Continuation of Task7's existing approved measurement requirement. The narrow
+closeout review supports the original AC mapping and declared platform limits,
+but confirms that `task-7-benchmark.py` contains no actual Canvas workflow.
+Current measured source: `210831e1928177d73d278b6adfad1112a240ce81`.
+Immutable baseline: `9bc73ffb35ccd6eb24629bfa8021b28063dc9112`.
+
+ADR required: no
+ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md
+Reason: Collect an omitted measurement already required by the approved design;
+no production, policy, threshold or architecture change.
+
+**Files and ownership:** No tracked product/test change. Prepare two private
+`git archive` checkouts under a single new `mktemp -d` directory in `/private/tmp`.
+The baseline retains its immutable product source. In both archives use the
+exact current bytes of these approved harness files only:
+`Tests/Canvas/browser/test_canvas_served_flow.py` and
+`Tests/Canvas/browser/canvas_live_chatbook_child.py`. This holds the corrected
+readiness/action test machinery constant while comparing product revisions.
+Record any additional harness dependency mismatch before changing the overlay;
+do not silently transplant product fixes or expand the workload.
+
+Implementer prepares/validates owned archives and reports their exact paths,
+source/harness hashes and tool provenance in `task-16-report.md`; root owns
+actual browser execution, evidence, Backlog, index/commits and closeout docs.
+Do not create a timing plugin or permanent benchmark framework. The existing
+pytest JUnit writer already reports the exact call duration:
+
+```text
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  'Tests/Canvas/browser/test_canvas_served_flow.py::test_actual_chatbook_console_finalizes_canvas_create_and_update[normal-True]' \
+  -q -ra --tb=short --show-capture=no -o junit_duration_report=call \
+  --junitxml=OWNED_UNIQUE_SAMPLE_XML
+```
+
+`OWNED_UNIQUE_SAMPLE_XML` is a fresh absolute file inside the task's private
+evidence directory, one per arm/sample; record the resolved command verbatim.
+The timed interval is pytest's **call phase**: the existing test's real served
+parent/child/browser setup, create/update/render/pin/reconnect/restored selection
+assertions and test-body cleanup. Collection and external fixture setup/teardown
+are excluded from that timing but must pass. It is end-to-end harness workflow
+cost, not pure SQL time, first-paint latency or an invented performance ceiling.
+
+- [x] Prepare the two archives without changing this worktree's HEAD/index.
+  Verify all baseline/current product files match their respective Git trees,
+  identical two-file harness overlays, same candidate assets, exact node presence,
+  existing interpreter/browser availability and repository pre-import isolation.
+  No app imports outside pytest, shared installs, user profiles or remote access.
+- [x] Root runs five independent samples per arm, serially, alternating pair
+  order current/baseline then baseline/current. Each invocation gets a unique
+  evidence directory and fresh repository-owned test state. Use scoped browser/
+  loopback permission. Preserve fixture-native lifecycle/fault captures per
+  sample before their fixed paths can be overwritten; never overwrite historical
+  worktree evidence. No other test/benchmark runs concurrently.
+- [x] Require exact node identity, one collected case, successful setup/call/
+  teardown, process exit0 and zero JUnit failure/error/skip outcomes before
+  accepting a sample. Preserve warnings and source/run identities separately.
+  Stop on the first unsuccessful invocation; no blind retry, timeout increase,
+  production patch or success-only median. A failed baseline is a reported gap,
+  not permission to weaken the comparison or call it passing.
+- [x] Report all raw call durations, median/max and absolute/relative deltas
+  only if both five-sample arms complete. Corroborate actual workflow assertions
+  and owned cleanup; timing success cannot substitute for behavioral evidence.
+  Preserve source/harness/evidence hashes and all diagnostics. Do not replay
+  completed app/TTS/helper benchmarks, static audits, eleven concurrency nodes,
+  broad suites or whole-correction reviews.
+- [x] Obtain a fix-only evidence review from the closeout reviewer. Correct the
+  Task7/closeout/Backlog status only when this specific gap is resolved. Keep
+  V2 disabled, TASK-31942 In Progress on failure, and all historical evidence.
+  No CI/push/PR/rebase/merge, dependency or host mutation is part of this task.
+
+Task16 execution status: stopped on the first current-arm invocation, exit1
+(1 failed, 1 inherited warning in6.73s), before Chromium launch. Root omitted
+the existing TLDW_CANVAS_CHROMIUM_EXECUTABLE override; the private archive and
+pytest-isolated home do not reach the installed browser via default fallbacks.
+No valid sample, baseline run, retry or aggregate exists. Preserve current-1
+output/JUnit/state and request approval for a fresh series with the explicit
+existing binary path in both arms. No source/assertion/timeout or dependency
+change is proposed. Full preparation/execution record: task-16-report.md in
+this plan's retained SDD evidence directory. TASK-31942 remains In Progress.
+
+Owner approved restarting Task16 with the existing explicit Chromium executable
+path in both arms. Use a fresh series-2 evidence namespace and preserve the
+failed current-1 attempt. The workload, five samples per arm, alternating order,
+unchanged assertions/deadlines and first-failure stop condition remain binding.
+
+Series2 completed: all ten invocations passed, each with one inherited Requests
+warning; no failures/skips/retries or discarded samples. Current median/max
+36.834/38.056s; baseline34.186/35.673s. Median+2.648s/+7.75%, max+2.383s/+6.68%.
+Exact JUnit identities and all output/diagnostic hashes independently rechecked.
+Measurement is full workflow cost, not pure SQL latency or a new threshold.
+Evidence and preserved initial failed attempt:
+Docs/superpowers/reviews/2026-09-08-sqlite-canvas-workflow-benchmark.md.
+The closeout finding's fix-only review approved the evidence: ADDRESSED, spec
+compliance PASS, task quality PASS, closeout READY, no new findings. The original
+AC mapping and all historical/static/platform limits are preserved in
+Docs/superpowers/reviews/2026-09-08-sqlite-acceptance-closeout.md. TASK-31942
+closes here; Task8/TASK-31941 qualification remains separate and V2 disabled.
+
 ## Spec coverage and handoff
 
 | Approved contract | Implementation/review unit |
@@ -1696,4 +1796,18 @@ platform/optional qualification and V2-disabled status remain unchanged.
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 | Helper-aware owner tests and pure Canvas integrity support during maintenance | 10 |
 
+### Historical progress summary through Task12
+
 Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Separately authorized Task9 closes the three strict-inventory gaps with independent approval and diagnoses the host without mutation. Task10 closes the 26 BASE failures with scoped review and committed verification. Task11 now resolves its test-teardown Minor with independent approval. Fresh affected-selection and checkout benchmarks have completed with the explicit limits in the final-local-qualification report: 1844 affected tests pass, but the five-child Canvas run has one unresolved failure, an exact rerun fails earlier, and aggregate static checks remain nonzero. Eleven semaphore-blocked cases and platform/optional gaps remain. No failed, skipped or deselected gate is passing evidence or permission for host cleanup/unrelated repairs. The user-approved source-free readiness/action spike has now reproduced an empty-card synthetic action before pending UI sync finishes; both temporary test edits were restored exactly. Evidence: Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md. The separate startup failure remains open. The separately approved Task12 harness correction is complete and independently reviewed; the original exact browser node now passes. No production fix or broader qualification replay occurred, and remaining qualification gaps stay open.
+
+### Final SQLite closeout
+
+Task13 resolves the shared-readiness harness gate; Task14 independently qualifies
+the exact eleven macOS concurrency cases; Task15 completes the owner-approved
+no-new-static-debt gate and unchanged budget checks. The final acceptance review
+supports all original ACs and declared platform limits. Task16 resolves its sole
+missing actual-child measurement and passes fix-only review, with exact ten-case
+evidence and the higher measured workflow cost preserved. TASK-31942 is Done.
+Consolidated record: Docs/superpowers/reviews/2026-09-08-sqlite-acceptance-closeout.md.
+All earlier evidence and SDD artifacts remain retained. Handback is to the
+separate Mermaid Task8/TASK-31941 qualification; V2 remains disabled.

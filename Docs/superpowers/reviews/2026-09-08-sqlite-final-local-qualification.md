@@ -344,3 +344,20 @@ passes, but whole-file lint/format remains nonzero. Historical results above
 remain evidence of their respective checkpoints. AC16 is checked; original
 AC1–7 remain unchecked, TASK-31942 In Progress and Canvas V2 disabled. No broader
 test/benchmark/review replay, host/dependency action or new remote operation.
+
+## Final acceptance reconciliation and actual-child measurement
+
+The [acceptance closeout](2026-09-08-sqlite-acceptance-closeout.md) now reconciles
+the original seven ACs and preserved platform/static limits with independent
+review. Its one Important missing-evidence finding was resolved by Task16's
+[paired actual Canvas workflow measurement](2026-09-08-sqlite-canvas-workflow-benchmark.md):
+five samples per arm, all ten invocations passing, median36.834s current versus
+34.186s baseline (+7.75%) for the full workflow. No completed app/TTS/helper
+measurement was repeated. The initial browser-path setup failure and approved
+fresh series are reported separately; no failure was silently discarded.
+
+Fix-only review verified the exact cases, inputs, hashes, aggregation and limits:
+ADDRESSED, spec compliance PASS, task quality PASS, closeout READY, no new issues.
+Original AC1–7 are checked and TASK-31942 is Done. This does not erase historical
+failures, make whole-file static debt green, qualify other platforms, or admit
+Canvas V2. Task8/TASK-31941 remains the separate candidate/admitted release gate.

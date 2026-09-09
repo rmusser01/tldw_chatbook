@@ -688,3 +688,31 @@ Task14/AC15 are satisfied for this fresh runner. Earlier failed setup evidence
 is preserved; no local host/Python changes, broad rerun, main/dev update or
 PR/merge occurred. Other platform/optional/static gates remain open, original
 final ACs remain unchecked, TASK-31942 stays In Progress and Canvas V2 disabled.
+
+## SQLite correction closeout and Mermaid handback — 2026-09-08
+
+TASK-31942 is now Done. The reviewed acceptance matrix reconciles the affected
+storage/actual-child results, separately qualified eleven macOS concurrency
+cases, final import-only coverage/unchanged startup budgets, and the explicitly
+approved baseline-static-debt/platform limits without inventing one aggregate
+all-green run. Historical failures and raw evidence above remain unchanged.
+
+The narrow closeout review found one omitted requirement: actual Canvas-child
+workflow timing against baseline. Task16 now supplies five samples per arm with
+identical harness and synthetic workload. All ten invocations pass; median
+36.834s current versus34.186s baseline (+2.648s/+7.75%). This measures the full
+create/update/render/pin/reconnect/restore/cleanup call, not isolated SQL latency.
+The initial missing-browser-path failure is preserved; the user explicitly
+approved the corrected fresh series, which had no retries or discarded samples.
+Each successful run retains the inherited Requests warning. Independent
+fix-only review: ADDRESSED, spec compliance PASS, quality PASS, closeout READY,
+with no new findings. No other completed suite, benchmark or broad review replay.
+
+See the [acceptance closeout](../superpowers/reviews/2026-09-08-sqlite-acceptance-closeout.md)
+and [paired workflow evidence](../superpowers/reviews/2026-09-08-sqlite-canvas-workflow-benchmark.md).
+Existing ADR125 applies unchanged; no source/dependency/host or remote change in
+this closeout. TASK-31941/Task8 must still run its separate candidate/admitted
+qualification and review. V2 executable remains false and default profile null;
+the earlier admitted1346-pass/4-fail result remains failed, not superseded by this
+SQLite handback. Revalidate pinned input availability before reproducibility
+runs; the earlier runtime archive cache was empty at preflight.
