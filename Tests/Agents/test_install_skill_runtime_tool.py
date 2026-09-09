@@ -28,7 +28,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
 from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 

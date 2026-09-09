@@ -14046,3 +14046,17 @@ usability, and have safety cleanup of their own. The repaired fourteen-case
 native cohort had zero post-test descriptor deltas across 166 observed opens;
 ordinary test success and a current-test-only midpoint sample had not established
 that outcome.
+
+### PR 2427: queued focus restoration can overwrite a successful Back
+
+On 2026-09-09, Notes Back intermittently lost its exact row and scroll even after
+the fixture waited for filtered records. A controlled projection delay proved
+those records preceded the replacement DOM and deferred focus settlement.
+Waiting for both removed that setup race, but a later run still failed. Focus
+stacks then showed Back restoring row n-18 before an older queued automatic
+callback restored the filter and zero scroll. Preserve a newer mounted non-grip
+focus owner at the automatic restoration boundary, and separately test missing
+focus and grip fallback. The deterministic late-callback control failed before
+the guard and passed afterward; a standalone successful Back was not sufficient
+evidence. Keep exact final focus and scroll assertions while fixing readiness
+and ownership independently.

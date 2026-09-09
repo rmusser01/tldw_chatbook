@@ -2041,3 +2041,53 @@ additional failures beyond the two Starter cases; their terminal tracebacks
 remain to be read before assigning causes. A fresh Git fetch and the live dev
 branch API both still resolve `2e3389e694`; the PR payload's older `baseRefOid`
 is not evidence that dev advanced, so no additional rebase is justified yet.
+
+### Wave-thirteen terminal repairs and final qualification (2026-09-09 UTC)
+
+The first native run completed with **830 passed, 21 failed, 10 warnings in
+1407.71s**, exit 1, and final **`sqlite_paths: []`**. Its source was the wave-thirteen
+integration checkpoint; the terminal log and native record remain in the directory
+above. The zero-descriptor result does not turn failing tests into a passing run.
+
+- Starter wraparound and compact Notes allocation pins were stale after TASK-32064
+  moved Chunking Lab into Details. Exactly one compact row returns to flexible
+  content. Updated pins retain total height, fixed controls, paint, navigation,
+  authority, zero-work seams and exact six-row surplus growth.
+- The three-cell Clear button clipped the Library search placeholder. Reclaimed
+  redundant padding and the doubled joined border within the same rail width;
+  an equally specific focus rule preserves visible focus. Mounted tests cover
+  both widths, full placeholder paint, adjacency, Clear visibility and keyboard
+  clear/refocus behavior. Both clipping and focus styling failed before repair.
+- Wide Work status deduplication had also removed the sole compact storage
+  authority. Compact Work now reuses its existing authority prefix; responsive
+  transitions update the existing node in place. Three compact-wide-compact
+  create/loading/editor controls failed before repair. Loading still omits an
+  invented Next instruction; obsolete test expectations were aligned without
+  removing status, identity, error or recovery assertions.
+- A controlled delayed filter projection proved that filter records precede
+  settled DOM/focus. The Back fixture now waits for the actual filtered list and
+  focus. A subsequent failure still occurred: stack traces showed Back restoring
+  row n-18 before an older queued callback restored the filter and zero scroll.
+  Notes automatic restoration now preserves a newer mounted non-grip focus owner,
+  following existing Media behavior. Deterministic controls retain missing/grip
+  fallback; exact Back identity, placement, filter, sort and scroll pins remain.
+  Temporary stack instrumentation is removed. Notes stays at its original
+  **5,276-line cap**.
+- Qodo comments 3965201343 and 3965201350 are addressed by contiguous local imports
+  and split-JSON test annotations/documentation, respectively.
+
+Current qualification: **28 passed, 828 deselected, 3 warnings in 93.58s** for the
+complete repaired Library case group (`/private/tmp/pr2427-wave13-all-repair.log`);
+**129 passed, 3 warnings in 42.88s** across complete Notes canvas, crit8, owner
+wiring and both ratchet files (`/private/tmp/pr2427-wave13-owner-final.log`);
+**16 passed, 2 warnings in 0.91s** for both Qodo-affected files
+(`/private/tmp/pr2427-wave13-qodo.log`). Changed Python files pass scoped Ruff;
+whitespace checks and derived-artifact preflight pass
+(`/private/tmp/pr2427-wave13-checkpoint-final-preflight.log`). Independent final
+review found no blocker in these repairs or their assertions.
+
+ADR required: no. ADR path: N/A. Reason: routine lifecycle/layout regression
+repairs and fixture alignment within accepted contracts, with no new boundary,
+dependency, privacy change or relaxed cap. The complete **856-case** native
+Library rerun on the repaired checkpoint, current-head Qodo review, live-base
+freshness and required GitHub checks remain merge gates. This is not a merge claim.

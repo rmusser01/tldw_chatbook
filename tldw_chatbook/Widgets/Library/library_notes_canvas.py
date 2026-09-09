@@ -2515,6 +2515,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.styles.min_width = 0 if compact else 40
         if not self.is_mounted:
             return
+        authority = self.query(f"#{self.authority_id}")
+        if authority:
+            label = authority.first(Static)
+            copy = self._authority_copy()
+            if self._static_text(label) != copy:
+                label.update(copy)
         if self.mode == "list" and self.list_state is not None:
             database_purpose = self.query("#library-notes-database-purpose")
             if database_purpose:

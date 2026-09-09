@@ -559,6 +559,7 @@ from ...Utils.adaptive_reader_state import (
     resolve_adaptive_reader_layout,
 )
 from ...Widgets.Library import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     LibraryAdaptiveReaderShell,
     LibraryMediaCanvas,
     LibraryNoteWorkPane,
@@ -2054,21 +2055,21 @@ class LibraryNotesController:
     def _restore_library_notes_after_targeted_sync(
         self, identity: LibraryNotesFocusIdentity
     ) -> None:
-        """Restore portable Notes focus + scroll after a canvas-scoped sync.
+        """Recover Notes focus after queued recompose unless a live owner claimed it.
 
-        Task-15457: unlike whole-screen rehydration, canvas sync never reaches
-        LibraryScreen.refresh. Restore synchronously from the canvas recompose
-        using the same-handler identity; no deferred-restore guard is needed.
-
+        Explicit action callbacks still run afterward at the canvas sync seam.
         Args:
             identity: The portable identity captured before the sync.
 
-        Returns:
-            None.
         """
         # task-32052: canvas sync's work-pane-only gate misses list -> create.
         # Reject the old navigator identity so Ctrl+N stays on Blank note.
         if identity.region and identity.region != self._library_notes_focus_region():
+            return
+        focused = self.focused
+        if focused is not None and focused.is_mounted and not focused.has_class(
+            LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+        ):
             return
         # Focus FIRST and synchronously: the callback runs from the canvas's
         # own ``recompose``, so focus is restored before any frame in which

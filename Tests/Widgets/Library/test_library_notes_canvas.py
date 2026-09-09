@@ -49,6 +49,7 @@ from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
     LibraryNotesCanvas,
 )
+from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
 
 pytestmark = pytest.mark.asyncio
 
@@ -241,6 +242,33 @@ async def test_authority_row_is_first_plain_child_in_every_notes_mode(
         assert "Library database" not in text
         assert status_fragment in text
         assert "Next:" in text
+
+
+@pytest.mark.parametrize("mode", ("create", "loading", "editor"))
+async def test_compact_work_authority_survives_responsive_round_trip(
+    widget_pilot, mode: str,  # noqa: F811
+) -> None:
+    """Keep storage authority in compact Work without duplicating wide Items.
+
+    Args:
+        widget_pilot: Real mounted-widget test context.
+        mode: Work subview whose inherited authority node stays mounted.
+    """
+    async with await widget_pilot(
+        LibraryNoteWorkPane, mode=mode, compact=True,
+    ) as pilot:
+        canvas = pilot.app.query_one(LibraryNoteWorkPane)
+        authority = canvas.query_one("#library-note-work-authority", Static)
+        for compact in (True, False, True):
+            canvas.apply_compact_presentation(compact)
+            await pilot.pause()
+            assert canvas.query_one("#library-note-work-authority") is authority
+            text = str(authority.renderable)
+            assert text.startswith("Library notes · Library database") is compact
+            assert text
+            if mode == "loading":
+                assert "Loading note…" in text
+                assert "Next:" not in text
 
 
 async def test_completed_import_receipt_has_focusable_back_action_at_60_columns():

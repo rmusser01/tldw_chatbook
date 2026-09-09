@@ -28,12 +28,12 @@ class LibraryNoteWorkPane(LibraryNotesCanvas):
         self.remove_class("library-adaptive-reader-items")
 
     def _authority_prefix(self) -> str:
-        """Never restate the authority the mounted list pane already names.
+        """Name storage when compact Work hides the list's authority.
 
         task-32063: both panes painted "Library notes · Library database …",
         so a wide Notes session showed the same authority sentence twice.
         """
-        return ""
+        return super()._authority_prefix() if self.compact else ""
 
     def compose(self) -> ComposeResult:
         """Compose the active task or a stable no-selection work surface."""
