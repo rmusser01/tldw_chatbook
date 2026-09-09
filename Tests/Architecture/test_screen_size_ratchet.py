@@ -852,7 +852,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # which is 1 OVER the 1258 budget dev left here, so this row still fails on
     # methods; that red predates this task (measured identical at its base
     # commit 9158fac98) and the budget is deliberately NOT raised to hide it.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32242, 1258),
+    # 2026-09-08, Library phase C task 2.5 (the sync storm): 32242 -> 32241.
+    # A one-line give-back, not a wave: the rail-switch handler needed one
+    # named constant (`LIBRARY_NOTES_RAIL_ROWS`, in `screen_constants.py`)
+    # to ask whether a press is LEAVING Notes, and using it at the three
+    # sites that spelled the same pair inline paid for the import and the
+    # comment. Re-pinned rather than left as slack, per this file's own rule.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32241, 1258),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

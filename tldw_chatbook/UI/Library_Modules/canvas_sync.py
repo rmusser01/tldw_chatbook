@@ -382,6 +382,56 @@ _LIBRARY_RESIDENT_CANVAS_OWNER_ROWS: dict[str, frozenset[str]] = {
 #: Sentinel for "this receiver does not expose the selection at all".
 _NO_SELECTED_ROW = object()
 
+#: The same two resident kinds as above, mapped to the canvas id residency
+#: parks in the canvas host. Kept beside the owner rows so the two halves of
+#: the residency guard cannot drift; ``library_browse_route_swap.
+#: LIBRARY_RESIDENT_CANVAS_IDS`` holds the same set from the swap's side and
+#: deliberately is NOT imported here (that module imports this one). The two
+#: are pinned equal by ``Tests/UI/test_library_phase_c_switch_storm.py::
+#: test_the_two_residency_guards_agree_on_which_canvases_are_resident``.
+_LIBRARY_RESIDENT_CANVAS_IDS: dict[str, str] = {
+    "media": "library-media-canvas",
+    "notes": "library-notes-canvas",
+}
+_LIBRARY_RESIDENT_CANVAS_ID_SET = frozenset(_LIBRARY_RESIDENT_CANVAS_IDS.values())
+
+#: The container residency parks hidden canvases in.
+LIBRARY_CANVAS_HOST_ID = "library-canvas"
+
+
+def _library_resident_canvas_awaits_display(canvas: Widget) -> bool:
+    """Whether this canvas is resident but has not been shown yet.
+
+    The second half of the phase-C residency guard, and the same argument as
+    the route-ownership half above: with both browse canvases permanently
+    mounted, a sync can now land on one that is parked in the canvas host with
+    ``display`` False. The route STATE flips several tens of milliseconds
+    before the route SWAP shows the canvas, so syncs land in that window --
+    phase-C task 2.5 measured **five of them on a resident Notes switch,
+    25 of its 62 mounts**, every one superseded by the swap's own adopt-sync
+    before anything was ever visible.
+
+    Refusing is safe because showing a resident canvas is exactly what
+    re-paints it: ``library_browse_route_swap._adopt_library_browse_canvas``
+    syncs every resident canvas at the moment it displays it, and the route
+    swap is the only writer of a browse canvas's ``display``.
+
+    Args:
+        canvas: The mounted canvas the dispatcher just resolved.
+
+    Returns:
+        True when the sync must be refused and left to the swap.
+    """
+    if canvas.display or canvas.id not in _LIBRARY_RESIDENT_CANVAS_ID_SET:
+        return False
+    if getattr(canvas.parent, "id", None) != LIBRARY_CANVAS_HOST_ID:
+        return False
+    logger.debug(
+        f"Library {canvas.id} sync refused: the canvas is resident but not "
+        "displayed; the route swap repaints it when it shows it."
+    )
+    return True
+
 
 def _library_canvas_kind_owns_route(screen: "LibraryScreen", kind: str) -> bool:
     """Whether ``kind``'s canvas is the one the current route owns.
@@ -516,6 +566,8 @@ def _sync_library_canvas(
             sync_args = (screen._build_library_conversations_state(),)
         elif kind == "media":
             canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
+            if _library_resident_canvas_awaits_display(canvas):
+                return False
             media_state = screen._build_library_media_state()
             # The state builder RESOLVES the selection -- a requested id the
             # active type filter no longer renders falls back to the first
@@ -539,6 +591,8 @@ def _sync_library_canvas(
             sync_kwargs = screen._library_media_trash_canvas_presentation()
         elif kind == "notes":
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+            if _library_resident_canvas_awaits_display(canvas):
+                return False
             sync_kwargs = screen._library_notes_list_canvas_kwargs()
             sync_kwargs["deferred_guard"] = deferred_guard
             # (wave-8 task 3) `focus_intent_generation` moved to

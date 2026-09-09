@@ -257,6 +257,12 @@ LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS = frozenset(
     {LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE}
 )
 
+#: The rail rows that land on the Database-Notes route. Named (phase-C task
+#: 2.5) because the rail-switch handler has to ask "is this press LEAVING
+#: Notes?" before it decides whether repainting the Notes canvas is work
+#: anybody will ever see.
+LIBRARY_NOTES_RAIL_ROWS = frozenset({LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE})
+
 
 # PR-3 Task 4: the retrieval outcomes phase two runs on. `ready` is the
 # ordinary case; `empty` is answered too -- honestly, and without a provider

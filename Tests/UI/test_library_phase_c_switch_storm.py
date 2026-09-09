@@ -124,6 +124,31 @@ class _SubtreeRestyleCounter:
         return sum(1 for fire in self.fires if fire == node_id)
 
 
+def test_the_two_residency_guards_agree_on_which_canvases_are_resident() -> None:
+    """The dispatcher and the route swap must name the same resident set.
+
+    ``canvas_sync`` cannot import ``library_browse_route_swap`` (that module
+    imports this one), so residency's canvas ids are spelled in both files.
+    Two copies of one fact is exactly how a guard goes quietly one-sided:
+    add a third resident canvas to the swap and the dispatcher would keep
+    repainting it while hidden, with no error anywhere.
+    """
+    from tldw_chatbook.UI.Library_Modules.canvas_sync import (
+        _LIBRARY_RESIDENT_CANVAS_IDS,
+        _LIBRARY_RESIDENT_CANVAS_OWNER_ROWS,
+    )
+    from tldw_chatbook.UI.Library_Modules.library_browse_route_swap import (
+        LIBRARY_RESIDENT_CANVAS_IDS,
+    )
+
+    assert set(_LIBRARY_RESIDENT_CANVAS_IDS.values()) == set(
+        LIBRARY_RESIDENT_CANVAS_IDS
+    )
+    assert set(_LIBRARY_RESIDENT_CANVAS_IDS) == set(
+        _LIBRARY_RESIDENT_CANVAS_OWNER_ROWS
+    )
+
+
 @pytest.mark.asyncio
 async def test_route_marker_classes_have_no_stylesheet_rules() -> None:
     """The marker classes are query markers, so nothing may style them.
@@ -199,4 +224,101 @@ async def test_route_switch_does_not_restyle_the_whole_shell_subtree(
     assert measured == {"media (switch-back)": 0, "notes (switch)": 0}, (
         "a rail-mode switch restyles the whole browse-shell subtree: "
         f"{measured}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_switching_away_does_not_rebuild_the_canvas_being_left() -> None:
+    """The outgoing canvas keeps its children -- nobody would ever see them.
+
+    Measured before this pin: a media switch-back spent **21 of its 81
+    mounts** rebuilding the *Notes* canvas, from
+    ``_supersede_library_notes_navigation`` -- which runs two statements
+    BEFORE the destination row is set, so the route-ownership guard still
+    saw Notes as the owner -- and then hid it. The rebuild is repeated for
+    real by the route swap the next time Notes is entered
+    (``_adopt_library_browse_canvas`` re-syncs every resident canvas it
+    shows), so nothing is lost by not doing it here.
+
+    Child IDENTITY is the assertion, not child count: a canvas-scoped
+    ``sync_state`` is ``refresh(recompose=True)``, which removes and rebuilds
+    the same-looking children, so counts would not notice.
+    """
+    host = _seeded_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _open_library(host, pilot)
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_MEDIA)
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_NOTES)
+
+        notes_canvas = screen.query_one("#library-notes-canvas")
+        assert notes_canvas.display, "precondition: Notes is the shown route"
+        before = [id(child) for child in notes_canvas.children]
+        assert before, "precondition: the Notes canvas has children to keep"
+
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_MEDIA)
+
+        after = [id(child) for child in notes_canvas.children]
+        # Liveness: the switch must have happened, or an untouched outgoing
+        # canvas is just a UI that did nothing.
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert screen.query_one("#library-media-canvas").display
+        assert not notes_canvas.display
+
+    assert after == before, (
+        "switching away rebuilt the outgoing Notes canvas's children"
+    )
+
+
+@pytest.mark.asyncio
+async def test_destination_canvas_is_not_rebuilt_while_it_is_still_hidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No resident canvas repaints before the swap shows it.
+
+    Measured before this pin: a later Notes switch spent **25 of its 62
+    mounts** on five ``sync_state`` calls that all ran with the canvas's
+    ``display`` still False -- the route STATE flips (so the ownership guard
+    admits them) several tens of milliseconds before the route SWAP shows the
+    canvas, and the swap's own adopt-sync repaints it again afterwards. The
+    work is provably discarded: it paints a widget nobody can see, and is
+    superseded before it is shown.
+
+    Recorded per call rather than counted in aggregate so a failure names how
+    many hidden repaints came back.
+    """
+    hidden_syncs: list[str] = []
+    armed = False
+
+    from tldw_chatbook.Widgets.Library import LibraryMediaCanvas, LibraryNotesCanvas
+
+    for canvas_class in (LibraryMediaCanvas, LibraryNotesCanvas):
+        original = canvas_class.sync_state
+
+        def sync_state(self, *args, _original=original, **kwargs):
+            if armed and not self.display:
+                hidden_syncs.append(type(self).__name__)
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(canvas_class, "sync_state", sync_state)
+
+    host = _seeded_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _open_library(host, pilot)
+        # Both routes visited first: the pin is about a RESIDENT destination,
+        # and a route's first entry legitimately builds its canvas fresh.
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_MEDIA)
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_NOTES)
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_MEDIA)
+
+        armed = True
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_NOTES)
+        armed = False
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen.query_one("#library-notes-canvas").display
+        assert not screen.query_one("#library-media-canvas").display
+
+    assert hidden_syncs == [], (
+        f"{len(hidden_syncs)} canvas repaint(s) ran while the canvas was "
+        f"hidden: {hidden_syncs}"
     )

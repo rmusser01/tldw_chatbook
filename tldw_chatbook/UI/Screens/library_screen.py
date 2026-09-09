@@ -759,6 +759,7 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_NOTES_SOURCE_DATABASE,
     LIBRARY_NOTES_SOURCE_FILES,
     LIBRARY_CANVAS_KIND_NOTES,
+    LIBRARY_NOTES_RAIL_ROWS,
     LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS,
     LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES,
     LIBRARY_STUDY_HANDOFF_MODES,
@@ -4300,11 +4301,7 @@ class LibraryScreen(BaseAppScreen):
         """Return whether the current Library route is owned by Database Notes."""
         return (
             self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
-            and self._library_selected_row_id
-            in {
-                LIBRARY_ROW_BROWSE_NOTES,
-                LIBRARY_ROW_CREATE_NOTE,
-            }
+            and self._library_selected_row_id in LIBRARY_NOTES_RAIL_ROWS
         )
 
     def _library_notes_compact_workflow_active(self) -> bool:
@@ -6914,15 +6911,11 @@ class LibraryScreen(BaseAppScreen):
         elif self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             self._sync_library_conversation_reader_layout_from_shell()
         elif (
-            self._library_selected_row_id
-            in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
+            self._library_selected_row_id in LIBRARY_NOTES_RAIL_ROWS
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_FILES
         ):
             self._sync_library_file_notes_reader_layout_from_shell()
-        elif self._library_selected_row_id in (
-            LIBRARY_ROW_BROWSE_NOTES,
-            LIBRARY_ROW_CREATE_NOTE,
-        ):
+        elif self._library_selected_row_id in LIBRARY_NOTES_RAIL_ROWS:
             self._sync_library_notes_reader_layout_from_shell()
             if self._notes_state.work_session_activation_pending:
                 self._activate_database_note_work_session(self._notes_state.selected_note_id)
@@ -19542,7 +19535,16 @@ class LibraryScreen(BaseAppScreen):
         # later returns to the same visual Notes region. Invalidate the token
         # now so leave→return cannot recreate authority by region equality.
         self._notes_state.operation = None
-        self._supersede_library_notes_navigation()
+        # ``render=`` only when this press STAYS on Notes: phase-C task 2.5
+        # measured this repaint at 21 of a media switch-back's 81 mounts,
+        # rebuilding the canvas the switch is about to hide (it runs before
+        # the destination row is set, so the route-ownership guard still sees
+        # Notes as the owner). Re-entering Notes repaints it for real --
+        # ``_adopt_library_browse_canvas`` syncs every resident canvas it
+        # shows -- so the only thing lost is work nobody could see.
+        self._supersede_library_notes_navigation(
+            render=row_id in LIBRARY_NOTES_RAIL_ROWS
+        )
         if row_id == LIBRARY_ROW_CREATE_NOTE and not self._notes_state.create_running:
             # Create status belongs to one visible Create attempt. Import
             # reuses the persistence seam from Navigator, so its internal
@@ -19566,10 +19568,7 @@ class LibraryScreen(BaseAppScreen):
         self._export_state.origin_row_id = ""
         # task-420: keep the footer's "u" hint in sync with the row gate.
         self._register_footer_shortcuts()
-        self._notes_state.explicit_stage_intent = row_id in {
-            LIBRARY_ROW_BROWSE_NOTES,
-            LIBRARY_ROW_CREATE_NOTE,
-        }
+        self._notes_state.explicit_stage_intent = row_id in LIBRARY_NOTES_RAIL_ROWS
         if self._notes_state.explicit_stage_intent:
             self._notes_state.stage = "notes"
         # A rail-row press is always a fresh entry into a content type, so
