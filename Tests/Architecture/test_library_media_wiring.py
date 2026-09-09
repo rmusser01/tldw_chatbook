@@ -437,19 +437,26 @@ _MEDIA_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: at the controller PR, exactly as every prior series' own wiring test
 #: carried it between its task 2 and task 3.
 #:
-#: **23 of the 140** (original 22 plus TASK-31932 step 68), from an ``ast`` census (never a call-shaped
+#: **30 of the 140** (original 22 plus TASK-31932 steps 68/70), from an ``ast`` census (never a call-shaped
 #: regex -- a bare callable passed as an argument is an ``ast.Attribute``
 #: too, and the prompts series lost three names to exactly that blind spot)
 #: over ``tldw_chatbook/`` + every ``Tests/`` root + ``Docs/`` + ``scripts/``
 #: + ``Helper_Scripts/``, excluding only the controller module, each name's
 #: own delegator body, and this file's own literal pin tuple above. The
-#: other 117 KEEP: **53 unconditionally** per the recipe §4 whitelist (48
+#: other 110 KEEP: **53 unconditionally** per the recipe §4 whitelist (48
 #: ``@on`` + 5 ``action_*``; media owns ZERO ``on_<message>``
 #: name-dispatched handlers, so that whitelist's third member is inert
-#: here) and **64 with a genuine external caller**. Prune fraction
-#: 23/140 = 16.43%.
+#: here) and **57 with a genuine external caller**. Prune fraction
+#: 30/140 = 21.43%.
 _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        "_adopt_library_media_row_owner",
+        "_focus_library_media_page_control",
+        "_request_library_media_filter",
+        "_advance_library_media_presentation_epoch",
+        "_library_media_successful_focus_is_allowed",
+        "_bind_library_media_settlement_deadline",
+        "_focus_library_media_trash_after_paint",
         "_cache_library_media_preview",
         "_add_library_media_highlight",
         "_build_library_media_viewer_display_state",

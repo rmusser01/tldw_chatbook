@@ -649,7 +649,7 @@ async def test_a_scope_change_clears_the_armed_analyze_choice():
         _sync_library_canvas(screen, "media")
         await _wait_for_selector(screen, pilot, "#library-media-analyze-receipt")
 
-        screen._request_library_media_filter("beta")
+        screen._media_controller._request_library_media_filter("beta")
         await pilot.pause()
         assert screen._media_state.analyze_choice is None
         _sync_library_canvas(screen, "media")

@@ -2930,41 +2930,13 @@ class LibraryPromptsController:
         target_artifact_type: ArtifactType | None = None,
         save_as_new: bool = False,
     ) -> None:
-        """Save the open Library prompt's current editor text.
-
-        The prompts DB's update seam (``update_prompt_by_id``, reached via
-        ``PromptScopeService.save_prompt``) has no caller-supplied
-        expected-version parameter of its own -- it always re-derives the
-        version to bump from a fresh read inside its own transaction, so it
-        cannot detect "this editor's cached version is stale" by itself.
-        This method does that staleness check itself, via a fresh
-        ``get_prompt`` read, BEFORE attempting the real write.
-
-        Likewise, a rename to another prompt's name needs to distinguish
-        "that name belongs to an active prompt" (name-in-use) from "that
-        name belongs to a soft-deleted prompt" (soft-deleted-name) --
-        outcomes the real ``update_prompt_by_id`` cannot cleanly
-        distinguish either (both ultimately surface as the same
-        ``ConflictError``/wrapped-``DatabaseError`` shape once the actual
-        write is attempted, since ``Prompts.name`` is globally unique
-        regardless of soft-delete state). So a rename is pre-checked by a
-        name lookup too, before ever attempting the write.
-
-        Every branch re-checks that the prompt this save was *for* is still
-        selected (and the editor still showing) before mutating shared
-        state, mirroring ``_save_library_note``'s stale-result guard.
-
-        Task 8b D1: ``prompt_id is None`` (``_selected_prompt_id`` unset) is
-        the create-flow sentinel -- set by
-        ``_enter_library_prompt_create_editor``/``handle_library_prompt_duplicate``,
-        never a stray/invalid state (a browsed prompt always has a real
-        int id). ``save_prompt`` already routes ``prompt_identifier=None``
-        to its own create path (``PromptScopeService.save_prompt``), so the
-        actual write call below is unchanged between create and update --
-        only the pre-checks (the version-staleness read has nothing to
-        check for a not-yet-created prompt) and the post-write bookkeeping
-        (adopting the freshly created id) differ, per ``is_create`` below.
-        """
+        """Save live prompt text through the scope service.
+        For updates, fetch the current version before writing: the DB derives its
+        own version and cannot detect a stale editor. Pre-check renames including
+        soft-deleted names so distinct refusal reasons survive the DB's shared
+        ConflictError shape. Recheck selection/editor ownership before every result.
+        None is the create-flow ID sentinel, not invalid state: skip update-only
+        prechecks, use the service's existing create path, and adopt the returned ID."""
         if self._library_prompts_mutation_in_flight:
             return
         if self._library_prompts_view != "editor":

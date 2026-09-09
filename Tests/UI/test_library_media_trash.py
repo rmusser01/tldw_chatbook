@@ -724,7 +724,7 @@ async def test_media_trash_entry_requests_one_independent_initial_page():
                 ),
                 message="Normal Media type scope never applied.",
             )
-            screen._request_library_media_filter("Interview")
+            screen._media_controller._request_library_media_filter("Interview")
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -1679,7 +1679,7 @@ async def test_media_trash_focus_recovers_after_suppressed_canvas_sync(monkeypat
             message="Real Tab did not leave Search after a suppressed sync.",
         )
         assert screen._notes_state.focus_intent_generation > older_generation
-        screen._focus_library_media_trash_after_paint(
+        screen._media_controller._focus_library_media_trash_after_paint(
             "#library-media-trash-search", older_generation
         )
         await pilot.pause()
