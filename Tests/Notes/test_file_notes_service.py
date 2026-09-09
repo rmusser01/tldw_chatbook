@@ -1324,3 +1324,50 @@ def test_scan_reports_the_entries_it_has_walked(
     assert seen == sorted(seen)
     assert seen[-1] == expected
     assert max(seen) >= SCAN_PROGRESS_INTERVAL
+
+
+def test_scan_stops_between_files_in_one_flat_directory(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-32121 (review): a flat folder is a single ``os.walk`` yield.
+
+    Checking only between directories leaves the per-file metadata work --
+    the slow half for a folder with thousands of files in it -- running
+    with the operation lock held, so Cancel could not free the next folder
+    change until the whole directory had been examined.
+    """
+    root = tmp_path / "flat"
+    root.mkdir()
+    for index in range(200):
+        (root / f"note{index:03d}.md").write_text("body", encoding="utf-8")
+    service = FileNotesService(root, replica)
+
+    examined = 0
+    original_is_symlink = service_module._is_symlink
+
+    def counting_is_symlink(path: Path) -> bool:
+        nonlocal examined
+        examined += 1
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(service_module, "_is_symlink", counting_is_symlink)
+
+    checks = 0
+
+    def should_cancel() -> bool:
+        nonlocal checks
+        checks += 1
+        # The directory-level check passes, so the walk is already inside
+        # the one directory when the user abandons the scan.
+        return checks > 1
+
+    with pytest.raises(ScanCancelled):
+        service.scan(should_cancel=should_cancel)
+
+    assert examined <= 1, (
+        f"the cancelled scan still examined {examined} of 200 files"
+    )
+    assert service._operation_lock.acquire(blocking=False)
+    service._operation_lock.release()

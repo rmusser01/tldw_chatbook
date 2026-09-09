@@ -1272,6 +1272,11 @@ class FileNotesService:
                 if name != ".git" and not _is_symlink(current_path / name)
             )
             for name in sorted(file_names):
+                # A flat folder is ONE walk yield, so the check above never
+                # comes round again: two stats per file is the slow half,
+                # and it runs with the operation lock held (review round 2).
+                if should_cancel is not None and should_cancel():
+                    raise ScanCancelled()
                 path = current_path / name
                 if not self._is_supported(path) or _is_symlink(path):
                     continue
