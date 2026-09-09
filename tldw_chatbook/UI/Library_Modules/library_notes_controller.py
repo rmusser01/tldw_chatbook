@@ -5,118 +5,41 @@ Follows ``backlog/docs/library-decomposition-recipe.md`` and the Media controlle
 Final Library move: Database Notes list/editor, screen-owned Folder-Files seams,
 note import, lasting sync, footer, responsive stages and focus/scroll restoration.
 
-**Cluster derivation.** A fresh SS6 ``ast`` census of ``LibraryScreen``
-class-body methods containing ``"note"`` (case-insensitive) found **291 raw
-``FunctionDef`` matches, 285 unique names**. The 6-name gap is NOT a property/setter pair, as in every
-prior series -- it is a **byte-identical DUPLICATE block dev shipped twice**
-(see the duplicate-block paragraph below). Of the 285, 93 carry an ``@on``
-decorator, 6 are ``action_*``, 7 are ``@staticmethod``, 5 are ``@property``,
-and **0 are ``@work``**.
+**Historical census.** SS6 found 291 raw notes-named definitions, 285 unique:
+93 ``@on``, 6 ``action_*``, 7 static methods, 5 properties, and no ``@work``.
+The six duplicate names below, not property/setter pairs, explain the gap.
+**No notes handlers use Textual name dispatch.** The 93 decorated handlers
+have 63 selector-bound and 36 Message-typed decorators (35 method names;
+``handle_library_notes_lasting_back`` has two). None of those Message classes'
+actual ``handler_name`` values matches its decorated method. The reverse census
+of 113 widget Message handler names finds only 4 Textual builtins and 7 prompt
+handlers on the Screen; its 17 ``on_*`` methods are 10 lifecycle hooks plus
+those 7. ``test_no_notes_handler_is_name_dispatched_by_textual`` pins both scans.
+Completeness checks found one non-notes selector false positive (Collections'
+``set_library_collection_capture_mode``) and six general shell helpers, not movers:
+``_apply_library_emergency_geometry``, ``_capture_library_emergency_restore_receipt``,
+``_restore_library_emergency_receipt``, ``_library_compose_scoped_ref``,
+``_library_landing_control_row_id``, and ``_library_landing_focus_control_id``.
+The emergency helper used by ``_apply_library_notes_stage_legs`` stays late-bound.
 
-**Recipe SS4's third whitelist member -- ``on_<message>`` NAME-dispatched
-handlers -- is INERT for notes, and this is the first series to resolve it
-rather than assume it.** The wave-8 plan predicted the opposite ("notes
-likely OWNS name-dispatched handlers... the census must enumerate them
-explicitly and the prune whitelist must be exercised with evidence"), and
-task 1's own hand-off repeated the prediction. Both are wrong, and the
-evidence is mechanical: the 93 ``@on``-decorated notes handlers split **63
-selector-bound decorators / 36 Message-typed decorators (35 unique method
-names**, because ``handle_library_notes_lasting_back`` carries two). Every
-one of those 36 Message classes was imported and its ``handler_name``
-READ -- ``LibraryNoteImportCanvas.ImportRequested`` computes
-``on_library_note_import_canvas_import_requested``,
-``LibraryNoteWorkPane.EditorReady`` computes
-``on_library_note_work_pane_editor_ready``, and so on -- and **not one
-matches the name of the method decorated with it**. Run the other way, over
-every ``Message`` subclass in ``Widgets/Library`` (113 distinct
-``handler_name``s), the only ones that ARE ``LibraryScreen`` methods are 4
-Textual builtins (``on_resize``, ``on_key``, ``on_mouse_down``,
-``on_descendant_focus``) and the 7 prompts-owned
-``on_prompt_block_editor_*``. ``LibraryScreen`` carries **17** ``on_*``
-methods in total: 10 lifecycle hooks and those 7. Zero are notes-owned.
-``test_no_notes_handler_is_name_dispatched_by_textual`` pins both directions
-so a later notes widget that DOES introduce a name-dispatched handler fails
-loudly instead of being pruned silently.
+**Duplicate provenance.** Parent ``2641ff0a0`` has identical 106-line blocks at
+``library_screen.py:6557-6662`` and ``:6663-6768``, from ``7cf89de6c`` and
+``fd505637f`` respectively. They define ``_library_notes_work_session_reader_width``,
+``_dispatch_library_notes_work_session``, ``_library_notes_work_first_preferences``,
+``_set_library_notes_source``, ``_dispatch_database_note_identity_cleared``, and
+``_activate_database_note_work_session`` twice. The second definitions won; the
+move retained each identical body once. Duplicate removal explains the 100-line
+difference between 4,034 Screen lines removed and 3,934 controller-body lines.
 
-Two completeness checks ran alongside the census:
-
-- a decorator scan for any NON-notes-named method carrying a
-  ``#library-note*``/``.library-note*``/``*Note*`` ``@on`` selector: **one
-  hit, a false positive** -- ``set_library_collection_capture_mode``'s
-  four-selector list includes ``#library-collections-mode-notes``, a
-  Collections button;
-- a reverse call-graph fixpoint for NON-notes-named methods whose every
-  in-class caller is (transitively) notes-named -- the "bare-named cluster
-  member" shape the conversations exemplar's own ``_conversation_records``
-  miss made the recipe warn about. It returns **6 names**, every one
-  SHELL-named and none moved: ``_apply_library_emergency_geometry`` with its
-  two helpers ``_capture_library_emergency_restore_receipt`` and
-  ``_restore_library_emergency_receipt`` (the emergency-geometry family),
-  ``_library_compose_scoped_ref``, ``_library_landing_control_row_id`` and
-  ``_library_landing_focus_control_id`` (landing/compose shell helpers).
-  Each is a general shell primitive that happens to have only one live
-  caller today; moving them would relocate shell infrastructure into a
-  subsystem controller, which is the One Home Rule violation the media
-  series' review-set ruling refused at the same shape. The one a mover calls
-  (``_apply_library_emergency_geometry``, from
-  ``_apply_library_notes_stage_legs``) is bound as a named late-binding
-  dependency instead.
-
-**The duplicate block, disclosed rather than tidied away.** Six notes
-methods were defined TWICE on ``LibraryScreen`` at the parent
-(``2641ff0a0``): ``_library_notes_work_session_reader_width``,
-``_dispatch_library_notes_work_session``,
-``_library_notes_work_first_preferences``, ``_set_library_notes_source``,
-``_dispatch_database_note_identity_cleared`` and
-``_activate_database_note_work_session``, at ``library_screen.py``
-``:6557-6662`` and ``:6663-6768``. The two 106-line blocks are **byte-for-byte
-identical** (verified by string comparison, not by eye), so the second
-definition silently won at class creation and behaviour never depended on
-which. It is a dev-side merge artefact, not this program's: ``git log -L``
-attributes the first block to ``7cf89de6c`` ("consolidate long-lived branch
-changes") and the second to ``fd505637f`` ("apply work-first Notes
-sessions"). A move cannot preserve it -- two delegators cannot share one
-name -- so **both copies are removed and ONE delegator per name is
-installed**; the definition that lands on this controller is byte-identical
-to both. That is why this commit removes 4,034 source lines from the screen
-for 3,934 lines of controller body: the 100-line difference is the duplicate
-block plus its own blank lines, and it is stated here so a reviewer reading
-the two numbers does not have to reconstruct why they differ.
-
-**Single vs. split controller: SINGLE, decided by connected components, not
-by feel.** The decision was taken at the point the split had to be made --
-over the **196-name candidate MOVE set as it stood then**, before the later
-hazard classes (2/3's ``LibraryScreen.<x>(self)`` family and everything after
-it) trimmed it to 185. Building the ``self.<name>`` reference graph over
-those 196 yields **one connected component of 135 names, one of 9 (the
-note-import canvas handlers), one of 2, and 50 isolated singletons**
-(135+9+2+50 = 196); adding an edge between any two of them that touch the
-same ``LibraryNotesState`` field collapses that to **one component of 154
-plus one of 9, one of 2 and 31 singletons** (154+9+2+31 = 196).
-
-**Re-derived over the FINAL 185 movers with the identical instrument** (a
-``self.<attr>`` walk PLUS the ``getattr(self, "<literal>")`` spelling, since
-that is the same spelling the binding census has to honour): **126 + 9 + 2 +
-48 singletons**, and **146 + 9 + 2 + 28** once shared-field edges are added.
-An independent re-derivation that counts only plain ``self.<attr>`` edges,
-without the literal-``getattr`` spelling, measures **142 + 9 + 3 + 2 + 29**;
-both are recorded because the difference is entirely that one spelling, and
-both say the same thing about the seam. **The verdict is unaffected by which
-set or which instrument is used** -- every profile is one dominant component,
-the same 9-member note-import group, one 2-member pair, and singletons. The
-only candidate seam of any size is that 9-member
-note-import group -- but four of the five ``LibraryNoteImportCanvas``
-handlers outside it (``...add_source``, ``...cancel``, ``...collision_name``,
-``...page``) are singletons only because they touch nothing else, and every
-one of the nine reaches the same ``_library_note_import_controller`` WIRING
-instance and the same ``_library_note_import_*`` state fields, so splitting
-them out would produce a second controller of ~13 methods sharing a wiring
-handle and a state object with the first. That buys nothing the ratchet's
-per-file governance (SS17) does not already give. The feared size did not
-materialise either: the hazard exclusions below remove 100 of the 285
-candidates, so the 185 that move carry **3,934 source lines** of body,
-putting this file within a few hundred lines of
-``library_media_controller.py``'s 4,630.
+**Single-owner decision.** The initial 196-candidate reference graph had components
+135 + 9 + 2 + 50 singletons; shared-state edges produced 154 + 9 + 2 + 31.
+For the final 185 movers, including literal ``getattr`` references, these became
+126 + 9 + 2 + 48 and 146 + 9 + 2 + 28. A plain-attribute-only re-derivation gave
+142 + 9 + 3 + 2 + 29; that spelling difference does not change the verdict.
+The nine import handlers and four singleton handlers (add-source, cancel,
+collision-name, page) share one import coordinator and state. Splitting this
+roughly 13-method group would duplicate ownership, not isolate it. The 100 hazard
+exclusions leave 185 movers/3,934 body lines, versus Media's 4,630, under SS17.
 
 **100 of the 285 candidates excluded, not moved (185 move).** Counted as
 DISJOINT classes, in the order applied, so the numbers sum. Classes 1-9
@@ -339,31 +262,12 @@ the RED tuple"):
     for a later series once those fixtures retarget, exactly as the media
     series disclosed for 7 of its own 16.
 
-    **CORRECTION, review round -- the reason this exclusion originally
-    carried was WRONG, and recipe SS3's "a wrong reason is worse than a thin
-    one" is why it is rewritten here rather than quietly left standing.**
-    The draft justified it as recipe SS3's TENTH shape (the media series'
-    Form E, callback identity): that
-    ``Tests/UI/test_screen_navigation.py:3225``'s ``focus_calls == [screen.
-    _restore_library_notes_focus_identity]`` would compare against a
-    CONTROLLER-bound method once the scheduling body moved. **It would not.**
-    Read at the tree rather than inferred from the assertion text, the
-    callback that assertion actually receives is ``finish_list_projection``
-    -- a CLOSURE defined inside ``_exit_library_note_editor_guarded`` -- so
-    the comparison never involved a bound method of anything, and no move
-    could have changed which object it captures. **And the test is RED at the
-    parent, on that exact assertion**, byte-identically (verified in an
-    isolated worktree at ``afaf2320c``: ``At index 0 diff: <function
-    LibraryScreen._exit_library_note_editor_guarded.<locals>.finish_list_
-    projection> != <bound method ...._restore_library_notes_focus_
-    identity>``). ``test_screen_navigation.py`` is on recipe SS7's documented
-    list with a stable 32-name failure set across trees, so this red was
-    never evidence about this move at all. The exclusion is retained -- on
-    the rule above, which does govern -- and the Form-E mechanism claim is
-    withdrawn. **Notes has ZERO Form-E callback-identity carriers**; the
-    census that would find one (a test comparing a captured callback against
-    ``<receiver>.<cluster-name>`` as a bare attribute) returned exactly this
-    one candidate, and reading it disqualified it.
+    **Withdrawn Form-E rationale.** The sole callback-identity candidate,
+    ``test_screen_navigation.py:3225``, actually receives the local
+    ``finish_list_projection`` closure, not a bound restore method. Its mismatch
+    was already RED at ``afaf2320c`` (SS7's stable 32-name failure set), not caused
+    by this move. Notes therefore has zero Form-E carriers; the conservative
+    real-screen binding/capture exclusion above remains the valid reason.
 
 **The bare-``self`` census, both figures.** Recipe SS3's standing correction
 after the media series' ``ancestors`` incident is to census EVERY bare

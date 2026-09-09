@@ -4335,16 +4335,13 @@ class LibraryScreen(BaseAppScreen):
         snapshot = self._library_note_session.snapshot
         if snapshot is None or not snapshot.in_conflict:
             return None
-        return self._library_note_editor_state()
+        return self._notes_controller._library_note_editor_state()
 
     @property
     def _library_note_preview_snapshot(self) -> LibraryNoteEditorState | None:
         """Return the canonical draft presentation while preview is active."""
         if not self._notes_state.preview:
             return None
-        return self._library_note_editor_state()
-
-    def _library_note_editor_state(self) -> LibraryNoteEditorState | None:
         return self._notes_controller._library_note_editor_state()
 
     def _library_note_presentation_state(self) -> LibraryNotePresentationState:
@@ -7239,7 +7236,7 @@ class LibraryScreen(BaseAppScreen):
             else:
                 self._library_landing_responsive_focus_id = ""
         self._notes_state.compact = compact
-        self._sync_library_notes_source_controls()
+        self._notes_controller._sync_library_notes_source_controls()
         if compact:
             self._notes_state.stage = self._notes_controller._compact_library_notes_stage(identity)
             self._notes_state.explicit_stage_intent = False
@@ -14011,7 +14008,7 @@ class LibraryScreen(BaseAppScreen):
                 reader_metadata["_list_status"] = self._library_lookup_error
             if not self._conversations_state.reader_layout.items_open:
                 reader_metadata["_list_summary"] = (
-                    self._conversation_reader_list_summary()
+                    self._conversation_reader_controller._conversation_reader_list_summary()
                 )
             # (task-32056) The workspace refusal renders on the action, not
             # as a toast after a press. Computed here (and again in
@@ -14740,9 +14737,6 @@ class LibraryScreen(BaseAppScreen):
                 )
                 return
             previous = row
-
-    def _conversation_reader_list_summary(self) -> str:
-        return self._conversation_reader_controller._conversation_reader_list_summary()
 
     def _sync_library_conversation_reader(self) -> bool:
         return self._conversation_reader_controller._sync_library_conversation_reader()
@@ -17126,6 +17120,8 @@ class LibraryScreen(BaseAppScreen):
                 offset=state.start_offset,
                 mutation_operation=operation,
             )
+            if not visit_is_current():
+                return
 
         filtered_selection = ""
         if filter_active:
@@ -17137,6 +17133,8 @@ class LibraryScreen(BaseAppScreen):
                 direction="target",
                 navigation_generation=self._notes_state.navigation_generation,
             )
+            if not visit_is_current():
+                return
             refreshed_filter = self._notes_state.tree_filter_state
             if refreshed_filter is not None:
                 filter_projection = build_filtered_library_notes_tree(refreshed_filter)
@@ -17166,6 +17164,8 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 focus=False,
             )
+        if not visit_is_current():
+            return
         if located:
             self._notes_state.tree_pending_target_placement_id = ""
         if filtered_selection:
@@ -17822,7 +17822,7 @@ class LibraryScreen(BaseAppScreen):
                     request_generation,
                     requested_id,
                 )
-                self._schedule_library_media_image_preview(
+                self._media_controller._schedule_library_media_image_preview(
                     request_generation=request_generation,
                     canonical_id=requested_id,
                     backing_id=resolved_service_media_id,
@@ -17891,9 +17891,6 @@ class LibraryScreen(BaseAppScreen):
             # the identity guard below avoids a duplicate large-document parse.
             self.call_next(self._recompose_library_media_detail_if_unrendered)
         return None
-
-    def _schedule_library_media_image_preview(self, *, request_generation: int, canonical_id: str, backing_id: int | str, detail: Mapping[str, Any], force: bool=False) -> None:
-        return self._media_controller._schedule_library_media_image_preview(request_generation=request_generation, canonical_id=canonical_id, backing_id=backing_id, detail=detail, force=force)
 
     async def _fetch_library_media_reading_progress(
         self, media_id: str
@@ -18554,7 +18551,7 @@ class LibraryScreen(BaseAppScreen):
         if outcome.get("cancelled"):
             self._marshal_library_export_cancelled(run_id)
         elif outcome["success"]:
-            self._marshal_library_export_success(
+            self._export_controller._marshal_library_export_success(
                 run_id,
                 outcome["path"],
                 outcome["dependency_info"],
@@ -18565,9 +18562,6 @@ class LibraryScreen(BaseAppScreen):
             )
         else:
             self._marshal_library_export_failure(run_id, outcome["message"])
-
-    def _marshal_library_export_success(self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool, message: str='', *, item_count: int | None=None, size_bytes: int | None=None) -> None:
-        return self._export_controller._marshal_library_export_success(run_id, path, dependency_info, registry_recorded, message, item_count=item_count, size_bytes=size_bytes)
 
     def _marshal_library_export_failure(self, run_id: int, message: str) -> None:
         return self._export_controller._marshal_library_export_failure(run_id, message)
@@ -19329,7 +19323,7 @@ class LibraryScreen(BaseAppScreen):
             and not self._library_note_session.destructive_running
             and self._library_note_session.destructive_admission is None
         ):
-            fields = self._read_library_note_editor_fields()
+            fields = self._notes_controller._read_library_note_editor_fields()
             if fields is not None:
                 raw_title, raw_content, raw_keywords_text = fields
                 # task-3315 (LIB-14 regression, pre-arc dev churn): the
@@ -19362,7 +19356,7 @@ class LibraryScreen(BaseAppScreen):
                 if title_blank and not any(
                     value.strip() for value in (raw_content, raw_keywords_text)
                 ):
-                    if await self._gc_pending_blank_note():
+                    if await self._notes_controller._gc_pending_blank_note():
                         return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
         before = self._library_note_session.snapshot
         before_saved_revision = before.saved_revision if before is not None else None
@@ -19407,9 +19401,6 @@ class LibraryScreen(BaseAppScreen):
             self._notes_controller._focus_library_note_validation_field(validation_field)
         return outcome
 
-    async def _gc_pending_blank_note(self) -> bool:
-        return await self._notes_controller._gc_pending_blank_note()
-
     @on(Button.Pressed, '#library-note-conflict-overwrite')
     def handle_library_note_conflict_overwrite(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_conflict_overwrite(event)
@@ -19419,9 +19410,6 @@ class LibraryScreen(BaseAppScreen):
         return self._notes_controller.handle_library_note_conflict_reload(event)
 
     # ----- Notes editor: preview, export, copy, use-in-console -----------
-
-    def _read_library_note_editor_fields(self) -> tuple[str, str, str] | None:
-        return self._notes_controller._read_library_note_editor_fields()
 
     @on(Button.Pressed, '#library-note-edit')
     def handle_library_note_edit_mode(self, event: Button.Pressed) -> None:
@@ -20309,9 +20297,6 @@ class LibraryScreen(BaseAppScreen):
     async def _show_library_file_notes(self, event: Button.Pressed) -> None:
         return await self._notes_controller._show_library_file_notes(event)
 
-    def _sync_library_notes_source_controls(self) -> None:
-        return self._notes_controller._sync_library_notes_source_controls()
-
     @on(Button.Pressed, '#library-notes-task-return')
     async def _return_from_library_notes_task(self, event: Button.Pressed) -> None:
         return await self._notes_controller._return_from_library_notes_task(event)
@@ -20385,7 +20370,7 @@ class LibraryScreen(BaseAppScreen):
                 if workspace is not None:
                     workspace.display = False
                 database_shell.display = True
-                self._sync_library_notes_source_controls()
+                self._notes_controller._sync_library_notes_source_controls()
                 self._sync_library_notes_reader_layout_from_shell()
                 self._restore_library_notes_authority_focus("database")
                 self._notes_state.focus_intent_generation += 1
@@ -21953,7 +21938,7 @@ class LibraryScreen(BaseAppScreen):
             )
             is not None
         ):
-            self._cancel_library_media_trash_delete_confirmation()
+            self._media_controller._cancel_library_media_trash_delete_confirmation()
             return
         self._exit_library_media_trash()
 
@@ -22021,9 +22006,6 @@ class LibraryScreen(BaseAppScreen):
         target = self._library_media_trash_browse_controller.open_delete_confirmation()
         if target is None:
             self._media_state.trash_focus_identity = "#library-media-trash-delete"
-
-    def _cancel_library_media_trash_delete_confirmation(self) -> None:
-        return self._media_controller._cancel_library_media_trash_delete_confirmation()
 
     @on(Button.Pressed, '#library-media-trash-delete-cancel')
     def handle_library_media_trash_delete_cancel(self, event: Button.Pressed) -> None:
@@ -22502,9 +22484,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _focus_library_notes_filter_input(self) -> None:
         return self._notes_controller._focus_library_notes_filter_input()
-
-    async def _reconcile_library_notes_list_canvas(self) -> None:
-        return await self._notes_controller._reconcile_library_notes_list_canvas()
 
     @on(Button.Pressed, "#library-prompts-sort")
     def handle_library_prompts_sort(self, event: Button.Pressed) -> None:
@@ -28352,7 +28331,7 @@ class LibraryScreen(BaseAppScreen):
             return
 
         if not deleted:
-            self._notify_library_note_delete_warning(
+            self._notes_controller._notify_library_note_delete_warning(
                 failure_message
                 or "This note changed elsewhere — refresh and try again."
             )
@@ -28372,9 +28351,6 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.tree_filter_state = None
         if self.is_mounted:
             _sync_library_canvas(self, "notes")
-
-    def _notify_library_note_delete_warning(self, message: str) -> None:
-        return self._notes_controller._notify_library_note_delete_warning(message)
 
     @on(Button.Pressed, "#library-notes-delete-undo")
     def handle_library_note_delete_undo(self, event: Button.Pressed) -> None:
@@ -28680,7 +28656,7 @@ class LibraryScreen(BaseAppScreen):
                 self._notes_state.filter_generation += 1
                 self._notes_state.tree_filter_state = None
             if self.is_mounted:
-                await self._reconcile_library_notes_list_canvas()
+                await self._notes_controller._reconcile_library_notes_list_canvas()
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
 
         self._notes_state.notice = ""

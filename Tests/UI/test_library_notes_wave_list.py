@@ -6,6 +6,7 @@ Group `list` of the critique-notes-2026-09 fix wave: tasks 32123, 32124,
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import MethodType, SimpleNamespace
@@ -44,6 +45,7 @@ from tldw_chatbook.Library.library_notes_state import (
 )
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
 from tldw_chatbook.Library.library_notes_tree_state import (
+    LibraryNotesFilterState,
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
     build_paged_library_notes_tree,
@@ -244,7 +246,9 @@ def _layout_screen_fake(*, width: int, view: str):
         ),
         _library_selected_row_id="browse-notes",
         _library_adaptive_reader_allocation_is_current=lambda _shell: True,
-        _library_notes_work_first_preferences=lambda preferences: preferences,
+        _notes_controller=SimpleNamespace(
+            _library_notes_work_first_preferences=lambda preferences: preferences,
+        ),
         query_one=lambda *_args, **_kwargs: shell,
         # No canvas is mounted in this fake, so the resolved width has
         # nothing to be pushed to.
@@ -1321,6 +1325,136 @@ async def test_reconcile_abandons_a_tree_visit_that_ended_mid_flight() -> None:
     assert service.calls == [], "the ended visit still loaded slices"
     assert fake._notes_state.tree_branches == {}
     assert fake._notes_state.tree_selected_placement_id == ""
+
+
+@pytest.mark.parametrize("superseded_stage", ["last_slice", "filter", "locator"])
+@pytest.mark.asyncio
+async def test_reconcile_abandons_after_each_awaited_tree_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    superseded_stage: str,
+) -> None:
+    """A superseded visit cannot dispatch later stages or overwrite its successor."""
+    service = _RestoreService(None)
+    fake = _branch_screen_fake(service)
+    fake._build_library_notes_tree_projection = MethodType(
+        LibraryScreen._build_library_notes_tree_projection, fake
+    )
+    fake._notes_state.tree_pending_target_placement_id = ""
+    fake._notes_state.filter = "needle"
+    fake._notes_state.tree_filter_state = LibraryNotesFilterState.empty(
+        query="needle",
+        generation=1,
+        topology_epoch=fake._notes_state.tree_topology_epoch,
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+
+    calls: list[str] = []
+    next_pending = "next-visit-pending"
+    next_selected = "next-visit-selected"
+
+    async def supersede(stage: str) -> None:
+        """End the captured visit at a controlled awaited stage."""
+        if stage != superseded_stage:
+            return
+        await asyncio.sleep(0)
+        fake._notes_state.tree_lifecycle_generation += 1
+        fake._notes_state.tree_branches = {}
+        fake._notes_state.tree_pending_target_placement_id = next_pending
+        fake._notes_state.tree_selected_placement_id = next_selected
+
+    async def load_slice(*_args, **_kwargs) -> None:
+        """Record the final affected-slice await."""
+        calls.append("last_slice")
+        await supersede("last_slice")
+
+    async def run_filter(*_args, **_kwargs) -> None:
+        """Record the active-filter refresh await."""
+        calls.append("filter")
+        await supersede("filter")
+
+    async def locate(*_args, **_kwargs) -> bool:
+        """Record the target-locator await and report a successful lookup."""
+        calls.append("locator")
+        await supersede("locator")
+        return True
+
+    monkeypatch.setattr(LibraryScreen, "_load_library_notes_tree_slice", load_slice)
+    monkeypatch.setattr(LibraryScreen, "_run_library_notes_filter", run_filter)
+    monkeypatch.setattr(LibraryScreen, "_locate_library_notes_tree_target", locate)
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "note_create",
+        {"note_id": "n1"},
+        before=None,
+        result={"id": "n1", "title": "n1"},
+    )
+
+    expected_calls = {
+        "last_slice": ["last_slice"],
+        "filter": ["last_slice", "filter"],
+        "locator": ["last_slice", "filter", "locator"],
+    }
+    assert calls == expected_calls[superseded_stage]
+    assert fake._notes_state.tree_pending_target_placement_id == next_pending
+    assert fake._notes_state.tree_selected_placement_id == next_selected
+
+
+@pytest.mark.asyncio
+async def test_reconcile_finishes_all_awaited_tree_stages_for_current_visit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A current visit still reloads, filters, locates, and settles its target."""
+    service = _RestoreService(None)
+    fake = _branch_screen_fake(service)
+    fake._build_library_notes_tree_projection = MethodType(
+        LibraryScreen._build_library_notes_tree_projection, fake
+    )
+    fake._notes_state.tree_pending_target_placement_id = ""
+    fake._notes_state.filter = "needle"
+    fake._notes_state.tree_filter_state = LibraryNotesFilterState.empty(
+        query="needle",
+        generation=1,
+        topology_epoch=fake._notes_state.tree_topology_epoch,
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+
+    calls: list[str] = []
+    desired_target = FolderPlacementId.unfiled("n1")
+
+    async def load_slice(*_args, **_kwargs) -> None:
+        """Record the final affected-slice await."""
+        calls.append("last_slice")
+
+    async def run_filter(*_args, **_kwargs) -> None:
+        """Record the active-filter refresh await."""
+        calls.append("filter")
+
+    async def locate(*_args, **_kwargs) -> bool:
+        """Record and emulate the successful target locator."""
+        calls.append("locator")
+        fake._notes_state.tree_selected_placement_id = desired_target
+        return True
+
+    monkeypatch.setattr(LibraryScreen, "_load_library_notes_tree_slice", load_slice)
+    monkeypatch.setattr(LibraryScreen, "_run_library_notes_filter", run_filter)
+    monkeypatch.setattr(LibraryScreen, "_locate_library_notes_tree_target", locate)
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "note_create",
+        {"note_id": "n1"},
+        before=None,
+        result={"id": "n1", "title": "n1"},
+    )
+
+    assert calls == ["last_slice", "filter", "locator"]
+    assert fake._notes_state.tree_pending_target_placement_id == ""
+    assert fake._notes_state.tree_selected_placement_id == desired_target
 
 
 def _kwargs_fake(*, tree_projection, sort_choices_visible: bool):

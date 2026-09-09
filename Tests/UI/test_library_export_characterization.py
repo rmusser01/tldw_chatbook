@@ -93,8 +93,10 @@ tests characterize is unaffected by that retarget.
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 
 import pytest
+from textual.app import App
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -106,6 +108,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_INGEST_EXPORT,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import FileSave
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_library_collections_capture_reader import _seed_legacy_records
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -122,6 +125,62 @@ from Tests.UI.test_library_shell import (
 )
 
 _GATE_TIMEOUT_SECONDS = 30.0
+
+
+@pytest.mark.asyncio
+async def test_success_worker_marshals_through_the_current_export_owner() -> None:
+    """The real thread worker and marshaller publish once through the live owner."""
+    calls = []
+    worker_threads = []
+    ui_thread = threading.get_ident()
+    dependencies = {"media": 1}
+    app = App()
+    async with app.run_test():
+        source = SimpleNamespace(app_config={}, local_chatbook_service=object())
+        screen = LibraryScreen(source)
+        replacement = LibraryScreen(source)._export_controller
+        # The marshaller needs only its injected UI-app port, not a mounted
+        # Library tree or database-backed source snapshot.
+        replacement._screen = SimpleNamespace(app=app)
+        screen._export_controller._apply_library_export_success_fn = (
+            lambda *args: pytest.fail("The superseded export owner published")
+        )
+        replacement._apply_library_export_success_fn = lambda *args: calls.append(
+            (threading.get_ident(), args)
+        )
+
+        def export_result(*args, **kwargs):
+            worker_threads.append(threading.get_ident())
+            screen._export_controller = replacement
+            return {
+                "success": True,
+                "path": "/export/bundle.zip",
+                "dependency_info": dependencies,
+                "registry_recorded": True,
+                "message": "Bundle saved",
+            }
+
+        screen._run_library_export_via_service = export_result
+        worker = screen._run_library_export_worker(
+            run_id=17,
+            scope=ExportScope(kind="everything"),
+            name="Bundle",
+            description="",
+            media_quality="original",
+            destination="/export/bundle.zip",
+            media_db=None,
+            chachanotes_db=None,
+            prompts_db=None,
+            preresolved_selections={},
+            cancel_event=None,
+        )
+        await worker.wait()
+
+    assert len(worker_threads) == 1 and worker_threads[0] != ui_thread
+    assert calls == [
+        (ui_thread, (17, "/export/bundle.zip", dependencies, True, "Bundle saved"))
+    ]
+    assert calls[0][1][2] is dependencies
 
 
 class _CancelAwareExportService:

@@ -891,7 +891,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # PR-2427 phase-C rebase retains its prior cleanup and the 16 canvas-owned
     # handler removals; measured 31692 lines / 1213 methods, no raised ceiling.
     # Empty-return/focus repairs plus comment-only paydown: 31689 / 1213.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31689, 1213),
+    # TASK-31932 steps 137/141/143 retire 16 private wrappers; step 142 keeps
+    # its post-await visit guards. Tighten the earned method ceiling only.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31689, 1200),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
