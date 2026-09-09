@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 21:39'
-updated_date: '2026-09-09 06:42'
+updated_date: '2026-09-09 07:14'
 labels:
   - library
   - notes
@@ -44,7 +44,9 @@ Fixed by committing the restore through the seam a create already uses -- `_reco
 
 Recorded because it cost a live round: the obvious seam, `_locate_library_notes_tree_target`, does NOT work here. Repainting the canvas removes the receipt the pressed Undo button lives in; the focus move that follows is classified as user intent by `on_descendant_focus`, which bumps `focus_intent_generation` and supersedes the locator's navigation before its first await returns. It returns False silently, with no warning event -- live proof: the count went back to 10 and the row never came back.
 
-Live (AC#3): caps/03-delete-receipt.txt (Notes (9), row gone) then caps/05-undo-row-returns.txt (Notes (10), "Groceries (not work) · now" back under Unfiled and selected).
+AC#1 is pinned for BOTH halves of "in its folder (or Unfiled)": the projection test is parametrized over an Unfiled restore and a restore into a folder, and asserts the exact placement id in each. The FOCUS half is evidenced live rather than in that test, because the fake screen stubs `_restore_library_notes_focus_identity` (it has no DOM); what the test pins there is the selection the restore lands on, which is what focus follows.
+
+Live (AC#3): caps/03-delete-receipt.txt (Notes (9), row gone) then caps/05-undo-row-returns.txt (Notes (10), "Groceries (not work) · now" back under Unfiled, selected and focused).
 
 Files: tldw_chatbook/UI/Library_Modules/library_notes_controller.py, tldw_chatbook/UI/Screens/library_screen.py, Tests/UI/test_library_notes_wave_list.py.
 <!-- SECTION:NOTES:END -->

@@ -16,7 +16,7 @@ from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_library_notes_folder_navigator import (
     _BranchService,
     _branch_screen_fake,
-    _folder,
+    _folder_page,
     _membership,
     _placement_page,
 )
@@ -81,6 +81,9 @@ class _CanvasApp(ConsolidatedCSSApp):
         self._canvas_kwargs = canvas_kwargs
 
     def compose(self):
+        # The canvas is told the same width it is given, the way the
+        # controller passes the resolved Items width.
+        self._canvas_kwargs.setdefault("pane_width", self._pane_width)
         canvas = LibraryNotesCanvas(id="library-notes-canvas", **self._canvas_kwargs)
         canvas.styles.width = self._pane_width
         canvas.styles.max_width = self._pane_width
@@ -89,6 +92,37 @@ class _CanvasApp(ConsolidatedCSSApp):
 
 def _visible(widget) -> bool:
     return widget.region.width > 0 and widget.region.height > 0
+
+
+def assert_every_action_fits(app) -> None:
+    """Every action in the mounted frame is painted inside the pane.
+
+    Asserting over the whole `.library-canvas-action` population, not a
+    hand-listed few: the hand-listed version passed while two siblings in
+    the same frame were off-pane (review round 1).
+    """
+    canvas = app.query_one("#library-notes-canvas", LibraryNotesCanvas)
+
+    def rendered(widget) -> bool:
+        # A hidden container (the browse row while the sort strip is open)
+        # legitimately leaves its children region-less.
+        node = widget
+        while node is not None and node is not canvas.parent:
+            if not node.display:
+                return False
+            node = node.parent
+        return True
+
+    actions = [w for w in app.query(".library-canvas-action") if rendered(w)]
+    assert actions, "no actions were composed"
+    offenders = [
+        (widget.id, widget.region)
+        for widget in actions
+        if not _visible(widget)
+        or widget.region.right > canvas.region.right
+        or widget.region.x < canvas.region.x
+    ]
+    assert not offenders, f"actions painted off the {canvas.region.width}-column pane: {offenders}"
 
 
 # -- task-32127: the list pane is not starved -----------------------------
@@ -193,52 +227,88 @@ def _folder_selected_projection() -> LibraryNotesTreeProjection:
 
 
 @pytest.mark.asyncio
-async def test_notes_toolbar_fits_two_rows_with_every_action_visible() -> None:
-    """task-32127 AC#3: two toolbar rows, Move / Remove / Last import visible."""
-    app = _CanvasApp(
-        pane_width=143,
+def _toolbar_app(pane_width: int) -> _CanvasApp:
+    """The heaviest toolbar the list can compose, at one pane width."""
+    return _CanvasApp(
+        pane_width=pane_width,
         list_state=_list_state(),
         tree_projection=_folder_selected_projection(),
         tree_selected_placement_id=FolderPlacementId.folder("work"),
         import_receipt_available=True,
     )
+
+
+def _toolbar_rows(app) -> set[int]:
+    return {
+        app.query_one(selector).region.y
+        for selector in (
+            "#library-notes-browse-actions",
+            "#library-notes-transfer-actions",
+            "#library-notes-tree-actions",
+        )
+    }
+
+
+@pytest.mark.asyncio
+async def test_notes_toolbar_fits_two_rows_with_every_action_visible() -> None:
+    """task-32127 AC#3: two toolbar rows at the width 235 columns produces.
+
+    137 is what the resolver hands the list at 235 with no note open (the
+    live capture measured the same); the shell is not needed to pin the
+    canvas's own composition at that width.
+    """
+    app = _toolbar_app(137)
     async with app.run_test(size=WIDE) as pilot:
         await pilot.pause()
-        canvas = app.query_one("#library-notes-canvas", LibraryNotesCanvas)
-        rows = {
-            app.query_one(selector).region.y
-            for selector in (
-                "#library-notes-browse-actions",
-                "#library-notes-transfer-actions",
-                "#library-notes-tree-actions",
-            )
-        }
+        rows = _toolbar_rows(app)
         assert len(rows) <= 2, f"toolbar occupies {len(rows)} rows"
         for selector in (
             "#library-notes-folder-move",
             "#library-notes-folder-remove",
             "#library-notes-import-receipt",
         ):
-            button = app.query_one(selector, Button)
-            assert _visible(button), f"{selector} is not painted"
-            assert button.region.right <= canvas.region.right, (
-                f"{selector} is painted off the pane"
-            )
+            assert app.query(selector), f"{selector} is not composed"
+        assert_every_action_fits(app)
+
+
+@pytest.mark.asyncio
+async def test_notes_toolbar_keeps_every_action_on_pane_beside_an_open_note() -> None:
+    """task-32127 AC#2's width must still paint every action on the pane.
+
+    62 columns is what the resolver gives the list at 235 with a note open.
+    Merging the two action groups onto one row put "Last import" at
+    x=53..68 of this pane (review round 1); below the merge threshold the
+    groups keep their own rows and everything fits.
+    """
+    app = _toolbar_app(62)
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        assert_every_action_fits(app)
 
 
 # -- task-32123: the delete receipt's recovery actions are reachable ------
 
 
+#: 40 characters exactly -- the AC's title length.
+RECEIPT_TITLE = "Groceries and the very long weekly plans"
+
+
+@pytest.mark.parametrize("compact", [False, True])
 @pytest.mark.asyncio
-async def test_delete_receipt_actions_are_pressable_in_a_thirty_eight_column_pane():
-    """task-32123 AC#3: Undo and Dismiss survive a 38-column pane."""
+async def test_delete_receipt_actions_are_pressable_in_a_thirty_eight_column_pane(
+    compact: bool,
+) -> None:
+    """task-32123 AC#1/#3: both actions survive 38 columns, compact or not."""
+    assert len(RECEIPT_TITLE) == 40
     receipt = LibraryNoteDeleteReceipt(
-        note_id="n1",
-        title="Groceries and the very long weekly plan",  # 39 characters
-        expected_version=2,
+        note_id="n1", title=RECEIPT_TITLE, expected_version=2
     )
-    app = _CanvasApp(pane_width=38, list_state=_list_state(delete_receipt=receipt))
-    async with app.run_test(size=WIDE) as pilot:
+    app = _CanvasApp(
+        pane_width=38,
+        list_state=_list_state(delete_receipt=receipt),
+        compact=compact,
+    )
+    async with app.run_test(size=COMPACT if compact else WIDE) as pilot:
         await pilot.pause()
         canvas = app.query_one("#library-notes-canvas", LibraryNotesCanvas)
         for selector in (
@@ -250,47 +320,81 @@ async def test_delete_receipt_actions_are_pressable_in_a_thirty_eight_column_pan
             assert button.region.right <= canvas.region.right, (
                 f"{selector} is painted off the pane"
             )
+        assert_every_action_fits(app)
 
 
 # -- task-32124: Undo puts the row back in the tree ----------------------
 
 
 class _RestoreService(_BranchService):
-    """A branch service whose Unfiled slice gains the note once restored."""
+    """A branch service whose slice gains the note back once restored.
 
-    def __init__(self) -> None:
+    ``parent`` is the branch the note is restored into: ``None`` for
+    Unfiled, a folder id for a filed placement (AC#1 names both).
+    """
+
+    def __init__(self, parent: str | None = None) -> None:
         super().__init__()
         self.restored = False
-        self.placement_pages[None] = _placement_page(None, "loose")
+        self.parent = parent
+        self.folder_pages[None] = _folder_page(None, "ideas")
+        self.placement_pages[parent] = _placement_page(parent, "loose")
 
     async def page_note_placements(self, **kwargs):
-        if kwargs["parent_id"] is None:
-            self.placement_pages[None] = (
-                _placement_page(None, "loose", "n1")
-                if self.restored
-                else _placement_page(None, "loose")
+        if kwargs["parent_id"] == self.parent:
+            self.placement_pages[self.parent] = _placement_page(
+                self.parent, *(("loose", "n1") if self.restored else ("loose",))
             )
         return await super().page_note_placements(**kwargs)
+
+    async def load_note_tree_mutation_context(self, **_kwargs):
+        # What the real service reports for the restored note: the branches
+        # its surviving placements live in.
+        return SimpleNamespace(
+            parent_ids=(),
+            placement_parent_ids=(self.parent,) if self.parent else (),
+            folder_ids=(self.parent,) if self.parent else (),
+            ancestor_ids=(),
+        )
 
     async def restore_note(self, **_kwargs):
         self.restored = True
         return {"id": "n1", "title": "n1", "version": 2}
 
     async def locate_note_tree_placement(self, **_kwargs):
+        if self.parent is None:
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.unfiled("n1"),
+                note_id="n1",
+                membership_id=None,
+                path=(),
+                placement_offset=0,
+            )
         return NoteTreeLocation(
-            placement_id=FolderPlacementId.unfiled("n1"),
+            placement_id=FolderPlacementId.note(self.parent, "n1", "m-n1"),
             note_id="n1",
-            membership_id=None,
-            path=(),
+            membership_id="m-n1",
+            path=(NoteTreePathStep(self.parent, None, 0),),
             placement_offset=0,
         )
 
 
+@pytest.mark.parametrize("parent", [None, "ideas"])
 @pytest.mark.asyncio
-async def test_undo_delete_returns_the_row_to_the_tree_projection(monkeypatch) -> None:
-    """task-32124 AC#1/#2: Undo restores the row itself, not only the count."""
-    service = _RestoreService()
+async def test_undo_delete_returns_the_row_to_the_tree_projection(
+    monkeypatch, parent: str | None
+) -> None:
+    """task-32124 AC#1/#2: Undo restores the row itself, not only the count.
+
+    Both halves of AC#1's "in its folder (or Unfiled)". The focus half is
+    not asserted here: this fake stubs `_restore_library_notes_focus_identity`
+    (there is no DOM), so the pin is the SELECTION the restore lands on, and
+    focus is evidenced live (caps/05-undo-row-returns.txt).
+    """
+    service = _RestoreService(parent)
     fake = _branch_screen_fake(service)
+    if parent is not None:
+        fake._notes_state.tree_expanded_ids = {parent}
     fake._notes_state.delete_receipt = None
     fake._local_source_records = {"notes": ()}
     fake._local_source_counts = {"notes": 0}
@@ -327,10 +431,15 @@ async def test_undo_delete_returns_the_row_to_the_tree_projection(monkeypatch) -
         ),
     )
 
-    # The tree starts with the note already deleted from its Unfiled branch.
-    await LibraryScreen._load_library_notes_tree_slice(
-        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
-    )
+    # The tree starts with the note already deleted from its branch.
+    for key in (
+        NotesBranchKey(None, "folders"),
+        NotesBranchKey(None, "placements"),
+        NotesBranchKey(parent, "placements"),
+    ):
+        await LibraryScreen._load_library_notes_tree_slice(
+            fake, key, direction="replace", offset=0
+        )
     before = LibraryScreen._build_library_notes_tree_projection(fake)
     assert all(row.note_id != "n1" for row in before.rows)
 
@@ -340,12 +449,15 @@ async def test_undo_delete_returns_the_row_to_the_tree_projection(monkeypatch) -
     await LibraryNotesController._undo_library_note_delete(fake, receipt)
 
     after = LibraryScreen._build_library_notes_tree_projection(fake)
-    assert any(row.note_id == "n1" for row in after.rows), (
-        "the restored note never came back to the tree"
+    restored = [row for row in after.rows if row.note_id == "n1"]
+    assert restored, "the restored note never came back to the tree"
+    expected = (
+        FolderPlacementId.unfiled("n1")
+        if parent is None
+        else FolderPlacementId.note(parent, "n1", "m-n1")
     )
-    assert fake._notes_state.tree_selected_placement_id == FolderPlacementId.unfiled(
-        "n1"
-    )
+    assert restored[0].placement_id == expected
+    assert fake._notes_state.tree_selected_placement_id == expected
 
 
 async def _passthrough_service_call(call, *, isolate_in_worker=False, **kwargs):
@@ -381,17 +493,15 @@ async def test_every_sort_option_renders_in_the_narrowest_pane() -> None:
     app = _CanvasApp(pane_width=38, list_state=state)
     async with app.run_test(size=WIDE) as pilot:
         await pilot.pause()
-        canvas = app.query_one("#library-notes-canvas", LibraryNotesCanvas)
         for selector in (
             "#library-notes-sort-newest",
             "#library-notes-sort-oldest",
             "#library-notes-sort-title",
         ):
-            button = app.query_one(selector, Button)
-            assert _visible(button), f"{selector} has no region"
-            assert button.region.right <= canvas.region.right, (
-                f"{selector} is painted off the pane"
-            )
+            assert app.query(selector), f"{selector} is not composed"
+        # Every action in the frame, not only the three options: the strip
+        # shares this pane with the transfer actions (review round 1).
+        assert_every_action_fits(app)
 
 
 # -- task-32137: rows carry an age and duplicates are distinguishable -----

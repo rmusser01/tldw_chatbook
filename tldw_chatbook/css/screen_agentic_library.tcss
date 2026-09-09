@@ -1036,6 +1036,15 @@ $ds-library-source-browser-width: 31;
     min-width: 0;
 }
 
+/* ...except the branch pagers, which are full-width rows carrying wrapped
+   range/status copy, not toolbar buttons. The rule above outranks
+   `.library-notes-tree-pager` on specificity, so it has to say so here
+   (review round 1). */
+#library-notes-canvas .library-notes-tree-pager {
+    width: 100%;
+    max-width: 100%;
+}
+
 /* task-32123: the receipt's copy owns its own row above the two recovery
    actions, so a title too long for the pane ends in an ellipsis instead of
    pushing Undo off the edge. */

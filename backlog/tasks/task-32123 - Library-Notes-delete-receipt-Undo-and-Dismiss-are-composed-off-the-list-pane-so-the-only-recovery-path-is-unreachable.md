@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 21:39'
-updated_date: '2026-09-09 06:42'
+updated_date: '2026-09-09 07:14'
 labels:
   - library
   - notes
@@ -39,11 +39,15 @@ PROVEN x3. `library_notes_canvas.py` ellipsizes the receipt title to 42 cells an
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Reproduced first: mounting the canvas at a 38-column pane with a 39-character receipt title put #library-notes-delete-undo at x=38..54 -- outside the pane -- and Dismiss further out still.
+Reproduced first: mounting the canvas at a 38-column pane with a 40-character receipt title put #library-notes-delete-undo at x=38..54 -- outside the pane -- and Dismiss further out still.
 
-The receipt is now a Vertical: the "✓ deleted · <title>" copy owns one row, the two recovery actions the next, so both are inside the pane at any width the list can take. The copy takes the pane width with `text-overflow: ellipsis` instead of a fixed 42-cell budget, and the Notes canvas drops Button's 16-cell minimum (a separate rule that task-32127 needed anyway), so the two actions cost 8 cells each rather than 32 together.
+The receipt is now a Vertical: the "✓ deleted · <title>" copy owns one row, the two recovery actions the next, so both are inside the pane at any width the list can take. The copy takes the pane width with `text-overflow: ellipsis` instead of a fixed 42-cell budget, and the Notes canvas drops Button's 16-cell minimum (a separate rule task-32127 needed anyway), so the two actions cost 8 cells each rather than 32 together.
 
-AC#2 is satisfied by its second disjunct (the actions wrap to their own row); the title budget stays a constant because the canvas has no pane width at compose time, and the ellipsis rule makes the constant harmless.
+AC#2 is satisfied by its second disjunct (the actions wrap to their own row). The title budget stays a constant because the canvas has no pane width at compose time for a FIRST mount, and the ellipsis rule makes the constant harmless.
+
+The stacking is unconditional rather than "below 60 columns" (review round 1, deferred): a second row costs one line in a list that is scrolling anyway, and a width-conditional receipt would need the same threshold plumbing for a strictly smaller benefit than the toolbar's. If a wide receipt ever needs its actions inline, `pane_width` is now on the canvas and the rule is one comparison.
+
+Pinned at 38 columns with a 40-character title in BOTH layouts (compact and not, AC#1 names both), and the frame asserts over every `.library-canvas-action` region.
 
 Live: deleted "Groceries (not work)" on the power profile at 235x52 -- caps/03-delete-receipt.txt shows both actions painted; at 100x30 (caps/06) the same stacking holds.
 

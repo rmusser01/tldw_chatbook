@@ -3098,6 +3098,12 @@ class LibraryNotesController:
             ),
             "title_placeholder_only": False,
             "compact": self._library_notes_compact,
+            # task-32127: the toolbar merges its two action groups only when
+            # the pane can hold them; this is the width the reader layout
+            # just resolved for the Items pane.
+            "pane_width": getattr(
+                self._notes_state.reader_layout, "items_width", 0
+            ),
             "create_running": self._library_note_create_running,
             "create_status": self._library_note_create_status,
             "load_state": self._library_note_load_state,

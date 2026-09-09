@@ -74,9 +74,11 @@ editor's own Back control returns to its list.
 - **Source strip** — a "Library notes | Folder files" toggle above the canvas.
   This page covers the Library notes side; see below for Folder files.
 - **Notes list** — the default view: a "Notes (N)" header, the
-  "Filter notes… (Enter)" field, a two-row toolbar (**New** / Select / Add
-  from files… / Export, then the folder and placement actions), the folder
-  tree, and one row per note showing its title and how long ago it changed
+  "Filter notes… (Enter)" field, a toolbar (**New** / Select / Add from
+  files… / Export, plus the folder and placement actions — two rows on a
+  wide list, three when the list is too narrow to seat two groups on one),
+  the folder tree, and one row per note showing its title and how long ago
+  it changed
   ("3m", "1d"). When two notes in the same folder share a title, each row
   also names its folder — "Reading list · Unfiled · 2h". While no note is
   open the list takes the width the empty work area would otherwise waste,

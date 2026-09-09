@@ -54,6 +54,13 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
+#: Columns the list pane needs before the browse and transfer toolbars share
+#: one row. Their widest composition -- New, Select, Add from files…, Export,
+#: Manage sync folders, Last import, plus both toolbars' own padding -- is 97
+#: cells, so under this width the merged row clips its last action off the
+#: pane, which is worse than the third row it saves (task-32127, review 1).
+_TOOLBAR_MERGE_MIN_WIDTH = 100
+
 
 def compose_note_row_label(
     title: str, *, folder_label: str = "", age_label: str = ""
@@ -255,6 +262,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         tree_deleted_folder_available: bool = False,
         title_placeholder_only: bool = False,
         compact: bool = False,
+        pane_width: int = 0,
         create_running: bool = False,
         create_status: str = "",
         load_state: str = "loading",
@@ -278,6 +286,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             title_placeholder_only: Render an empty title with an Untitled
                 placeholder for a pristine newly-created note.
             compact: Whether 60-column-safe controls and labels are active.
+            pane_width: Columns the mounted list pane has, from the resolved
+                reader layout. Only the toolbar reads it, to decide whether
+                one row can hold both action groups; ``0`` (unknown) keeps
+                them on their own rows.
             create_running: Whether note creation is in progress.
             create_status: Visible creation completion or recovery status.
             load_state: Editor-load state (``"loading"`` or ``"failed"``).
@@ -298,6 +310,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.tree_deleted_folder_available = tree_deleted_folder_available
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
+        self.pane_width = pane_width
         self.create_running = create_running
         self.create_status = create_status
         self.load_state = load_state
@@ -540,6 +553,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         tree_deleted_folder_available: bool,
         title_placeholder_only: bool,
         compact: bool,
+        pane_width: int,
         create_running: bool,
         create_status: str,
         load_state: str,
@@ -567,6 +581,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             tree_deleted_folder_available: Whether Undo folder removal is available.
             title_placeholder_only: Whether the title is placeholder-only.
             compact: Whether compact editor controls are enabled.
+            pane_width: Columns the mounted list pane has (see ``__init__``).
             create_running: Whether note creation is in progress.
             create_status: Current note-creation status copy.
             load_state: Current note-loading state identifier.
@@ -604,6 +619,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.tree_deleted_folder_available = tree_deleted_folder_available
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
+        self.pane_width = pane_width
         self.create_running = create_running
         self.create_status = create_status
         self.load_state = load_state
@@ -849,11 +865,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             sort_available = self.tree_projection is None
             sort_choices_visible = sort_available and list_state.sort_choices_visible
             # task-32127: the browse and transfer actions share ONE row, so
-            # the toolbar is two rows rather than three. Not in the compact
-            # single stage, where the pane is ~40 columns and one row cannot
-            # hold both groups without clipping the last action.
+            # the toolbar is two rows rather than three -- but only where the
+            # pane can hold both groups. Below the threshold the merged row
+            # clipped its last action off the pane, which is worse than the
+            # third row it saves (review round 1).
             action_rows: Horizontal | None = None
-            if not self.compact:
+            if self.pane_width >= _TOOLBAR_MERGE_MIN_WIDTH:
                 action_rows = Horizontal(id="library-notes-action-rows")
                 action_rows.styles.height = "auto"
             with action_rows or nullcontext():
