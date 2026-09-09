@@ -853,40 +853,12 @@ from ..Library_Modules.screen_helpers import (
 def _assign_library_reader_preferences_attribute(
     owner: Any, attribute: str, value: Any
 ) -> None:
-    """Write through a possibly-dotted attribute path off ``owner``.
+    """Write a flat or dotted preference/choice-strip attribute on its owner.
 
-    Task 9 (Conversations cleanup) support: ``_replace_library_reader_preference``
-    and ``_persist_library_reader_preference`` dispatch across every reader
-    destination (media, collections, conversations, notes, notes_files,
-    prompts, skills) through a ``{destination: attribute_name}`` dict, read
-    with plain ``getattr``/``operator.attrgetter`` and written with plain
-    ``setattr``. Every destination except conversations and collections still
-    keeps its reader-preferences object as a flat screen attribute, so a bare
-    attribute-name string has always been enough. Conversations' own
-    ``reader_preferences`` field moved to ``self._conversations_state.reader_preferences``
-    (Task 6/9) -- one extra hop the generic dispatch's plain ``setattr``
-    cannot express. This resolves the last (dotted) segment's owner via
-    ``operator.attrgetter`` and assigns onto it, and is a no-op passthrough
-    (``setattr(owner, attribute, value)``) for every other, undotted,
-    destination -- so the five not-yet-extracted subsystems are unaffected.
-    Future subsystem extractions hit this exact same shape; this helper is
-    meant to keep serving them, not to be re-derived per subsystem.
-
-    Second use, added by Task 4 (Export cleanup): ``_close_open_library_
-    choice_strip`` dispatches across a DIFFERENT dict-of-name-strings
-    (media/prompts/skills/export choice-strip visibility, built by
-    ``_library_open_choice_strip``) with the identical possibly-dotted-path
-    shape -- Export's own visibility field moved to ``self._export_state.
-    quality_choices_visible`` (Task 2/4), while media/prompts/skills keep
-    flat screen attributes, so the same generic dotted-vs-flat passthrough
-    this docstring already describes serves that dispatcher too, without a
-    second near-identical helper.
-
-    Third use, added by Task 7 (Collections cleanup): the same two dicts'
-    ``"collections"`` entry moved from the flat ``_library_collections_
-    reader_preferences`` name to ``self._collections_state.reader_preferences``
-    (Task 5/7) -- exactly the same dotted-vs-flat shape Conversations already
-    established, requiring no change to this helper's own logic.
+    Args:
+        owner: Root object for the attribute path.
+        attribute: Flat name or dotted path; resolve the parent with attrgetter.
+        value: Replacement value.
     """
     head, _, tail = attribute.rpartition(".")
     target = operator.attrgetter(head)(owner) if head else owner
@@ -7231,9 +7203,6 @@ class LibraryScreen(BaseAppScreen):
     def _sync_library_ingest_rail_for_width(self, width: int) -> None:
         return self._ingest_controller._sync_library_ingest_rail_for_width(width)
 
-    def _sync_library_ingest_rail_from_shell(self) -> None:
-        return self._ingest_controller._sync_library_ingest_rail_from_shell()
-
     def _transition_library_notes_presentation(
         self,
         compact: bool,
@@ -7305,9 +7274,6 @@ class LibraryScreen(BaseAppScreen):
     def _queue_library_notes_settled_focus_restore(self, expected: LibraryNotesFocusIdentity, guard: _LibraryNotesRestoreGuard | None=None) -> None:
         return self._notes_controller._queue_library_notes_settled_focus_restore(expected, guard)
 
-
-    def _record_library_notes_focus_interaction(self, expected: Widget, user_intent: bool) -> None:
-        return self._notes_controller._record_library_notes_focus_interaction(expected, user_intent)
 
     def _update_library_notes_responsive_state(self) -> None:
         return self._notes_controller._update_library_notes_responsive_state()
@@ -9689,7 +9655,7 @@ class LibraryScreen(BaseAppScreen):
                 ):
                     LibraryScreen._supersede_library_notes_navigation(self)
             self.call_after_refresh(
-                self._record_library_notes_focus_interaction,
+                self._notes_controller._record_library_notes_focus_interaction,
                 focused,
                 user_intent,
             )
@@ -10393,46 +10359,14 @@ class LibraryScreen(BaseAppScreen):
             self._refresh_library_skills_trust_posture()
 
     async def _read_library_collections_count(self) -> None:
-        """Read the Collections capture total for the rail row.
+        """Read the unfiltered Collections page-one total inside the source snapshot.
 
-        task-32057 AC#2: the capture count rides
-        ``LibraryCollectionsCaptureController.state.exact_total``, which
-        only exists once the canvas has loaded a page -- so the rail
-        painted a bare "Collections" beside "Media (11)"/"Notes (7)",
-        indistinguishable from Search / RAG, whose count is absent by
-        design.
-
-        Three deliberate constraints:
-
-        * It reads page 1 through the SAME scope-service enumerator the
-          canvas lists from, but NOT through the reader controller -- a
-          count read must not pre-select a capture or arm an applied scope
-          for the Continue receipt, i.e. decide any part of a visit the
-          user has not made yet. This is the UNFILTERED page-1 total, so it
-          answers only "how much is in Collections"; once the canvas owns a
-          scope, its own total is the authority and this value is not
-          consulted (see ``_build_library_shell_input``).
-        * It runs INSIDE the local-source snapshot pass rather than as its
-          own worker, so the count arrives with every other count and the
-          screen still reconciles exactly once per snapshot
-          (``Tests/UI/test_library_entry_compose_once.py``) -- started
-          alongside that pass's gather, not ahead of it, so its deadline
-          overlaps the gather's instead of stacking on top (fix round 2,
-          finding 3).
-        * Every path that does not produce a fresh total CLEARS the stored
-          one. ``CollectionsCaptureScopeService.deactivate()`` nulls the
-          active authority on an authority switch or teardown, and a
-          retained number would go on painting the previous authority's
-          count under the new one's name (fix round 1, finding 2).
-
-        The read carries its OWN deadline. It sits outside the shared
-        gather below (whose all-or-nothing failure branches would drop this
-        count whenever an unrelated source seam failed), so it would
-        otherwise be the one unbounded await in the snapshot pass -- and in
-        server mode ``list_page`` is an HTTP round trip with no timeout of
-        its own, which would hang every rail count in "Checking existing
-        Library content…" with no deadline sentence and no Retry (fix round
-        1, finding 3). A timeout is treated exactly like a failed read.
+        Use the canvas's scope service, without selecting a capture or arming a
+        reader scope. Once the canvas owns a scope, its total takes precedence.
+        Run alongside the shared gather, with an independent bounded deadline:
+        unrelated source failures must not discard this count or serialize waits.
+        Clear the stored total on every failed/unavailable/stale-authority path.
+        See TASK-32057 and the entry-compose-once tests.
         """
         collections = self._collections_controller
         controller = collections._ensure_library_collections_capture_controller()
@@ -12016,27 +11950,15 @@ class LibraryScreen(BaseAppScreen):
     async def _study_count_or_none(
         self, count_callable: Any, label: str, **kwargs: Any
     ) -> int | None:
-        """Fetch a decorative Create-rail count, degrading quietly on failure.
-
-        Runs inside the same ``asyncio.gather`` as the local source snapshot
-        fetch (see ``_list_local_source_snapshot``). Unlike the three browse
-        sources (notes/media/conversations), study/quiz counts are purely
-        decorative rail badges: the underlying scope-service methods can
-        raise ``PolicyDeniedError`` (via ``_enforce_policy``) or a plain
-        ``ValueError`` (e.g. local backend unavailable) depending on the
-        runtime, and none of that should ever surface as Library error copy
-        or fail the snapshot fetch -- it just degrades to ``None``, which
-        the rail renders as an uncounted row.
+        """Fetch a decorative Create-rail count without failing the source snapshot.
 
         Args:
-            count_callable: The bound count method to invoke (e.g.
-                ``study_scope_service.count_decks``).
-            label: Human-readable label for the debug log on failure.
-            **kwargs: Forwarded to ``count_callable``.
+            count_callable: Bound scope-service count method.
+            label: Debug-log label on failure.
+            **kwargs: Arguments forwarded to the count method.
 
         Returns:
-            The exact count, or ``None`` if the call failed or returned
-            something other than an ``int``.
+            An integer count, or None on failure/noninteger results (uncounted row).
         """
         # SQLite ``:memory:`` connections are thread-local (``threading.local``
         # on ``CharactersRAGDB``) -- only the thread that created the DB has
@@ -18944,13 +18866,7 @@ class LibraryScreen(BaseAppScreen):
         analysis_hint.display = bool(new_state.analysis_hint_line)
         # (task-3304, MI-08) Gate-line/hint changes move the fold; re-derive
         # the indicator once the new heights have actually laid out.
-        self.call_after_refresh(self._update_library_ingest_fold_hint)
-
-    def _update_library_ingest_fold_hint(self) -> None:
-        return self._ingest_controller._update_library_ingest_fold_hint()
-
-    def _scroll_library_ingest_queue_into_view(self) -> None:
-        return self._ingest_controller._scroll_library_ingest_queue_into_view()
+        self.call_after_refresh(self._ingest_controller._update_library_ingest_fold_hint)
 
     def _update_library_ingest_dynamic_regions(
         self,
@@ -21015,7 +20931,7 @@ class LibraryScreen(BaseAppScreen):
             # ran a Library search. Same call_after_refresh seam the
             # CREATE_PROMPT/CREATE_SKILL entry-focus branches below use.
             self.call_after_refresh(self._focus_library_ingest_path)
-            self.call_after_refresh(self._sync_library_ingest_rail_from_shell)
+            self.call_after_refresh(self._ingest_controller._sync_library_ingest_rail_from_shell)
         if row_id == LIBRARY_ROW_CREATE_NOTE and self.is_mounted:
             # task-32052 AC#1: the New-note canvas opened with NOTHING
             # focused, so its advertised "enter create note" was dead and
@@ -25428,28 +25344,20 @@ class LibraryScreen(BaseAppScreen):
         prompt_id: int,
         artifact_fields: Mapping[str, Any] | None = None,
     ) -> None:
-        """Write the exported prompt content to the path chosen via ``FileSave``.
+        """Write the live prompt to the FileSave destination after path validation.
 
-        Mirrors ``_write_library_note_export_file`` exactly: runs the
-        dialog-returned path through ``validate_path_simple`` (the same
-        base-directory-free validator this screen uses for every other
-        user-chosen save path) before writing, and is a plain (not async)
-        method since the write is a synchronous ``Path.write_text`` --
-        ``call_after_refresh`` (its only caller) accepts either.
+        Uses the same base-directory-free validator as other user-chosen saves.
 
         Args:
-            selected_path: The chosen destination, or ``None`` if the
-                dialog was cancelled.
-            name: The prompt's live (possibly unsaved) name.
-            author: The prompt's live author.
-            details: The prompt's live details text.
-            system_prompt: The prompt's live system-prompt text.
-            user_prompt: The prompt's live user-prompt text.
-            keywords_text: The prompt's live keywords, as a
-                comma-separated string.
-            prompt_id: The prompt's id (used only for logging).
-            artifact_fields: Optional structured Prompt/Recipe metadata
-                captured with the live block working copy.
+            selected_path: Destination, or None when cancelled.
+            name: Live, possibly unsaved prompt name.
+            author: Live author.
+            details: Live details.
+            system_prompt: Live system prompt.
+            user_prompt: Live user prompt.
+            keywords_text: Comma-separated live keywords.
+            prompt_id: Prompt id, used only for logging.
+            artifact_fields: Structured Prompt/Recipe metadata from the working copy.
         """
         if self._prompts_state.mutation_in_flight:
             return
@@ -26143,7 +26051,7 @@ class LibraryScreen(BaseAppScreen):
             # asserting the OLD value and the only invalid signal a
             # focus-only border. Update the receipt, the inline message, and
             # the Start gate in place instead.
-            self._update_library_ingest_group_receipt(event.group)
+            self._ingest_controller._update_library_ingest_group_receipt(event.group)
             message = validate_ingest_option_value(field, event.value)
             try:
                 error_line = self.query_one(
@@ -27415,7 +27323,7 @@ class LibraryScreen(BaseAppScreen):
         # (task-3304, MI-08) The receipt must be seen, not just exist: the
         # queue's outcome area sat below the fold on every submit. After
         # the recompose settles, bring the queue heading into view.
-        self.call_after_refresh(self._scroll_library_ingest_queue_into_view)
+        self.call_after_refresh(self._ingest_controller._scroll_library_ingest_queue_into_view)
 
     @work(thread=True)
     def _save_library_ingest_options(
@@ -27741,9 +27649,6 @@ class LibraryScreen(BaseAppScreen):
             form.chunk_size = str(defaults.get("chunk_size", 1000))
         self._save_library_ingest_options({f"library.ingest_options.{group}": {}})
         self._refresh_library_ingest_canvas_preserving_context()
-
-    def _update_library_ingest_group_receipt(self, group: str) -> None:
-        return self._ingest_controller._update_library_ingest_group_receipt(group)
 
     # ----- Export canvas: section entry points --------------------------
 
@@ -28837,7 +28742,7 @@ class LibraryScreen(BaseAppScreen):
     async def _discard_new_library_note(self, create_token: str) -> None:
         """Run one preclaimed untouched-create discard and release its lock."""
         try:
-            await self._discard_new_library_note_claimed(create_token)
+            await self._notes_controller._discard_new_library_note_claimed(create_token)
         finally:
             self._notes_state.mutation_in_flight = False
             # task-16480: the claimed coroutine's list reconcile runs while
@@ -28847,9 +28752,6 @@ class LibraryScreen(BaseAppScreen):
             # Re-sync after releasing the lock, the same way
             # ``_execute_library_notes_tree_mutation``'s finally does.
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
-
-    async def _discard_new_library_note_claimed(self, create_token: str) -> None:
-        return await self._notes_controller._discard_new_library_note_claimed(create_token)
 
     def _notify_library_note_create_warning(self, message: str) -> None:
         return self._notes_controller._notify_library_note_create_warning(message)
@@ -30287,28 +30189,17 @@ class LibraryScreen(BaseAppScreen):
         url: str,
         keywords: list[str],
     ) -> None:
-        """Persist metadata edits, then re-fetch detail and exit edit mode.
+        """Save supported metadata, re-fetch detail and exit edit mode.
 
-        Guards against a missing ``update_media_item`` service or a failed
-        write by logging the failure and surfacing a quiet notice, but
-        always re-fetches the current detail afterwards so the viewer never
-        shows a stale/half-applied edit.
-
-        Only the local backend's supported metadata fields (title, author,
-        url, keywords) are sent -- notably ``version`` is NOT included.
-        ``Client_Media_DB_v2.update_media_metadata`` performs its own
-        optimistic-version check internally from the row it reads and takes
-        no caller-supplied ``version`` argument, so omitting it here loses
-        no locking guarantees while avoiding the local backend's metadata
-        field allowlist rejecting the write outright.
+        Report missing-service/write failures without leaving a half-applied view.
+        The local backend owns optimistic version checks; do not pass version.
 
         Args:
-            media_id: The Library media item id being edited.
-            title: New title field value.
-            author: New author field value.
-            url: New URL field value.
-            keywords: New keywords, already split from the comma-separated
-                edit input.
+            media_id: Library media id.
+            title: New title.
+            author: New author.
+            url: New URL.
+            keywords: Parsed keywords.
         """
         updated_item: Mapping[str, Any] | None = None
         committed = False
@@ -30336,7 +30227,7 @@ class LibraryScreen(BaseAppScreen):
                     committed = True
                     # Keep the broad landing/rail cache in step; the exact
                     # Media page remains controller-owned.
-                    self._patch_local_media_record(
+                    self._media_controller._patch_local_media_record(
                         media_id,
                         title=title,
                         author=author,
@@ -30374,9 +30265,6 @@ class LibraryScreen(BaseAppScreen):
                 committed=committed,
                 upsert_items=(updated_item,) if updated_item is not None else (),
             )
-
-    def _patch_local_media_record(self, media_id: str, *, title: str, author: str, url: str, keywords: list[str]) -> None:
-        return self._media_controller._patch_local_media_record(media_id, title=title, author=author, url=url, keywords=keywords)
 
     def _notify_library_media_edit_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed media-edit save.
@@ -31212,28 +31100,18 @@ class LibraryScreen(BaseAppScreen):
         analysis_content: str,
         viewer_owned: bool = True,
     ) -> bool:
-        """Persist an analysis edit as a new document version, then re-fetch detail.
+        """Persist caller-supplied analysis as a version, then refresh owned detail.
 
-        Guards against a missing ``save_analysis_version`` service or a
-        failed write by logging the failure and surfacing a quiet notice,
-        but always re-fetches detail afterwards so the viewer never shows a
-        stale/half-applied edit. Analysis (re)generation via an LLM is
-        explicitly out of scope -- this only persists caller-supplied text.
+        Report failures without leaving a half-applied view; no LLM generation.
 
         Args:
-            media_id: The Library media item id being edited.
-            content: The current document content, sent unchanged alongside
-                the edited analysis (``save_analysis_version`` requires it).
-            analysis_content: The edited analysis text to persist.
-            viewer_owned: False when the caller is the task-28007 bulk run
-                rather than the Reader. A bulk item must not clear the
-                Reader's editing flag, must not raise one toast per item
-                (its receipt counts the failure), and must not re-fetch a
-                detail nobody is reading.
+            media_id: Library media id.
+            content: Unchanged document content required by the version service.
+            analysis_content: Edited analysis.
+            viewer_owned: False for bulk work: no Reader flags, toasts or detail fetch.
 
         Returns:
-            True when the analysis actually persisted. The bulk run counts
-            a failed save as a failed item -- this used to be swallowed.
+            Whether persistence succeeded; bulk receipts count failed saves.
         """
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         save_analysis_version = getattr(service, "save_analysis_version", None)
@@ -31282,28 +31160,16 @@ class LibraryScreen(BaseAppScreen):
         return saved
 
     async def _reproject_library_media_analysis_row(self, media_id: str) -> None:
-        """Re-read one row's ``has_analysis`` from the projection after a write.
+        """Refresh a retained row's has_analysis flag from the actual SQL projection.
 
-        Qodo on #2475: ``has_analysis`` is a SQL projection frozen into the
-        retained row when the page applied, so a freshly saved analysis left
-        its own row unmarked until something re-paged the list.
-
-        Asks the projection rather than trusting the write's own claim. Live
-        on 2026-09-07 the two disagreed: the Reader's Save returned a version
-        record while nothing reached the database (``create_document_version``
-        documents that it "assumes it's called within an existing transaction
-        context", and this service calls it standalone), so a row patched
-        from the write said "analysed" beside a Reader still saying "No
-        analysis yet.". One targeted id-scoped SELECT on a human-paced
-        gesture cannot say that; it is never on the page path.
+        A write receipt alone did not prove persistence (Qodo #2475); use an
+        id-scoped read after human-paced writes, never during page rendering.
 
         Args:
-            media_id: The canonical media id whose row should be re-read.
+            media_id: Canonical id of the row to re-read.
 
         Returns:
-            None. A missing service, an unresolvable id, or a failed read
-            leaves the row exactly as it was -- the next page fetch is still
-            authoritative.
+            None. Missing service/id or failed reads leave the row unchanged.
         """
         browse = self._library_media_browse_controller.state
         # task-31961: the membership test goes ABOVE the fetch. A bulk

@@ -1986,3 +1986,58 @@ ADR required: no new ADR. ADR path: `backlog/decisions/140-official-kokoro-pytor
 for the incoming accepted runtime; existing Library decisions remain authoritative.
 Reason: integration of upstream decisions and routine bounded reconciliation,
 not a new architecture or relaxed cap.
+
+### Wave-thirteen integration and bounded repairs (2026-09-09 UTC)
+
+Rebased 220 commits onto `2e3389e694`, completing at
+`59a5ad3826d9f8902a2be9d3264fe29b3665f7f7`. The conflicts were three independent
+lesson unions and two generated inventory summaries; no production conflict.
+The prior published checkpoint is `1d910d63d624e78f84a2fe806fdb8119eff0eee9`.
+
+- Complete incoming offline TTS/DB/visibility files: **248 passed, 1 skipped
+  (real MPS), 3 warnings in 13.18s** (`/private/tmp/pr2427-wave13-runtime.log`).
+  No download, inference or audio/device test was run.
+- Complete incoming UI cohort: **508 passed, 4 failed, 3 warnings in 665.14s**
+  (`/private/tmp/pr2427-wave13-ui.log`). All four failures use obsolete Notes
+  tree selectors; the retained Notes canvas uses `library-notes-row-0` for
+  the same first fixture note. All five obsolete references were aligned,
+  retaining the pane, focus, status and query assertions. An independent
+  three-case RED reproduced the selector failure in 94.73s.
+- Step 76 removed exactly eight private forwarding methods and retargeted
+  their concrete callers to existing controllers. Absence controls failed
+  before deletion (three Library cases and one Chat case). The full executable
+  AST comparison against `59a5ad3826` passed after accounting only for these
+  eight removals/call targets and stripping docstrings. All incoming behavior
+  remains; Chat is **16,762 lines / 505 methods**, Library **31,865 / 1,229**,
+  within unchanged caps. Historical documentation was shortened, not runtime
+  behavior or cap enforcement.
+- Complete architecture owner/ratchet files: **84 passed, 2 warnings in 1.98s**
+  (`/private/tmp/pr2427-wave13-owner-green.log`). Complete crit8, character
+  switcher, session-tab and scheduler repair files: **99 passed, 3 warnings
+  in 84.68s** (`/private/tmp/pr2427-wave13-repair-green.log`).
+- Both derived-artifact preflights pass; the later log is
+  `/private/tmp/pr2427-wave13-final-preflight.log`. Ruff adds no diagnostics:
+  Chat retains its three baseline diagnostics, Library its 47, crit8 its two
+  pre-existing unused imports. Changed wiring and character-switcher files
+  pass Ruff. Whitespace checks pass. Independent review found no runtime
+  blocker; its stale census comments and import-spacing nits are corrected.
+
+The final-source native run of all 851 Library shell cases is still active at
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave13-shell-native.p859l8`.
+It observes native descriptors without connection patches or forced collection.
+Production and shell-test bytes remain frozen. Two early failures are stale
+Starter focus expectations: the incoming layout moved Chunking Lab into hidden
+Details, so Tab wraps to the visible rail-collapse control. Both sizes reproduce
+independently (**2 failed, 849 deselected in 5.16s**,
+`/private/tmp/pr2427-wave13-starter-red.log`); step 77 records the bounded fixture
+repair to apply after the run. The final descriptor result is not yet known.
+This checkpoint is not merge-ready; native completion, those repairs, current
+head/base review and required checks remain open.
+
+Checkpoint refresh: the architecture files pass again (**84 passed, 2 warnings
+in 1.99s**), reviewed test files pass Ruff, and derived-artifact preflight passes
+with 3,672 unique Backlog task records. The running native cohort has reported
+additional failures beyond the two Starter cases; their terminal tracebacks
+remain to be read before assigning causes. A fresh Git fetch and the live dev
+branch API both still resolve `2e3389e694`; the PR payload's older `baseRefOid`
+is not evidence that dev advanced, so no additional rebase is justified yet.

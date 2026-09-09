@@ -3236,7 +3236,7 @@ class ChatScreen(BaseAppScreen):
             on_full_search=self.app_instance.open_conversation_archive,
             active_results=initial_results,
             history_loader=self._workspace.load_console_session_switcher_history,
-            character_loader=self._load_console_character_switcher_page,
+            character_loader=self._character_context.keyword_page,
             character_activate=activate_character,
             character_commit_waiter=wait_for_character_commit,
             character_open_library=self._open_console_character_library,
@@ -3275,11 +3275,6 @@ class ChatScreen(BaseAppScreen):
                 )
 
             hydration.add_done_callback(reconcile_after_hydration)
-
-    async def _load_console_character_switcher_page(self, **kwargs: Any) -> Any:
-        """Delegate a bounded Keyword page to the authority-fenced controller."""
-
-        return await self._character_context.keyword_page(**kwargs)
 
     async def _wait_until_character_switcher_commit_started(
         self,
