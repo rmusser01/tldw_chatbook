@@ -476,6 +476,12 @@ def _sync_library_canvas(
             sync_kwargs = screen._library_media_trash_canvas_presentation()
         elif kind == "notes":
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+            # task-32127 (review round 2): BEFORE the kwargs are built. The
+            # canvas composes its toolbar from the Items width this resolves,
+            # and the caller has already flipped the notes view, so building
+            # first handed the new view the previous one's geometry (measured:
+            # the editor's 58 columns for a 77-column list after Back).
+            screen._sync_library_notes_reader_layout_from_shell()
             sync_kwargs = screen._library_notes_list_canvas_kwargs()
             sync_kwargs["deferred_guard"] = deferred_guard
             # (wave-8 task 3) `focus_intent_generation` moved to
@@ -517,7 +523,6 @@ def _sync_library_canvas(
                     not note_work_surface_changed and note_work.editor_has_focus()
                 )
                 note_work.sync_state(**note_work_kwargs)
-            screen._sync_library_notes_reader_layout_from_shell()
         elif kind == "prompts":
             canvas = screen.query_one(
                 "#library-prompts-canvas", LibraryPromptsListCanvas

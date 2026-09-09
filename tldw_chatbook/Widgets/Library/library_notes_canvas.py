@@ -79,6 +79,30 @@ _TOOLBAR_MERGE_MIN_WIDTH = 100
 _TOOLBAR_STACK_MIN_WIDTH = 48
 
 
+def _toolbar_shape(pane_width: int, compact: bool) -> tuple[bool, bool]:
+    """Return the two toolbar decisions one pane width drives.
+
+    A width of 0 means "not measured yet": the canvas is composed before the
+    reader shell it lives in exists, so the first frame of a Notes visit has
+    no resolved Items width. That frame takes the conservative shape -- one
+    row per group, neither merged nor stacked -- which is what the list
+    rendered before either threshold existed; the first state sync then
+    composes at the real width (task-32127, review round 2).
+
+    Args:
+        pane_width: Columns the list pane has, or 0 when unmeasured.
+        compact: Whether the compact shell pins the toolbars to one row.
+
+    Returns:
+        ``(merged, stacked)`` -- whether the browse and transfer groups
+        share a row, and whether a group stacks its actions vertically.
+    """
+    return (
+        pane_width >= _TOOLBAR_MERGE_MIN_WIDTH,
+        0 < pane_width < _TOOLBAR_STACK_MIN_WIDTH and not compact,
+    )
+
+
 def compose_note_row_label(
     title: str, *, folder_label: str = "", age_label: str = ""
 ) -> str:
@@ -908,8 +932,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # pane can hold both groups. Below the threshold the merged row
             # clipped its last action off the pane, which is worse than the
             # third row it saves (review round 1).
+            merged, stacked = _toolbar_shape(self.pane_width, self.compact)
             action_rows: Horizontal | None = None
-            if self.pane_width >= _TOOLBAR_MERGE_MIN_WIDTH:
+            if merged:
                 action_rows = Horizontal(id="library-notes-action-rows")
                 action_rows.styles.height = "auto"
             with action_rows or nullcontext():
@@ -976,9 +1001,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     self.import_snapshot.phase
                     if self.import_snapshot is not None
                     else ""
-                )
-                stacked = (
-                    self.pane_width < _TOOLBAR_STACK_MIN_WIDTH and not self.compact
                 )
                 transfer_actions = (Vertical if stacked else Horizontal)(
                     id="library-notes-transfer-actions", classes="ds-toolbar"
@@ -1283,7 +1305,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "This folder is managed by sync; change its sync root instead."
         )
         stale_reason = "This branch may be out of date; retry it before changing it."
-        stacked = self.pane_width < _TOOLBAR_STACK_MIN_WIDTH and not self.compact
+        _, stacked = _toolbar_shape(self.pane_width, self.compact)
         with (Vertical if stacked else Horizontal)(
             id="library-notes-tree-actions", classes="ds-toolbar"
         ):

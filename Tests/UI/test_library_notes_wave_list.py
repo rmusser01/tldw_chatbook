@@ -12,6 +12,7 @@ from types import MethodType, SimpleNamespace
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_library_notes_folder_navigator import (
     _BranchService,
@@ -19,6 +20,16 @@ from Tests.UI.test_library_notes_folder_navigator import (
     _folder_page,
     _membership,
     _placement_page,
+)
+from Tests.UI.test_library_shell import (
+    LIBRARY_TEST_SIZE,
+    LibraryHarness,
+    _active_library_screen,
+    _seed_conversations,
+    _two_conversations,
+    _two_notes,
+    _wait_for_library_shell,
+    _wait_for_selector,
 )
 from tldw_chatbook.Library.library_notes_state import (
     LibraryNoteDeleteReceipt,
@@ -48,7 +59,10 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     AdaptiveReaderLayoutPreferences,
     resolve_adaptive_reader_layout,
 )
-from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+    LibraryNotesCanvas,
+    _toolbar_shape,
+)
 
 #: The two geometries the critique ran at.
 WIDE = (235, 52)
@@ -175,6 +189,9 @@ def _layout_screen_fake(*, width: int, view: str):
         _library_adaptive_reader_allocation_is_current=lambda _shell: True,
         _library_notes_work_first_preferences=lambda preferences: preferences,
         query_one=lambda *_args, **_kwargs: shell,
+        # No canvas is mounted in this fake, so the resolved width has
+        # nothing to be pushed to.
+        query=lambda *_args, **_kwargs: (),
     )
     return fake, shell
 
@@ -704,3 +721,150 @@ async def test_flat_rows_render_the_same_single_line_age() -> None:
         label = str(app.query_one("#library-notes-row-0", Button).label)
 
     assert label == "Q3 retro · 3m"
+
+
+# -- review round 2 (PR #2544) --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_toolbar_uses_the_width_the_pane_has_after_a_round_trip() -> None:
+    """The toolbar composes from THIS view's width, not the previous view's.
+
+    Qodo review 1 (High): the canvas kwargs were built from
+    ``reader_layout`` while ``_sync_library_canvas`` resolved the new
+    layout afterwards, so returning from the editor composed the list for
+    the editor's narrow Items pane and left the toolbar an extra row until
+    some later sync. Driven through the real Back button rather than the
+    resolver alone, which is what the review asked for.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-new")
+        canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        list_width = screen._notes_state.reader_layout.items_width
+        # The first frame has no resolved width at all (the shell it lives
+        # in is not mounted when it composes), so it must take the shape
+        # that clips nothing rather than the narrowest one.
+        assert _toolbar_shape(canvas.pane_width, canvas.compact) == (False, False)
+        transfer = screen.query_one("#library-notes-transfer-actions")
+        assert len({child.region.y for child in transfer.children}) == 1
+
+        screen.query(".library-notes-tree-note-row").first(Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        assert screen._notes_state.reader_layout.items_width < list_width
+
+        screen.query_one("#library-note-back", Button).press()
+        # The FIRST frame the list is painted in, not a settled one: the
+        # stale-geometry window this pins is one sync wide.
+        await _wait_for_selector(screen, pilot, "#library-notes-new")
+        canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+
+        assert canvas.pane_width == screen._notes_state.reader_layout.items_width
+        assert canvas.pane_width == list_width
+
+
+@pytest.mark.asyncio
+async def test_reconcile_abandons_a_tree_visit_that_ended_mid_flight() -> None:
+    """Qodo review 4: a reconcile whose Notes visit ended must not reopen it.
+
+    Unmounting clears every branch and bumps the lifecycle generation; a
+    reconcile still awaiting its mutation context would otherwise start
+    slice loads that capture the NEW generation and repopulate the next
+    visit's tree from the old one's mutation.
+    """
+    service = _RestoreService(None)
+    fake = _branch_screen_fake(service)
+    fake._load_library_notes_tree_slice = MethodType(
+        LibraryScreen._load_library_notes_tree_slice, fake
+    )
+    fake._build_library_notes_tree_projection = MethodType(
+        LibraryScreen._build_library_notes_tree_projection, fake
+    )
+    fake._locate_library_notes_tree_target = MethodType(
+        LibraryScreen._locate_library_notes_tree_target, fake
+    )
+    fake._notes_state.tree_pending_target_placement_id = ""
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+
+    context = service.load_note_tree_mutation_context
+
+    async def end_the_visit(**kwargs):
+        # What `_invalidate_library_notes_tree_for_unmount` does.
+        fake._notes_state.tree_branches = {}
+        fake._notes_state.tree_lifecycle_generation += 1
+        return await context(**kwargs)
+
+    service.load_note_tree_mutation_context = end_the_visit
+    service.calls.clear()
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "note_create",
+        {"note_id": "n1"},
+        before=None,
+        result={"id": "n1", "title": "n1"},
+    )
+
+    assert service.calls == [], "the ended visit still loaded slices"
+    assert fake._notes_state.tree_branches == {}
+    assert fake._notes_state.tree_selected_placement_id == ""
+
+
+def _kwargs_fake(*, tree_projection, sort_choices_visible: bool):
+    """The reads `_library_notes_canvas_kwargs` makes in list view."""
+    return SimpleNamespace(
+        _notes_state=SimpleNamespace(reader_layout=SimpleNamespace(items_width=137)),
+        _library_notes_sort="newest",
+        _library_notes_filter="",
+        _library_notes_sort_choices_visible=sort_choices_visible,
+        _library_note_import_snapshot=None,
+        _library_note_import_controller=SimpleNamespace(
+            snapshot=SimpleNamespace(can_revisit_receipt=False)
+        ),
+        _library_notes_lasting_sync_snapshot=None,
+        _build_library_notes_tree_projection=lambda: tree_projection,
+        _library_notes_tree_selected_placement_id="",
+        _library_notes_deleted_folder_receipt=None,
+        _library_notes_compact=False,
+        _library_note_create_running=False,
+        _library_note_create_status="",
+        _library_note_load_state="",
+        _library_note_load_message="",
+        _library_selected_row_id="browse-notes",
+        _library_notes_view="list",
+        _build_library_notes_state=_list_state,
+    )
+
+
+def test_the_tree_taking_over_closes_the_flat_sort_chooser() -> None:
+    """Qodo review 6: the tree hides the chooser, so the STATE must go too.
+
+    Sort is only composed on the flat fallback. Opening it there and then
+    letting the tree arrive left the footer offering "choose sort" and
+    spent the first Escape on a mode nothing was rendering.
+    """
+    fake = _kwargs_fake(
+        tree_projection=_folder_selected_projection(), sort_choices_visible=True
+    )
+
+    values = LibraryNotesController._library_notes_canvas_kwargs(fake)
+
+    assert values["tree_projection"] is not None
+    assert fake._library_notes_sort_choices_visible is False
+
+
+def test_the_flat_list_keeps_its_open_sort_chooser() -> None:
+    """The same pass leaves the flat list's chooser exactly as it was."""
+    fake = _kwargs_fake(tree_projection=None, sort_choices_visible=True)
+
+    LibraryNotesController._library_notes_canvas_kwargs(fake)
+
+    assert fake._library_notes_sort_choices_visible is True

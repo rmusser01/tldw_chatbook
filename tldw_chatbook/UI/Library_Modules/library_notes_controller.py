@@ -503,7 +503,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
@@ -608,6 +608,14 @@ if TYPE_CHECKING:
     from ..Screens.library_screen import LibraryScreen
 
 
+#: Commits one folder-tree mutation: patches the branches the operation
+#: touched, reloads exactly those slices, and settles the selection.
+#: ``(operation, payload, *, before, result, partial, destination_membership)``
+#: -- see ``LibraryScreen._reconcile_library_notes_tree_mutation``, the only
+#: implementation, which every screen wiring this controller must match.
+LibraryNotesTreeMutationReconciler = Callable[..., Awaitable[None]]
+
+
 class LibraryNotesController:
     """Owns the Library Notes cluster (185 methods).
 
@@ -707,7 +715,7 @@ class LibraryNotesController:
         patch_library_note_list_from_session,
         project_library_media_stage_classes,
         push_library_note_import_picker,
-        reconcile_library_notes_tree_mutation,
+        reconcile_library_notes_tree_mutation: LibraryNotesTreeMutationReconciler,
         refresh_library_note_detail,
         refresh_local_source_snapshot,
         register_footer_shortcuts,
@@ -1244,7 +1252,15 @@ class LibraryNotesController:
         return self._push_library_note_import_picker_fn
 
     @property
-    def _reconcile_library_notes_tree_mutation(self) -> Any:
+    def _reconcile_library_notes_tree_mutation(
+        self,
+    ) -> LibraryNotesTreeMutationReconciler:
+        """The screen's folder-tree mutation reconciler (task-32124).
+
+        Returns:
+            The awaitable injected at construction; see
+            ``LibraryNotesTreeMutationReconciler`` for its contract.
+        """
         return self._reconcile_library_notes_tree_mutation_fn
 
     @property
@@ -3105,6 +3121,14 @@ class LibraryNotesController:
         return True
     def _library_notes_canvas_kwargs(self) -> dict[str, Any]:
         """Return every compose input for the mounted Database Notes canvas."""
+        tree_projection = self._build_library_notes_tree_projection()
+        if tree_projection is not None and self._library_notes_sort_choices_visible:
+            # task-32128 (review round 2): Sort exists only on the flat
+            # fallback, so the tree arriving while the chooser is open must
+            # close the MODE, not just stop rendering it -- otherwise the
+            # footer keeps offering "choose sort" and the first Escape is
+            # spent on a chooser nothing is painting.
+            self._library_notes_sort_choices_visible = False
         values: dict[str, Any] = {
             "list_state": None,
             "sort_mode": self._library_notes_sort,
@@ -3116,7 +3140,7 @@ class LibraryNotesController:
                 self._library_note_import_controller.snapshot.can_revisit_receipt
             ),
             "lasting_sync_snapshot": self._library_notes_lasting_sync_snapshot,
-            "tree_projection": self._build_library_notes_tree_projection(),
+            "tree_projection": tree_projection,
             "tree_selected_placement_id": getattr(
                 self, "_library_notes_tree_selected_placement_id", ""
             ),
