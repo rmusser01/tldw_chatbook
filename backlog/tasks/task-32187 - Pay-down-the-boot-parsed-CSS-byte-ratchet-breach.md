@@ -2,7 +2,7 @@
 id: TASK-32187
 title: >-
   Pay down the boot-parsed CSS byte ratchet breach and re-tighten the limit
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-09 12:30'
 labels:
@@ -120,7 +120,22 @@ would flip every tie the app bundle currently wins against them. That is a
 cascade change needing its own design, and it would buy 2,632 B — 4% of what
 these two paydowns buy.
 
+Harness fallout, fixed at the root. `app.py`'s TASK-24459 note warns that a
+screen `CSS_PATH` would style harness-mounted screens with only the MOVED
+half of a split module; this hit the mirror image — harnesses pinned to the
+bundle alone now saw only the REMAINDER. Six `Tests/Watchlists/*` files took
+`consolidated_css.APP_STYLESHEETS` (which that module already documents as
+the post-split meaning of "the app's styling"), and
+`Tests/UI/full_app_destination_context.py` — which runs the real app but
+reaches Watchlists by `push_screen`, bypassing navigation and therefore
+`_ensure_screen_owned_css` — gained one line calling that seam, repairing the
+whole `Tests/UI/test_watchlists_*` cluster at once. Measured: the five
+bundle-pinned files went 23 failed -> 2 failed, against a dev baseline of 6.
+
+Re-measured after merging dev `86a8054edb`: 743,660 B, headroom 24,340.
+
 Modified: `tldw_chatbook/css/build_css.py`, `tldw_chatbook/css/widget_css.py`,
+`Tests/UI/full_app_destination_context.py`, six `Tests/Watchlists/*` harnesses,
 `tldw_chatbook/app.py`, `Tests/Performance/test_boot_css_byte_budget.py`,
 `Tests/Performance/boot_budget_snapshots/boot_css_bytes.json`,
 `Tests/UI/test_css_build_integrity.py`,
