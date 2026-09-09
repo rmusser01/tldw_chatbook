@@ -388,6 +388,15 @@ A and C clear it (0 mounts; 124 → 30 ms, −76%; cpu −92%). B fails (i) outr
    the active one is gone (`0` hits) after one `screen.recompose()`, because
    `recompose` removes every non-system child. **No residency mechanism can work
    while the rail switch calls it.**
+6. **The toggle repaints by itself; no explicit refresh is needed.** Writing
+   `styles.display` produced a reflow (3 ms) and a render pass (12 ms) per
+   switch with no `refresh()` call in the spike, and **no CSS re-apply beyond
+   1.2 ms** — the stylesheet is not re-matched against an already-registered
+   subtree. That 15 ms is the entire mechanism cost. A/C's 30 ms `block`
+   is larger because a block is measured between pilot polls and also contains
+   loop time this instrument does not attribute (timers, message-pump turns,
+   poll granularity) -- so 15 ms is the number to compare against `ref`'s
+   187 ms, and 30 vs 124 ms is the conservative reading.
 
 ### Composition rulings
 

@@ -60,6 +60,32 @@ buttons + 2 overflow hints) · footer 6 · screen chrome 6 · reader shell and i
 Notes (switch) the same way: rail 52 + canvas (notes) 19 + nav bar 19 + screen
 chrome 11 + footer 6 + shell grid 6 + canvas host 1 = **114**.
 
+Media switch-in, the same 177 by WIDGET CLASS (18 classes; the brief asked for
+this cut too, and it is the one that shows the storm is generic chrome, not
+media-specific widgets):
+
+```
+mounts   Button 45, Static 39, Horizontal 26, Vertical 16, NavigationButton 15,
+         LibraryRailRowButton 15, DestinationRailSectionHeader 5, Input 3,
+         LibraryMediaRowScroll 3, LibraryAdaptiveReaderPaneGrip 2,
+         MainNavigationBar 1, Container 1, AppFooterStatus 1,
+         LibraryMediaReaderShell 1, LibraryRail 1, LibraryMediaViewer 1,
+         LibraryRailSearchInput 1, LibraryMediaCanvas 1
+unmounts Button 40, Static 38, Horizontal 20, Vertical 15,
+         LibraryRailRowButton 15, NavigationButton 15,
+         DestinationRailSectionHeader 5, ScrollBar 2, LibraryMediaRowScroll 2,
+         Input 2, Container 1, AppFooterStatus 1, LibraryNavigationRailHandle 1,
+         LibraryRail 1, LibraryEmergencyReturn 1, LibraryLandingCanvas 1,
+         MainNavigationBar 1, LibraryRailSearchInput 1
+```
+
+Notes (switch): mounts Static 30, Button 21, NavigationButton 15,
+LibraryRailRowButton 15, Horizontal 10, Vertical 7,
+DestinationRailSectionHeader 5, + 10 singletons = 114; unmounts 121 across 19
+classes, and its unmount list is the media route being destroyed
+(`LibraryMediaReaderShell`, `LibraryMediaViewer`, `LibraryMediaCanvas`,
+`LibraryMediaRowScroll` all appear once each).
+
 ### Where §25's mount numbers come from — the arithmetic closes exactly
 
 Measured DOM: media route **119** nodes, notes route **114**; media canvas
