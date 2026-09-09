@@ -14,7 +14,6 @@ from typing import Any
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
-from .artwork import decode_native_artwork
 from .contracts import (
     ALLOWED_ASSET_MIME_TYPES,
     ALLOWED_ASSET_ROLES,
@@ -1361,6 +1360,8 @@ def _validate_source_context_content(value: object) -> None:
         raise ValueError
     for key, item in value.items():
         if key == "artwork":
+            from .artwork import decode_native_artwork
+
             decode_native_artwork(item)
             continue
         if not isinstance(item, str) or not item:

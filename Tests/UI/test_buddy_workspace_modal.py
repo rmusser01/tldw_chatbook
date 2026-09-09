@@ -104,3 +104,41 @@ async def test_refresh_preserves_selected_result_and_focus_without_acknowledging
         assert modal.query_one("#buddy-inbox-close").has_focus
         assert modal.selected_entry() == entry()
         assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_blocks_enter_highlight_and_acknowledgement_until_recovery():
+    from textual.widgets import OptionList
+
+    from tldw_chatbook.Widgets.Persona_Widgets.buddy_workspace_modal import (
+        BuddyWorkspaceModal,
+    )
+
+    failed = False
+    opened, seen = [], []
+
+    async def snapshot():
+        if failed:
+            raise ValueError("Workspace unavailable; retrying.")
+        return "Research", (entry(),)
+
+    app = App()
+    async with app.run_test() as pilot:
+        modal = BuddyWorkspaceModal(
+            snapshot=snapshot, open_entry=opened.append, acknowledge=seen.append
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        failed = True
+        await modal.refresh_inbox()
+        listing = modal.query_one(OptionList)
+        listing.focus()
+        await pilot.press("enter")
+        modal._sync_actions()
+        assert modal.query_one("#buddy-inbox-open", Button).disabled
+        await modal._mark_seen(entry())
+        assert opened == seen == []
+        failed = False
+        await modal.refresh_inbox()
+        await pilot.press("enter")
+        assert opened == [entry()]

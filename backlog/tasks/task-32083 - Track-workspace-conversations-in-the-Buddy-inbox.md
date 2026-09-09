@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 19:32'
-updated_date: '2026-09-08 21:06'
+updated_date: '2026-09-09 01:13'
 labels:
   - buddy
   - console
@@ -28,17 +28,13 @@ Present active workspace conversations and directed replies through a nonintrusi
 - [x] #3 Workspace mode has no voice input, including inside a selected conversation.
 - [x] #4 Opening inbox does not mark all results read or resolve questions; acknowledgement is result-specific.
 - [x] #5 Updates are scoped to the bound workspace and never steal focus.
+- [x] #6 Refresh failures consistently gate mouse and keyboard activation and acknowledgement until a successful fresh snapshot recovers the inbox.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes; existing ADR applies. ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md. Reason: independent Buddy scope and existing app-owned Console activity authority.
-1. Project active local sessions and existing durable unseen receipts into exact workspace inbox entries.
-2. Add a native keyboard/compact-safe inbox with Needs you, Running and Results and explicit result-specific acknowledgement.
-3. Route row interaction to the shared conversation modal with voice disabled and preserve focus on refresh.
-4. Verify workspace filtering, stale targets, frozen acknowledgement, no mutation on open and mounted directed row interaction; document behavior.
-5. Fix cold-start receipt access through a narrow app-owned ConsoleRuntime.ensure_activity_receipt_service seam: reuse one AgentRunsDB/lazy service across inbox and later bridge creation, fence creation against disposal, close worker-owned connections, and report loading/degraded storage without false empty results. Verify persisted ordinary receipts from a fresh runtime on Home with no bridge/provider/selection and targeted resource-lifetime races.
+Preserve the completed implementation under ADR-139 and ADR-079; follow Docs/superpowers/plans/2026-09-08-chatbook-buddy-ux-review-remediation.md for the reviewed UX corrections, focused regressions and mounted verification. ADR required: no new ADR. Reason: direct correction within existing ownership, persistence and runtime boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -55,4 +51,6 @@ Verification: 16 targeted tests passed in 7.32s: new Tests/Chat/test_console_rec
 Root implementation: added read-only workspace projection over current local session/queue/decision snapshots and immutable existing unread result receipts, native Needs you/Running/Results inbox, exact frozen-ID acknowledgement and directed row opening with voice disabled. Refresh preserves selected row and focus; opening or speaking never acknowledges. Hidden selected-session ordinary and queued completions now publish unread receipts using existing authority. Fixed Close awaiting safe dismissal and bounded row-open storage errors. Six workspace coordinator/normal and compact modal checks with speech controls, 6 projection checks and 4 hidden/visible direct/queue receipt cases pass. Agent cold receipt initialization evidence is recorded above. Saved-row cold interaction is being completed under TASK-32082; final combined gate pending. ADR-139 and Docs/User_Guide/buddies.md document scope and limitations.
 
 Final integration complete: cold Home result opening now lazily boots the existing headless runtime only on explicit interaction, hydrates exact saved rows without selecting Console, and retains their later questions/confirmations. Concurrent loader admission is verified by the TASK-32082 regression. Root receipt, projection, exact acknowledgement, no-microphone, normal/compact speech controls and focus checks pass; combined runtime/UI gate includes the actual cold saved transcript -> Send -> Close -> late question/tool approval journey. Independent final review is clear after fixing the cold opener and retained target race. No new run owner, automatic acknowledgement or voice input was added. ADR-139 and user guide capture shipped limits.
+
+Native inbox refresh recovery complete: freshness now gates Enter, pointer Open and result acknowledgement consistently, retaining rows for context and restoring actions on a successful identical snapshot. Scoped tests and combined384affected group passed, preserving exact result identity and workspace no-microphone behavior. Independent review clear; guides and evidence updated. ADR-139 applies; no new ownership or runtime boundary.
 <!-- SECTION:NOTES:END -->

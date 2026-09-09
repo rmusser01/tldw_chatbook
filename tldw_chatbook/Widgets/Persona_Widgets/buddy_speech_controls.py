@@ -26,7 +26,7 @@ class BuddySpeechControls(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("", id="buddy-speech-status", markup=False)
-        with Horizontal():
+        with Horizontal(id="buddy-speech-actions"):
             yield Button("Pause", id="buddy-speech-pause", compact=True)
             yield Button("Skip", id="buddy-speech-skip", compact=True)
             yield Button("Mute", id="buddy-speech-mute", compact=True)
@@ -54,6 +54,17 @@ class BuddySpeechControls(Vertical):
                 else "Buddy speech is off"
             )
         self.query_one("#buddy-speech-status", Static).update(status)
+        self.query_one("#buddy-speech-actions").display = bool(
+            self.coordinator.enabled
+            or self.coordinator.needs_consent
+            or state.current_title
+            or state.queued
+            or state.error
+            or self.coordinator.notice
+            or state.paused
+            or state.muted
+            or state.input_active
+        )
         pause = self.query_one("#buddy-speech-pause", Button)
         pause.label = "Resume" if state.paused else "Pause"
         pause.disabled = not self.coordinator.enabled or state.input_active

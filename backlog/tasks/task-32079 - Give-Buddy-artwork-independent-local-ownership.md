@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 19:29'
-updated_date: '2026-09-08 20:53'
+updated_date: '2026-09-09 01:13'
 labels:
   - buddy
   - console
@@ -27,16 +27,13 @@ Let users select an installed visual companion without creating or retaining a P
 - [x] #3 Legacy selection migration is idempotent, preserves geometry, enabled state and artwork notices, and leaves the old selection usable on failure.
 - [x] #4 Built-in and native imported artwork can be published to Buddy ownership with preserved supplied attribution and unknown licensing kept unspecified.
 - [x] #5 Targeted SQLite, publication and controller tests verify restart, migration, failure and ownership isolation.
+- [x] #6 New Buddy index has meaningful query-plan evidence without SQLite statistics and appears in the required index census.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes
-ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md
-Reason: independent ownership and explicit default-selection semantics.
-Follow Task 2 in Docs/superpowers/plans/2026-09-08-console-buddy-foundations.md.
-Read the approved spec and existing relevant ADRs; add failing targeted regression coverage, implement shared authority/creation seams, validate targeted integration, then document evidence and review.
+Retain the existing ADR-139 implementation. PR CI follow-up: reproduce the index census and UI-ready failures on merged dev, defer unnecessary imports and capture active Buddy lookup query plans without sqlite_stat1, run guards and focused regression tests. ADR required: no new ADR. ADR paths: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md and backlog/decisions/097-boot-budget-ratchets.md. Reason: validation and lazy-import correction within existing contracts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -53,4 +50,6 @@ Core changed files: Persona_Buddy/library.py, controller.py, preferences.py and 
 Parent review reproduced and resolved two startup regressions: inactive or archived legacy builtins no longer seed a replacement independent Buddy, and unclaimed migration now holds the first-controller construction lock across preference admission, disk write and app_config publication. If controller construction wins during the visual copy, migration hands off without overwriting its current selection. Deterministic concurrency/handoff tests and real inactive/deleted/archived legacy seed tests pass; included in the final 183-test speech/startup regression run. No full-suite run or shared-file formatting.
 
 Final integration gate: 813 passed in Tests/Persona_Buddy, Tests/Persona_Visual, WorkspaceDB/default/provisioning and Persona assignment suites (162.62s); 7 lazy packaging/architecture checks passed, with the previously reproduced untouched legacy builtin boundary failure excluded. Independent review startup retirement and constructor/migration ownership races are fixed and covered. Final user guide: Docs/User_Guide/buddies.md. ADR-139 governs genuine Buddy ownership. No new lint findings in task-owned files; only targeted tests were run.
+
+PR UX follow-up complete: real SQLite active Buddy lookup now asserts idx_buddy_visual_bindings_active through the production union-view shape with no sqlite_stat1. Index census passes282 entries/67 pins; affected Buddy library/controller/UI/default verification384passed. Independent review confirmed the query evidence. ADR-139 and ADR-097 remain authoritative; no index or budget waiver. Final evidence: Docs/Development/Reviews/2026-09-08-chatbook-buddy-persona-ux.md.
 <!-- SECTION:NOTES:END -->

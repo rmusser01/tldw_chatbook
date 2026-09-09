@@ -32,8 +32,6 @@ from uuid import uuid4
 
 from loguru import logger
 
-from .console_assistant_defaults import ConsoleAssistantStartup
-
 # None is an explicit plain choice; omission alone permits workspace inheritance.
 UNSPECIFIED_ASSISTANT = object()
 
@@ -42,6 +40,8 @@ if TYPE_CHECKING:
         CanvasPromotionContribution,
         CanvasStagingOwner,
     )
+
+    from .console_session_settings import ConsoleAssistantStartup
 
 from tldw_chatbook.Agents.agent_models import (
     FinalContinuation,

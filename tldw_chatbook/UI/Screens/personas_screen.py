@@ -520,19 +520,6 @@ class _CharacterTTSControlSnapshot:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _PersonaBuddyActionAuthority:
-    """Immutable Workbench and app-owner authority for one explicit action."""
-
-    action: str
-    source: str
-    persona_id: str
-    revision: int
-    session_generation: int
-    scope_service: object = dataclasses.field(repr=False, compare=False)
-    controller: object = dataclasses.field(repr=False, compare=False)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class _ActorPackExportUIAuthority:
     """Exact screen and selection authority for one app-owned export."""
 
@@ -1263,7 +1250,6 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_operation_inflight: bool = False
         self._profile_save_completion: asyncio.Future[None] | None = None
         self._persona_buddy_session_generation: int = 0
-        self._persona_buddy_action_lock = asyncio.Lock()
         # Mirrors _profile_save_inflight for the character editor: guards
         # against a re-entrant Save (double-click/Ctrl+S) while an earlier
         # save for this session is still persisting.
@@ -7152,218 +7138,17 @@ class PersonasScreen(BaseAppScreen):
         event.stop()
         await self._attach_selection_to_console(intent="start_chat")
 
-    def _persona_buddy_action_context_is_current(
-        self,
-        authority: _PersonaBuddyActionAuthority,
-    ) -> bool:
-        """Revalidate every Workbench owner behind one explicit Buddy action."""
-
-        return bool(
-            self.is_mounted
-            and getattr(self.app_instance, "character_persona_scope_service", None)
-            is authority.scope_service
-            and getattr(self.app, "persona_buddy_controller", None)
-            is authority.controller
-            and self._persona_buddy_session_generation == authority.session_generation
-            and self.state.active_mode == "personas"
-            and self.state.runtime_source == authority.source
-            and self.persona_handler.current_mode() == authority.source
-            and self.state.selected_entity_kind == "persona"
-            and self.state.selected_entity_id == authority.persona_id
-            and not self.state.has_unsaved_changes
-        )
-
-    @staticmethod
-    def _persona_buddy_record_is_eligible(
-        record: Mapping[str, object], authority: _PersonaBuddyActionAuthority
-    ) -> bool:
-        """Return whether a complete record still matches local action authority."""
-
-        return bool(
-            authority.source == "local"
-            and str(record.get("id") or "") == authority.persona_id
-            and type(record.get("version")) is int
-            and record.get("version") == authority.revision
-            and record.get("is_active", True) is True
-            and record.get("deleted", False) is False
-        )
-
-    @staticmethod
-    async def _fetch_persona_buddy_action_record(
-        authority: _PersonaBuddyActionAuthority,
-    ) -> Mapping[str, object] | None:
-        """Fetch a full record only through the request's captured service."""
-
-        getter = getattr(authority.scope_service, "get_persona_profile", None)
-        if not callable(getter):
-            return None
-        try:
-            record = await getter(authority.persona_id, mode=authority.source)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "Persona Buddy action profile refresh failed "
-                "(category=profile_unavailable)."
-            )
-            return None
-        if hasattr(record, "model_dump"):
-            record = record.model_dump(mode="json")
-        return record if isinstance(record, Mapping) else None
-
     @on(PersonaBuddyActionRequested)
     def _handle_persona_buddy_action(
         self, message: PersonaBuddyActionRequested
     ) -> None:
-        """Capture one action session and run it as a replaceable screen worker."""
-
+        """Route legacy inspector messages to independent Buddy management."""
         message.stop()
-        scope_service = getattr(
-            self.app_instance, "character_persona_scope_service", None
+        from ..Navigation.buddy_management import get_buddy_management
+
+        get_buddy_management(self.app).request_visibility(
+            "manage" if message.action == "use" else message.action
         )
-        # Explicit Buddy actions are the feature's entry point, so when the
-        # passive read yields None they must CONSTRUCT the lazy controller
-        # (TASK-21103): a profile whose preferences still say disabled reads
-        # None from the persona_buddy_controller property, and "Use for
-        # Buddy" from that state has to be able to enable it end to end.
-        controller = getattr(self.app, "persona_buddy_controller", None)
-        if controller is None:
-            ensure = getattr(self.app, "ensure_persona_buddy_controller", None)
-            if callable(ensure):
-                controller = ensure()
-        authority = _PersonaBuddyActionAuthority(
-            action=message.action,
-            source=message.source,
-            persona_id=message.persona_id,
-            revision=message.revision,
-            session_generation=self._advance_persona_buddy_session(),
-            scope_service=scope_service,
-            controller=controller,
-        )
-        self.run_worker(
-            self._run_persona_buddy_action(authority),
-            group="personas-buddy-action",
-            exclusive=True,
-            exit_on_error=False,
-        )
-
-    async def _run_persona_buddy_action(
-        self, authority: _PersonaBuddyActionAuthority
-    ) -> None:
-        """Persist one explicit action behind exact ABA-safe authority."""
-
-        scope_service = authority.scope_service
-        controller = authority.controller
-        if (
-            authority.source != "local"
-            or scope_service is None
-            or controller is None
-            or not self._persona_buddy_action_context_is_current(authority)
-        ):
-            self._notify(
-                "Persona Buddy is available for active local Personas.", "warning"
-            )
-            return
-
-        record = await self._fetch_persona_buddy_action_record(authority)
-        if (
-            record is None
-            or not self._persona_buddy_action_context_is_current(authority)
-            or not self._persona_buddy_record_is_eligible(record, authority)
-        ):
-            if self._persona_buddy_action_context_is_current(authority):
-                self._notify(
-                    "Persona Buddy is available for active local Personas.", "warning"
-                )
-            return
-
-        selection = PersonaBuddySelection("local", authority.persona_id)
-        async with self._persona_buddy_action_lock:
-            if not self._persona_buddy_action_context_is_current(authority):
-                return
-            current = controller.current_preferences()
-            if authority.action == "use":
-                changes: dict[str, object] = {
-                    "selection": selection,
-                    "enabled": True,
-                    "open": True,
-                }
-            elif current.selection != selection:
-                self._notify("Use this Persona for Buddy first.", "warning")
-                return
-            elif authority.action == "show":
-                changes = {"enabled": True, "open": True}
-            elif authority.action == "close":
-                changes = {"open": False}
-            else:
-                changes = {"enabled": False}
-
-            candidate = dataclasses.replace(current, **changes)
-            if candidate != current:
-
-                async def restore_previous_action_fields() -> None:
-                    latest_preferences = controller.current_preferences()
-                    rollback = dataclasses.replace(
-                        latest_preferences,
-                        **{field: getattr(current, field) for field in changes},
-                    )
-                    if rollback != latest_preferences:
-                        await controller.update_preferences(rollback)
-
-                try:
-                    await controller.update_preferences(candidate)
-                except asyncio.CancelledError:
-                    if not self._persona_buddy_action_context_is_current(authority):
-                        await restore_previous_action_fields()
-                    raise
-                except Exception:
-                    logger.warning(
-                        "Persona Buddy preference update failed "
-                        "(category=preference_update_failed)."
-                    )
-                    if self._persona_buddy_action_context_is_current(authority):
-                        self._notify(
-                            "Persona Buddy preference could not be saved.", "error"
-                        )
-                    return
-                if not self._persona_buddy_action_context_is_current(authority):
-                    await restore_previous_action_fields()
-                    return
-                preferences = controller.current_preferences()
-                if any(
-                    getattr(preferences, field) != value
-                    for field, value in changes.items()
-                ):
-                    self._notify(
-                        "Persona Buddy preference could not be saved.", "error"
-                    )
-                    return
-            self._sync_inspector_buddy_status()
-
-        record = await self._fetch_persona_buddy_action_record(authority)
-        if (
-            record is None
-            or not self._persona_buddy_action_context_is_current(authority)
-            or not self._persona_buddy_record_is_eligible(record, authority)
-        ):
-            return
-        reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
-        if callable(reconcile):
-            try:
-                await reconcile()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.warning(
-                    "Persona Buddy view refresh failed (category=view_refresh_failed)."
-                )
-                if self._persona_buddy_action_context_is_current(authority):
-                    self._notify(
-                        "Persona Buddy was updated, but its view could not refresh.",
-                        "warning",
-                    )
-            if not self._persona_buddy_action_context_is_current(authority):
-                return
 
     @on(CharacterMessage.Loaded)
     async def _handle_character_loaded(self, message: CharacterMessage.Loaded) -> None:

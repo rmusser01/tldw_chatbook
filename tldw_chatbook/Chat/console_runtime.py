@@ -1318,6 +1318,25 @@ class ConsoleRuntime:
 
     def _resolve_new_console_assistant(self, workspace_id: str, settings: Any) -> Any:
         """Resolve new-chat identity without requiring a mounted Console view."""
+        from collections.abc import Mapping
+
+        from ..Workspaces.models import DEFAULT_WORKSPACE_ID
+        from .console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+        from .console_session_settings import (
+            ConsoleAssistantStartup,
+            blank_console_session_settings,
+        )
+
+        # Default/global scopes never inherit a Persona (ADR-079). Keep their
+        # ordinary boot path free of workspace Persona resolution.
+        if workspace_id in (CONSOLE_GLOBAL_WORKSPACE_ID, DEFAULT_WORKSPACE_ID, ""):
+            config = getattr(self._app, "app_config", {})
+            return ConsoleAssistantStartup(
+                settings
+                or blank_console_session_settings(
+                    config if isinstance(config, Mapping) else {}
+                )
+            )
         from .console_assistant_defaults import resolve_new_console_assistant
 
         return resolve_new_console_assistant(self._app, workspace_id, settings)

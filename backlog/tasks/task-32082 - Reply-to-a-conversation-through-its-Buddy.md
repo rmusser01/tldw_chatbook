@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 19:31'
-updated_date: '2026-09-08 21:03'
+updated_date: '2026-09-09 01:13'
 labels:
   - buddy
   - console
@@ -28,20 +28,14 @@ Allow context and replies to a pinned conversation from another application dest
 - [x] #3 Per-conversation drafts survive closing; Open in Console is available and close restores focus.
 - [x] #4 Supported conversation voice uses existing guarded voice facilities; microphone capture stops when interaction closes.
 - [x] #5 Closing, hiding or rebinding never stops accepted work; deleted/inaccessible targets never fall back.
+- [x] #6 The modal initially shows current content, follows new replies when at end, preserves deliberate reading and offers a Latest or new-updates action with readily reachable pending decisions.
+- [x] #7 Fresh conversations show an empty state and speech-off presentation leaves useful reading space at compact sizes.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no
-ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md
-Reason: directly implement approved explicit conversation interaction using retained Console execution and existing guarded decisions/voice.
-1. Add an app-owned exact-binding coordinator and mounted projection modal; preserve per-binding drafts and opener focus.
-2. Add a narrow composer-preserving manual send option with visible refusal of unseen staged inputs, retaining all normal admission/permission and durable recovery checks.
-3. Project existing approval/question cards and resolve only exact current owner rounds. Extend answerable-time claims for the visible Buddy projection.
-4. Reuse guarded Console streaming dictation with explicit start/finish, review-before-send, owner/generation fencing, and microphone discard on close/suspend.
-5. Add targeted two-session mounted text/approval, stale/deleted owner, draft/focus and microphone-close coverage; record exact results and limitations.
-Detailed plan: Docs/superpowers/plans/2026-09-08-buddy-conversation-interaction.md
+Preserve the completed implementation under ADR-139 and ADR-079; follow Docs/superpowers/plans/2026-09-08-chatbook-buddy-ux-review-remediation.md for the reviewed UX corrections, focused regressions and mounted verification. ADR required: no new ADR. Reason: direct correction within existing ownership, persistence and runtime boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -58,4 +52,6 @@ Validation: final race/cold/retained-decision/bootstrap-failure subset 6 passed 
 Files: UI/Navigation/buddy_conversation.py; Widgets/Persona_Widgets/buddy_conversation_modal.py; narrow Chat/console_chat_controller.py and console_interrupt_rounds.py changes; Tests/UI/test_buddy_conversation_modal.py; Tests/Chat/test_console_decision_clock.py; Docs/User_Guide/console/buddy-conversation.md; Docs/superpowers/plans/2026-09-08-buddy-conversation-interaction.md; testing-evidence lesson. Existing ADR139 amended for explicit cold bootstrap and retained decision availability.
 
 Evidence uses mounted Textual and real SQLite with injected provider/recorder boundaries. No full sweep, live provider, physical microphone, audible playback or realtime-voice claim. No commits made.
+
+Native conversation UX follow-up complete: initial empty state, current-content opening, follow-at-end with retained reading position, Latest/new updates, direct exact-decision access and compact speech-off controls. Final production-CSS confirmation exposed nested approval-body clipping at60x20; Buddy-scoped auto-height/flexible Select and ancestor-aware regression now show Approve once and Deny at60x20/80x24.384affected cases before final fixes; final transcript/layout/CSS37passed. Independent source/render review clear; lesson, guides and evidence updated under ADR-139. No real microphone/audio or provider claim.
 <!-- SECTION:NOTES:END -->

@@ -12,7 +12,6 @@ from types import MappingProxyType
 from typing import Any
 
 from . import importer
-from .artwork import artwork_from_pack
 from .assets import (
     PersonaVisualAssetMetadata,
     _decode_selected_frame,
@@ -130,6 +129,8 @@ def read_buddy_archive(path: os.PathLike[str] | str) -> BuddySnapshot:
             raw_pack = importer._json_member(archive, members, "metadata/pack.json")[
                 "pack"
             ]
+            from .artwork import artwork_from_pack
+
             artwork = artwork_from_pack(raw_pack)
         source_path, source_identity, source_digest = (
             source.path,

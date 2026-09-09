@@ -36,9 +36,13 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
         border: round $accent; background: $panel; padding: 0 1; }
     #buddy-conversation-title { height: 2; text-style: bold; }
     #buddy-activity, #buddy-reply-notice { height: auto; }
-    #buddy-conversation-body { height: 1fr; }
+    #buddy-conversation-body { height: 1fr; min-height: 2; }
+    #buddy-transcript-navigation { height: 1; }
+    #buddy-transcript-navigation Button { height: 1; min-width: 8; width: auto; }
     #buddy-transcript { height: auto; padding: 1 0; }
     #buddy-reply { height: 5; min-height: 3; }
+    BuddyConversationModal.compact #buddy-reply { height: 3; }
+    BuddyConversationModal.compact #buddy-conversation-title { height: 1; }
     #buddy-actions { height: 3; align-horizontal: right; }
     #buddy-actions Button { min-width: 8; width: auto; margin-left: 1; }
     #buddy-reply-notice { color: $text-muted; }
@@ -54,7 +58,9 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
         self._syncing_draft = False
         self._visible = True
         self._timer: Any = None
-        self._last_transcript = ""
+        self._last_transcript: str | None = None
+        self._last_decisions = ""
+        self._new_updates = False
         self._last_draft = coordinator.drafts.get(binding, "")
 
     def compose(self) -> ComposeResult:
@@ -67,6 +73,9 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
                 yield SkillInstallConfirmCard(id="buddy-install")
                 yield SkillScriptConfirmCard(id="buddy-script")
                 yield ChatQuestionCard(id="buddy-question")
+            with Horizontal(id="buddy-transcript-navigation"):
+                yield Button("Latest", id="buddy-latest", compact=True)
+                yield Button("Pending decision", id="buddy-pending", compact=True)
             yield Static("", id="buddy-reply-notice", markup=False)
             yield TextArea(
                 self.coordinator.drafts.get(self.binding, ""), id="buddy-reply"
@@ -84,8 +93,12 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
                 yield Button("Open Console", id="buddy-open-console")
                 yield Button("Close", id="buddy-close")
 
+    def on_resize(self) -> None:
+        self.set_class(self.size.height <= 24, "compact")
+
     def on_mount(self) -> None:
         super().on_mount()
+        self.query_one("#buddy-conversation-body", VerticalScroll).anchor()
         self._timer = self.set_interval(0.2, self.refresh_projection)
         self.call_after_refresh(self.refresh_projection)
         self.query_one("#buddy-reply", TextArea).focus()
@@ -93,6 +106,10 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
     def refresh_projection(self) -> None:
         if not self.is_mounted or not self._visible:
             return
+        body = self.query_one("#buddy-conversation-body", VerticalScroll)
+        first = self._last_transcript is None
+        follow = first or body.scroll_y >= body.max_scroll_y - 1
+        changed = False
         coordinator = self.coordinator
         session = coordinator.resolve(self.binding)
         controller = coordinator.controller
@@ -125,6 +142,7 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
                 for message in messages
             )[-64000:]
             if transcript != self._last_transcript:
+                changed = True
                 self.query_one("#buddy-transcript", Static).update(
                     transcript or "No messages yet."
                 )
@@ -132,6 +150,18 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
         else:
             self.query_one("#buddy-transcript", Static).update("")
         payloads = coordinator.decision_payloads(self.binding) if available else {}
+        decisions = repr(payloads)
+        changed = changed or decisions != self._last_decisions
+        self._last_decisions = decisions
+        self.query_one("#buddy-pending", Button).display = bool(payloads)
+        if changed:
+            if follow:
+                self.call_after_refresh(self._scroll_latest)
+            else:
+                self._new_updates = True
+        self.query_one("#buddy-latest", Button).label = (
+            "Latest · new updates" if self._new_updates else "Latest"
+        )
         approval = payloads.get("approval")
         card = self.query_one(ChatApprovalCard)
         if approval:
@@ -173,6 +203,47 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
                 if status != "idle"
                 else "Dictate"
             )
+
+    def _scroll_latest(self) -> None:
+        self.query_one("#buddy-conversation-body", VerticalScroll).anchor()
+        self._new_updates = False
+        self.query_one("#buddy-latest", Button).label = "Latest"
+
+    @on(Button.Pressed, "#buddy-latest")
+    def latest(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._scroll_latest()
+
+    @on(Button.Pressed, "#buddy-pending")
+    def pending(self, event: Button.Pressed) -> None:
+        event.stop()
+        for card_type in (
+            ChatApprovalCard,
+            SkillInstallConfirmCard,
+            SkillScriptConfirmCard,
+            ChatQuestionCard,
+        ):
+            card = self.query_one(card_type)
+            if card.display:
+                body = self.query_one("#buddy-conversation-body", VerticalScroll)
+                body.release_anchor()
+                controls = [widget for widget in card.query(Button) if widget.focusable]
+                if controls:
+                    controls[0].focus(scroll_visible=False)
+                    # Nested scroll_to_widget clips through the tall card's
+                    # ancestors at small sizes. Target the action's measured
+                    # position directly in the transcript viewport instead.
+                    body.scroll_to(
+                        y=body.scroll_y
+                        + controls[0].region.bottom
+                        - body.content_region.bottom,
+                        animate=False,
+                        immediate=True,
+                    )
+                else:
+                    body.scroll_to_widget(card, animate=False, top=True, immediate=True)
+                return
+        self.query_one("#buddy-open-console", Button).focus()
 
     @on(TextArea.Changed, "#buddy-reply")
     def draft_changed(self, event: TextArea.Changed) -> None:

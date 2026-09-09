@@ -1,12 +1,15 @@
 # Buddies in Console and across screens
 
 Open **Console → Menu → Buddy** to manage Buddy artwork, its follow target and
-the target's Persona. The floating Buddy's **⚙** control opens the same form;
+the target's Persona. The floating Buddy's **⚙** control and Personas → **Manage Buddy** open the same form;
 focus the Buddy and press **m** for keyboard access.
 
-Choose installed artwork or enter a native `.tldw-persona-vpack` / `.zip` path.
-Preview an expression, choose **Dynamic** or **Static**, set its size, and Apply.
-Global Reduce motion also suppresses animation. Cancel discards form changes.
+Choose installed artwork, preview an expression, and choose **Dynamic** or
+**Static**. **Import pack & size** contains the optional native
+`.tldw-persona-vpack` / `.zip` path and terminal-cell dimensions. Global Reduce
+motion also suppresses animation. Apply saves your choices; Cancel discards them.
+If import or saving fails, the form retains your attempted values for correction.
+A partial save identifies which settings were saved and which need retrying.
 Pixel Migu is available in a fresh profile. Imported artwork and its creator,
 licence and notices remain in the local Buddy library. Choosing artwork does not
 create or assign a Persona. Existing Persona-backed Buddy selections are copied
@@ -24,8 +27,10 @@ move it; the lower-right grip resizes it. Closing or hiding it does not stop a r
 
 ## Conversation Buddy
 
-The interaction window shows the pinned conversation's transcript, current work,
-questions and supported approval cards. Type a reply and Send without changing
+The interaction window opens at current content and follows new replies while
+you are at the end. Reading older messages preserves your position; **Latest**
+returns to the end and indicates new updates. Pending decisions have a direct
+jump action. Type a reply and Send without changing
 the underlying screen. Each conversation keeps its Buddy draft when the window
 closes; its Console composer draft remains separate. Existing permissions still
 apply. If Console has staged inputs the Buddy cannot display, review those in
@@ -49,11 +54,14 @@ does not offer microphone input, including inside a conversation opened from it.
 
 Opening or refreshing the inbox does not clear results. **Mark seen** applies to
 the selected result only. Questions still require an answer, and approvals still
-require their existing confirmation. Updates never take keyboard focus.
+require their existing confirmation. Updates never take keyboard focus. If a
+refresh fails, retained rows remain visible for context, but opening and marking
+results seen wait for a successful refresh.
 
 ## Personas and speech
 
-The management form can keep the current Persona, choose another, or choose
+The management form names the current Persona or workspace default, including
+None or an unavailable assignment. It can keep the current Persona, choose another, or choose
 **None** for the followed conversation. Changes affect future turns and are
 unavailable while a run, queue or decision is active. A Persona change is saved
 atomically with its prompt and settings. Existing memory-write permission requires
@@ -83,4 +91,5 @@ decisions alive. A finite decision timer advances only while the decision is
 actually answerable. Explicit Stop, closing a session, and app shutdown retain
 their cancellation behavior. This feature does not resume unfinished provider
 runs after an app restart. Chatbook currently supports local Buddy interaction;
-the server UX will be ported separately.
+the corresponding server/shared WebUI changes are tracked in
+[server PR #2933](https://github.com/rmusser01/tldw_server/pull/2933).

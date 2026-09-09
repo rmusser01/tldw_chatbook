@@ -260,7 +260,7 @@ async def test_persona_buddy_action_message_uses_normal_textual_delivery():
 @pytest.mark.parametrize(
     ("button_id", "label", "action"),
     (
-        ("#personas-buddy-use", "Use for Buddy", "use"),
+        ("#personas-buddy-use", "Manage Buddy", "manage"),
         ("#personas-buddy-show", "Show Buddy", "show"),
         ("#personas-buddy-close", "Close Buddy", "close"),
         ("#personas-buddy-disable", "Disable Buddy", "disable"),
@@ -270,7 +270,18 @@ async def test_active_local_persona_buddy_actions_are_explicit_and_typed(
     button_id: str,
     label: str,
     action: str,
+    monkeypatch,
 ):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Navigation import buddy_management
+
+    calls = []
+    monkeypatch.setattr(
+        buddy_management,
+        "get_buddy_management",
+        lambda _: SimpleNamespace(request_visibility=calls.append),
+    )
     app = InspectorApp()
     async with app.run_test(size=(170, 50)) as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
@@ -297,76 +308,36 @@ async def test_active_local_persona_buddy_actions_are_explicit_and_typed(
         await pilot.click(button_id)
         await pilot.pause()
 
-        message = app.buddy_messages[-1]
-        assert (
-            message.action,
-            message.source,
-            message.persona_id,
-            message.revision,
-        ) == (
-            action,
-            "local",
-            "persona-7",
-            4,
-        )
+        assert calls == [action]
+        assert app.buddy_messages == []
 
 
-async def test_server_persona_buddy_actions_are_disabled_with_exact_recovery_copy():
+@pytest.mark.parametrize("source", ["local", "server", None])
+async def test_independent_buddy_controls_do_not_require_persona_owner(source):
     app = InspectorApp()
-    async with app.run_test(size=(170, 50)) as pilot:
-        pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(
-            name="Remote Archivist",
-            kind="persona",
-            source="server",
-            entity_id="persona-7",
-            revision=4,
-            active=True,
-            profile_current=True,
-        )
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one(PersonasInspectorPane)
+        if source:
+            pane.show_selection(
+                name="Unrelated",
+                kind="persona",
+                source=source,
+                entity_id="other",
+                revision=1,
+                active=False,
+                profile_current=False,
+            )
+        pane.set_buddy_status(source=None, persona_id=None, enabled=True, open=True)
         await pilot.pause()
-
-        for button_id in (
+        for selector in (
             "#personas-buddy-use",
-            "#personas-buddy-show",
             "#personas-buddy-close",
             "#personas-buddy-disable",
         ):
-            button = pilot.app.query_one(button_id, Button)
-            assert button.disabled is True
-            assert button.tooltip == "Save a local copy first"
-
-
-async def test_non_owner_highlight_only_enables_use_with_truthful_tooltip():
-    app = InspectorApp()
-    async with app.run_test(size=(170, 50)) as pilot:
-        pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(
-            name="Navigator",
-            kind="persona",
-            source="local",
-            entity_id="persona-2",
-            revision=5,
-            active=True,
-            profile_current=True,
-        )
-        pane.set_buddy_status(
-            source="local",
-            persona_id="persona-1",
-            enabled=True,
-            open=True,
-        )
-        await pilot.pause()
-
-        assert pane.query_one("#personas-buddy-use", Button).disabled is False
-        for button_id in (
-            "#personas-buddy-show",
-            "#personas-buddy-close",
-            "#personas-buddy-disable",
-        ):
-            button = pane.query_one(button_id, Button)
-            assert button.disabled is True
-            assert button.tooltip == "Select the Persona currently used by Buddy"
+            button = pane.query_one(selector, Button)
+            assert not button.disabled
+            assert all(node.display for node in button.ancestors_with_self)
+        assert pane.query_one("#personas-buddy-show", Button).disabled
 
 
 async def test_persona_highlight_alone_emits_no_buddy_action():
@@ -404,7 +375,7 @@ async def test_buddy_actions_keep_exact_labels_and_focus_without_keybindings(siz
         await pilot.pause()
 
         expected = (
-            ("#personas-buddy-use", "Use for Buddy"),
+            ("#personas-buddy-use", "Manage Buddy"),
             ("#personas-buddy-show", "Show Buddy"),
             ("#personas-buddy-close", "Close Buddy"),
             ("#personas-buddy-disable", "Disable Buddy"),
@@ -425,54 +396,6 @@ async def test_buddy_actions_keep_exact_labels_and_focus_without_keybindings(siz
 
         await pilot.press("u", "s", "c", "d")
         assert app.buddy_messages == []
-
-
-@pytest.mark.parametrize(
-    ("entity_id", "revision", "active"),
-    ((None, 4, True), ("persona-7", None, True), ("persona-7", 4, False)),
-)
-async def test_buddy_rejects_incomplete_or_inactive_local_persona(
-    entity_id, revision, active
-):
-    app = InspectorApp()
-    async with app.run_test(size=(170, 50)) as pilot:
-        pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(
-            name="Archivist",
-            kind="persona",
-            source="local",
-            entity_id=entity_id,
-            revision=revision,
-            active=active,
-            profile_current=True,
-        )
-        await pilot.pause()
-
-        for button in pilot.app.query(".persona-buddy-action").results(Button):
-            assert button.disabled is True
-
-
-async def test_buddy_requires_current_complete_profile_not_cached_eligibility():
-    app = InspectorApp()
-    async with app.run_test(size=(170, 50)) as pilot:
-        pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(
-            name="Cached Persona",
-            kind="persona",
-            source="local",
-            entity_id="persona-7",
-            revision=4,
-            active=True,
-            profile_current=False,
-        )
-        await pilot.pause()
-
-        for button in pilot.app.query(".persona-buddy-action").results(Button):
-            assert button.disabled is True
-            assert (
-                button.tooltip
-                == "Persona details are unavailable. Refresh and try again."
-            )
 
 
 async def test_default_state_shows_no_selection_and_disabled_actions():

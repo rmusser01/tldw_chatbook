@@ -91,8 +91,114 @@ async def test_actions_remain_visible_and_fields_keyboard_accessible(size):
         apply = modal.query_one("#buddy-apply", Button)
         assert apply.region.bottom <= size[1]
         assert apply.region.right <= size[0]
+        from textual.widgets import Collapsible
+
+        modal.query_one(Collapsible).collapsed = False
+        await pilot.pause()
         modal.query_one("#buddy-height", Input).focus()
         await pilot.pause()
         await pilot.wait_for_scheduled_animations()
         assert modal.query_one("#buddy-height").region.bottom <= apply.region.y
         assert modal.query_one("#buddy-height").has_focus
+
+
+@pytest.mark.asyncio
+async def test_apply_failure_preserves_form_and_blocks_dismissal_while_saving():
+    import asyncio
+
+    m = modal_module()
+    started, finish = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def apply(choice):
+        calls.append(choice)
+        started.set()
+        await finish.wait()
+        raise ValueError("Cannot import this pack. Check its path and retry.")
+
+    app = App()
+    async with app.run_test() as pilot:
+        modal = m.BuddyManagementModal(apply=apply)
+        app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#buddy-import", Input).value = "/missing.zip"
+        modal.query_one("#buddy-apply", Button).press()
+        await started.wait()
+        await pilot.press("escape")
+        assert app.screen is modal
+        assert modal.query_one("#buddy-apply", Button).disabled
+        finish.set()
+        await pilot.pause()
+        assert app.screen is modal
+        assert modal.query_one("#buddy-import", Input).value == "/missing.zip"
+        assert "Check its path" in str(modal.query_one("#buddy-form-error").render())
+        assert not modal.query_one("#buddy-apply", Button).disabled
+        assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 20), (80, 24), (120, 40)])
+async def test_preview_pointer_focus_and_disclosed_geometry_fit(size):
+    from textual.widgets import Collapsible
+
+    m = modal_module()
+    previews = []
+    app = App()
+    async with app.run_test(size=size) as pilot:
+        modal = m.BuddyManagementModal(
+            buddies=(("Migu", "migu"),),
+            initial=m.BuddyManagementChoice(buddy_id="migu"),
+            preview=lambda *args: previews.append(args) or "Migu preview",
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        preview = modal.query_one("#buddy-preview-button", Button)
+        preview.focus()
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        assert preview.has_focus
+        assert (
+            preview.region.right
+            <= modal.query_one("#buddy-management-body").region.right
+        )
+        assert await pilot.click("#buddy-preview-button")
+        await pilot.pause()
+        assert previews == [("migu", "idle")]
+        advanced = modal.query_one(Collapsible)
+        assert advanced.collapsed
+        advanced.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not advanced.collapsed
+        height = modal.query_one("#buddy-height", Input)
+        height.focus()
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        assert height.has_focus
+        assert (
+            height.region.right
+            <= modal.query_one("#buddy-management-body").region.right
+        )
+        assert height.region.bottom <= modal.query_one("#buddy-apply").region.y
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["conversation", "workspace"])
+async def test_current_persona_name_is_literal_text(kind):
+    from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
+
+    m = modal_module()
+    binding = BuddyBinding(kind=kind, target_id="target")
+    app = App()
+    async with app.run_test() as pilot:
+        modal = m.BuddyManagementModal(
+            targets=(
+                m.BuddyTargetChoice(
+                    "target", "Named target", binding, current_persona="Archivist [/]"
+                ),
+            ),
+            initial=m.BuddyManagementChoice(binding=binding),
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        assert "Archivist [/]" in str(modal.query_one("#buddy-persona-help").render())

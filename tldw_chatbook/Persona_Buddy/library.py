@@ -16,10 +16,6 @@ from uuid import uuid4
 from loguru import logger
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Persona_Visual.artwork import (
-    artwork_from_pack,
-    encode_native_artwork,
-)
 from tldw_chatbook.Persona_Visual.assets import (
     PersonaVisualAssetMetadata,
     load_persona_visual_asset,
@@ -130,6 +126,8 @@ class BuddyLibrary:
         source_key: str | None = None,
     ) -> BuddyRecord:
         """Publish one reviewed immutable copy; only a complete binding is listed."""
+        from tldw_chatbook.Persona_Visual.artwork import encode_native_artwork
+
         if type(review) is not BuddySnapshot or not review.is_current():
             raise ValueError("buddy_source_changed")
         title = review.title if name is None else name
@@ -226,6 +224,8 @@ class BuddyLibrary:
         self, persona_id: str, *, name: str | None = None, source_key: str | None = None
     ) -> BuddyRecord:
         """Copy a current local Persona graph; its subsequent lifecycle is irrelevant."""
+        from tldw_chatbook.Persona_Visual.artwork import artwork_from_pack
+
         if source_key is not None:
             existing = self._source_record(source_key)
             if existing is not None:

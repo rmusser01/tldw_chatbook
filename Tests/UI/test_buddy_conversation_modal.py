@@ -2,10 +2,11 @@
 
 import asyncio
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Button, Input, TextArea
 
 from Tests.Chat.test_console_runtime_lifetime import (
@@ -13,6 +14,7 @@ from Tests.Chat.test_console_runtime_lifetime import (
     _pending_call,
     _StalledGateway,
 )
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
@@ -40,7 +42,11 @@ async def until(predicate):
         await asyncio.sleep(0.01)
 
 
-class Harness(App):
+class Harness(ConsolidatedCSSApp):
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss"
+    )
+
     def __init__(self):
         super().__init__()
         self.gateway = _StalledGateway()

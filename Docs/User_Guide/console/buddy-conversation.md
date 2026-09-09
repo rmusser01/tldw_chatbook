@@ -5,6 +5,12 @@ conversation over your current destination. The panel shows recent messages,
 activity, questions and supported approval cards. A saved inbox conversation can
 load here without changing the selected Console conversation or workspace.
 
+The transcript opens at current content. It follows new replies while you are at
+the end and preserves your position when reading earlier messages. **Latest**
+returns to the end and indicates updates received while you were reading above.
+Pending decisions offer a direct jump action without scrolling the entire history.
+An empty conversation shows **No messages yet**.
+
 Type a reply and choose **Send**. Replies belong to this conversation even when
 Console has another conversation selected. A busy or unavailable conversation
 shows its current state instead of sending elsewhere. Closing the panel restores

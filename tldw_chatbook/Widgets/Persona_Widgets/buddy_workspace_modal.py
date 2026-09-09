@@ -55,6 +55,7 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
         self._entries: tuple[BuddyInboxEntry, ...] = ()
         self._refreshing = False
         self._loaded = False
+        self._fresh = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="buddy-inbox"):
@@ -96,6 +97,7 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
             title, entries = await self._snapshot()
             if not self.is_mounted:
                 return
+            self._fresh = True
             self.query_one("#buddy-inbox-title", Static).update(f"Buddy · {title}")
             self.query_one("#buddy-inbox-error", Static).update("")
             if entries == self._entries and self._loaded:
@@ -132,6 +134,7 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
                 listing.highlighted = listing.get_option_index(entries[0].key)
             self._sync_actions()
         except Exception as exc:  # noqa: BLE001 - storage failure cannot break a live modal
+            self._fresh = False
             if self.is_mounted:
                 message = (
                     str(exc)
@@ -146,9 +149,11 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def _sync_actions(self) -> None:
         entry = self.selected_entry()
-        self.query_one("#buddy-inbox-open", Button).disabled = entry is None
+        self.query_one("#buddy-inbox-open", Button).disabled = (
+            not self._fresh or entry is None
+        )
         self.query_one("#buddy-inbox-seen", Button).disabled = (
-            entry is None or not entry.receipt_ids
+            not self._fresh or entry is None or not entry.receipt_ids
         )
 
     @on(OptionList.OptionHighlighted, "#buddy-inbox-list")
@@ -161,7 +166,7 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def _request_open(self) -> None:
         entry = self.selected_entry()
-        if entry is not None:
+        if self._fresh and entry is not None:
             self._open_entry(entry)
 
     @on(Button.Pressed)
@@ -173,7 +178,7 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
             self._request_open()
         elif event.button.id == "buddy-inbox-seen":
             entry = self.selected_entry()
-            if entry is not None and entry.receipt_ids:
+            if self._fresh and entry is not None and entry.receipt_ids:
                 self.app.run_worker(
                     self._mark_seen(entry),
                     group="buddy-inbox-acknowledge",
@@ -181,6 +186,8 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
                 )
 
     async def _mark_seen(self, entry: BuddyInboxEntry) -> None:
+        if not self._fresh:
+            return
         try:
             pending = self._acknowledge(entry)
             count = await pending if inspect.isawaitable(pending) else pending

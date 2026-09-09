@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 19:30'
-updated_date: '2026-09-08 21:02'
+updated_date: '2026-09-09 01:13'
 labels:
   - buddy
   - console
@@ -31,20 +31,15 @@ Manage the current Buddy and conversation Persona without leaving Console using 
 - [x] #4 Preview, keyboard access, narrow-terminal scrolling and focus restoration work; missing targets show an actionable unavailable state.
 - [x] #5 Buddy animation reflects only its selected scope; changing Console selection does not retarget it.
 - [x] #6 Existing-session Persona assignment commits identity, prompt and settings atomically before live publication; stale, busy, inactive or repurposed targets retain their old assignment, and workspace changes preserve memory/tool policy.
+- [x] #7 Preview, geometry, Apply and Cancel are visible and usable at normal and compact sizes, with optional import and geometry progressively disclosed.
+- [x] #8 Apply failures preserve all staged values with actionable errors and truthful partial-save status; duplicate Apply and ambiguous dismissal while saving are prevented.
+- [x] #9 Current conversation Persona and workspace default names, None and unavailable states are visible; Personas controls manage the independent Buddy through the shared coordinator.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes
-ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md
-Reason: management and explicit scope are the new application Buddy interaction boundary.
-1. Define strict local conversation/workspace bindings and private interaction preferences; verify no implicit retarget or ephemeral persistence.
-2. Build a native staged management modal with injected read-only library/target/Persona choices, fixed Apply/Cancel footer and keyboard/compact layout coverage.
-3. Integrate the completed independent library, controller preferences and shared app opener into composer menu and floating settings.
-4. Scope trusted lifecycle leases, preserve static/reduce-motion expressions, and wire existing Persona assignment with explicit target and safe future-turn behavior.
-5. Verify Apply/Cancel, missing targets, rendering/focus and scoped state with targeted tests; review integrations and document.
-6. Add a read-only prepared Persona assignment service for exact local sessions/workspaces. Revalidate target and active Persona, reject busy/stale owners, atomically CAS identity/prompt/settings before publishing fenced live memory, and preserve workspace policy. Verify SQLite rollback/round-trip, explicit None and concurrent target/Persona changes.
+Preserve the completed implementation under ADR-139 and ADR-079; follow Docs/superpowers/plans/2026-09-08-chatbook-buddy-ux-review-remediation.md for the reviewed UX corrections, focused regressions and mounted verification. ADR required: no new ADR. Reason: direct correction within existing ownership, persistence and runtime boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -61,4 +56,6 @@ Verification: 50 passed in Tests/Chat/test_console_persona_assignment.py, Tests/
 Root integration: added one native staged Buddy/Follow/Persona/Notifications form shared by Console Menu and floating settings, independent library preview/import, fixed Apply/Cancel footer, exact conversation/workspace binding persistence, and scoped trusted lifecycle projection. Apply batches private artwork/presentation/scope preferences with rollback; existing Persona assignment uses the prepared atomic seam above. First-save binding promotion is serialized with Apply and preserves temporary/stale-owner fences; restored bindings resolve to their exact current form choice. Body click/Enter opens interaction without writing geometry. Static and global reduced motion suppress animation. Scope replay preserves accepted run identity, including VALIDATING, and retained workspace-member tool/voice/wake leases survive scope additions. Targeted evidence: 31 adapter/scope/coordinator checks, 5 management modal checks, entry-point/body-click checks and fresh-profile actual Menu -> Apply -> Home -> pinned chat -> Close -> Cancel journey pass. Independent UI review issues fixed with regressions. Docs/User_Guide/buddies.md and ADR-139 describe behavior; final combined feature gate pending.
 
 Final joint verification: 813 foundational tests passed and the 288-test runtime/UI gate passed all management behavior except a test-only premature Select assignment before child composition. Settling the pilot after modal publication fixes that fixture; the focused management modal, fresh-install journey, entry points and normal/compact speech-enabled inbox group now passes all 12 tests (18.11s). Root and independent UI reviews are complete; validating-state replay, saved binding promotion/restoration and stale-owner fixes are covered. All modified Python files parse, no introduced Ruff diagnostics, new files formatted, diff whitespace clean. Known unrelated baseline tests are recorded under final TASK-32084 evidence.
+
+Native UX corrections complete: visible preview/focus and scoped geometry, progressively disclosed import/size, named current/default Persona with literal brackets, retained staged Apply errors and guarded imports/retry, and independent Personas inspector Manage/Show/Close/Disable controls.384affected tests passed; later management/layout20 and coordinator17 passed including partial-save recovery. Normal/compact native renders inspected; independent review clear. Existing ADR-139/079 boundaries, guide, plan and review evidence updated. No full suite or real provider/audio checks.
 <!-- SECTION:NOTES:END -->

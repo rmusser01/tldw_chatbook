@@ -12,7 +12,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static, Switch
+from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
 
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -32,6 +32,7 @@ class BuddyTargetChoice:
     binding: BuddyBinding
     persona_editable: bool = True
     persona_unavailable_reason: str = ""
+    current_persona: str = "None"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,14 +83,16 @@ class BuddyManagementModal(
     .buddy-toggle-row Static { width: 1fr; height: auto; }
     .buddy-toggle-row Switch { width: auto; }
     #buddy-size { height: 3; }
-    #buddy-size Input { width: 1fr; }
+    #buddy-management-body #buddy-size Input { width: 1fr; min-width: 4; }
     #buddy-size Static { width: 9; height: 3; content-align: left middle; }
     #buddy-size #buddy-height-label { width: 10; padding-left: 1; }
     #buddy-preview { height: auto; max-height: 12; content-align: center middle; }
     #buddy-preview-actions { height: 3; }
-    #buddy-preview-state { width: 1fr; }
+    #buddy-management-body #buddy-preview-state { width: 1fr; min-width: 10; }
     #buddy-preview-button { width: auto; min-width: 11; }
-    #buddy-form-error { height: auto; color: $error; }
+    #buddy-form-error, #buddy-import-error { height: auto; color: $error; }
+    #buddy-advanced { height: auto; padding: 0; }
+    #buddy-preview-button:focus { text-style: bold reverse; }
     #buddy-management-actions { height: 3; min-height: 3; align-horizontal: right; }
     #buddy-management-actions Button { width: auto; min-width: 10; margin-left: 1; }
     """
@@ -102,6 +105,7 @@ class BuddyManagementModal(
         personas: tuple[tuple[str, str], ...] = (),
         initial: BuddyManagementChoice | None = None,
         preview: Callable[[str, str], Any] | None = None,
+        apply: Callable[[BuddyManagementChoice], Any] | None = None,
     ) -> None:
         super().__init__()
         self._buddies = buddies
@@ -110,6 +114,8 @@ class BuddyManagementModal(
         self._initial = initial or BuddyManagementChoice()
         self._preview_callback = preview
         self._preview_generation = 0
+        self._apply_callback = apply
+        self._applying = False
 
     def compose(self) -> ComposeResult:
         initial = self._initial
@@ -148,15 +154,6 @@ class BuddyManagementModal(
                     allow_blank=False,
                     id="buddy-artwork",
                 )
-                yield Static(
-                    "Import a native Buddy pack (.tldw-persona-vpack or .zip)",
-                    classes="buddy-help",
-                )
-                yield Input(
-                    value=initial.import_path,
-                    placeholder="Path to pack; installed when you Apply",
-                    id="buddy-import",
-                )
                 if self._preview_callback is not None:
                     with Horizontal(id="buddy-preview-actions"):
                         yield Select(
@@ -183,11 +180,6 @@ class BuddyManagementModal(
                     allow_blank=False,
                     id="buddy-motion",
                 )
-                with Horizontal(id="buddy-size"):
-                    yield Static("Width")
-                    yield Input(str(initial.width), type="integer", id="buddy-width")
-                    yield Static("Height", id="buddy-height-label")
-                    yield Input(str(initial.height), type="integer", id="buddy-height")
                 yield Static("Follow", classes="buddy-section")
                 yield Select(
                     target_choices,
@@ -200,7 +192,9 @@ class BuddyManagementModal(
                     classes="buddy-help",
                 )
                 yield Static("Persona", classes="buddy-section")
-                yield Static("", id="buddy-persona-help", classes="buddy-help")
+                yield Static(
+                    "", id="buddy-persona-help", classes="buddy-help", markup=False
+                )
                 yield Select(
                     [
                         (Text("Keep current assignment"), PERSONA_UNCHANGED),
@@ -211,6 +205,30 @@ class BuddyManagementModal(
                     allow_blank=False,
                     id="buddy-persona",
                 )
+                with Collapsible(
+                    title="Import pack & size",
+                    collapsed=not bool(initial.import_path),
+                    id="buddy-advanced",
+                ):
+                    yield Static(
+                        "Import a native Buddy pack (.tldw-persona-vpack or .zip)",
+                        classes="buddy-help",
+                    )
+                    yield Input(
+                        value=initial.import_path,
+                        placeholder="Path to pack; installed when you Apply",
+                        id="buddy-import",
+                    )
+                    yield Static("", id="buddy-import-error", markup=False)
+                    with Horizontal(id="buddy-size"):
+                        yield Static("Width")
+                        yield Input(
+                            str(initial.width), type="integer", id="buddy-width"
+                        )
+                        yield Static("Height", id="buddy-height-label")
+                        yield Input(
+                            str(initial.height), type="integer", id="buddy-height"
+                        )
                 yield Static("Notifications & voice", classes="buddy-section")
                 with Horizontal(classes="buddy-toggle-row"):
                     yield Static("Speak responses with conversation names")
@@ -225,6 +243,7 @@ class BuddyManagementModal(
                 yield Button("Apply", variant="primary", id="buddy-apply")
 
     def on_mount(self) -> None:
+        super().on_mount()
         self._sync_persona_controls()
         self.query_one("#buddy-enabled").focus()
 
@@ -253,6 +272,13 @@ class BuddyManagementModal(
             message = "Default Persona for future new conversations in this workspace."
         else:
             message = "Assistant Persona for this conversation. Artwork is independent."
+        if target is not None:
+            label = (
+                "Current default"
+                if target.binding.kind == "workspace"
+                else "Current Persona"
+            )
+            message = f"{label}: {target.current_persona}. {message}"
         self.query_one("#buddy-persona-help", Static).update(message)
 
     @on(Button.Pressed, "#buddy-preview-button")
@@ -283,17 +309,63 @@ class BuddyManagementModal(
     @on(Button.Pressed, "#buddy-cancel")
     def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
+
+    def dismiss_safe_once(self, result: object) -> bool:
+        if self._applying:
+            return False
+        return super().dismiss_safe_once(result)
 
     @on(Button.Pressed, "#buddy-apply")
     def _apply(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._applying:
+            return
         try:
             choice = self._choice()
         except ValueError as exc:
             self.query_one("#buddy-form-error", Static).update(str(exc))
             return
-        self.dismiss(choice)
+        if self._apply_callback is None:
+            self.dismiss_safe_once(choice)
+            return
+        self._applying = True
+        self.query_one("#buddy-apply", Button).disabled = True
+        self.query_one("#buddy-apply", Button).label = "Applying…"
+        self.query_one("#buddy-cancel", Button).disabled = True
+        self.query_one("#buddy-management-body").disabled = True
+        self.query_one("#buddy-form-error", Static).update(
+            "Applying settings… Keep this dialog open."
+        )
+        self.run_worker(
+            self._commit(choice), group="buddy-management-commit", exclusive=True
+        )
+
+    async def _commit(self, choice: BuddyManagementChoice) -> None:
+        succeeded = False
+        try:
+            result = self._apply_callback(choice)
+            if inspect.isawaitable(result):
+                await result
+            succeeded = True
+        except Exception as exc:  # noqa: BLE001 - preserve staged input on storage failure
+            message = (
+                str(exc)
+                if isinstance(exc, ValueError)
+                else "Could not save Buddy settings. Check profile storage and retry."
+            )
+            self.query_one("#buddy-form-error", Static).update(message)
+            if choice.import_path:
+                self.query_one("#buddy-import-error", Static).update(message)
+                self.query_one("#buddy-advanced", Collapsible).collapsed = False
+        finally:
+            self._applying = False
+            self.query_one("#buddy-management-body").disabled = False
+            self.query_one("#buddy-apply", Button).disabled = False
+            self.query_one("#buddy-apply", Button).label = "Apply"
+            self.query_one("#buddy-cancel", Button).disabled = False
+        if succeeded:
+            self.dismiss_safe_once(None)
 
     def _choice(self) -> BuddyManagementChoice:
         enabled = self.query_one("#buddy-enabled", Switch).value

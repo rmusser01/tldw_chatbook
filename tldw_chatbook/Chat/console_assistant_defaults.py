@@ -3,26 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 from ..Workspaces.models import DEFAULT_WORKSPACE_ID
 from .console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from .console_session_settings import (
+    ConsoleAssistantStartup,
     ConsoleSessionSettings,
     blank_console_session_settings,
 )
-
-
-@dataclass(frozen=True)
-class ConsoleAssistantStartup:
-    """Resolved settings and identity for one new conversation."""
-
-    settings: ConsoleSessionSettings
-    assistant_kind: str = "generic"
-    assistant_id: str = "console"
-    persona_memory_mode: str | None = None
-    notice: str = ""
 
 
 def build_persona_agent_system_prompt(record: Mapping[str, Any]) -> str:

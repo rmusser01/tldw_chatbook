@@ -436,3 +436,24 @@ def test_changed_persona_authority_rejects_the_copy(environment, monkeypatch):
     assert (
         repo.db.execute_query("SELECT COUNT(*) FROM buddy_profiles").fetchone()[0] == 0
     )
+
+
+def test_active_buddy_lookup_uses_partial_index_without_statistics(environment):
+    library, repository, *_ = environment
+    buddy = library.copy_persona("persona-local-1")
+    connection = library.db.get_connection()
+    # Pin the actual union-view lookup, without ANALYZE influencing the planner.
+    assert (
+        connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()
+        is None
+    )
+    plan = connection.execute(
+        "EXPLAIN QUERY PLAN SELECT * FROM visual_owner_bindings "
+        "WHERE persona_id IS ? AND buddy_id IS ? AND status = 'active'",
+        (None, buddy.id),
+    ).fetchall()
+    assert any("idx_buddy_visual_bindings_active" in str(row[3]) for row in plan)
+    binding = repository._active_binding_record(None, buddy_id=buddy.id)
+    assert binding is not None and binding.buddy_id == buddy.id

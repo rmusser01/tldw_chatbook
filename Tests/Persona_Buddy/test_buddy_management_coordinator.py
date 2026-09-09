@@ -218,3 +218,190 @@ async def test_first_save_promotion_preserves_stale_or_unsavable_preferences(
         assert writes == []
     assert manager.preferences == previous
     assert app.app_config == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action,enabled,opened",
+    [("show", True, True), ("close", True, False), ("disable", False, True)],
+)
+async def test_independent_visibility_does_not_read_or_change_persona(
+    action, enabled, opened
+):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+    from tldw_chatbook.Persona_Buddy.preferences import (
+        BuddySelection,
+        PersonaBuddyPreferences,
+    )
+
+    initial = PersonaBuddyPreferences(
+        enabled=True, open=action != "show", selection=BuddySelection("independent")
+    )
+    writes = []
+    controller = PersonaBuddyController(
+        preferences=initial, preference_writer=lambda p: writes.append(p) or True
+    )
+    app = SimpleNamespace(
+        app_config={}, console_runtime=None, reconcile_persona_buddy_view=AsyncMock()
+    )
+    manager = coordinator_module().BuddyManagementCoordinator(
+        app, controller=controller
+    )
+    await manager._set_visibility(action)
+    result = controller.current_preferences()
+    assert result.selection == initial.selection
+    assert result.enabled is enabled
+    assert result.open is opened
+    assert writes[-1] == result
+    app.reconcile_persona_buddy_view.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_import_retry_after_save_failure_reuses_publication_and_keeps_revision_guard(
+    monkeypatch,
+):
+    from tldw_chatbook import config
+    from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+    from tldw_chatbook.Persona_Buddy.preferences import BuddySelection
+    from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
+        BuddyManagementChoice,
+    )
+
+    published = []
+    record = SimpleNamespace(id="imported")
+    library = SimpleNamespace(
+        review_archive=lambda p: p,
+        publish_review=lambda review: published.append(review) or record,
+        get_buddy=lambda _: record,
+    )
+    controller = PersonaBuddyController()
+    manager = coordinator_module().BuddyManagementCoordinator(
+        SimpleNamespace(app_config={}, console_runtime=None),
+        controller=controller,
+        library=library,
+    )
+    choice = BuddyManagementChoice(enabled=True, import_path="pack.zip")
+    imports = {}
+    monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: False)
+    with pytest.raises(ValueError) as failed:
+        await manager.apply_choice(choice, expected_revision=0, imports=imports)
+    revision = failed.value.buddy_retry_revision
+    assert imports == {"pack.zip": "imported"}
+    assert controller.current_preferences().selection is None
+    monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: True)
+    await manager.apply_choice(choice, expected_revision=revision, imports=imports)
+    assert published == ["pack.zip"]
+    assert controller.current_preferences().selection == BuddySelection("imported")
+    controller.apply_preferences_patch(selection=BuddySelection("newer"))
+    with pytest.raises(ValueError, match="changed elsewhere"):
+        await manager.apply_choice(choice, expected_revision=revision, imports=imports)
+    assert controller.current_preferences().selection == BuddySelection("newer")
+
+
+@pytest.mark.asyncio
+async def test_invalid_import_error_is_actionable_and_does_not_expose_internal_code():
+    from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+    from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
+        BuddyManagementChoice,
+    )
+
+    def invalid(_):
+        raise ValueError("persona_visual_import_invalid")
+
+    manager = coordinator_module().BuddyManagementCoordinator(
+        SimpleNamespace(app_config={}, console_runtime=None),
+        controller=PersonaBuddyController(),
+        library=SimpleNamespace(review_archive=invalid),
+    )
+    with pytest.raises(ValueError) as failed:
+        await manager.apply_choice(BuddyManagementChoice(import_path="missing.zip"))
+    assert "Check the path" in str(failed.value)
+    assert "persona_visual_import_invalid" not in str(failed.value)
+
+
+def test_current_persona_labels_use_names_none_and_existing_workspace_resolution():
+    from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
+
+    manager = coordinator_module().BuddyManagementCoordinator(
+        SimpleNamespace(
+            app_config={},
+            local_character_persona_service=SimpleNamespace(
+                get_persona_profile=lambda key: (
+                    {"id": key, "name": "Archivist"} if key == "known" else None
+                )
+            ),
+        )
+    )
+    assert manager._persona_label("known") == "Archivist"
+    assert manager._persona_label(None) == "None"
+    assert manager._persona_label("secret-id") == "Unavailable"
+    assert (
+        manager._workspace_persona_label(
+            SimpleNamespace(
+                assistant_defaults=WorkspaceAssistantDefaults(assistant_id="known")
+            )
+        )
+        == "Archivist"
+    )
+    assert (
+        manager._workspace_persona_label(
+            SimpleNamespace(
+                assistant_defaults=WorkspaceAssistantDefaults(assistant_id="missing")
+            )
+        )
+        == "Unavailable (new conversations use None)"
+    )
+    assert (
+        manager._workspace_persona_label(SimpleNamespace(assistant_defaults=None))
+        == "None"
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_persona_failure_reports_saved_buddy_and_safe_retry_revision(
+    monkeypatch,
+):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat import console_persona_assignment
+    from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+    from tldw_chatbook.Persona_Buddy.preferences import BuddySelection
+    from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
+        BuddyManagementChoice,
+    )
+
+    monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: True)
+    assignment = SimpleNamespace(
+        apply=AsyncMock(side_effect=ValueError("Persona changed"))
+    )
+    monkeypatch.setattr(
+        console_persona_assignment,
+        "prepare_buddy_persona_assignment",
+        lambda *_: assignment,
+    )
+    controller = PersonaBuddyController()
+    manager = coordinator_module().BuddyManagementCoordinator(
+        SimpleNamespace(app_config={}, console_runtime=None),
+        controller=controller,
+        library=SimpleNamespace(get_buddy=lambda _: SimpleNamespace(id="migu")),
+    )
+    with pytest.raises(ValueError, match="Buddy settings were saved") as failed:
+        await manager.apply_choice(
+            BuddyManagementChoice(
+                enabled=True, buddy_id="migu", persona_choice="selected-persona"
+            ),
+            expected_revision=0,
+        )
+    assert controller.current_preferences().selection == BuddySelection("migu")
+    assert (
+        failed.value.buddy_retry_revision
+        == controller.snapshot().preferences_generation
+    )
+    await manager.apply_choice(
+        BuddyManagementChoice(enabled=True, buddy_id="migu"),
+        expected_revision=failed.value.buddy_retry_revision,
+    )
+    assert assignment.apply.await_count == 1

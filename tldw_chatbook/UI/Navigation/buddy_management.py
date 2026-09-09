@@ -71,6 +71,51 @@ class BuddyManagementCoordinator:
         self._opening = True
         self.app.run_worker(self._open(), group="buddy-management-open", exclusive=True)
 
+    def request_visibility(self, action: str) -> None:
+        """Control the independent Buddy without a Persona selection."""
+        if action == "manage":
+            self.request_open()
+        elif action in {"show", "close", "disable"}:
+            self.app.run_worker(
+                self._set_visibility(action), group="buddy-visibility", exclusive=False
+            )
+
+    async def _set_visibility(self, action: str) -> None:
+        async with self._apply_lock:
+            controller = self.controller
+            previous = controller.current_preferences()
+            if action == "show" and previous.selection is None:
+                self.request_open()
+                return
+            changes = (
+                {"enabled": True, "open": True}
+                if action == "show"
+                else {"open": False}
+                if action == "close"
+                else {"enabled": False}
+            )
+            revision = controller.apply_preferences_patch(**changes)
+            try:
+                if not await controller.persist_preferences_revision(revision):
+                    raise ValueError("Could not save Buddy visibility. Retry.")
+            except Exception:  # noqa: BLE001 - keep current settings on storage failure
+                controller.rollback_preferences_revision(revision, previous)
+                self.app.notify(
+                    "Could not save Buddy visibility. Retry.", severity="error"
+                )
+                return
+            from tldw_chatbook.Persona_Buddy.preferences import (
+                serialize_persona_buddy_preferences,
+            )
+
+            self.app.app_config["persona_buddy"] = serialize_persona_buddy_preferences(
+                controller.current_preferences()
+            )
+            self.reconcile_scope()
+            pending = self.app.reconcile_persona_buddy_view()
+            if asyncio.iscoroutine(pending):
+                await pending
+
     def request_interaction(self) -> None:
         """Open the explicitly followed target without selecting a Console tab."""
         binding = self.preferences.binding
@@ -109,12 +154,37 @@ class BuddyManagementCoordinator:
                 width=saved.geometry.width,
                 height=saved.geometry.height,
             )
+            revision = controller.snapshot().preferences_generation
+            imports: dict[str, str] = {}
+
+            async def commit(choice: Any) -> None:
+                nonlocal revision
+                try:
+                    await self.apply_choice(
+                        choice, expected_revision=revision, imports=imports
+                    )
+                except ValueError as exc:
+                    if getattr(exc, "buddy_retry_revision", None) is not None:
+                        revision = exc.buddy_retry_revision
+                    raise
+                self.app.notify("Buddy settings applied.")
+                try:
+                    pending = self.app.reconcile_persona_buddy_view()
+                    if asyncio.iscoroutine(pending):
+                        await pending
+                except Exception:  # noqa: BLE001 - settings already saved
+                    self.app.notify(
+                        "Buddy settings saved, but the view could not refresh. Try Show Buddy again.",
+                        severity="warning",
+                    )
+
             self._modal = BuddyManagementModal(
                 buddies=tuple((record.name, record.id) for record in buddies),
                 targets=targets,
                 personas=personas,
                 initial=initial,
                 preview=self._preview,
+                apply=commit,
             )
             self.app.push_screen(self._modal, self._closed)
         except Exception:  # noqa: BLE001 - app boundary keeps storage faults out of the message pump
@@ -136,7 +206,8 @@ class BuddyManagementCoordinator:
                 active_only=True, limit=100, offset=offset
             )
             rows.extend(
-                (str(row.get("name") or row["id"]), str(row["id"])) for row in page
+                (str(row.get("name") or "Unnamed Persona"), str(row["id"]))
+                for row in page
             )
             if len(page) < 100:
                 return tuple(rows)
@@ -199,6 +270,39 @@ class BuddyManagementCoordinator:
         finally:
             self._promotion_pending = False
 
+    def _persona_label(self, persona_id: str | None) -> str:
+        if not persona_id:
+            return "None"
+        service = getattr(self.app, "local_character_persona_service", None)
+        try:
+            row = service.get_persona_profile(persona_id) if service else None
+            if not row or row.get("deleted"):
+                return "Unavailable"
+            return str(row.get("name") or "Unnamed Persona")
+        except Exception:  # noqa: BLE001 - display-only lookup degrades independently
+            return "Unavailable"
+
+    def _workspace_persona_label(self, workspace: Any) -> str:
+        from tldw_chatbook.Workspaces.assistant_defaults import (
+            resolve_effective_assistant_default,
+        )
+
+        service = getattr(self.app, "local_character_persona_service", None)
+        try:
+            effective = resolve_effective_assistant_default(
+                workspace.assistant_defaults,
+                service.get_persona_profile if service else lambda _: None,
+            )
+            if effective.status == "available":
+                return effective.label or "Unnamed Persona"
+            return (
+                "Unavailable (new conversations use None)"
+                if effective.status == "unavailable"
+                else "None"
+            )
+        except Exception:  # noqa: BLE001 - display-only lookup cannot prevent management
+            return "Unavailable (new conversations use None)"
+
     async def _target_choices(self) -> tuple[Any, ...]:
         from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
             BuddyTargetChoice,
@@ -221,6 +325,12 @@ class BuddyManagementCoordinator:
                     f"conversation:{session.id}",
                     f"Conversation: {session.title} · {session.id[:8]}",
                     BuddyBinding.for_session(session),
+                    current_persona=await asyncio.to_thread(
+                        self._persona_label,
+                        session.assistant_id
+                        if session.assistant_kind == "persona"
+                        else None,
+                    ),
                     persona_editable=not busy and not is_character,
                     persona_unavailable_reason=(
                         "Wait for this conversation’s current run to finish before changing its Persona."
@@ -250,6 +360,9 @@ class BuddyManagementCoordinator:
                         f"Workspace: {workspace.name}",
                         BuddyBinding(
                             kind="workspace", target_id=workspace.workspace_id
+                        ),
+                        current_persona=await asyncio.to_thread(
+                            self._workspace_persona_label, workspace
                         ),
                     )
                 )
@@ -327,7 +440,13 @@ class BuddyManagementCoordinator:
             )
         return workspace
 
-    async def apply_choice(self, choice: Any) -> None:
+    async def apply_choice(
+        self,
+        choice: Any,
+        *,
+        expected_revision: int | None = None,
+        imports: dict[str, str] | None = None,
+    ) -> None:
         """Validate, publish requested artwork, then batch preference persistence.
 
         Import failure cannot change selection. A failed preference write rolls back
@@ -339,6 +458,18 @@ class BuddyManagementCoordinator:
         )
 
         async with self._apply_lock:
+
+            def require_current() -> None:
+                if (
+                    expected_revision is not None
+                    and self.controller.snapshot().preferences_generation
+                    != expected_revision
+                ):
+                    raise ValueError(
+                        "Buddy settings changed elsewhere. Cancel and reopen to review the current selection before applying."
+                    )
+
+            require_current()
             target = await self._validate_binding(choice.binding)
             if choice.persona_choice != PERSONA_UNCHANGED:
                 # Admission runs before artwork publication or preference mutation.
@@ -353,11 +484,31 @@ class BuddyManagementCoordinator:
                 assignment = None
             selected_id = choice.buddy_id
             if choice.import_path:
-                review = await asyncio.to_thread(
-                    self.library.review_archive, choice.import_path
+                selected_id = (
+                    imports.get(choice.import_path) if imports is not None else None
                 )
-                record = await asyncio.to_thread(self.library.publish_review, review)
-                selected_id = record.id
+                if selected_id is None:
+                    try:
+                        review = await asyncio.to_thread(
+                            self.library.review_archive, choice.import_path
+                        )
+                        require_current()
+                        record = await asyncio.to_thread(
+                            self.library.publish_review, review
+                        )
+                    except Exception as exc:
+                        raise ValueError(
+                            "Could not import this Buddy pack. Check the path, pack format and profile storage, then retry."
+                        ) from exc
+                    selected_id = record.id
+                    if imports is not None:
+                        imports[choice.import_path] = selected_id
+                elif (
+                    await asyncio.to_thread(self.library.get_buddy, selected_id) is None
+                ):
+                    raise ValueError(
+                        "The imported Buddy was removed. Cancel and reopen to import it again."
+                    )
             elif selected_id is not None:
                 record = await asyncio.to_thread(self.library.get_buddy, selected_id)
                 if record is None:
@@ -366,6 +517,7 @@ class BuddyManagementCoordinator:
                     )
             # I/O above can outlive a deleted or repurposed target.
             await self._validate_binding(choice.binding)
+            require_current()
             controller = self.controller
             previous = controller.current_preferences()
             selected = (
@@ -393,14 +545,28 @@ class BuddyManagementCoordinator:
                 saved = await controller.persist_preferences_revision(
                     revision, extra_sections={"buddy_interaction": encoded}
                 )
-            except Exception:
-                controller.rollback_preferences_revision(revision, previous)
-                raise
-            if not saved:
-                controller.rollback_preferences_revision(revision, previous)
-                raise ValueError(
-                    "Could not save Buddy settings. Your previous settings are retained; retry."
+            except Exception as exc:
+                restored = controller.rollback_preferences_revision(revision, previous)
+                error = ValueError(
+                    "Could not save Buddy settings. Check profile storage and retry."
                 )
+                if restored:
+                    error.buddy_retry_revision = (
+                        controller.snapshot().preferences_generation
+                    )
+                raise error from exc
+            if not saved:
+                restored = controller.rollback_preferences_revision(revision, previous)
+                error = ValueError(
+                    "Could not save Buddy settings. Your previous settings are retained; retry."
+                    if restored
+                    else "Buddy settings changed elsewhere while saving. Cancel and reopen to review the current selection."
+                )
+                if restored:
+                    error.buddy_retry_revision = (
+                        controller.snapshot().preferences_generation
+                    )
+                raise error
             self.preferences = interaction
             self._scope_configured = True
             self.app.app_config["buddy_interaction"] = dict(encoded)
@@ -412,6 +578,7 @@ class BuddyManagementCoordinator:
                 controller.current_preferences()
             )
             controller.invalidate_profile()
+            self.start_scope_tracking()
             if assignment is not None:
                 # This is a separate assistant-domain commit, never hidden inside
                 # artwork selection. Its own version guard retains the old Persona
@@ -419,10 +586,11 @@ class BuddyManagementCoordinator:
                 try:
                     await assignment.apply()
                 except Exception as exc:
-                    raise ValueError(
-                        "Buddy settings were saved, but the Persona changed or could not be saved. Reopen Buddy settings to retry the Persona change."
-                    ) from exc
-            self.start_scope_tracking()
+                    error = ValueError(
+                        "Buddy settings were saved, but the Persona changed or could not be saved. Your staged Persona choice is retained; review it and retry."
+                    )
+                    error.buddy_retry_revision = revision
+                    raise error from exc
 
     def start_scope_tracking(self) -> None:
         """Resume persisted scope when an enabled Buddy first becomes visible."""

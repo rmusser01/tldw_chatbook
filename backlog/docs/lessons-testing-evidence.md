@@ -6286,6 +6286,16 @@ Three mechanics worth keeping:
    harness with `CSS_PATH = BUNDLED_STYLESHEET` — and treat a red mounted
    test in a bare harness as unattributed until reproduced under the bundle.
 
+**Buddy follow-up (TASK-32082, 2026-09-08).** A 60x20 pending-decision test
+reported the focused action inside the transcript, but the final render still
+hid Approve once and Deny. With the full production CSS loaded, the nested
+`approval-batch-body` remained a default `1fr` Container inside an auto-sized
+card and clipped its children to one row. Coordinates inside the outer scroll
+viewport were insufficient. Buddy-scoped auto-height/flexible Select rules,
+after regenerating the app bundle, made both actions visible. The regression
+now checks each relevant ancestor's content bounds and horizontal containment;
+the final 60x20 and 80x24 compositor renders confirm the controls are painted.
+
 ## A `0.000` from a seam the harness never wired reads exactly like a real negative (TASK-17855/18255, 2026-08-18)
 
 TASK-17855 censused the RAG eval harness's residual zero-row queries and
