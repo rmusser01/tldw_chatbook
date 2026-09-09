@@ -42,6 +42,18 @@ from tldw_chatbook.Widgets.Library.library_browse_reader_shell import (
 )
 
 
+def _media_canvas(screen) -> Widget:
+    """The mounted Media canvas -- receiver of the row-geometry message.
+
+    Phase C task 3 moved ``_handle_library_media_row_geometry_changed`` onto
+    ``LibraryMediaCanvas``, because ``LibraryMediaRowGeometryChanged`` is
+    posted by the canvas's own ``LibraryMediaRowScroll``. Tests that
+    hand-post that message must address the canvas: a post to the screen
+    would now be handled by nobody, which turns every negative assertion in
+    this file into a vacuous pass.
+    """
+    return screen.query_one("#library-media-canvas", Widget)
+
 
 #: A scroll offset deep in the wide row list and reachable at BOTH sizes these
 #: return tests use. task-31633 made a wide item two painted rows instead of
@@ -805,9 +817,14 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
         request = screen._media_state.return_settlement
         assert receipt is not None
         assert request is not None
-        screen._handle_library_media_row_geometry_changed(geometry)
+        # Phase C task 3: the geometry `@on` row moved to
+        # `LibraryMediaCanvas` (its message is posted by the canvas's own
+        # `LibraryMediaRowScroll`), so the screen no longer carries this
+        # method. Every direct call in this file is retargeted to the
+        # controller it always forwarded to; the assertions are unchanged.
+        screen._media_controller._handle_library_media_row_geometry_changed(geometry)
         duplicate = geometry_message_type(owner, owner.latest_geometry)
-        screen._handle_library_media_row_geometry_changed(duplicate)
+        screen._media_controller._handle_library_media_row_geometry_changed(duplicate)
 
         assert desired_scroll_commits == 1
         assert target_focus_attempts == 1
@@ -847,8 +864,8 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
         newer = newer_messages[-1]
         assert newer.geometry.revision == geometry.geometry.revision + 1
 
-        screen._handle_library_media_row_geometry_changed(newer)
-        screen._handle_library_media_row_geometry_changed(
+        screen._media_controller._handle_library_media_row_geometry_changed(newer)
+        screen._media_controller._handle_library_media_row_geometry_changed(
             geometry_message_type(owner, owner.latest_geometry)
         )
         await pilot.pause()
@@ -1380,7 +1397,7 @@ async def test_screen_unmount_revokes_complete_pending_return_authority(
         assert screen._library_pending_list_entry_media_return is None
         assert screen._media_state.return_settlement is None
         assert screen._library_list_entry_focus_timer is None
-        screen._handle_library_media_row_geometry_changed(queued)
+        screen._media_controller._handle_library_media_row_geometry_changed(queued)
         assert screen._media_state.last_exact_settlement is None
 
 
@@ -1455,7 +1472,13 @@ async def test_old_owner_and_below_floor_geometry_cannot_settle(
         assert owner is not old_owner
         assert getattr(screen.focused, "media_id", None) != media_id
 
-        assert screen.post_message(geometry_message_type(old_owner, old_geometry))
+        # Phase C task 3: the geometry row is owned by the media canvas
+        # now, so a hand-posted message goes to the canvas -- posting it to
+        # the screen would be a test that always passes for the wrong
+        # reason (nothing there handles it any more).
+        assert _media_canvas(screen).post_message(
+            geometry_message_type(old_owner, old_geometry)
+        )
         await pilot.pause()
         assert screen._media_state.last_exact_settlement is None
         assert getattr(screen.focused, "media_id", None) != media_id
@@ -1803,7 +1826,7 @@ async def test_existing_request_rejects_live_signature_drift(
             return real_scroll_to(*args, **kwargs)
 
         monkeypatch.setattr(owner, "scroll_to", observe_scroll)
-        screen._handle_library_media_row_geometry_changed(geometry)
+        screen._media_controller._handle_library_media_row_geometry_changed(geometry)
         await pilot.pause()
 
         assert screen._media_state.return_settlement is None
@@ -1995,7 +2018,9 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
                     screen._media_state.reader_layout,
                     items_open=False,
                 )
-            screen._handle_library_media_row_geometry_changed(geometry)
+            screen._media_controller._handle_library_media_row_geometry_changed(
+                geometry
+            )
         await pilot.pause()
 
         assert screen._media_state.last_settlement_outcome is None
@@ -2101,7 +2126,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
             real_on_resize,
         )
         monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
-        assert screen.post_message(current_geometry)
+        assert _media_canvas(screen).post_message(current_geometry)
         await pilot.pause()
 
         assert screen._media_state.return_settlement is None
@@ -2221,7 +2246,7 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
             real_on_resize,
         )
         monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
-        assert screen.post_message(current_geometry)
+        assert _media_canvas(screen).post_message(current_geometry)
         await pilot.pause()
 
         assert screen._media_state.return_settlement is None

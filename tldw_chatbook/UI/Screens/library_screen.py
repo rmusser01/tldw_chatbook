@@ -5795,10 +5795,6 @@ class LibraryScreen(BaseAppScreen):
         if row is not None:
             self._media_state.detail = {**detail, "content": row["content"] or ""}
 
-    @on(LibraryMediaRowGeometryChanged)
-    def _handle_library_media_row_geometry_changed(self, event: LibraryMediaRowGeometryChanged) -> None:
-        return self._media_controller._handle_library_media_row_geometry_changed(event)
-
     def _reconcile_library_media_stage_presentation(self) -> bool:
         """Equality-reconcile the mounted Media stage; return whether it changed."""
         try:
@@ -13273,6 +13269,7 @@ class LibraryScreen(BaseAppScreen):
                         self._media_state.selected_media_id = media_state.selected_id
                         yield LibraryMediaCanvas(
                             media_state,
+                            actions=self._media_controller,
                             **self._library_media_canvas_presentation(),
                             id="library-media-canvas",
                         )
@@ -14378,18 +14375,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _request_library_media_filter(self, query: str) -> None:
         return self._media_controller._request_library_media_filter(query)
-
-    @on(Input.Changed, '#library-media-filter')
-    def handle_library_media_filter_changed(self, event: Input.Changed) -> None:
-        return self._media_controller.handle_library_media_filter_changed(event)
-
-    @on(Input.Submitted, '#library-media-filter')
-    def handle_library_media_filter_submitted(self, event: Input.Submitted) -> None:
-        return self._media_controller.handle_library_media_filter_submitted(event)
-
-    @on(Button.Pressed, '#library-media-filter-clear')
-    def handle_library_media_filter_clear(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_filter_clear(event)
 
     def _load_library_media_list_if_needed(self) -> None:
         return self._media_controller._load_library_media_list_if_needed()
@@ -19986,14 +19971,6 @@ class LibraryScreen(BaseAppScreen):
             then=lambda: self._focus_library_control("#library-media-type-filter"),
         )
 
-    @on(Button.Pressed, '#library-media-sort')
-    def handle_library_media_sort(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_sort(event)
-
-    @on(OptionList.OptionSelected, '#library-media-sort-choices')
-    def handle_library_media_sort_choice(self, event: OptionList.OptionSelected) -> None:
-        return self._media_controller.handle_library_media_sort_choice(event)
-
     @on(Button.Pressed, "#library-media-empty-import")
     async def handle_library_media_empty_import(self, event: Button.Pressed) -> None:
         """Open the existing Library Import destination from a true empty page."""
@@ -20010,18 +19987,6 @@ class LibraryScreen(BaseAppScreen):
             None,
             focus_identity="#library-media-empty-clear-type",
         )
-
-    @on(Button.Pressed, '#library-media-previous')
-    def handle_library_media_previous(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_previous(event)
-
-    @on(Button.Pressed, '#library-media-next')
-    def handle_library_media_next(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_next(event)
-
-    @on(Button.Pressed, '#library-media-retry')
-    def handle_library_media_retry(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_retry(event)
 
     @on(Button.Pressed, ".library-media-row")
     def handle_library_media_row(self, event: Button.Pressed) -> None:
@@ -20221,14 +20186,6 @@ class LibraryScreen(BaseAppScreen):
                 f"Selection discarded ({count} {item_word}).",
                 severity="information",
             )
-
-    @on(Button.Pressed, '#library-media-select-all')
-    def handle_library_media_select_all(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_select_all(event)
-
-    @on(Button.Pressed, '#library-media-select-clear')
-    def handle_library_media_select_clear(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_select_clear(event)
 
     @on(Button.Pressed, "#library-media-export-selected")
     async def handle_library_media_export_selected(self, event: Button.Pressed) -> None:
@@ -21162,10 +21119,6 @@ class LibraryScreen(BaseAppScreen):
                     claim,
                     focus_identity=f"#library-media-trash-row-{target.page_index}"
                 )
-
-    @on(Button.Pressed, '#library-media-open-viewer')
-    def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_open_viewer(event)
 
     def _open_library_media_viewer(self, media_id: str) -> None:
         return self._media_controller._open_library_media_viewer(media_id)
@@ -26368,10 +26321,6 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_prompts_export_selected(self, event: Button.Pressed) -> None:
         return await self._prompts_controller.handle_library_prompts_export_selected(event)
 
-    @on(Button.Pressed, '#library-media-export')
-    async def handle_library_media_export(self, event: Button.Pressed) -> None:
-        return await self._media_controller.handle_library_media_export(event)
-
     @on(Button.Pressed, "#library-conversations-export")
     async def handle_library_conversations_export(self, event: Button.Pressed) -> None:
         return await self._conversations_controller.handle_library_conversations_export(event)
@@ -28111,14 +28060,6 @@ class LibraryScreen(BaseAppScreen):
 
     # -- review-set entry points (task-28242) --------------------------------
 
-    @on(Button.Pressed, '#library-media-review')
-    def handle_library_media_review_these(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_review_these(event)
-
-    @on(Button.Pressed, '#library-media-review-selected')
-    def handle_library_media_review_selected(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_review_selected(event)
-
     async def _review_these_worker(self) -> None:
         """Page the whole filtered result, then create + open the set.
 
@@ -28338,10 +28279,6 @@ class LibraryScreen(BaseAppScreen):
             notify(message, severity=severity)
 
     # -- review-set picker (task-28243) ---------------------------------------
-
-    @on(Button.Pressed, '#library-media-review-sets')
-    def handle_library_media_review_sets(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_review_sets(event)
 
     async def _review_set_picker_worker(self) -> None:
         """List saved sets, await one picker decision, and apply it.

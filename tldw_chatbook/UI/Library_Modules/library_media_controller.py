@@ -3602,6 +3602,7 @@ class LibraryMediaController:
             self._selected_media_id = media_state.selected_id
         return LibraryMediaCanvas(
             media_state,
+            actions=self,
             **self._library_media_canvas_presentation(),
             id="library-media-canvas",
         )

@@ -343,7 +343,13 @@ _BUDGETS: dict[str, int] = {
     # `test_media_row_toggle_resolves_the_dotted_state_path[controller]` and
     # only that leg; reverting `canvas_sync.py`'s media branch reds only the
     # `[screen]` leg.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4669,
+    # 2026-09-09, Library phase C task 3 (region ownership, media): 4669 ->
+    # 4670. Exactly one line, and it is the wiring the migration exists to
+    # make possible -- `actions=self` at this module's single
+    # `LibraryMediaCanvas(...)` construction site, which is what lets the
+    # canvas own its sixteen canvas-origin `@on` rows without reaching back
+    # through the screen. The screen shrank 63 lines in the same commit.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4670,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

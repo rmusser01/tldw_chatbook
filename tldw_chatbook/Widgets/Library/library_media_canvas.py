@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -61,6 +61,17 @@ from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     library_row_button,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # Phase C, task 3: the canvas's ACTIONS collaborator is the media
+    # controller itself, named rather than concealed behind a bespoke
+    # protocol -- the spec's own ruling ("visible coupling over a concealed
+    # facade", which retired the `LibraryScreenHost` facade idea). The
+    # import is TYPE_CHECKING-only because `library_media_controller`
+    # imports THIS module at runtime.
+    from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+        LibraryMediaController,
+    )
 
 
 _MEDIA_ROW_COMPACT_HEIGHT = 1
@@ -262,10 +273,22 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         can_rename_speakers: bool = False,
         media_db: Any = None,
         speaker_rename_media_id: int | None = None,
+        actions: "LibraryMediaController | None" = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.canvas = canvas
+        # Phase C, task 3 (region ownership): what the 16 canvas-origin
+        # `@on` rows below call. `None` is the harness default -- a bare
+        # canvas built by a test has no controller and its toolbar is inert,
+        # exactly as it was when the screen owned the routing and the test
+        # mounted no screen. Both PRODUCTION construction sites bind it, and
+        # that is pinned by
+        # `Tests/UI/test_library_phase_c_region_ownership.py::
+        # test_both_media_canvas_construction_sites_bind_the_actions_
+        # collaborator`, because a missed one has no runtime symptom short
+        # of a silently dead control.
+        self.actions = actions
         self.pager = pager
         self.type_options = (
             canvas.type_options if type_options is None else type_options
@@ -335,6 +358,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         change makes a hidden canvas focusable or drives its Inputs from code,
         this gate does NOT cover it.
 
+        **And it does not cover this canvas's OWN ``@on`` rows** (phase C,
+        task 3). Textual 8.2.8 dispatches a node's decorated handlers BEFORE
+        that node's ``on_<message>`` convention method
+        (``MessagePump._get_dispatch_methods`` yields ``_decorated_handlers``
+        first, per MRO class), and ``event.stop()`` only sets
+        ``_stop_propagation``, which is read AFTER the whole dispatch loop --
+        so nothing here can un-run a handler on this same node. The migrated
+        rows below therefore take the refusal themselves, through
+        ``_media_actions_for_press``. This method stays because it is still
+        the only thing refusing presses aimed at the 20 canvas-origin rows
+        the screen still owns.
+
         Args:
             event: The bubbling press.
 
@@ -344,6 +379,172 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if not self.display:
             event.stop()
             event.prevent_default()
+
+    # ---- Phase C, task 3: the canvas-origin rows this region owns --------
+    #
+    # Sixteen ``@on`` rows moved here from ``LibraryScreen``'s routing table.
+    # The rule is ORIGIN: every control below is composed by this canvas's
+    # own ``compose``, and ``LibraryMediaRowGeometryChanged`` is posted by
+    # ``LibraryMediaRowScroll``, defined in this module -- so the message
+    # passes through this widget on its way up. The Reader's, the Trash
+    # canvas's and the adaptive shell's rows can only be caught at the
+    # screen and stay there permanently; the full three-way census (16
+    # migrated / 20 deferred / 43 permanent) is pinned by
+    # ``Tests/UI/test_library_phase_c_region_ownership.py``.
+    #
+    # Behaviour does not move with the routing: each row forwards to the
+    # same-named ``LibraryMediaController`` method, unchanged. The One Rule
+    # keeps the work in the controller; what the region widget gains is
+    # ownership of its own events.
+
+    def _media_actions_for_press(
+        self, event: Button.Pressed
+    ) -> "LibraryMediaController | None":
+        """Resolve the actions collaborator for a press, or refuse.
+
+        The residency refusal for the migrated rows, mirroring
+        ``on_button_pressed``'s scope EXACTLY (presses, and nothing else) so
+        the migration changes no behaviour: a hidden resident canvas already
+        swallowed these presses before they moved here, and it still does --
+        just one dispatch step earlier, which is where it now has to happen.
+
+        Args:
+            event: The press being routed.
+
+        Returns:
+            The media controller, or ``None`` when this canvas is parked
+            off-route (or was built without a controller, as in a bare-canvas
+            test).
+        """
+        if not self.display:
+            event.stop()
+            event.prevent_default()
+            return None
+        return self.actions
+
+    @on(Input.Changed, "#library-media-filter")
+    def handle_library_media_filter_changed(self, event: Input.Changed) -> None:
+        """Route the filter box's debounce tick to the media controller."""
+        if self.actions is not None:
+            self.actions.handle_library_media_filter_changed(event)
+
+    @on(Input.Submitted, "#library-media-filter")
+    def handle_library_media_filter_submitted(self, event: Input.Submitted) -> None:
+        """Route an explicit filter submit to the media controller."""
+        if self.actions is not None:
+            self.actions.handle_library_media_filter_submitted(event)
+
+    @on(Button.Pressed, "#library-media-filter-clear")
+    def handle_library_media_filter_clear(self, event: Button.Pressed) -> None:
+        """Route "Clear filter" to the media controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_filter_clear(event)
+
+    @on(Button.Pressed, "#library-media-sort")
+    def handle_library_media_sort(self, event: Button.Pressed) -> None:
+        """Route the sort chooser's opener to the media controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_sort(event)
+
+    @on(OptionList.OptionSelected, "#library-media-sort-choices")
+    def handle_library_media_sort_choice(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Route a picked sort value to the media controller."""
+        if self.actions is not None:
+            self.actions.handle_library_media_sort_choice(event)
+
+    @on(Button.Pressed, "#library-media-previous")
+    def handle_library_media_previous(self, event: Button.Pressed) -> None:
+        """Route the pager's Previous to the media controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_previous(event)
+
+    @on(Button.Pressed, "#library-media-next")
+    def handle_library_media_next(self, event: Button.Pressed) -> None:
+        """Route the pager's Next to the media controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_next(event)
+
+    @on(Button.Pressed, "#library-media-retry")
+    def handle_library_media_retry(self, event: Button.Pressed) -> None:
+        """Route Retry -- the pager's and the load-failure callout's -- on."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_retry(event)
+
+    @on(Button.Pressed, "#library-media-select-all")
+    def handle_library_media_select_all(self, event: Button.Pressed) -> None:
+        """Route select mode's "All" to the media controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_select_all(event)
+
+    @on(Button.Pressed, "#library-media-select-clear")
+    def handle_library_media_select_clear(self, event: Button.Pressed) -> None:
+        """Route select mode's "None" to the media controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_select_clear(event)
+
+    @on(Button.Pressed, "#library-media-open-viewer")
+    def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
+        """Route the preview's "Open in viewer" to the media controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_open_viewer(event)
+
+    @on(Button.Pressed, "#library-media-export")
+    async def handle_library_media_export(self, event: Button.Pressed) -> None:
+        """Route the toolbar's Export to the media controller.
+
+        The one ``async`` row of the sixteen: the controller's Export handler
+        awaits a modal, so a sync forwarder here would build a coroutine and
+        drop it.
+        """
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            await actions.handle_library_media_export(event)
+
+    @on(Button.Pressed, "#library-media-review")
+    def handle_library_media_review_these(self, event: Button.Pressed) -> None:
+        """Route "Review these" to the media controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_review_these(event)
+
+    @on(Button.Pressed, "#library-media-review-selected")
+    def handle_library_media_review_selected(self, event: Button.Pressed) -> None:
+        """Route select mode's "Review selected" to the media controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_review_selected(event)
+
+    @on(Button.Pressed, "#library-media-review-sets")
+    def handle_library_media_review_sets(self, event: Button.Pressed) -> None:
+        """Route the title row's review-sets control to the controller."""
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_review_sets(event)
+
+    @on(LibraryMediaRowGeometryChanged)
+    def _handle_library_media_row_geometry_changed(
+        self, event: LibraryMediaRowGeometryChanged
+    ) -> None:
+        """Route one row-scroll owner's settled geometry to the controller.
+
+        Deliberately NOT behind ``_media_actions_for_press``: this message is
+        not a press, and the hidden-canvas case is already rejected by the
+        controller's own return-settlement fence (``_library_media_
+        settlement_tree`` owner check), which is where task 2 recorded that
+        refusal as living.
+        """
+        if self.actions is not None:
+            self.actions._handle_library_media_row_geometry_changed(event)
 
     def sync_state(
         self,

@@ -858,7 +858,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # to ask whether a press is LEAVING Notes, and using it at the three
     # sites that spelled the same pair inline paid for the import and the
     # comment. Re-pinned rather than left as slack, per this file's own rule.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32241, 1258),
+    # 2026-09-09, Library phase C task 3 (region ownership, media): 32241 ->
+    # 32178 and 1259 -> 1243 methods. Sixteen canvas-origin `@on` delegators
+    # left the screen's routing table for `LibraryMediaCanvas`, which is on
+    # the DOM path their messages already travel. This is the first time this
+    # row's METHOD count moves at all, and it clears the +1 red dev left here
+    # by measurement rather than by raising: 1243 is what the class now has.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32178, 1243),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
