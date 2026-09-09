@@ -775,11 +775,10 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/profile_schema.py | _CandidateValidationJob.pin_parent | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _copy_source_to_snapshot | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _open_candidate_source | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_schema.py | _open_exact_store_sidecars | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | capture_post_init_profile_store_authority | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | open_exact_current_profile_store | connect_private_sqlite | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | open_exact_current_profile_store | connect_private_sqlite_descriptor | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_schema.py | open_exact_current_profile_store | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_schema.py | _ExactCurrentProfileConnection.open_descriptor | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | open_profile_store | connect_private_sqlite | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | peek_profile_store_schema_version | connect_private_sqlite | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _validate_profile_candidate | connect_private_sqlite | 2 | unsupported | tts |

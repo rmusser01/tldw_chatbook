@@ -671,3 +671,39 @@ previously left the candidate job locally retained while releasing every native
 hold. Keep the remaining actual leases, original error and ordinary positive release;
 no retry, registry or interface is added. Outer association is additional protection,
 not a substitute for standalone native exclusion.
+
+### Task10 phase14f — exact TTS connection and profile-lock retirement (rulings95–99)
+
+The existing exact-current wrapper is created before pin allocation and retained
+through ordinary source leases in existing strong lease membership. Separate native
+attempts retain their returned descriptors, dual SQLite handles, source identities,
+unknown outcomes and cleanup errors. The existing exact cleanup exception carries
+partial ownership to the repository. Native close uncertainty cannot be healed by
+retrying a descriptor number, a closed property, later successful allocation or a
+terminal repository result. Remaining ordinary leases survive uncertain release.
+Standalone wrapper close revalidates the original WAL/SHM namespace before its first
+live SQLite close, preserving the repository's foreign-namespace quarantine.
+
+Original verifier traversal uses its existing private-path open/close attribution;
+main and sidecar opens retain their original direct OS attribution. The retained
+parent's final close remains the original direct OS close. Per-attempt native
+rejection evidence and the existing SQLite admission outcome distinguish positively
+refused allocations from substituted providers that allocate then raise. A later
+optional-sidecar result cannot clear an earlier unknown attempt.
+
+Each ProfileStoreLease acquisition owns a separate native outcome and ordinary
+source holds before lock-file open. Its primary/residual compatibility slots, public
+retry behavior and error precedence remain. Successful original native close can
+retire despite an unlock error; unknown open/close remains independently retained
+through closed-field normalization or later successful acquisition. This introduces
+no second mutex, native registry, source binding or callback/capture permission.
+
+Real reference BLOBs remain owned by their original SQLite parent. Source-worker
+native observations prove parent close retires returned and unreturned BLOBs after
+read/write close faults; failed parent close retains actual native exclusion. The
+existing sanitized BLOB error codes and first control-flow identity are preserved;
+secondary ordinary error detail remains intentionally unmapped (ruling98). No BLOB
+registry or diagnostic exception payload is added. These host-specific native tests
+are not Windows qualification, whole TTS runtime drain or startup release. Migration,
+restore publication/rebind, reference materialization, bundles, voices, dirty UI,
+service/audio/model/process and app/headless aggregation remain Task10 obligations.

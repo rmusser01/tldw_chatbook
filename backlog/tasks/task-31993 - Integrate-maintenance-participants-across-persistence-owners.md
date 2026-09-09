@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 23:53'
-updated_date: '2026-09-08 21:57'
+updated_date: '2026-09-09 02:14'
 labels:
   - backup-recovery
 dependencies:
@@ -131,6 +131,16 @@ ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct approved native ownership integration, preserving ADR028/040/051/023; controller ruling governs any bounded association change.
 
+### Phase14f implementation plan — exact current TTS native retirement
+
+1. Establish actual native dual-SQLite/descriptor, shared profile-lock and reference BLOB close-before/after and constructor-return behavioral evidence through public callers.
+2. Obtain controller ownership rulings before production changes; reuse exact wrapper, retained cleanup exception and source-worker lifecycle, preserving native namespace quarantine and ordinary error precedence.
+3. Retain unresolved outcomes without close retries or false closed-field proof; prove independent native exclusion and positive ordinary retirement using private subprocesses without host SemLock.
+4. Verify affected repository/reference/candidate/capture behavior, exact source census and scoped static checks; self-review and document native limits and immediate migration/runtime continuation.
+5. Commit this bounded phase and write identical dual reports, preserving In Progress and all three AC unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of approved native resource ownership, preserving ADR028/040/051/023; controller ruling precedes each ownership change.
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -901,3 +911,9 @@ replacement, responder or startup promotion; In Progress and all3 AC unchecked.
 Self-review only; controller owns wholeTask10 production review. Full identical dual
 phase14e report records exact commands/logs, RED versus fixture corrections, native
 limits and final commit/clean-status addendum.
+
+### Phase14f implementation notes
+
+The exact current TTS wrapper now owns source admission before native pins and retains dual SQLite/descriptors, unique unknown allocation outcomes and close-once uncertainty through the existing cleanup exception. Standalone close checks the original WAL/SHM namespace. ProfileStoreLease records actual native acquisition/cleanup independently of primary/residual compatibility slots; positive close after unlock error retires, while unknown native outcomes preserve independent exclusion. Parent-owned real reference BLOB retirement is proven without another registry or changed public error mapping.
+
+Direct implementation of ADR126 under controller rulings95–99, preserving ADR028/040/051/023. Exact native and independent private-process evidence, ordinary refusal, control-flow, cancellation/queued work, standalone reference validation, real capture/reference round trips and scoped census/static checks are recorded with exact commands and limitations in the dual phase14f report. Source changes are limited to profile_schema.py and profile_store_lock.py; tests and exact owner inventory follow their actual native seams. No full suite, SemLock host cleanup, user resources, audio/models/network, startup/Complete promotion, merge or push. Task10 remains In Progress with all three AC unchecked; migration/publication/rebind, materializer/bundle/voice/runtime/dirty UI and actual app/headless aggregation remain mandatory.

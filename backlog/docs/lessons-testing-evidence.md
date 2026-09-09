@@ -5883,3 +5883,13 @@ A retained Python job and local pause refusal do not prove native exclusion. Aft
 an uncertain subordinate lease retirement, test an independent maintainer against
 the actual authority and scope. Retire only known private test startup fixtures to
 isolate that observation; never clear the uncertain owner to make a probe pass.
+
+## Optional native failure needs a distinct allocation attempt (TASK-31993 phase14f)
+
+A real current-profile WAL open allocated a native descriptor before its substituted
+provider raised FileNotFoundError. The optional-sidecar loop then opened SHM and
+cleared a shared `descriptor` pending flag. A separate maintainer entered after the
+repository retired, despite the leaked WAL descriptor. A unique pending token for
+each allocation keeps that unknown attempt after later success or ordinary absence.
+The regression failed at independent native admission, then passed after the token
+change; exception type and later native success were not evidence of prior absence.

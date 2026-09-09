@@ -1647,7 +1647,7 @@ def test_release_replays_after_closed_inspection_interrupt(
         **kwargs: Any,
     ) -> BinaryIO:
         delegate = cast(BinaryIO, original_open(path, *args, **kwargs))
-        if opened_handles:
+        if path != database_path.with_name(f"{database_path.name}.lock") or opened_handles:
             return delegate
         handle = ReleaseInspectionHandle(delegate)
         opened_handles.append(handle)
