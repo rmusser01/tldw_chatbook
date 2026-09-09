@@ -1,0 +1,23 @@
+{
+  "command": [
+    "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+    "-B",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/verify_live_tts_content.py",
+    "--evidence",
+    "/private/tmp/tts-macos-burndown/linux/evidence/linux-onnx-live-20260909-02/evidence.json",
+    "--model",
+    "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+    "--language",
+    "en",
+    "--output",
+    "/private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-02-content.json"
+  ],
+  "started_utc": "2026-09-09T07:31:54.804570+00:00",
+  "verifier_sha256_before": "b1e8d27b12d723dcea65209b0a7ec11f7ec9b53385b512d1378011ebdaefc3e2",
+  "pid": 21749,
+  "exit_code": 0,
+  "elapsed_seconds": 4.089287250302732,
+  "ended_utc": "2026-09-09T07:31:58.894034+00:00",
+  "verifier_sha256_after": "b1e8d27b12d723dcea65209b0a7ec11f7ec9b53385b512d1378011ebdaefc3e2",
+  "joined": true
+}

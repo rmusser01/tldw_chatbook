@@ -1,0 +1,20 @@
+{
+  "verified_utc": "2026-09-09T07:48:46.873033+00:00",
+  "status": "asset_ready_installation_deferred",
+  "archive_sha256": "638718c4c63625ab300de4c92c67925d54c0e9e3830009eaa992f29819d59c43",
+  "archive_bytes": 525943040,
+  "dictionary_file_count": 20,
+  "original_archive_file_count": 18,
+  "dictionary_bytes": 811662881,
+  "all_dictionary_file_hashes_match": true,
+  "all_original_dictionary_members_preserved": true,
+  "bsd_license_conditions_match_pinned_upstream": true,
+  "license_copyright_difference": "Archive 2011-2021; pinned repository 2011-2017; both original files preserved.",
+  "installed_package_hashes_unchanged": true,
+  "venv_dicdir_still_absent": true,
+  "deferred_link_script_parses": true,
+  "deferred_link_script_sha256": "6a289ee25399f5c7b3571968e3fac75914f9c01ccb486f6536092fdc54ef7d09",
+  "inference_executed": false,
+  "tokenizer_initialized": false,
+  "venv_link_applied": false
+}

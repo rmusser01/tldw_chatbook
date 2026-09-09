@@ -1,0 +1,10 @@
+onnxruntime cpuid_info warning: Unknown CPU vendor. cpuinfo_vendor value: 0
+Traceback (most recent call last):
+  File "/probe/validate_linux_onnx.py", line 245, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/probe/validate_linux_onnx.py", line 86, in main
+    assert not credential_names, ("Flagged environment names (values withheld): "
+           ^^^^^^^^^^^^^^^^^^^^
+AssertionError: Flagged environment names (values withheld): ['TIKTOKEN_CACHE_DIR', 'TOKENIZERS_PARALLELISM']; inherited: []
+LAUNCH_RECORD /private/tmp/tts-macos-burndown/linux/linux-import-diagnostic-launch.json

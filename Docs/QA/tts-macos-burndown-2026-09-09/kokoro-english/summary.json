@@ -1,0 +1,642 @@
+{
+  "status": "three_final_runs_passed_with_33_normalized_exact_source_clips",
+  "scope": "English en-us, af_heart, speed 1.0, mounted Speech pane and trusted Console handler, real model/codecs/device; not full-shell navigation or acoustic loopback.",
+  "runs": [
+    {
+      "name": "pytorch-cpu-en-us-final-01",
+      "pid": 95679,
+      "engine": "pytorch",
+      "device": "cpu",
+      "format": "wav",
+      "runtime_exit": 0,
+      "runtime_seconds": 169.13268399238586,
+      "successful_source_clips": 15,
+      "repeats": 12,
+      "content_exit": 0,
+      "normalized_exact_clips": 15,
+      "raw_case_sensitive_exact_clips": 0,
+      "raw_text_difference": "All clips capitalize Compass; no lexical differences.",
+      "distinct_audio_sha256_count": 15,
+      "cancel": {
+        "inference_class": "kokoro.model.KModel",
+        "enter_at": 2172793.509452833,
+        "stop_requested_at": 2172793.520823916,
+        "exit_at": 2172796.580399,
+        "stop_returned_at": 2172796.582123666,
+        "settled_at": 2172796.582137166,
+        "stop_to_return_seconds": 3.0612997501157224,
+        "post_stop_inference_calls": 0,
+        "native_calls_at_stop": 1,
+        "native_calls_at_settlement": 0,
+        "successor_started_at": 2172796.613556875
+      },
+      "all_successful_playback_completed": true,
+      "all_settlement_owners_zero": true,
+      "cleanup_joined": true,
+      "memory_before_model": {
+        "at": 2172766.177270625,
+        "threads": 2,
+        "rss_bytes": 225902592,
+        "peak_rss_bytes": 225902592
+      },
+      "phase_memory": [
+        {
+          "phase": "speech-lab",
+          "at": 2172783.223205791,
+          "threads": 3,
+          "rss_bytes": 2111209472,
+          "peak_rss_bytes": 2111275008,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-warmup",
+          "at": 2172793.4698645,
+          "threads": 3,
+          "rss_bytes": 1949827072,
+          "peak_rss_bytes": 2129805312,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-cancel",
+          "at": 2172796.582137375,
+          "threads": 3,
+          "rss_bytes": 3658006528,
+          "peak_rss_bytes": 3658006528,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-successor",
+          "at": 2172806.961218083,
+          "threads": 3,
+          "rss_bytes": 3673800704,
+          "peak_rss_bytes": 3673948160,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-01",
+          "at": 2172817.220984375,
+          "threads": 3,
+          "rss_bytes": 2630811648,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-02",
+          "at": 2172827.424499875,
+          "threads": 3,
+          "rss_bytes": 1865121792,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-03",
+          "at": 2172837.761558083,
+          "threads": 3,
+          "rss_bytes": 1821442048,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-04",
+          "at": 2172848.124905958,
+          "threads": 3,
+          "rss_bytes": 2086338560,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-05",
+          "at": 2172858.361884,
+          "threads": 3,
+          "rss_bytes": 2109751296,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-06",
+          "at": 2172868.786176166,
+          "threads": 3,
+          "rss_bytes": 1814134784,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-07",
+          "at": 2172879.176828166,
+          "threads": 3,
+          "rss_bytes": 2082111488,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-08",
+          "at": 2172889.531299833,
+          "threads": 3,
+          "rss_bytes": 2104229888,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-09",
+          "at": 2172900.001977666,
+          "threads": 3,
+          "rss_bytes": 2112028672,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-10",
+          "at": 2172910.496082833,
+          "threads": 3,
+          "rss_bytes": 2115846144,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-11",
+          "at": 2172920.879660791,
+          "threads": 3,
+          "rss_bytes": 1626177536,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-12",
+          "at": 2172931.333486625,
+          "threads": 3,
+          "rss_bytes": 2061025280,
+          "peak_rss_bytes": 3681370112,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      ],
+      "memory_after_cleanup": {
+        "at": 2172931.400715541,
+        "threads": 2,
+        "rss_bytes": 1407582208,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "repeat_rss_bytes": {
+        "first": 2630811648,
+        "last": 2061025280,
+        "minimum": 1626177536,
+        "maximum": 2630811648
+      },
+      "runtime_receipt": "runs/pytorch-cpu-en-us-final-01/evidence.json",
+      "content_receipt": "runs/pytorch-cpu-en-us-final-01/content.json",
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "versions": {
+        "tldw_chatbook": "0.2.0",
+        "textual": "8.2.8",
+        "numpy": "2.5.3",
+        "sounddevice": "0.5.6",
+        "soundfile": "0.14.0",
+        "kokoro": "0.9.4",
+        "kokoro-onnx": "0.6.1",
+        "torch": "2.14.0",
+        "onnxruntime": "1.29.0",
+        "misaki": "0.9.4",
+        "spacy": "3.8.16",
+        "en-core-web-sm": "3.8.0"
+      },
+      "assets": {
+        "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+        "/private/tmp/tts-runtime-recovery-validation/kokoro-model/config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+        "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+      },
+      "runtime_files": {
+        "torch._C": {
+          "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/torch/_C.cpython-312-darwin.so",
+          "sha256": "b5b5b86566d6e00ee22b73c51e6c243bd894ffbf06f12c58d0bab0549b1840ac"
+        },
+        "kokoro.model": {
+          "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/kokoro/model.py",
+          "sha256": "301c55350a068c4ed3b4cbd1209d2afb848bebca72db5657405e47e9dfb604db"
+        }
+      }
+    },
+    {
+      "name": "pytorch-mps-en-us-final-01",
+      "pid": 97490,
+      "engine": "pytorch",
+      "device": "mps",
+      "format": "wav",
+      "runtime_exit": 0,
+      "runtime_seconds": 102.72200393676758,
+      "successful_source_clips": 9,
+      "repeats": 6,
+      "content_exit": 0,
+      "normalized_exact_clips": 9,
+      "raw_case_sensitive_exact_clips": 0,
+      "raw_text_difference": "All clips capitalize Compass; no lexical differences.",
+      "distinct_audio_sha256_count": 9,
+      "cancel": {
+        "inference_class": "kokoro.model.KModel",
+        "enter_at": 2172992.539417875,
+        "stop_requested_at": 2172992.554162416,
+        "exit_at": 2172995.010126625,
+        "stop_returned_at": 2172995.02065125,
+        "settled_at": 2172995.020680666,
+        "stop_to_return_seconds": 2.466488834004849,
+        "post_stop_inference_calls": 0,
+        "native_calls_at_stop": 1,
+        "native_calls_at_settlement": 0,
+        "successor_started_at": 2172995.059535916
+      },
+      "all_successful_playback_completed": true,
+      "all_settlement_owners_zero": true,
+      "cleanup_joined": true,
+      "memory_before_model": {
+        "at": 2172962.923083833,
+        "threads": 2,
+        "rss_bytes": 227196928,
+        "peak_rss_bytes": 227196928
+      },
+      "phase_memory": [
+        {
+          "phase": "speech-lab",
+          "at": 2172983.060851875,
+          "threads": 3,
+          "rss_bytes": 1484587008,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 563101696,
+          "mps_driver_bytes": 1277673472
+        },
+        {
+          "phase": "console-warmup",
+          "at": 2172992.489684125,
+          "threads": 3,
+          "rss_bytes": 1493303296,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 566509568,
+          "mps_driver_bytes": 1277673472
+        },
+        {
+          "phase": "console-cancel",
+          "at": 2172995.020681083,
+          "threads": 3,
+          "rss_bytes": 1345847296,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 567687168,
+          "mps_driver_bytes": 2429452288
+        },
+        {
+          "phase": "console-successor",
+          "at": 2173004.706136666,
+          "threads": 3,
+          "rss_bytes": 1347436544,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 565786624,
+          "mps_driver_bytes": 2351857664
+        },
+        {
+          "phase": "console-repeat-01",
+          "at": 2173014.112835333,
+          "threads": 3,
+          "rss_bytes": 1347796992,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 564213760,
+          "mps_driver_bytes": 2360246272
+        },
+        {
+          "phase": "console-repeat-02",
+          "at": 2173023.49628825,
+          "threads": 3,
+          "rss_bytes": 1347928064,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 565065728,
+          "mps_driver_bytes": 2360246272
+        },
+        {
+          "phase": "console-repeat-03",
+          "at": 2173032.89533575,
+          "threads": 3,
+          "rss_bytes": 1348091904,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 564148224,
+          "mps_driver_bytes": 2360246272
+        },
+        {
+          "phase": "console-repeat-04",
+          "at": 2173042.298931458,
+          "threads": 3,
+          "rss_bytes": 1348255744,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 565131264,
+          "mps_driver_bytes": 2360246272
+        },
+        {
+          "phase": "console-repeat-05",
+          "at": 2173051.69842275,
+          "threads": 3,
+          "rss_bytes": 1348386816,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 564213760,
+          "mps_driver_bytes": 2360246272
+        },
+        {
+          "phase": "console-repeat-06",
+          "at": 2173061.119640458,
+          "threads": 3,
+          "rss_bytes": 1348501504,
+          "peak_rss_bytes": 1517699072,
+          "mps_allocated_bytes": 565065728,
+          "mps_driver_bytes": 2360246272
+        }
+      ],
+      "memory_after_cleanup": {
+        "at": 2173061.168000708,
+        "threads": 2,
+        "rss_bytes": 1348501504,
+        "peak_rss_bytes": 1517699072,
+        "mps_allocated_bytes": 565065728,
+        "mps_driver_bytes": 2360246272
+      },
+      "repeat_rss_bytes": {
+        "first": 1347796992,
+        "last": 1348501504,
+        "minimum": 1347796992,
+        "maximum": 1348501504
+      },
+      "runtime_receipt": "runs/pytorch-mps-en-us-final-01/evidence.json",
+      "content_receipt": "runs/pytorch-mps-en-us-final-01/content.json",
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "versions": {
+        "tldw_chatbook": "0.2.0",
+        "textual": "8.2.8",
+        "numpy": "2.5.3",
+        "sounddevice": "0.5.6",
+        "soundfile": "0.14.0",
+        "kokoro": "0.9.4",
+        "kokoro-onnx": "0.6.1",
+        "torch": "2.14.0",
+        "onnxruntime": "1.29.0",
+        "misaki": "0.9.4",
+        "spacy": "3.8.16",
+        "en-core-web-sm": "3.8.0"
+      },
+      "assets": {
+        "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+        "/private/tmp/tts-runtime-recovery-validation/kokoro-model/config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+        "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+      },
+      "runtime_files": {
+        "torch._C": {
+          "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/torch/_C.cpython-312-darwin.so",
+          "sha256": "b5b5b86566d6e00ee22b73c51e6c243bd894ffbf06f12c58d0bab0549b1840ac"
+        },
+        "kokoro.model": {
+          "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/kokoro/model.py",
+          "sha256": "301c55350a068c4ed3b4cbd1209d2afb848bebca72db5657405e47e9dfb604db"
+        }
+      }
+    },
+    {
+      "name": "onnx-cpu-en-us-final-01",
+      "pid": 98834,
+      "engine": "onnx",
+      "device": "cpu",
+      "format": "mp3",
+      "runtime_exit": 0,
+      "runtime_seconds": 110.6124038696289,
+      "successful_source_clips": 9,
+      "repeats": 6,
+      "content_exit": 0,
+      "normalized_exact_clips": 9,
+      "raw_case_sensitive_exact_clips": 0,
+      "raw_text_difference": "All clips capitalize Compass; no lexical differences.",
+      "distinct_audio_sha256_count": 1,
+      "cancel": {
+        "inference_class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+        "enter_at": 2173108.421010208,
+        "stop_requested_at": 2173108.451707708,
+        "exit_at": 2173111.508715291,
+        "stop_returned_at": 2173111.520590166,
+        "settled_at": 2173111.520619666,
+        "stop_to_return_seconds": 3.0688824579119682,
+        "post_stop_inference_calls": 0,
+        "native_calls_at_stop": 1,
+        "native_calls_at_settlement": 0,
+        "successor_started_at": 2173111.545564375
+      },
+      "all_successful_playback_completed": true,
+      "all_settlement_owners_zero": true,
+      "cleanup_joined": true,
+      "memory_before_model": {
+        "at": 2173083.1771245,
+        "threads": 2,
+        "rss_bytes": 228835328,
+        "peak_rss_bytes": 228835328
+      },
+      "phase_memory": [
+        {
+          "phase": "speech-lab",
+          "at": 2173097.364634416,
+          "threads": 3,
+          "rss_bytes": 1149108224,
+          "peak_rss_bytes": 1149157376,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-warmup",
+          "at": 2173108.39251675,
+          "threads": 3,
+          "rss_bytes": 1343602688,
+          "peak_rss_bytes": 1343717376,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-cancel",
+          "at": 2173111.520620208,
+          "threads": 3,
+          "rss_bytes": 1432895488,
+          "peak_rss_bytes": 1433042944,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-successor",
+          "at": 2173122.797068541,
+          "threads": 3,
+          "rss_bytes": 1433092096,
+          "peak_rss_bytes": 1433239552,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-01",
+          "at": 2173133.747082333,
+          "threads": 3,
+          "rss_bytes": 1433141248,
+          "peak_rss_bytes": 1433255936,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-02",
+          "at": 2173144.891133625,
+          "threads": 3,
+          "rss_bytes": 1393639424,
+          "peak_rss_bytes": 1433387008,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-03",
+          "at": 2173156.22742825,
+          "threads": 3,
+          "rss_bytes": 1393590272,
+          "peak_rss_bytes": 1433387008,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-04",
+          "at": 2173167.392521625,
+          "threads": 3,
+          "rss_bytes": 1395113984,
+          "peak_rss_bytes": 1433387008,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-05",
+          "at": 2173178.612360083,
+          "threads": 3,
+          "rss_bytes": 1395130368,
+          "peak_rss_bytes": 1433387008,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        {
+          "phase": "console-repeat-06",
+          "at": 2173189.553105875,
+          "threads": 3,
+          "rss_bytes": 1395146752,
+          "peak_rss_bytes": 1433387008,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      ],
+      "memory_after_cleanup": {
+        "at": 2173189.591723708,
+        "threads": 2,
+        "rss_bytes": 1395130368,
+        "peak_rss_bytes": 1433387008,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "repeat_rss_bytes": {
+        "first": 1433141248,
+        "last": 1395146752,
+        "minimum": 1393590272,
+        "maximum": 1433141248
+      },
+      "runtime_receipt": "runs/onnx-cpu-en-us-final-01/evidence.json",
+      "content_receipt": "runs/onnx-cpu-en-us-final-01/content.json",
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "versions": {
+        "tldw_chatbook": "0.2.0",
+        "textual": "8.2.8",
+        "numpy": "2.5.3",
+        "sounddevice": "0.5.6",
+        "soundfile": "0.14.0",
+        "kokoro": "0.9.4",
+        "kokoro-onnx": "0.6.1",
+        "torch": "2.14.0",
+        "onnxruntime": "1.29.0",
+        "misaki": "0.9.4",
+        "spacy": "3.8.16",
+        "en-core-web-sm": "3.8.0"
+      },
+      "assets": {
+        "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+        "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+      },
+      "runtime_files": {
+        "onnxruntime.capi.onnxruntime_pybind11_state": {
+          "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.so",
+          "sha256": "01adaf3590b50c5f10ce59b6844b6b33cb45142b6b3fc9a2fb2094d8645e873e"
+        }
+      }
+    }
+  ],
+  "earlier_failures": [
+    {
+      "name": "cpu-initial",
+      "status": "failed",
+      "failure": {
+        "type": "ValueError",
+        "message": "Fresh Speech Lab voice/speed did not follow configured defaults",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1165, in main\n    asyncio.run(run_live(args, evidence))\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1008, in run_live\n    raise ValueError(\nValueError: Fresh Speech Lab voice/speed did not follow configured defaults\n"
+      },
+      "cleanup_joined": true,
+      "outside_final_matrix_denominator": true,
+      "receipt": "runs/cpu-initial/evidence.json",
+      "actual_voice": "af_alloy",
+      "expected_voice": "af_heart",
+      "native_calls_observed": 0
+    },
+    {
+      "name": "cpu-fixed",
+      "status": "failed",
+      "failure": {
+        "type": "ValueError",
+        "message": "Cancelled request started another native call",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1170, in main\n    asyncio.run(run_live(args, evidence))\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1075, in run_live\n    validate_cancellation(cancelled)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 210, in validate_cancellation\n    raise ValueError(\"Cancelled request started another native call\")\nValueError: Cancelled request started another native call\n"
+      },
+      "cleanup_joined": true,
+      "outside_final_matrix_denominator": true,
+      "receipt": "runs/cpu-fixed/evidence.json",
+      "stop_requested_at": 2171065.852498041,
+      "observed_call_count": 2,
+      "post_stop_call_count": 1,
+      "post_stop_call_delay_seconds": [
+        3.9354129591956735
+      ],
+      "all_native_calls_ended_before_stop_returned": true
+    }
+  ],
+  "source_manifest_file_count": 2253,
+  "source_manifest_identical_before_after_and_across_final_runs": true,
+  "memory_limit": "Finite process RSS and MPS allocator observations at phase settlements, not long-running leak qualification or proof of complete memory return.",
+  "content_limit": "ASR covers the saved generated source audio. Playback completion is evidenced separately by afplay exits or sink drains/callback frames. No ASR of an acoustic recording is claimed.",
+  "total_successful_clips": 33,
+  "total_distinct_audio_sha256": 25,
+  "file_playback_successes": 11,
+  "sink_playback_successes": 22,
+  "excluded_cancel_phases": 3,
+  "total_normalized_exact": 33,
+  "total_complete_anchors": 33,
+  "total_raw_case_sensitive_exact": 0,
+  "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+  "raw_transcript": "Silver Compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+  "content_anchors": [
+    "silver compass",
+    "quiet orchard",
+    "amber sunrise"
+  ],
+  "lexical_differences": []
+}

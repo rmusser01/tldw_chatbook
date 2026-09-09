@@ -1,0 +1,164 @@
+{
+  "scope": "Separate later candidate tuples; prior failed Higgs and content-limited p225 receipts remain unchanged. No default-installed-runtime fix claim.",
+  "higgs": {
+    "run": "higgs/runs/live-wav-portaudio-02/evidence.json",
+    "status": "runtime_passed_content_pending",
+    "content_status": "content_passed",
+    "content_exact": 3,
+    "content_denominator": 3,
+    "library": {
+      "sounddevice_requested_name": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.dylib",
+      "actual_function_image": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.19.8.dylib",
+      "actual_sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+      "portaudio_version": [
+        1246976,
+        "PortAudio V19.7.0-devel, revision unknown"
+      ],
+      "expected_prefix": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib",
+      "expected_sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+      "stream_opened": false,
+      "model_loaded": false,
+      "verified": true
+    },
+    "stop_seconds": 96.3995968750678,
+    "cancel_forward_calls": 512,
+    "phases": [
+      {
+        "id": "speech-lab",
+        "outcome": "success",
+        "forward_calls": 118,
+        "native_calls": [
+          {
+            "class": "HiggsAudioServeEngine.generate",
+            "device": "cpu",
+            "dtype": "torch.float32",
+            "max_new_tokens": 512,
+            "enter_at": 2177015.692672291,
+            "thread_id": 6188560384,
+            "exit_at": 2177043.816001833
+          }
+        ],
+        "playback": {
+          "kind": "file",
+          "pid": 32519,
+          "player": "afplay",
+          "started_at": 2177044.270546166,
+          "exit_code": 0,
+          "elapsed_seconds": 5.354316458571702
+        }
+      },
+      {
+        "id": "console-warmup",
+        "outcome": "success",
+        "forward_calls": 101,
+        "native_calls": [
+          {
+            "class": "HiggsAudioServeEngine.generate",
+            "device": "cpu",
+            "dtype": "torch.float32",
+            "max_new_tokens": 512,
+            "enter_at": 2177049.656491,
+            "thread_id": 6188560384,
+            "exit_at": 2177070.063380458
+          }
+        ],
+        "playback": {
+          "kind": "sink",
+          "outcome": "success",
+          "elapsed_seconds": 3.689954790752381,
+          "drained": true,
+          "device_frames": 87360
+        }
+      },
+      {
+        "id": "console-cancel",
+        "outcome": "cancelled",
+        "forward_calls": 512,
+        "native_calls": [
+          {
+            "class": "HiggsAudioServeEngine.generate",
+            "device": "cpu",
+            "dtype": "torch.float32",
+            "max_new_tokens": 512,
+            "enter_at": 2177073.946376583,
+            "thread_id": 6188560384,
+            "exit_at": 2177170.363725333
+          }
+        ],
+        "playback": null
+      },
+      {
+        "id": "console-successor",
+        "outcome": "success",
+        "forward_calls": 132,
+        "native_calls": [
+          {
+            "class": "HiggsAudioServeEngine.generate",
+            "device": "cpu",
+            "dtype": "torch.float32",
+            "max_new_tokens": 512,
+            "enter_at": 2177170.416444875,
+            "thread_id": 6188560384,
+            "exit_at": 2177196.11427975
+          }
+        ],
+        "playback": {
+          "kind": "sink",
+          "outcome": "success",
+          "elapsed_seconds": 4.9067824999801815,
+          "drained": true,
+          "device_frames": 117120
+        }
+      }
+    ],
+    "worker_exit_code": 0,
+    "cleanup_joined": true,
+    "source_unchanged": true
+  },
+  "alltalk_p226": {
+    "run": "alltalk/runs/live-wav-p226-01/evidence.json",
+    "status": "runtime_passed_content_pending",
+    "content_status": "content_review_required",
+    "native_speaker": "p226",
+    "library": {
+      "sounddevice_requested_name": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/_sounddevice_data/portaudio-binaries/libportaudio.dylib",
+      "actual_function_image": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/_sounddevice_data/portaudio-binaries/libportaudio.dylib",
+      "actual_sha256": "f48bedb7f4f79c0ca050776afe943458555db7341e0dae00511d109ccde907c0",
+      "portaudio_version": [
+        1246976,
+        "PortAudio V19.7.0-devel, revision unknown"
+      ],
+      "expected_prefix": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/_sounddevice_data/portaudio-binaries",
+      "expected_sha256": "f48bedb7f4f79c0ca050776afe943458555db7341e0dae00511d109ccde907c0",
+      "stream_opened": false,
+      "model_loaded": false,
+      "verified": true
+    },
+    "small_exact": 1,
+    "base_en_exact": 1,
+    "denominator_per_recognizer": 3,
+    "worker_exit_code": 0,
+    "server_runs": [
+      {
+        "pid": 35488,
+        "command": [
+          "/private/tmp/tts-macos-burndown/alltalk/venv/bin/python",
+          "-B",
+          "/private/tmp/tts-macos-burndown/alltalk/p226/observed_server.py",
+          "--port",
+          "17851",
+          "--events",
+          "/private/tmp/tts-macos-burndown/alltalk/live-wav-p226-01/server-events.jsonl"
+        ],
+        "start_at": 2177268.300976208,
+        "selected_native_speaker": "p226",
+        "ready_at": 2177275.100940541,
+        "exit_code": -15,
+        "exit_at": 2177289.618289875
+      }
+    ],
+    "cleanup_joined": true,
+    "source_unchanged": true
+  },
+  "release": "higgs/provenance/candidate-provider-process-release.json"
+}

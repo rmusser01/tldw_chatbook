@@ -1,0 +1,30 @@
+{
+  "all_copied_hashes_equal": true,
+  "semantic_round_trips": [
+    {
+      "path": "wheel/final-wheel-verify.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 1
+    },
+    {
+      "path": "wheel/runs/pytorch-cpu-wav/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    },
+    {
+      "path": "wheel/runs/pytorch-mps-wav/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    },
+    {
+      "path": "wheel/runs/onnx-cpu-mp3/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    }
+  ],
+  "all_round_trips_equal": true,
+  "artifact_count": 40,
+  "local_markdown_links_checked": 20,
+  "missing_links": [],
+  "packaged_artifact_bytes": 645422
+}

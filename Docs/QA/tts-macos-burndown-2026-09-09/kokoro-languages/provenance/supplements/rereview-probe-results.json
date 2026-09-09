@@ -1,0 +1,138 @@
+{
+  "scope": "actual production routing and KPipeline implementation; fake G2P and fake model; no real model/ASR/audio/server",
+  "source_hashes_before": {
+    "tldw_chatbook/TTS/kokoro_languages.py": "e34e4dd905a2fe82d23ed0787896dc86fffe741b84d5172702fb286f91d7a430",
+    "tldw_chatbook/TTS/kokoro_pytorch.py": "fee9db433af842c6c45f57e2707cb7c27ba12e4d51c266b5f1c53b6dd774a660",
+    "tldw_chatbook/TTS/backends/kokoro.py": "005551e99e56ef4dff82d66a4509f6e57b8af8e196cf3d19281313fab9a5c32d"
+  },
+  "checks": [
+    {
+      "case": "public_onnx_ja_construction",
+      "code": "dependency_missing",
+      "retryable": false,
+      "engine_preserved": true,
+      "workers_joined": true
+    },
+    {
+      "case": "public_onnx_ja_phonemization",
+      "code": "dependency_missing",
+      "retryable": false,
+      "engine_preserved": true,
+      "workers_joined": true
+    },
+    {
+      "case": "public_onnx_zh_construction",
+      "code": "dependency_missing",
+      "retryable": false,
+      "engine_preserved": true,
+      "workers_joined": true
+    },
+    {
+      "case": "public_onnx_zh_phonemization",
+      "code": "dependency_missing",
+      "retryable": false,
+      "engine_preserved": true,
+      "workers_joined": true
+    },
+    {
+      "case": "actual_pipeline_public_pcm_cancel",
+      "cancelled_trace": [
+        "g2p_enter",
+        "g2p_exit",
+        "g2p_enter",
+        "STOP",
+        "g2p_exit"
+      ],
+      "no_forward_after_g2p_stop": true,
+      "no_cancelled_output": true,
+      "workers_joined": true,
+      "shared_identities_preserved": true,
+      "same_backend_successor_passed": true
+    },
+    {
+      "case": "actual_pipeline_public_pcm_close",
+      "cancelled_trace": [
+        "g2p_enter",
+        "g2p_exit",
+        "g2p_enter",
+        "STOP",
+        "g2p_exit"
+      ],
+      "no_forward_after_g2p_stop": true,
+      "no_cancelled_output": true,
+      "workers_joined": true,
+      "shared_identities_preserved": true,
+      "same_backend_successor_passed": false
+    },
+    {
+      "case": "actual_pipeline_public_wav_cancel",
+      "cancelled_trace": [
+        "g2p_enter",
+        "g2p_exit",
+        "g2p_enter",
+        "STOP",
+        "g2p_exit"
+      ],
+      "no_forward_after_g2p_stop": true,
+      "no_cancelled_output": true,
+      "workers_joined": true,
+      "shared_identities_preserved": true,
+      "same_backend_successor_passed": true
+    },
+    {
+      "case": "actual_pipeline_public_wav_close",
+      "cancelled_trace": [
+        "g2p_enter",
+        "g2p_exit",
+        "g2p_enter",
+        "STOP",
+        "g2p_exit"
+      ],
+      "no_forward_after_g2p_stop": true,
+      "no_cancelled_output": true,
+      "workers_joined": true,
+      "shared_identities_preserved": true,
+      "same_backend_successor_passed": false
+    },
+    {
+      "case": "actual_pipeline_public_timestamps_cancel",
+      "cancelled_trace": [
+        "g2p_enter",
+        "g2p_exit",
+        "g2p_enter",
+        "STOP",
+        "g2p_exit"
+      ],
+      "no_forward_after_g2p_stop": true,
+      "no_cancelled_output": true,
+      "workers_joined": true,
+      "shared_identities_preserved": true,
+      "same_backend_successor_passed": true
+    },
+    {
+      "case": "actual_pipeline_public_timestamps_close",
+      "cancelled_trace": [
+        "g2p_enter",
+        "g2p_exit",
+        "g2p_enter",
+        "STOP",
+        "g2p_exit"
+      ],
+      "no_forward_after_g2p_stop": true,
+      "no_cancelled_output": true,
+      "workers_joined": true,
+      "shared_identities_preserved": true,
+      "same_backend_successor_passed": false
+    }
+  ],
+  "source_hashes_after": {
+    "tldw_chatbook/TTS/kokoro_languages.py": "e34e4dd905a2fe82d23ed0787896dc86fffe741b84d5172702fb286f91d7a430",
+    "tldw_chatbook/TTS/kokoro_pytorch.py": "fee9db433af842c6c45f57e2707cb7c27ba12e4d51c266b5f1c53b6dd774a660",
+    "tldw_chatbook/TTS/backends/kokoro.py": "005551e99e56ef4dff82d66a4509f6e57b8af8e196cf3d19281313fab9a5c32d"
+  },
+  "official_pipeline": {
+    "path": "/private/tmp/tts-runtime-recovery-validation/kokoro-venv/lib/python3.12/site-packages/kokoro/pipeline.py",
+    "sha256": "09da32aab781f7a163cbf9f6e379d53db40957cbbab50bc26a21c8440c0eabd6"
+  },
+  "status": "all_10_independent_checks_passed"
+}

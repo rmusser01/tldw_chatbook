@@ -1,0 +1,14 @@
+{
+  "scope": "one no-argument startup check; main must return usage before creating a server",
+  "started": 1788935424.241861,
+  "pid": 81227,
+  "timed_out_before_main_usage": true,
+  "sample": {
+    "exit_code": 255,
+    "stdout": "",
+    "stderr": "sample[81262]: sample cannot examine process 81227 (http_shutdown_test) for unknown reasons, even though it appears to exist; try running with `sudo`.\n"
+  },
+  "forced_cleanup": "SIGKILL to exact task-owned diagnostic child",
+  "exit_code": -9,
+  "finished": 1788935427.270676
+}

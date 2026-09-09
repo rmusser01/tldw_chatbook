@@ -1,0 +1,43 @@
+{
+  "runtime_semantic_round_trips": [
+    {
+      "path": "alltalk/runs/live-wav-01/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    },
+    {
+      "path": "alltalk/runs/live-wav-02/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    },
+    {
+      "path": "alltalk/runs/live-mp3-01/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    },
+    {
+      "path": "higgs/runs/live-wav-01/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    },
+    {
+      "path": "higgs/runs/live-wav-01/evidence-before-forced-shutdown.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    },
+    {
+      "path": "higgs/runs/live-wav-02/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    },
+    {
+      "path": "higgs/runs/live-wav-02/evidence-before-forced-shutdown.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    }
+  ],
+  "all_round_trips_equal": true,
+  "copied_hashes_equal": true,
+  "artifact_count": 30,
+  "package_bytes": 425257
+}

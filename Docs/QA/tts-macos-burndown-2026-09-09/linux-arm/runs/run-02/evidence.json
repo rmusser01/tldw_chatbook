@@ -1,0 +1,264 @@
+{
+  "schema_version": 1,
+  "status": "headless_runtime_passed_content_pending",
+  "pid": 1,
+  "started_utc": "2026-09-09T07:27:31.811311+00:00",
+  "scope": "Headless Linux ARM production Kokoro backend inference and complete WAV decoding. No Lab, Console, physical playback, device drain or acoustic loopback claim.",
+  "physical_playback_qualified": false,
+  "dev_snd_present": false,
+  "torch_present": false,
+  "environment_names": [
+    "ALL_PROXY",
+    "FTP_PROXY",
+    "GPG_KEY",
+    "HF_HOME",
+    "HF_HUB_DISABLE_PROGRESS_BARS",
+    "HF_HUB_DISABLE_TELEMETRY",
+    "HF_HUB_DISABLE_XET",
+    "HF_HUB_OFFLINE",
+    "HOME",
+    "HOSTNAME",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "KMP_INIT_AT_FORK",
+    "LC_CTYPE",
+    "LOGURU_DIAGNOSE",
+    "MKL_NUM_THREADS",
+    "NO_PROXY",
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "PATH",
+    "PIP_NO_CACHE_DIR",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONPATH",
+    "PYTHONUNBUFFERED",
+    "PYTHON_KEYRING_BACKEND",
+    "PYTHON_SHA256",
+    "PYTHON_VERSION",
+    "TIKTOKEN_CACHE_DIR",
+    "TLDW_CONFIG_PATH",
+    "TOKENIZERS_PARALLELISM",
+    "TORCH_HOME",
+    "TQDM_DISABLE",
+    "TRANSFORMERS_OFFLINE",
+    "TRANSFORMERS_VERBOSITY",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "all_proxy",
+    "ftp_proxy",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy"
+  ],
+  "inherited_environment_names": [
+    "ALL_PROXY",
+    "FTP_PROXY",
+    "GPG_KEY",
+    "HOME",
+    "HOSTNAME",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "LC_CTYPE",
+    "MKL_NUM_THREADS",
+    "NO_PROXY",
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "PATH",
+    "PIP_NO_CACHE_DIR",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONPATH",
+    "PYTHONUNBUFFERED",
+    "PYTHON_SHA256",
+    "PYTHON_VERSION",
+    "all_proxy",
+    "ftp_proxy",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy"
+  ],
+  "credential_environment_names": [],
+  "python": "3.13.15 (main, Aug 31 2026, 23:46:42) [GCC 12.2.0]",
+  "platform": "Linux-6.12.67-linuxkit-aarch64-with-glibc2.36",
+  "machine": "aarch64",
+  "source_revision_supplied": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "imported_package": "/workspace/tldw_chatbook",
+  "source_hashes": {
+    "$ref": "../../provenance/source-hashes.json"
+  },
+  "validator_files": {
+    "/probe/validate_linux_onnx.py": "c3149dbd2b7360186c48d0895acd876a3e5b7835501f4909de2d99e601c9d6ac",
+    "/workspace/scripts/validate_live_tts.py": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2"
+  },
+  "assets": {
+    "/assets/kokoro.onnx": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+    "/assets/voices.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+  },
+  "versions": {
+    "kokoro-onnx": "0.6.1",
+    "onnxruntime": "1.29.0",
+    "numpy": "2.5.3",
+    "soundfile": "0.14.0",
+    "pydub": "0.25.1",
+    "av": "18.1.0"
+  },
+  "runtime_files": {
+    "/usr/local/lib/python3.13/site-packages/kokoro_onnx/__init__.py": "32602bee21b14ed161fdfd3c8b921b267782ad143a49c3ebd256c16c473808f5",
+    "/usr/local/lib/python3.13/site-packages/onnxruntime/__init__.py": "63301d3d4e828419c6520fbd0dd05af7667274c99c38f9592d4c0a9c5161ff55",
+    "/usr/local/lib/python3.13/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.cpython-313-aarch64-linux-gnu.so": "5574a1e5d1dc5bcf1dff1e4ac2d41f8a9cd7db5ad35661c28ba1433897ceb23e"
+  },
+  "available_execution_providers": [
+    "AzureExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "phases": [
+    {
+      "id": "linux-warmup",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "outcome": "success",
+      "native_calls": [
+        {
+          "request_id": "linux-warmup",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/assets/kokoro.onnx",
+          "enter_at": 143472.797112721,
+          "thread_id": 281471721918848,
+          "exit_at": 143478.746250264
+        }
+      ],
+      "started_at": 143472.782575887,
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/linux/evidence/linux-onnx-live-20260909-02/audio/linux-warmup.wav",
+        "sha256": "8210f6331c1a3729049b9c3781877e722b673eccbfd7294b6459f67ac4967afe",
+        "pcm_sha256": "b450229750105ed4231abe661ecf32b9976a4355ada3a65d4e47f9a4b114984a",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 201728,
+        "seconds": 8.405333333333333,
+        "rms": 0.0774014169202708,
+        "peak": 0.736907958984375,
+        "container_path": "/evidence/linux-onnx-live-20260909-02/audio/linux-warmup.wav"
+      },
+      "settled_at": 143478.840787848,
+      "resources": {
+        "native_tasks": 0,
+        "onnx_workers": 0,
+        "native_calls": 0
+      }
+    },
+    {
+      "id": "linux-cancel",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "outcome": "cancelled",
+      "native_calls": [
+        {
+          "request_id": "linux-cancel",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/assets/kokoro.onnx",
+          "enter_at": 143478.846792056,
+          "thread_id": 281471713464704,
+          "exit_at": 143488.136880519
+        }
+      ],
+      "started_at": 143478.842724931,
+      "stop_requested_at": 143478.863096181,
+      "resources_at_stop": {
+        "native_tasks": 0,
+        "onnx_workers": 1,
+        "native_calls": 1
+      },
+      "settled_at": 143488.142793352,
+      "resources": {
+        "native_tasks": 0,
+        "onnx_workers": 0,
+        "native_calls": 0
+      },
+      "partial_bytes": 0
+    },
+    {
+      "id": "linux-successor",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "outcome": "success",
+      "native_calls": [
+        {
+          "request_id": "linux-successor",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/assets/kokoro.onnx",
+          "enter_at": 143488.14665356,
+          "thread_id": 281471721918848,
+          "exit_at": 143493.948814105
+        }
+      ],
+      "started_at": 143488.143022977,
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/linux/evidence/linux-onnx-live-20260909-02/audio/linux-successor.wav",
+        "sha256": "8210f6331c1a3729049b9c3781877e722b673eccbfd7294b6459f67ac4967afe",
+        "pcm_sha256": "b450229750105ed4231abe661ecf32b9976a4355ada3a65d4e47f9a4b114984a",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 201728,
+        "seconds": 8.405333333333333,
+        "rms": 0.0774014169202708,
+        "peak": 0.736907958984375,
+        "container_path": "/evidence/linux-onnx-live-20260909-02/audio/linux-successor.wav"
+      },
+      "settled_at": 143494.045328355,
+      "resources": {
+        "native_tasks": 0,
+        "onnx_workers": 0,
+        "native_calls": 0
+      }
+    }
+  ],
+  "package_lists": {
+    "pip-freeze.txt": "1b97429f8c094e2004d4b55915518f0a1e99cc9deadf0bae2c130ab5015f2be6",
+    "dpkg-packages.txt": "0bfcb6316626b7ebf6448ccfcaed864fec8e8843fa6ea39aef4368a288780059"
+  },
+  "active_execution_providers": [
+    "CPUExecutionProvider"
+  ],
+  "final_resources": {
+    "native_tasks": 0,
+    "onnx_workers": 0,
+    "native_calls": 0
+  },
+  "cleanup_joined": true,
+  "source_hashes_after": {
+    "$ref": "../../provenance/source-hashes.json"
+  },
+  "source_unchanged": true,
+  "ended_utc": "2026-09-09T07:27:54.455391+00:00",
+  "packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/linux/evidence/linux-onnx-live-20260909-02/evidence.json",
+    "original_sha256": "394ab4d2a80928e8cb4afcf3b2dbc5a03e712cc88ea0de43e2c362a74741a31c",
+    "source_manifest_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+    "source_hash_fields": [
+      "source_hashes",
+      "source_hashes_after"
+    ]
+  }
+}

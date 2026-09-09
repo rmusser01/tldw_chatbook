@@ -1,0 +1,75 @@
+{
+  "scope": "Every source and device clip from the two successful native shutdown/recovery runs",
+  "source_evidence": [
+    {
+      "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/evidence.json",
+      "sha256": "b7a9dcb414a752fbf330d6da9083a3c831be77f9b0151280c18e89121fb4ac5f"
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/evidence.json",
+      "sha256": "94a57829d8301d75f1b22fa420c615cb55c3ccab9eed84130e452938780ef3cd"
+    }
+  ],
+  "phases": [
+    {
+      "id": "cpu-source-0",
+      "outcome": "success",
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/artifacts/02-fresh-server-successor-playback-source.wav",
+        "sha256": "545bc8dcd1b1813ce5046a19d6dfa55409aa3db7ff118472318d16a925db2bb6",
+        "frames": 277425,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.290816326530612,
+        "rms": 0.046756355883023154,
+        "peak": 0.372711181640625
+      }
+    },
+    {
+      "id": "cpu-device-0",
+      "outcome": "success",
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/artifacts/02-fresh-server-successor-playback-device-0.wav",
+        "sha256": "8986a25971922508f4d24c86e632c7d17f58dd14b14d81658c7af30708b9e7f9",
+        "frames": 277830,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.3,
+        "rms": 0.046722264477919585,
+        "peak": 0.372711181640625
+      }
+    },
+    {
+      "id": "metal-source-0",
+      "outcome": "success",
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/artifacts/02-fresh-server-successor-playback-source.wav",
+        "sha256": "532d14e8c0540059f637dd1e00bd48414eb680d405aa7500ebe2416d81dc34be",
+        "frames": 277302,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.288027210884354,
+        "rms": 0.04678040111863575,
+        "peak": 0.375244140625
+      }
+    },
+    {
+      "id": "metal-device-0",
+      "outcome": "success",
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/artifacts/02-fresh-server-successor-playback-device-0.wav",
+        "sha256": "885183ce28aed80c93d22aac505699f7684ab2ad2f9bedccd75bf12efe78be34",
+        "frames": 277830,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.3,
+        "rms": 0.04673592824275234,
+        "peak": 0.375244140625
+      }
+    }
+  ]
+}

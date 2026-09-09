@@ -1,0 +1,72 @@
+{
+  "verified_utc": "2026-09-09T07:20:49.623590+00:00",
+  "runtime_json_roundtrips": [
+    {
+      "run": "cpu-initial",
+      "original_sha256": "97ba0d5467b79a6ea60531288477e46bf74f97b4887b4e87151e933723f93164",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 9,
+        "source_hashes_after": 9
+      }
+    },
+    {
+      "run": "cpu-fixed",
+      "original_sha256": "f1107b8af46d3b1123ee9309506e926113174ed56cce8a7c631db641a4e9b070",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 8,
+        "source_hashes_after": 8
+      }
+    },
+    {
+      "run": "pytorch-cpu-en-us-final-01",
+      "original_sha256": "ea932ccebb58b6b71d93ad935d2c17138d34f0d56a6389db86b94c20ad8b58fa",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "pytorch-mps-en-us-final-01",
+      "original_sha256": "ccbf8b4ddc8c706181ff28f4fe95dc4c32fbc68522b0307fcd366a9184adfac7",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-en-us-final-01",
+      "original_sha256": "09d71817df055a6ac486f648e9b5bfb66ae3f636dffef8a0e252e6ae515b3297",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    }
+  ],
+  "byte_preserving_copies": 4,
+  "all_byte_preserving_copies_match": true,
+  "all_original_evidence_hashes_match_asr_receipts": true,
+  "successful_phase_and_content_clip_sets_match": true,
+  "successful_clip_count": 33,
+  "normalized_exact": 33,
+  "complete_anchors": 33,
+  "all_raw_differences_are_compass_case_only": true,
+  "all_playback_durations_cover_source_duration_with_250ms_tolerance": true,
+  "all_three_stops_overlap_observed_inference": true,
+  "all_three_stops_return_after_observed_inference_exit": true,
+  "all_final_cancelled_requests_have_zero_post_stop_inference_calls": true,
+  "all_final_settlements_and_cleanup_have_zero_recorded_owners": true,
+  "source_manifests_identical_across_all_final_before_after_maps": true,
+  "source_file_count": 2253,
+  "new_inference_audio_or_production_changes": false,
+  "readme_link_targets_verified": 19,
+  "all_packaged_json_parsed": true,
+  "all_source_capture_hashes_still_match": true,
+  "all_packaged_artifact_hashes_match_provenance": true,
+  "cpu_initial_failure_classification": "Harness omitted production _seed_axis_defaults; runner corrected. Not a production voice-selection regression.",
+  "readme_correction_utc": "2026-09-09T07:23:02.700744+00:00"
+}

@@ -1,0 +1,314 @@
+{
+  "schema_version": 1,
+  "status": "runtime_passed_content_pending",
+  "pid": 22898,
+  "started_utc": "2026-09-09T07:34:59.652279+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+      "language": "hi",
+      "content_anchors": [],
+      "started_at": 2175408.945599833,
+      "native_calls": [
+        {
+          "request_id": "speech-lab",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2175409.998897708,
+          "thread_id": 6146699264,
+          "exit_at": 2175411.019795083
+        }
+      ],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "request": {
+        "model_id": "kokoro",
+        "voice_id": "hf_alpha",
+        "speed": 1.0
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01/audio/speech-lab.wav",
+        "sha256": "d5b57aaa0cefc25583425897f8f09fb5972cdfc2a193920fb5f9895ce0ba8707",
+        "pcm_sha256": "a82dcfc5ac4fc2cea913a057a03b18f9b3627fd1057eefd53e9171b39789365d",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 237000,
+        "seconds": 9.875,
+        "rms": 0.10388852369750587,
+        "peak": 0.767181396484375
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 22925,
+        "player": "afplay",
+        "started_at": 2175411.247278708,
+        "exit_code": 0,
+        "elapsed_seconds": 10.919923957902938
+      },
+      "settled_at": 2175422.167300666,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2175422.167303833,
+        "threads": 3,
+        "rss_bytes": 2096414720,
+        "peak_rss_bytes": 2096496640,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-warmup",
+      "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+      "language": "hi",
+      "content_anchors": [],
+      "started_at": 2175422.187380541,
+      "native_calls": [
+        {
+          "request_id": "console-warmup",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2175422.203080958,
+          "thread_id": 6146699264,
+          "exit_at": 2175423.466485666
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2175423.524463583
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2175433.499761458
+        }
+      ],
+      "devices": [
+        {
+          "frames": 237120,
+          "audible_frames": 213071,
+          "callbacks": 494,
+          "sample_rate": 24000,
+          "sha256": "f29ad9ccaf3720ea83a9d4b6c8d6215d097b39731ae18bc28266c3abe7fa49af"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "4cba61a1-c43e-440f-8bf3-80c0d436f146",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.923014082945883,
+        "drained": true,
+        "device_frames": 237120
+      },
+      "source_bytes": 474044,
+      "source_sha256": "394b6873bad3aea7464ab2a0c1c830d955f360d69c93212bea170330fdc2318b",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01/audio/console-warmup.wav",
+        "sha256": "394b6873bad3aea7464ab2a0c1c830d955f360d69c93212bea170330fdc2318b",
+        "pcm_sha256": "d333d9a35b2a55e5d94fe1afa46ace58e3ccd26e7fe1cbe99840c901d3e26703",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 237000,
+        "seconds": 9.875,
+        "rms": 0.10391660088206651,
+        "peak": 0.768890380859375
+      },
+      "settled_at": 2175433.504773375,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2175433.504773958,
+        "threads": 3,
+        "rss_bytes": 1910669312,
+        "peak_rss_bytes": 2129920000,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    }
+  ],
+  "arguments": {
+    "engine": "pytorch",
+    "device": "cpu",
+    "model": "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth",
+    "voice": "hf_alpha",
+    "voice_dir": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices",
+    "voices": null,
+    "language": "hi",
+    "format": "wav",
+    "speed": 1.0,
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-hi.txt",
+    "cancel_text_file": null,
+    "scenarios": "playback",
+    "repeats": 1,
+    "phase_timeout": 300,
+    "cleanup_timeout": 60,
+    "run_timeout": 1800,
+    "expected_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+    "output": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01",
+    "play_audio": true,
+    "worker": true
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+  "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+  "assets": {
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/hf_alpha.pt": "06906fe05746d13a79c5c01e21fd7233b05027221a933c9ada650f5aafc8f044"
+  },
+  "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "versions": {
+    "tldw_chatbook": "0.2.0",
+    "textual": "8.2.8",
+    "numpy": "2.5.3",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": "0.9.4",
+    "kokoro-onnx": "0.6.1",
+    "torch": "2.14.0",
+    "onnxruntime": "1.29.0",
+    "misaki": "0.9.4",
+    "spacy": "3.8.16",
+    "en-core-web-sm": "3.8.0"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2175406.173074666,
+    "threads": 2,
+    "rss_bytes": 226672640,
+    "peak_rss_bytes": 226672640
+  },
+  "runtime_files": {
+    "torch._C": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/torch/_C.cpython-312-darwin.so",
+      "sha256": "b5b5b86566d6e00ee22b73c51e6c243bd894ffbf06f12c58d0bab0549b1840ac"
+    },
+    "kokoro.model": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/kokoro/model.py",
+      "sha256": "301c55350a068c4ed3b4cbd1209d2afb848bebca72db5657405e47e9dfb604db"
+    }
+  },
+  "backend_assets": [
+    {
+      "model": "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth",
+      "engine": "pytorch"
+    }
+  ],
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation complete!",
+      "severity": "information"
+    },
+    {
+      "message": "Playback complete",
+      "severity": "information"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "4cba61a1-c43e-440f-8bf3-80c0d436f146",
+      "error": null
+    }
+  ],
+  "memory_after_cleanup": {
+    "at": 2175433.55312125,
+    "threads": 2,
+    "rss_bytes": 1249427456,
+    "peak_rss_bytes": 2129920000,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "ended_utc": "2026-09-09T07:35:29.415440+00:00",
+  "packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01/evidence.json",
+    "original_sha256": "4769a0307aff8f286780343d40c0f3d4507ea9a14dfe1a82dea7879f235bf83c",
+    "source_map_references": {
+      "source_hashes": {
+        "path": "../../../kokoro-english/provenance/source-hashes.json",
+        "overrides": {},
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "7038b5b7779d66c6fe66a15eafb0204de2fcca2d0cd41c437f33ce17290bd188"
+      },
+      "source_hashes_after": {
+        "path": "../../../kokoro-english/provenance/source-hashes.json",
+        "overrides": {},
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "7038b5b7779d66c6fe66a15eafb0204de2fcca2d0cd41c437f33ce17290bd188"
+      }
+    },
+    "transformation": "Only source_hashes/source_hashes_after are factored; all other original JSON values are retained."
+  }
+}

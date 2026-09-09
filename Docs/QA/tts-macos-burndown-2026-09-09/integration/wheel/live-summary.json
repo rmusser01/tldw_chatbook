@@ -1,0 +1,96 @@
+{
+  "status": "complete_records_packaged",
+  "tuples": [
+    {
+      "name": "pytorch-cpu-wav",
+      "runtime_exit": 0,
+      "status": "runtime_passed_content_pending",
+      "content_exit": 0,
+      "content_status": "content_passed",
+      "exact": 3,
+      "clips": 3,
+      "cleanup_joined": true,
+      "source_unchanged": true,
+      "imported_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+      "phases": [
+        {
+          "id": "speech-lab",
+          "outcome": "success"
+        },
+        {
+          "id": "console-warmup",
+          "outcome": "success"
+        },
+        {
+          "id": "console-cancel",
+          "outcome": "cancelled"
+        },
+        {
+          "id": "console-successor",
+          "outcome": "success"
+        }
+      ]
+    },
+    {
+      "name": "pytorch-mps-wav",
+      "runtime_exit": 0,
+      "status": "runtime_passed_content_pending",
+      "content_exit": 0,
+      "content_status": "content_passed",
+      "exact": 3,
+      "clips": 3,
+      "cleanup_joined": true,
+      "source_unchanged": true,
+      "imported_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+      "phases": [
+        {
+          "id": "speech-lab",
+          "outcome": "success"
+        },
+        {
+          "id": "console-warmup",
+          "outcome": "success"
+        },
+        {
+          "id": "console-cancel",
+          "outcome": "cancelled"
+        },
+        {
+          "id": "console-successor",
+          "outcome": "success"
+        }
+      ]
+    },
+    {
+      "name": "onnx-cpu-mp3",
+      "runtime_exit": 0,
+      "status": "runtime_passed_content_pending",
+      "content_exit": 0,
+      "content_status": "content_passed",
+      "exact": 3,
+      "clips": 3,
+      "cleanup_joined": true,
+      "source_unchanged": true,
+      "imported_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+      "phases": [
+        {
+          "id": "speech-lab",
+          "outcome": "success"
+        },
+        {
+          "id": "console-warmup",
+          "outcome": "success"
+        },
+        {
+          "id": "console-cancel",
+          "outcome": "cancelled"
+        },
+        {
+          "id": "console-successor",
+          "outcome": "success"
+        }
+      ]
+    }
+  ],
+  "release": "wheel/ownership-release.json"
+}
