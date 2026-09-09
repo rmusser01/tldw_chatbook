@@ -204,6 +204,21 @@ def test_windows_timer_library_is_owned_by_webrtc_and_transitive() -> None:
     assert "target_link_libraries(_native PRIVATE webrtc_aec3)" in cmake
 
 
+def test_msvc_runtime_is_static_and_consistent_for_both_native_targets() -> None:
+    """File-only runtime contract; repaired-wheel linking is exercised by CI."""
+    cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    selection = re.search(
+        r"if\(MSVC\)\s+set_target_properties\(webrtc_aec3 _native PROPERTIES\s+"
+        + re.escape('MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"')
+        + r"\s*\)\s+endif\(\)",
+        cmake,
+    )
+    assert selection is not None
+    assert cmake.count("MSVC_RUNTIME_LIBRARY") == 1
+    assert selection.start() > cmake.index("add_library(webrtc_aec3 STATIC")
+    assert selection.start() > cmake.index("pybind11_add_module(_native MODULE")
+
+
 @pytest.mark.parametrize(
     ("platform", "expected"),
     [

@@ -168,6 +168,11 @@ pybind11_add_module(_native MODULE src/bindings.cpp src/duplex_bridge.cpp src/du
 target_link_libraries(_native PRIVATE webrtc_aec3)
 target_compile_features(_native PRIVATE cxx_std_17)
 
+if(MSVC)
+  set_target_properties(webrtc_aec3 _native PROPERTIES
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 install(TARGETS _native LIBRARY DESTINATION tldw_voice_aec)
 install(
   FILES
