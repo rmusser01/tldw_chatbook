@@ -265,6 +265,40 @@ dev-side reds, not this task's:
 `receiver_kind`), as are `test_screen_reuse_helpers.py` and
 `test_library_canvas_sync_defects.py`.
 
+### The media suites
+
+Working tree, all 19 `test_library_media_*.py` files plus
+`test_library_multiselect_media.py`: **24 failed, 686 passed** (15 min).
+
+Control, scratch worktree at the untouched HEAD, restricted to the four files
+carrying the bulk of those failures: `test_library_media_render_fixes.py` +
+`_side_by_side.py` + `_trash.py` gave **17 failed / 233 passed**, and
+`_reader_no_change_sync_t22208.py`'s wall-time probe was red too — **18
+failures, every name also failing in the working tree.**
+
+Two honest caveats rather than a clean pair:
+
+1. **One working-tree failure the control did not reproduce**:
+   `test_library_media_trash.py::test_media_trash_back_and_escape_restore_
+   distinct_media_return[escape]`. Run on its own in the working tree it
+   **passes** (`2 passed in 5.65s`), so it is a flake, not a regression.
+2. **Five of the working tree's 24 failure names were never captured** — the
+   capture command ended in `tail -20` and kept only 19 of them — so the
+   file-by-file comparison covers 19 of 24. The five lost names are in the
+   alphabetically earliest media files.
+
+Both runs shared the machine with **two other sessions' pytest processes** on
+overlapping Library files, and these suites read and write shared user-data
+databases under `~/.local/share/tldw_cli/default_user/`, so cross-run
+interference is a live hazard for the wall-clock and focus-ordering tests in
+particular. That is the most likely cause of caveat 1.
+
+The evidence that actually carries the claim is structural, not statistical:
+**`git diff --name-only b81cb98b0..HEAD` touches zero files under
+`tldw_chatbook/`.** The landed diff is one spec addendum, one test file, one
+Helper_Scripts probe and one SDD report; there is no mechanism by which it could
+move a media suite.
+
 **Flag for the ledger:** `test_library_selection_updates.py::test_tier1_toggle_
 falls_back_to_recompose_on_query_one_failure` is red at HEAD. That test asserts
 exactly the fallback behaviour the design record proposes to narrow, so Task 2
