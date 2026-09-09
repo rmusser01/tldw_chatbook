@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import ast
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from html import unescape
 import inspect
+from pathlib import Path
+import sqlite3
 import textwrap
 from types import SimpleNamespace
+from typing import Iterator
 
 from loguru import logger as loguru_logger
 import pytest
@@ -63,6 +67,77 @@ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+
+
+@pytest.fixture
+def folder_navigator_database(tmp_path: Path) -> Iterator[CharactersRAGDB]:
+    """Yield one exact-owner Notes database and retire every thread-local handle."""
+    database: CharactersRAGDB | None = None
+    try:
+        database = CharactersRAGDB(
+            tmp_path / "folder-navigator.db",
+            client_id="folder-navigator",
+        )
+        yield database
+    finally:
+        if database is not None:
+            try:
+                database.close_connection()
+            finally:
+                with database.quiesce_connections(timeout_seconds=2.0):
+                    pass
+                assert database.registered_connection_count() == 0
+
+
+def test_folder_navigator_database_retires_worker_after_body_failure(
+    tmp_path: Path,
+) -> None:
+    """Retire an owned worker handle without masking failure or closing a foreign DB.
+
+    Args:
+        tmp_path: Isolated directory for the owned and foreign databases.
+    """
+    fixture = folder_navigator_database.__wrapped__(tmp_path)
+    owner: CharactersRAGDB | None = None
+    foreign: CharactersRAGDB | None = None
+    worker_connection: sqlite3.Connection | None = None
+    try:
+        owner = next(fixture)
+        foreign = CharactersRAGDB(tmp_path / "foreign.db", client_id="foreign")
+        foreign_connection = foreign.get_connection()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker_connection = executor.submit(owner.get_connection).result(
+                timeout=2.0
+            )
+        owner.close_connection()
+        assert owner.registered_connection_count() > 0
+
+        primary = RuntimeError("forced folder navigator body failure")
+        with pytest.raises(
+            RuntimeError, match="forced folder navigator body failure"
+        ) as caught:
+            try:
+                raise primary
+            finally:
+                fixture.close()
+
+        assert caught.value is primary
+        assert owner.registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connection.execute("SELECT 1")
+        assert foreign_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        try:
+            fixture.close()
+        finally:
+            try:
+                if owner is not None:
+                    with owner.quiesce_connections(timeout_seconds=2.0):
+                        pass
+            finally:
+                if foreign is not None:
+                    with foreign.quiesce_connections(timeout_seconds=2.0):
+                        pass
 
 
 def _page(
@@ -411,9 +486,9 @@ async def test_authoritative_status_replacement_prunes_and_normal_clears() -> No
 
 @pytest.mark.asyncio
 async def test_real_service_pages_drive_inactive_and_out_of_window_screen_status(
-    tmp_path,
+    folder_navigator_database: CharactersRAGDB,
 ) -> None:
-    db = CharactersRAGDB(tmp_path / "screen-status.db", client_id="screen-status")
+    db = folder_navigator_database
     repository = LocalNoteFolderRepository(db)
     folder = repository.create_folder(name="Folder", parent_id=None)
     for index in range(20):
@@ -446,7 +521,6 @@ async def test_real_service_pages_drive_inactive_and_out_of_window_screen_status
     assert managed_note not in {str(item.note["id"]) for item in state.items}
     assert fake._notes_state.tree_protected_folder_ids == {folder.folder_id}
     assert fake._notes_state.tree_inactive_managed_folder_ids == {folder.folder_id}
-    db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -1764,6 +1838,10 @@ def test_clearing_filter_restores_same_epoch_browse_receipt_without_touching_ran
     fake._library_notes_scroll_owner = lambda *_args: None
     fake._focus_library_notes_filter_input = lambda: None
     callbacks = []
+    settled_focus = []
+    fake._queue_library_notes_settled_focus_restore = (
+        lambda focus, guard=None: settled_focus.append((focus, guard))
+    )
 
     def sync(_screen, _kind, *, then=None, **_kwargs):
         callbacks.append(then)
@@ -1788,6 +1866,7 @@ def test_clearing_filter_restores_same_epoch_browse_receipt_without_touching_ran
     assert fake._notes_state.tree_branches[key] is trusted
     assert fake._notes_state.tree_branches[key].total == 41
     assert fake._notes_state.tree_branches[key].freshness == "fresh"
+    assert settled_focus == [(receipt.focus_identity, None)]
 
 
 class _MutationService:
@@ -4278,6 +4357,10 @@ async def test_mounted_topology_changed_back_restores_exact_duplicate_ranges_and
         )
         notes_list = screen._library_notes_scroll_owner("navigator")
         assert notes_list is not None
+        await _wait_until(
+            pilot,
+            lambda: int(notes_list.scroll_y) == receipt.scroll_offset[1],
+        )
         assert int(notes_list.scroll_y) == receipt.scroll_offset[1]
         assert not screen.query("#library-notes-navigation-status")
 
@@ -5147,8 +5230,9 @@ async def test_mounted_expansion_failure_stays_beneath_folder_and_collapse_retai
 @pytest.mark.asyncio
 async def test_mounted_real_repository_statuses_protect_actions_before_page_membership(
     tmp_path,
+    folder_navigator_database: CharactersRAGDB,
 ):
-    db = CharactersRAGDB(tmp_path / "mounted-folder-authority.db", client_id="mounted")
+    db = folder_navigator_database
     repository = LocalNoteFolderRepository(db)
     inactive = repository.create_folder(name="Inactive", parent_id=None)
     nested = repository.create_folder(name="Nested", parent_id=None)

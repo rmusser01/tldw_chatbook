@@ -3563,3 +3563,50 @@ classified or waived before terminal traces and diagnosis. At the current
 published head, all 54 GitHub review threads are resolved (no further page),
 but this does not substitute for fresh review/checks after publishing the
 rebased checkpoint. Protected merge remains blocked.
+
+Published the rebase/steps 140–144 checkpoint as
+`25f28bcbb1a9ca1b4aa80bdf3c5ba72e21f07f60` with an exact lease on `0b5ee22306`.
+Progress comment 5607662288 records the open failures; comment 5607662527 requests
+fresh `/agentic_review`, and Qodo has acknowledged that it is working. No new
+unresolved review thread was present at the subsequent check.
+
+Step 145 test-only repair is verified for its exact scope: both database-owning
+tests now use one per-test fixture with finalization from allocation through
+dependent setup/body, ordinary close followed by bounded same-file quiescence,
+and a zero-registry assertion. A real worker/failure/foreign-owner control proves
+the actual finalizer retires the owned handle, preserves the primary error and
+leaves another database usable. The two filter-clear fakes record the existing
+settled-focus collaborator while retaining all trusted-range assertions.
+Native targeted qualification: five passed / 113 deselected, three warnings,
+6.67s; six standard final descriptors and zero SQLite retention. Log:
+`/private/tmp/pr2427-plan145-five-native.log`; receipt:
+`$TMPDIR/pr2427-plan145-five-native.76AWrU/fd_identity.jsonl`.
+Root diff review, scoped Ruff and whitespace checks pass. This is not a claim
+that the complete folder-navigation file is green.
+
+The stronger bounded exact-scroll wait disproves the initial readiness-only
+hypothesis: topology Back still retains zero instead of six. The locator's
+explicit focus runs before layout, then automatic restoration refuses to steal
+the now-live focus and never schedules its scroll retry. Step 147 records a
+locator-local scroll-only after-refresh repair using the existing `current()`
+predicate at both scheduling and execution; it remains unimplemented during the
+frozen source run. Original failing evidence:
+`/private/tmp/pr2427-plan145-scroll-boundary-red.log`.
+
+Step 146 separately confirms two stale shell width oracles in isolated RED
+diagnostics: custom terminal120 resolves Items58 rather than56, and resize170
+resolves Items64/Work92 rather than56/100. These match the accepted TASK-32127
+comfort64 and TASK-31953 custom-width clamp contracts; every other work-budget,
+saved-setting, priority and hysteresis oracle remains required. The rail fit
+test separately passes count/fit/no-midword-cut but wrongly demands `Chats`
+even when the preferred full `Conversations (2)` fits. Logs:
+`/private/tmp/pr2427-custom-resize-diagnostic.log` and
+`/private/tmp/pr2427-rail-diagnostic.log`. No shell source edit during its run.
+
+Dev advanced again to fetched `e1d6e8be2ffccdfc596d00ecc63acec2c1a1bd03`:
+21 commits / 38 files add Notes onboarding and Obsidian import. GitHub now
+reports conflicts against published `25f28bcbb1`. Read-only integration review
+is in progress; no checkout/rebase occurs before current qualification becomes
+terminal. The import decomposition remains specifically design-gated, and its
+size must be reassessed against this incoming behavior rather than an old
+snapshot. Final-head review/checks and normal protected merge remain open.
