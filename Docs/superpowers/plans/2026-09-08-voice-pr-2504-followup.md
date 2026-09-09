@@ -245,6 +245,53 @@ schema migrations while integrating current dev; no new runtime or authority.
    exact dev is the final publication target; later independent dev commits are
    reported as drift instead of silently restarting another integration cycle.
 
+Integration review refinement (before implementation): the incoming Buddy's
+per-kind cards and host clocks do not yet consume the existing mixed-type
+approval/install/script ledger. Compose them through the current typed projection
+and exact successfully rendered Buddy owner/head claim, preserving the ordinary
+Console active-session guard and the union of independently visible views. Keep
+one allowance/expiry authority, finishing-head ordering, strict original resolvers,
+and question/worktree host behavior. Call controller projection/clock methods only
+outside the aliased non-reentrant host lock. Scope includes the Buddy coordinator,
+modal, shared controller/host, focused real-controller mounted/fake-clock tests and
+their exact source/lint closure. Existing ADR-139 records this implementation
+clarification; no new permission, ledger, lifetime service or ADR is introduced.
+Also retain the synchronous voice shutdown fence before the incoming receipt-owner
+await, with one software regression. Correct only scheduler timing documentation
+in `Utils/boot_worker_policy.py`: IMMEDIATE bypasses the stagger gate but the
+scheduler starts after UI readiness; enum, identities, limits and runtime stay put.
+The public direct-announcer seam must also route the three typed kinds through
+their existing live stable-ID sanitized announcer, preserving exact-once delivery
+and failed-delivery retry. Legacy host scanning must not duplicate those notices;
+question/worktree retain the incoming notice path. Cover the direct and scanning
+entries with the existing real-round privacy regression before changing the seam.
+Mechanical lint completion removes only the now-unused `use_human_input_wait`
+import and the unused result binding of the unchanged `host.run_round` call;
+existing delayed-import E402 debt remains outside this integration scope.
+
+Policy review disposition before fixture adaptation: ADR-094 already retains
+approval/install/script decisions through no-view runtime domain routers; the
+incoming blanket None-setter/immediate-refusal assumption is obsolete for those
+three kinds. Preserve ADR-139's question-specific no-view refusal and exact Buddy
+retention exception. Adapt only the incoming skill fixture to a worker-owned
+request, exact pending identity, unchanged finite allowance while hidden, and
+explicit bounded cancellation before the existing target close/reopen assertions.
+Do not add a wake-origin discriminator or remove stable admission proxies. The
+independent immutable-source review is recorded in current-plan scratch as
+`dev733-headless-policy-review.md`; ADR-139 makes the per-kind policy explicit.
+
+Final dev733 local integration checkpoint: the real 19-commit rebase completed at
+`fb503c9feddf7964d33d2e16629c3b0c8ee13710`, preserving the requested pre-rebase
+backup. Genuine schema-70 predecessor RED/GREEN establishes schema 71 after the
+unchanged source-pin 69 and Buddy 70 migrations. The composed Buddy typed ledger
+and quit-fence frozen-source gate passed 20 cases; schema/inventory checks passed
+9; direct-announcer/privacy/retry checks passed 5. Root's separate pre-inspected
+TTS/receipt/Canvas joined gate passed 19 cases. Known dependency warnings remain;
+these are targeted software results, not new native or hosted-CI evidence.
+The official diagnostic inventory has no drift (594 owners, 1384 TASK-492 calls,
+55 TASK-31551 calls, 7684 TASK-494 calls, 12 sink files). Exact evidence and the
+final immutable commit belong in current-plan `dev733-rebase-report.md`.
+
 After scoped reviews, run one proportionate joined software gate covering changed seams and obtain a final read-only combined review. Refresh dev/PR/comments and account for any changes. Push the same branch with explicit force-with-lease, reply to each inline finding with the fix or grounded explanation, and resolve only addressed threads. Observe normal automatic checks; diagnose failures before more tests or changes. Record exact final head/check status and leave PR 2504 OPEN and UNMERGED. Preserve worktrees and recoverable evidence.
 
 ## Local verification checkpoint — 2026-09-08

@@ -122,3 +122,41 @@ async def test_gateway_registry_is_lazy_and_preserves_injected_identity():
     assert injected.provisional_trace_registry is registry
     await gateway.aclose()
     await injected.aclose()
+
+
+@pytest.mark.asyncio
+async def test_quit_fence_survives_wait_for_receipt_owner_creation(monkeypatch):
+    from Tests.Chat.test_console_speculative_voice_promotion_races import _voice_context
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_voice_promotion import VoicePromotionClaimStatus
+
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    runtime = ConsoleRuntime(SimpleNamespace())
+    runtime.set_chat_store(store)
+    owner = runtime.voice_promotion_owner
+    permit = owner.seal_quiescent(owner.begin_quit())
+    runtime.begin_dispose(voice_promotion_permit=permit)
+    started, release = asyncio.Event(), asyncio.Event()
+    original = asyncio.to_thread
+
+    async def receipt_creation_gate(func, *args, **kwargs):
+        if func.__name__ == "receipt_database_after_creation":
+            started.set()
+            await release.wait()
+        return await original(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", receipt_creation_gate)
+    disposal = asyncio.create_task(runtime.dispose())
+    await asyncio.wait_for(started.wait(), 3)
+    try:
+        assert not disposal.done()
+        owner.abort_quit(permit)  # A consumed permit cannot reopen admission.
+        assert (
+            owner.try_claim(_voice_context(store, session.id)).status
+            is VoicePromotionClaimStatus.QUIT_FENCED
+        )
+        assert runtime._disposed
+    finally:
+        release.set()
+        await asyncio.wait_for(disposal, 3)

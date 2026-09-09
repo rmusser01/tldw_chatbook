@@ -1273,6 +1273,8 @@ async def test_each_hidden_decision_id_emits_one_sanitized_notice():
         ("approval", "skill_install", "skill_script"), ids, strict=True
     ):
         controller._announce_hidden_decision(kind, session.id, decision_id)
+        controller.announce_hidden_decision(session.id, kind)
+    controller._interrupt_host.announce_hidden_decisions()
     assert len(app.notifications) == 3, "a stable ID was announced twice"
 
     controller.resolve_pending_approval(

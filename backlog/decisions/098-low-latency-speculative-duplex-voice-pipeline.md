@@ -622,6 +622,9 @@ voice import authorization. The initial dev integration used schema 68 to 69.
 The 2026-09-08 PR #2504 rebase preserves dev's schema-69 saved-source pin
 migration unchanged and composes voice provenance after it, from 69 to 70;
 earlier migration numbers in historical source evidence do not replace dev migrations.
+The final dev `733f7a628c` integration also preserves its independent-Buddy
+schema-70 migration byte-for-byte. Voice provenance therefore occupies 70 to 71,
+with the same SQL body, indexes and guards; schema 69 and 70 remain upstream-owned.
 
 Production connects the existing winning-promotion registry/context/import
 callbacks, with pair-first and trace-best-effort sequencing. Provisional calls

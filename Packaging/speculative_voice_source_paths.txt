@@ -104,7 +104,7 @@ Tests/Chat/test_console_voice_worker_integration.py
 Tests/Chat/test_voice_phrase_sequencer.py
 Tests/DB/test_chachanotes_v56_semantic_trace_migration.py
 Tests/DB/test_chachanotes_v57_semantic_mutation_guard_migration.py
-Tests/DB/test_chachanotes_v70_voice_trace_provenance_migration.py
+Tests/DB/test_chachanotes_v71_voice_trace_provenance_migration.py
 Tests/DB/test_console_voice_trace_grants_gc.py
 Tests/Packaging/fixtures/speculative_voice_physical/safe_full_duplex.json
 Tests/Packaging/fixtures/speculative_voice_physical/safe_half_duplex.json
@@ -128,6 +128,7 @@ Tests/STT/test_transcription_service_facade.py
 Tests/TTS/test_pcm_stream_plan.py
 Tests/TTS/test_tts_request_admission.py
 Tests/UI/test_app_quit_guard.py
+Tests/UI/test_buddy_conversation_modal.py
 Tests/UI/test_console_composer_menu.py
 Tests/UI/test_console_hands_free_wiring.py
 Tests/UI/test_console_meeting_guard.py
@@ -148,6 +149,7 @@ Tests/test_persistent_diagnostic_boundary.py
 Tests/test_persistent_diagnostic_sentinel_matrix.py
 backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md
 backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md
+backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md
 backlog/docs/lessons-testing-evidence.md
 backlog/tasks/task-23175 - Add-low-latency-speculative-duplex-voice-pipeline.md
 native/voice_aec/.gitattributes
@@ -572,7 +574,8 @@ tldw_chatbook/DB/migrations/chachanotes_v65_to_v66_character_conversation_search
 tldw_chatbook/DB/migrations/chachanotes_v66_to_v67_canvas_revisions.sql
 tldw_chatbook/DB/migrations/chachanotes_v67_to_v68_canvas_runtime_profiles.sql
 tldw_chatbook/DB/migrations/chachanotes_v68_to_v69_console_trace_source_pin.sql
-tldw_chatbook/DB/migrations/chachanotes_v69_to_v70_voice_trace_provenance.sql
+tldw_chatbook/DB/migrations/chachanotes_v69_to_v70_independent_buddy.sql
+tldw_chatbook/DB/migrations/chachanotes_v70_to_v71_voice_trace_provenance.sql
 tldw_chatbook/Local_Ingestion/__init__.py
 tldw_chatbook/Local_Ingestion/transcription_service.py
 tldw_chatbook/STT/__init__.py
@@ -591,6 +594,7 @@ tldw_chatbook/TTS/request_admission.py
 tldw_chatbook/UI/Console_Modules/dictation.py
 tldw_chatbook/UI/Console_Modules/hands_free.py
 tldw_chatbook/UI/Console_Modules/wiring.py
+tldw_chatbook/UI/Navigation/buddy_conversation.py
 tldw_chatbook/UI/Screens/chat_screen.py
 tldw_chatbook/UI/__init__.py
 tldw_chatbook/Utils/__init__.py
@@ -601,6 +605,7 @@ tldw_chatbook/Widgets/Console/__init__.py
 tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py
 tldw_chatbook/Widgets/Console/console_transcript.py
 tldw_chatbook/Widgets/Console/console_voice_preview.py
+tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py
 tldw_chatbook/Widgets/Settings_Widgets/speech_tts_panel_types.py
 tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py
 tldw_chatbook/Widgets/__init__.py

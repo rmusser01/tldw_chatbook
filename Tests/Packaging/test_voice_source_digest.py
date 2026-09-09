@@ -19,6 +19,13 @@ from tldw_chatbook.Audio import voice_process_lifetime
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_PATH_LIST = _PROJECT_ROOT / "Packaging/speculative_voice_source_paths.txt"
 _REQUIRED_CURRENT_SCOPE = {
+    "Tests/DB/test_chachanotes_v71_voice_trace_provenance_migration.py",
+    "Tests/UI/test_buddy_conversation_modal.py",
+    "backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md",
+    "tldw_chatbook/DB/migrations/chachanotes_v69_to_v70_independent_buddy.sql",
+    "tldw_chatbook/DB/migrations/chachanotes_v70_to_v71_voice_trace_provenance.sql",
+    "tldw_chatbook/UI/Navigation/buddy_conversation.py",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py",
     "native/voice_aec/vendor/webrtc/common_audio/resampler/sinc_resampler_sse.cc",
     "native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/atomic_hook.h",
     "native/voice_aec/vendor/webrtc/third_party/abseil-cpp/absl/base/internal/raw_logging.cc",

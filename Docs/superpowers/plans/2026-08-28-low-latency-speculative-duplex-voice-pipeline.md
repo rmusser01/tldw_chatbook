@@ -2,7 +2,7 @@
 
 Current dev port: follow the [2026-09-06 integration plan](2026-09-06-speculative-voice-dev-integration.md)
 and ADR-098's current-dev privacy amendment. This historical source plan's
-executable migration/test paths are mapped to dev schema 68→69; historical
+executable migration/test paths are mapped to dev schema 70→71; historical
 measurements and qualification requests below do not qualify the port or authorize
 additional runtime, hardware, or soak runs. Application/companion source version
 is 0.2.0; original unqualified identity bytes remain unchanged.
@@ -82,7 +82,7 @@ Select only hunks created for the current task. If patch staging cannot separate
 | `tldw_chatbook/Chat/console_runtime.py` | App-lifetime promotion owner composition, view injection, session-close coordination, and shutdown drain. |
 | `tldw_chatbook/Chat/chat_persistence_service.py` | Atomic already-complete pair, usage, receipt, unseen-mark, and active-leaf CAS transaction. |
 | `tldw_chatbook/Chat/console_voice_trace_promotion.py` | Typed one-use provisional trace capability registry and winning-call importer. |
-| `tldw_chatbook/DB/migrations/chachanotes_v69_to_v70_voice_trace_provenance.sql` | Explicit ordinary versus post-dispatch trace provenance and direct-terminal import guards. |
+| `tldw_chatbook/DB/migrations/chachanotes_v70_to_v71_voice_trace_provenance.sql` | Explicit ordinary versus post-dispatch trace provenance and direct-terminal import guards. |
 | `tldw_chatbook/UI/Console_Modules/hands_free.py` | Legacy/new selection and view-scoped lifecycle wiring. |
 | `tldw_chatbook/Widgets/Console/console_voice_preview.py` | Ephemeral user/assistant projection outside the durable message store. |
 | `tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py` | Canonical settings UI for response eagerness, STT mode, and AEC troubleshooting. |
@@ -1200,13 +1200,13 @@ gate remain mandatory before any runtime wiring may become eligible.
 **Files:**
 
 - Create: `tldw_chatbook/Chat/console_voice_trace_promotion.py`
-- Create: `tldw_chatbook/DB/migrations/chachanotes_v69_to_v70_voice_trace_provenance.sql`
+- Create: `tldw_chatbook/DB/migrations/chachanotes_v70_to_v71_voice_trace_provenance.sql`
 - Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py`
 - Modify: `tldw_chatbook/Chat/console_exchange_capture.py`
 - Modify: `tldw_chatbook/Chat/console_trace_models.py`
 - Modify: `tldw_chatbook/Chat/console_trace_repository.py`
 - Modify: `tldw_chatbook/Chat/console_trace_service.py`
-- Test: `Tests/DB/test_chachanotes_v70_voice_trace_provenance_migration.py`
+- Test: `Tests/DB/test_chachanotes_v71_voice_trace_provenance_migration.py`
 - Test: `Tests/Chat/test_console_voice_capture.py`
 - Test: `Tests/Chat/test_console_trace_repository.py`
 - Test: `Tests/Chat/test_console_trace_service.py`
@@ -1233,7 +1233,7 @@ The winning importer must redeem the entire manifest in one trace transaction, l
 
 - [x] **Step 3: Run RED.**
 
-Run: `pytest -q Tests/DB/test_chachanotes_v70_voice_trace_provenance_migration.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_trace_repository.py Tests/Chat/test_console_trace_service.py`
+Run: `pytest -q Tests/DB/test_chachanotes_v71_voice_trace_provenance_migration.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_trace_repository.py Tests/Chat/test_console_trace_service.py`
 
 Expected: schema provenance, direct-terminal guards, typed capability, and importer tests fail while ordinary trace lifecycle tests remain green.
 
@@ -1247,7 +1247,7 @@ The gateway registry is the authority for issue, manifest seal, aggregate budget
 
 - [x] **Step 6: Run migration, trace, privacy, and lifecycle tests.**
 
-Run: `pytest -q Tests/DB/test_chachanotes_v56_semantic_trace_migration.py Tests/DB/test_chachanotes_v57_semantic_mutation_guard_migration.py Tests/DB/test_chachanotes_v70_voice_trace_provenance_migration.py Tests/Chat/test_console_exchange_capture.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_trace_call_lifecycle.py Tests/Chat/test_console_trace_repository.py Tests/Chat/test_console_trace_service.py`
+Run: `pytest -q Tests/DB/test_chachanotes_v56_semantic_trace_migration.py Tests/DB/test_chachanotes_v57_semantic_mutation_guard_migration.py Tests/DB/test_chachanotes_v71_voice_trace_provenance_migration.py Tests/Chat/test_console_exchange_capture.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_trace_call_lifecycle.py Tests/Chat/test_console_trace_repository.py Tests/Chat/test_console_trace_service.py`
 
 Expected: old and new schema paths, provenance/reason round trip, ordinary reservation chronology, ownerless/existing/concurrent lineage, complete multi-call import, missing/gapped/overflow/expired rejection, replay rejection, temp/save races, uncertain commit, and conversation-authoritative trace failure all pass.
 
@@ -1663,7 +1663,7 @@ The approval-gated release workflow downloads the exact qualified wheel/evidence
 
 - [x] **Step 8: Run final targeted verification and complete static checks.**
 
-Run: `pytest -q Tests/Audio/test_duplex_contracts.py Tests/Audio/test_aec_backend.py Tests/Audio/test_duplex_transport.py Tests/Audio/test_voice_preprocessor.py Tests/Audio/test_rolling_transcript.py Tests/Audio/test_voice_aec_corpus.py Tests/DB/test_chachanotes_v70_voice_trace_provenance_migration.py Tests/Chat/test_voice_phrase_sequencer.py Tests/Chat/test_chat_persistence_service.py Tests/Chat/test_console_exchange_capture.py Tests/Chat/test_console_trace_call_lifecycle.py Tests/Chat/test_console_trace_repository.py Tests/Chat/test_console_trace_service.py Tests/Chat/test_console_voice_attempts.py Tests/Chat/test_console_voice_supervisor.py Tests/Chat/test_console_speculative_voice.py Tests/Chat/test_console_speculative_voice_properties.py Tests/Chat/test_console_speculative_voice_promotion_races.py Tests/Chat/test_console_chat_store_atomic_promotion.py Tests/Chat/test_console_runtime_lifetime.py Tests/Chat/test_console_runtime_shutdown.py Tests/Chat/test_console_voice_eligibility.py Tests/Chat/test_console_voice_effect_barrier.py Tests/Chat/test_console_voice_promotion.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_voice_ephemerality.py Tests/UI/test_app_quit_guard.py Tests/UI/test_console_runtime_ownership.py Tests/UI/test_console_speculative_voice_wiring.py Tests/UI/test_console_voice_preview.py Tests/UI/test_console_voice_accessibility.py Tests/UI/test_settings_speculative_voice_panel.py Tests/integration/test_speculative_voice_pipeline.py Tests/Performance/test_speculative_voice_latency.py Tests/Packaging/test_voice_aec_distribution.py Tests/Packaging/test_voice_aec_installed_wheel.py Tests/Packaging/test_voice_physical_reports.py Tests/Packaging/test_voice_qualification_manifest.py Tests/Packaging/test_speculative_voice_lint_scope.py`
+Run: `pytest -q Tests/Audio/test_duplex_contracts.py Tests/Audio/test_aec_backend.py Tests/Audio/test_duplex_transport.py Tests/Audio/test_voice_preprocessor.py Tests/Audio/test_rolling_transcript.py Tests/Audio/test_voice_aec_corpus.py Tests/DB/test_chachanotes_v71_voice_trace_provenance_migration.py Tests/Chat/test_voice_phrase_sequencer.py Tests/Chat/test_chat_persistence_service.py Tests/Chat/test_console_exchange_capture.py Tests/Chat/test_console_trace_call_lifecycle.py Tests/Chat/test_console_trace_repository.py Tests/Chat/test_console_trace_service.py Tests/Chat/test_console_voice_attempts.py Tests/Chat/test_console_voice_supervisor.py Tests/Chat/test_console_speculative_voice.py Tests/Chat/test_console_speculative_voice_properties.py Tests/Chat/test_console_speculative_voice_promotion_races.py Tests/Chat/test_console_chat_store_atomic_promotion.py Tests/Chat/test_console_runtime_lifetime.py Tests/Chat/test_console_runtime_shutdown.py Tests/Chat/test_console_voice_eligibility.py Tests/Chat/test_console_voice_effect_barrier.py Tests/Chat/test_console_voice_promotion.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_voice_ephemerality.py Tests/UI/test_app_quit_guard.py Tests/UI/test_console_runtime_ownership.py Tests/UI/test_console_speculative_voice_wiring.py Tests/UI/test_console_voice_preview.py Tests/UI/test_console_voice_accessibility.py Tests/UI/test_settings_speculative_voice_panel.py Tests/integration/test_speculative_voice_pipeline.py Tests/Performance/test_speculative_voice_latency.py Tests/Packaging/test_voice_aec_distribution.py Tests/Packaging/test_voice_aec_installed_wheel.py Tests/Packaging/test_voice_physical_reports.py Tests/Packaging/test_voice_qualification_manifest.py Tests/Packaging/test_speculative_voice_lint_scope.py`
 
 `Packaging/speculative_voice_python_paths.txt` lists every Python file created or modified by Tasks 1-12, including Audio, Chat, TTS, provider gateway, runtime, controller, persistence/capture, UI/Widgets, config, native wrapper, packaging scripts, and tests. Run: `xargs ruff check < Packaging/speculative_voice_python_paths.txt`
 

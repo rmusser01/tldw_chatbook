@@ -219,7 +219,14 @@ class InterruptRoundHost:
         # None preserves the setter-based contract for non-Textual callers.
         # A reused screen explicitly reports suspend/resume, including modals.
         self.view_visible: bool | None = None
-        self._decision_views: dict[object, tuple[str, frozenset[str]]] = {}
+        self._decision_views: dict[
+            object,
+            tuple[
+                str,
+                frozenset[str],
+                tuple[weakref.ReferenceType[Any], int, bool, str] | None,
+            ],
+        ] = {}
         self._retained_decision_targets: dict[
             str, tuple[weakref.ReferenceType[Any], int, bool]
         ] = {}
@@ -259,14 +266,58 @@ class InterruptRoundHost:
         session_id: str | None,
         *,
         kinds: tuple[str, ...] = tuple(KIND_SETTER_ATTRS),
+        decision_id: str | None = None,
     ) -> None:
         """Claim/release a visible exact-session decision projection, such as Buddy."""
+        session = (
+            next(
+                (row for row in self._seams.store.sessions() if row.id == session_id),
+                None,
+            )
+            if decision_id is not None
+            else None
+        )
+        rendered = (
+            (
+                weakref.ref(session),
+                session.conversation_binding_revision,
+                session.ephemeral,
+                decision_id,
+            )
+            if session is not None
+            else None
+        )
         with self.lock:
+            previous = self._decision_views.get(owner)
             if session_id is None:
                 self._decision_views.pop(owner, None)
             else:
-                self._decision_views[owner] = (session_id, frozenset(kinds))
+                self._decision_views[owner] = (session_id, frozenset(kinds), rendered)
         self.refresh_decision_clocks()
+        refresh = getattr(self._seams, "_refresh_answerable_decision", None)
+        if callable(refresh):
+            for target in {session_id, previous[0] if previous else None} - {None}:
+                refresh(target)
+
+    def rendered_decision_ids(self, session_id: str) -> set[str]:
+        """Snapshot live exact-binding card claims without retaining the host lock."""
+        with self.lock:
+            views = tuple(self._decision_views.values())
+        sessions = self._seams.store.sessions()
+        result = set()
+        for target, _kinds, rendered in views:
+            if target != session_id or rendered is None:
+                continue
+            reference, revision, ephemeral, decision_id = rendered
+            session = reference()
+            if (
+                session is not None
+                and session.conversation_binding_revision == revision
+                and session.ephemeral == ephemeral
+                and any(row is session for row in sessions)
+            ):
+                result.add(decision_id)
+        return result
 
     def set_view_visible(self, visible: bool) -> None:
         """Account for the old visibility interval before changing clock activity."""
@@ -295,7 +346,7 @@ class InterruptRoundHost:
                         )
                         or any(
                             session_id == target and kind in kinds
-                            for target, kinds in self._decision_views.values()
+                            for target, kinds, _rendered in self._decision_views.values()
                         )
                     ) and (not clock.requires_head or head is clock.payload)
                     clock.update(now, answerable)
@@ -309,7 +360,11 @@ class InterruptRoundHost:
             pending = []
             for kind, states in self.registries.items():
                 for state in states.values():
-                    if state.get("attention_announced") or state.get("revoked"):
+                    if (
+                        state.get("decision_type")
+                        or state.get("attention_announced")
+                        or state.get("revoked")
+                    ):
                         continue
                     state["attention_announced"] = True
                     pending.append((state.get("session_id", ""), kind))
@@ -591,7 +646,9 @@ class InterruptRoundHost:
             # The controller's accepted-time metadata uses this same lock.
             # Enter the hook only after releasing the registration lock.
             is_head = publish_decision(
-                round_state=state, payload=payload, decision_type=kind,
+                round_state=state,
+                payload=payload,
+                decision_type=kind,
                 decision_id=round_id,
                 timeout_seconds=float(payload.get("timeout_seconds") or 0),
                 retained_store=self.payloads[kind],
@@ -619,7 +676,9 @@ class InterruptRoundHost:
             park_toast = getattr(self._seams, "park_pending_approval", None)
             if retained_decision:
                 if self._seams._approval_view_is_detached() or is_parked or not is_head:
-                    self._seams._announce_hidden_decision(kind, owning_session_id, round_id)
+                    self._seams._announce_hidden_decision(
+                        kind, owning_session_id, round_id
+                    )
                 elif getattr(self._seams, "set_pending_decision", None) is not None:
                     self._seams._marshal_pending_decision_projection()
                 else:
@@ -708,7 +767,10 @@ class InterruptRoundHost:
                 if discard is not None:
                     discard(session_id, round_id)
             try:
-                if retained_decision and getattr(self._seams, "set_pending_decision", None) is not None:
+                if (
+                    retained_decision
+                    and getattr(self._seams, "set_pending_decision", None) is not None
+                ):
                     self._seams._marshal_pending_decision_projection()
                 else:
                     self.remount_head(

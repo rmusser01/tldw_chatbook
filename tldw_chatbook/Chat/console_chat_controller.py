@@ -36,6 +36,7 @@ from uuid import uuid4
 import weakref
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.Character_Chat.emote_directives import (
@@ -359,7 +360,6 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_DEFAULT_ENABLED,
     build_builtin_gate,
 )
-from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 #: task-31385: environment override for ``[console] interrupt_bell``
 #: (environment -> config.toml -> default, like every other setting).
 INTERRUPT_BELL_ENV_VAR = "TLDW_CONSOLE_INTERRUPT_BELL"
@@ -4167,6 +4167,7 @@ class ConsoleChatController:
         #: then stamps/parks under this shared lock.
         self._pending_decision_order = 0
         self._answerable_decision_by_session: dict[str, str] = {}
+        self._console_answerable_decision_by_session: dict[str, str] = {}
         self._announced_pending_decision_ids: set[str] = set()
         self.decision_monotonic_clock: Callable[[], float] = time.monotonic
 
@@ -13078,7 +13079,7 @@ class ConsoleChatController:
         # mount, the advisory permission summary fired INSIDE the human-wait
         # mark, decision stamping on cancel/timeout, and finishing-phase
         # retention at teardown.
-        outcome = self._interrupt_host.run_round(
+        self._interrupt_host.run_round(
             "approval",
             round_id,
             payload,
@@ -13568,13 +13569,11 @@ class ConsoleChatController:
 
     def active_session_changed(self) -> None:
         """Pause stale heads and derive the newly active session's head."""
-        now = self.decision_monotonic_clock()
         with self._approval_state_lock:
             answerable = tuple(self._answerable_decision_by_session.items())
+            self._console_answerable_decision_by_session.clear()
         for answerable_session_id, decision_id in answerable:
-            self._pause_answerable_decision(
-                answerable_session_id, decision_id, now=now
-            )
+            self._refresh_answerable_decision(answerable_session_id)
         session_id = self.store.active_session_id
         if session_id:
             self._reproject_pending_decision_for_session(session_id)
@@ -13634,17 +13633,41 @@ class ConsoleChatController:
             return
         self.app.call_from_thread(self.project_pending_decision_for_active_session)
 
-    def set_answerable_decision(
-        self, session_id: str, decision_id: str | None
-    ) -> bool:
-        """Pause or start the exact active-session FIFO head's clock."""
+    def set_answerable_decision(self, session_id: str, decision_id: str | None) -> bool:
+        """Update Console's claim without erasing another visible owner's claim."""
+        with self._approval_state_lock:
+            self._console_answerable_decision_by_session.pop(session_id, None)
+            if decision_id is not None and session_id == self.store.active_session_id:
+                self._console_answerable_decision_by_session[session_id] = decision_id
+        current_id = self._refresh_answerable_decision(session_id)
+        return decision_id is None or (
+            session_id == self.store.active_session_id and current_id == decision_id
+        )
+
+    def _refresh_answerable_decision(self, session_id: str) -> str | None:
+        """Reconcile rendered Console/Buddy claims against one typed FIFO clock."""
+        rendered = self._interrupt_host.rendered_decision_ids(session_id)
+        projection = self.pending_decision_projection(session_id)
+        with self._approval_state_lock:
+            console_id = self._console_answerable_decision_by_session.get(session_id)
+        if session_id == self.store.active_session_id and console_id is not None:
+            rendered.add(console_id)
+        decision_id = (
+            projection.decision_id
+            if projection is not None
+            and projection.payload.get("phase") != "finishing"
+            and projection.decision_id in rendered
+            else None
+        )
         now = self.decision_monotonic_clock()
         with self._approval_state_lock:
             current_id = self._answerable_decision_by_session.get(session_id)
+        if current_id == decision_id:
+            return current_id
         if current_id is not None:
             self._pause_answerable_decision(session_id, current_id, now=now)
         if decision_id is None:
-            return True
+            return None
 
         started = False
 
@@ -13652,10 +13675,14 @@ class ConsoleChatController:
             nonlocal started
             if state.get("settled"):
                 return
-            if session_id != (self.store.active_session_id or ""):
+            if state.get("session_id") != session_id:
                 return
             payloads = self._pending_decision_payloads_locked(session_id)
-            if not payloads or payloads[0].get("_decision_id") != decision_id:
+            if (
+                not payloads
+                or payloads[0].get("_decision_id") != decision_id
+                or payloads[0].get("phase") == "finishing"
+            ):
                 return
             remaining = state.get("remaining_active_seconds")
             if remaining is not None and float(remaining) <= 0:
@@ -13665,19 +13692,19 @@ class ConsoleChatController:
             started = True
 
         self._mutate_exact_pending_decision(decision_id, _start)
-        return started
+        return decision_id if started else None
 
     def expire_pending_decisions(self) -> tuple[str, ...]:
         """Fail closed every answerable head whose active allowance elapsed."""
         now = self.decision_monotonic_clock()
         with self._approval_state_lock:
             answerable = tuple(self._answerable_decision_by_session.items())
+        for session_id, _decision_id in answerable:
+            self._refresh_answerable_decision(session_id)
         expired = [
             decision_id
             for session_id, decision_id in answerable
-            if self._expire_answerable_decision_if_due(
-                session_id, decision_id, now=now
-            )
+            if self._expire_answerable_decision_if_due(session_id, decision_id, now=now)
         ]
         return tuple(expired)
 
@@ -13933,7 +13960,19 @@ class ConsoleChatController:
         return True if config_value is None else config_value
 
     def announce_hidden_decision(self, session_id: str, kind: str) -> None:
-        """Use the app-wide notice for all retained human-decision kinds."""
+        """Keep typed notices under their live stable-ID privacy authority."""
+        if kind in ("approval", "skill_install", "skill_script"):
+            with self._interrupt_host.lock:
+                decision_ids = tuple(
+                    decision_id
+                    for decision_id, state in self._interrupt_host.registries[
+                        kind
+                    ].items()
+                    if state.get("session_id") == session_id
+                )
+            for decision_id in decision_ids:
+                self._announce_hidden_decision(kind, session_id, decision_id)
+            return
         self._announce_detached_approval(session_id, kind=kind)
 
     def _announce_detached_approval(

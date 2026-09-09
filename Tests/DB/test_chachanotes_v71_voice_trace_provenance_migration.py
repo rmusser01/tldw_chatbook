@@ -38,7 +38,9 @@ def test_genuine_v70_upgrades_without_rewriting_semantic_rows(tmp_path: Path) ->
             )
         )
         assert {row[1] for row in buddy_schema_before} >= {
-            "buddy_profiles", "buddy_visual_bindings", "visual_owner_bindings"
+            "buddy_profiles",
+            "buddy_visual_bindings",
+            "visual_owner_bindings",
         }
         assert "reservation_provenance" not in {
             row[1]
@@ -97,14 +99,17 @@ def test_genuine_v70_upgrades_without_rewriting_semantic_rows(tmp_path: Path) ->
     try:
         connection = migrated.get_connection()
         assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 71
-        assert tuple(
-            tuple(row)
-            for row in connection.execute(
-                "SELECT type, name, sql FROM sqlite_master "
-                "WHERE name LIKE '%buddy%' OR name = 'visual_owner_bindings' "
-                "ORDER BY type, name"
+        assert (
+            tuple(
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT type, name, sql FROM sqlite_master "
+                    "WHERE name LIKE '%buddy%' OR name = 'visual_owner_bindings' "
+                    "ORDER BY type, name"
+                )
             )
-        ) == buddy_schema_before
+            == buddy_schema_before
+        )
         assert "reservation_provenance" in {
             row[1]
             for row in connection.execute("PRAGMA table_info(console_trace_calls)")

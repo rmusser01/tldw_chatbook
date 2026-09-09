@@ -770,6 +770,33 @@ preserved. Full offline verification and scoped lint pass. Independent combined
 review and automatic x86 platform proof remain pending; no qualification or merge
 claim is made from these source/archive checks.
 
+## PR #2504 follow-up — final dev733 composition
+
+Rebased the complete reviewed 19-commit series onto exact dev `733f7a628c`,
+retaining the pre-rebase `535b28f6c3` backup. Upstream source-pin schema 69 and
+independent-Buddy schema 70 SQL remain byte-identical; voice provenance follows
+at 71 with the same indexes and guards. Current tests, index census and exact
+source/lint inventories use the new slot. ADR-098 records that composition.
+
+Buddy now consumes the existing mixed typed-decision head and shared allowance
+through exact successfully rendered owner claims. Console/Buddy visibility is a
+union without a second expiry clock; original strict resolvers remain authority.
+ADR-139 clarifies the established ADR-094 retained three-kind no-view policy
+without changing question refusal or adding a wake-origin discriminator. Typed
+direct/scanning notices reuse the live stable-ID sanitized dedupe/retry path;
+incoming question/worktree notices remain intact. The synchronous voice quit
+fence still precedes receipt-owner disposal await. Scheduler timing docs now
+describe incoming post-UI-ready deferral, with no policy/runtime change.
+
+Frozen-source targeted gates passed 20 bridge/quit cases, 9 migration/inventory
+cases and 5 notice/privacy/retry cases. Root independently passed 19 selected
+TTS/receipt/Canvas controls. Existing dependency warnings remain. Index census
+passes (294 names/rows, 79 plan-pinned); official diagnostics show no drift.
+The current-plan ignored `dev733-rebase-report.md` records exact commands,
+revisions, RED/GREEN, lint limitations and immutable-resource hashes. This is
+software/file evidence only; task remains In Progress, packaged hard-off
+authority unchanged, PR open/unmerged, with no new local native/live execution.
+
 ## Renumbering provenance
 
 This task was initially created as `TASK-23113`. It was renumbered before its first

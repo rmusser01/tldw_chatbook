@@ -75,6 +75,239 @@ class Harness(ConsolidatedCSSApp):
         await self.console_runtime.dispose()
 
 
+def _request_retained_round(app, kind, session_id):
+    if kind == "approval":
+        return app.controller.request_mcp_approvals(
+            [_pending_call()], session_id=session_id
+        )
+    if kind == "skill_install":
+        return app.controller.request_skill_install_confirm(
+            "https://example.com/skill", session_id=session_id
+        )
+    return app.controller.request_skill_script_confirm(
+        {"skill_name": "Demo", "script_path": "demo.py"}, session_id=session_id
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ("approval", "skill_install", "skill_script"))
+async def test_buddy_rendered_typed_head_spends_one_visible_allowance(kind):
+    from Tests.UI.test_console_headless_approval import _DecisionClock
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+
+    app = Harness()
+    clock = _DecisionClock()
+    app.controller.decision_monotonic_clock = clock
+    app.controller.mcp_approval_timeout_seconds = lambda: 5.0
+    app.controller.skill_install_confirm_timeout_seconds = lambda: 5.0
+    app.controller.skill_script_confirm_timeout_seconds = lambda: 5.0
+    async with app.run_test(size=(100, 36)) as pilot:
+        binding = BuddyBinding.for_session(app.target)
+        modal = open_buddy_conversation(app, binding, allow_voice=False)
+        await pilot.pause()
+        pending = asyncio.create_task(
+            asyncio.to_thread(_request_retained_round, app, kind, app.target.id)
+        )
+        try:
+            await until(
+                lambda: app.controller.pending_decision_projection(app.target.id)
+            )
+            modal.refresh_projection()
+            head = app.controller.pending_decision_projection(app.target.id)
+            assert head is not None
+            clock.advance(2.0)
+            # Reprojecting/hiding Console must not erase the displayed Buddy claim.
+            app.controller.set_answerable_decision(app.target.id, None)
+            assert (
+                app.controller.pending_decision_projection(
+                    app.target.id
+                ).remaining_active_seconds
+                == 3.0
+            )
+            modal.on_screen_suspend()
+            clock.advance(600.0)
+            assert app.controller.expire_pending_decisions() == ()
+            assert not pending.done()
+            modal.on_screen_resume()
+            await pilot.pause()
+            assert (
+                app.controller.pending_decision_projection(app.target.id).decision_id
+                == head.decision_id
+            )
+            clock.advance(3.0)
+            assert app.controller.expire_pending_decisions() == (head.decision_id,)
+            result = await asyncio.wait_for(pending, 3)
+            assert result in (
+                {"write_file": "timeout"},
+                False,
+                {"allow": False, "remember": False},
+            )
+            assert app.store.active_session_id == app.other.id
+            assert app.other.draft == "Unrelated Console draft"
+        finally:
+            app.controller.begin_shutdown()
+            await asyncio.wait_for(pending, 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("later_kind", ("skill_install", "skill_script"))
+async def test_buddy_typed_mixed_head_blocks_later_or_other_owner_resolution(
+    later_kind,
+):
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+
+    app = Harness()
+    async with app.run_test(size=(100, 36)) as pilot:
+        binding = BuddyBinding.for_session(app.target)
+        modal = open_buddy_conversation(app, binding, allow_voice=False)
+        await pilot.pause()
+        first = asyncio.create_task(
+            asyncio.to_thread(_request_retained_round, app, "approval", app.target.id)
+        )
+        pending = [first]
+        try:
+            await until(
+                lambda: app.controller.pending_decision_projection(app.target.id)
+            )
+            later = asyncio.create_task(
+                asyncio.to_thread(
+                    _request_retained_round, app, later_kind, app.target.id
+                )
+            )
+            pending.append(later)
+            host = app.controller._interrupt_host
+            await until(lambda: host.head_round_payload(later_kind, app.target.id))
+            modal.refresh_projection()
+            head = app.controller.pending_decision_projection(app.target.id)
+            later_id = host.head_round_payload(later_kind, app.target.id)["request_id"]
+            decision = False if later_kind == "skill_install" else (False, False)
+            assert set(modal.coordinator.decision_payloads(binding)) == {"approval"}
+            assert not modal.coordinator.resolve_decision(
+                binding, later_kind, later_id, decision
+            )
+            assert not modal.coordinator.resolve_decision(
+                BuddyBinding.for_session(app.other),
+                "approval",
+                head.decision_id,
+                {"write_file": "deny"},
+            )
+            assert not modal.coordinator.resolve_decision(
+                binding, "approval", "missing", {"write_file": "deny"}
+            )
+            assert modal.coordinator.resolve_decision(
+                binding, "approval", head.decision_id, {"write_file": "deny"}
+            )
+            assert await asyncio.wait_for(first, 3) == {"write_file": "deny"}
+            await until(
+                lambda: (
+                    app.controller.pending_decision_projection(
+                        app.target.id
+                    ).decision_id
+                    == later_id
+                )
+            )
+            modal.refresh_projection()
+            assert modal.coordinator.resolve_decision(
+                binding, later_kind, later_id, decision
+            )
+            await asyncio.wait_for(later, 3)
+            app.target.conversation_binding_revision += 1
+            assert not modal.coordinator.resolve_decision(
+                binding, later_kind, later_id, decision
+            )
+            assert app.store.active_session_id == app.other.id
+        finally:
+            app.controller.begin_shutdown()
+            await asyncio.wait_for(asyncio.gather(*pending), 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "boundary", ("console_overlap", "render_failure", "rebind", "finishing")
+)
+async def test_buddy_clock_claim_keeps_render_and_owner_boundaries(
+    boundary, monkeypatch
+):
+    from Tests.UI.test_console_headless_approval import _DecisionClock
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+    app = Harness()
+    clock = _DecisionClock()
+    app.controller.decision_monotonic_clock = clock
+    app.controller.mcp_approval_timeout_seconds = lambda: 5.0
+    async with app.run_test(size=(100, 36)) as pilot:
+        binding = BuddyBinding.for_session(app.target)
+        modal = open_buddy_conversation(app, binding, allow_voice=False)
+        await pilot.pause()
+        pending = asyncio.create_task(
+            asyncio.to_thread(_request_retained_round, app, "approval", app.target.id)
+        )
+        try:
+            await until(
+                lambda: app.controller.pending_decision_projection(app.target.id)
+            )
+            modal.refresh_projection()
+            head = app.controller.pending_decision_projection(app.target.id)
+            assert not app.controller.set_answerable_decision(
+                app.target.id, head.decision_id
+            )
+            clock.advance(1.0)
+            if boundary == "console_overlap":
+                # Exercise the real Console claim API; its independent rendering
+                # gate is covered by the adjacent runtime-router controls.
+                app.controller.switch_session(app.target.id)
+                assert app.controller.set_answerable_decision(
+                    app.target.id, head.decision_id
+                )
+                modal.on_screen_suspend()
+                clock.advance(1.0)
+                assert (
+                    app.controller.pending_decision_projection(
+                        app.target.id
+                    ).remaining_active_seconds
+                    == 3.0
+                )
+                app.controller.set_answerable_decision(app.target.id, None)
+            elif boundary == "render_failure":
+
+                def fail_render(*args, **kwargs):
+                    raise RuntimeError("card render failed")
+
+                monkeypatch.setattr(
+                    modal.query_one(ChatApprovalCard), "set_batch", fail_render
+                )
+                with pytest.raises(RuntimeError, match="card render failed"):
+                    modal.refresh_projection()
+                modal._timer.pause()
+            elif boundary == "rebind":
+                app.target.conversation_binding_revision += 1
+                assert not modal.coordinator.resolve_decision(
+                    binding, "approval", head.decision_id, {"write_file": "allow_once"}
+                )
+                app.controller.expire_pending_decisions()
+            else:
+                with app.controller._approval_state_lock:
+                    app.controller._parked_approval_payloads[head.decision_id][
+                        "phase"
+                    ] = "finishing"
+                modal.refresh_projection()
+                assert modal.query_one(ChatApprovalCard).display
+                assert not modal.coordinator.resolve_decision(
+                    binding, "approval", head.decision_id, {"write_file": "allow_once"}
+                )
+            remaining = app.controller.pending_decision_projection(
+                app.target.id
+            ).remaining_active_seconds
+            assert remaining == (3.0 if boundary == "console_overlap" else 4.0)
+            clock.advance(600.0)
+            assert app.controller.expire_pending_decisions() == ()
+            assert not pending.done()
+        finally:
+            app.controller.begin_shutdown()
+            await asyncio.wait_for(pending, 3)
+
+
 @pytest.mark.asyncio
 async def test_buddy_send_targets_bound_session_and_survives_modal_close():
     from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
@@ -243,11 +476,18 @@ async def test_buddy_existing_decision_cards_resolve_only_the_bound_round(kind):
 @pytest.mark.parametrize("kind", ("question", "skill_install", "skill_script"))
 async def test_explicit_buddy_retains_headless_decisions_after_close(kind):
     from Tests.Chat.test_console_ask_user_round import _questions
+    from Tests.UI.test_console_headless_approval import _DecisionClock
     from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
 
     app = Harness()
+    clock = _DecisionClock()
+    app.controller.decision_monotonic_clock = clock
+    app.controller.skill_install_confirm_timeout_seconds = lambda: 5.0
+    app.controller.skill_script_confirm_timeout_seconds = lambda: 5.0
     async with app.run_test(size=(100, 36)) as pilot:
-        assert getattr(app.controller, "set_pending_" + kind) is None
+        assert app.console_runtime.view is None
+        if kind == "question":
+            assert app.controller.set_pending_question is None
         binding = BuddyBinding.for_session(app.target)
         modal = open_buddy_conversation(app, binding, allow_voice=False)
         await pilot.pause()
@@ -267,13 +507,34 @@ async def test_explicit_buddy_retains_headless_decisions_after_close(kind):
                 {"skill_name": "Demo", "script_path": "demo.py"}, session_id=session_id
             )
 
-        # A wake-only sibling with no explicit interaction still fails closed.
-        result = request(app.other.id)
-        assert result in (
-            False,
-            {"answered": False, "reason": "cancelled"},
-            {"allow": False, "remember": False},
-        )
+        if kind == "question":
+            # No-view questions still require the exact retained Buddy target.
+            assert request(app.other.id) == {"answered": False, "reason": "cancelled"}
+        else:
+            # ADR-094's domain routers retain hidden skills, never authorize
+            # execution or consume a finite allowance just by being installed.
+            sibling = asyncio.create_task(asyncio.to_thread(request, app.other.id))
+            try:
+                await until(
+                    lambda: app.controller.pending_decision_projection(app.other.id)
+                )
+                head = app.controller.pending_decision_projection(app.other.id)
+                assert head.decision_type == kind
+                assert app.controller._answerable_decision_by_session == {}
+                clock.advance(600.0)
+                assert app.controller.expire_pending_decisions() == ()
+                current = app.controller.pending_decision_projection(app.other.id)
+                assert current.decision_id == head.decision_id
+                assert current.remaining_active_seconds == 5.0
+                assert not sibling.done()
+            finally:
+                app.controller._cancel_pending_decisions_for_session(app.other.id)
+                result = await asyncio.wait_for(sibling, 3)
+                assert result == (
+                    False
+                    if kind == "skill_install"
+                    else {"allow": False, "remember": False}
+                )
         pending = asyncio.create_task(asyncio.to_thread(request, app.target.id))
         try:
             await until(
