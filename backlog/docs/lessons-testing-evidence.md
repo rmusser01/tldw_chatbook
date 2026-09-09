@@ -57,6 +57,51 @@ real playback. Exercise installed wheels as well as editable source. Keep
 observer corrections separate from application failures, and preserve raw ASR
 differences instead of silently turning lexical mismatches into exact matches.
 
+## Import deferral must pass both startup and screen-preload budgets
+
+**TASK-32160, 2026-09-08.** Deferring pure TTS profile-repository construction
+reduced warm UI-ready modules from 979 to 963 against the unchanged 972 limit.
+The separate screen-preimport guard then rose from 500 to 516 against its 500
+limit: the Personas route imported voice-bundle types through the profile library
+and loaded the same repository closure later. Deferring annotation-only types and
+the one real choice constructor at its existing action helper restored preload
+to 499/500; the app still used the genuine class and one first-use repository.
+The controller's committed five-test check independently measured 963/972 and
+499/500 and retained the real ordinary/partial native-exit assertions.
+
+**What to do.** Run all affected import-phase guards together. A lower boot count
+does not prove reduced preload cost. Trace the route that picks up the deferred
+closure, retain real first-action/class-identity coverage, and never raise another
+phase's limit to pay for the first phase's apparent improvement.
+
+## Lifecycle tests must include startup and cleanup interruptions
+
+**TASK-32160, SQLite helper review, 2026-09-07.** A 118-pass helper selection
+missed two real-child failures. Interrupting the first child's actual close path
+replaced an active `SystemExit`, left the second child alive, and retained all
+three reserved slots, including unused capacity. Delaying helper entry until its
+launcher had exited let a late `getppid()` capture the replacement parent; the
+helper then accepted preparation and stayed alive on an inherited input pipe.
+The existing tests injected only `HelperCleanupError` and exited the parent only
+after successful initialization. Regressions at those missing boundaries drove
+settle-all cleanup and original-parent metadata captured before exec; the corrected
+focused selection passed 136 tests in independent implementation/spec-review runs.
+
+**What to do.** Inject control flow from the real cleanup path, not just a cleanup
+status exception. Gate initialization so the owner can disappear before the child
+captures state. Verify untouched targets, remaining children, exception precedence,
+and unused capacity explicitly; successful ready-state shutdown proves none of those
+earlier or interrupted transitions.
+
+## Transport failure must not change a served process into a native owner
+
+**TASK-31939, Canvas snapshot delivery, 2026-09-06.** A regression with a
+served-launch marker and a refused control client returned a native Canvas
+gateway: launch mode had been inferred from whether authentication produced a
+client. Retaining the served marker independently and refusing native gateway
+creation made that regression pass. A bad protocol version must disable the
+affected transport, not select a different listener or authority boundary.
+
 ## Index-plan guards must accept the names the DDL actually uses
 
 **TASK-31242 isolated PR preparation, 2026-09-05.** Five real-SQLite,
@@ -76,6 +121,15 @@ real query-plan assertions, and verify a guard's name recognition before
 discarding evidence or weakening its inventory policy.
 
 ## A test counter is neither atomic publication nor completion evidence
+
+**TASK-31940, Mermaid recovery, 2026-09-07.** The actual served-child
+control-refusal browser fixture also published its owner receipt with direct
+`write_text`. The reader observed changed mtime and then parsed an empty string.
+A deterministic test opened the destination before writing and observed `''`;
+publishing through a sibling plus replacement preserved the previous complete
+JSON during that same interval. Apply atomic publication to every cross-process
+receipt, not only invocation counters; changed mtime does not prove a write has
+finished.
 
 **TASK-31742, Canvas integration, 2026-09-06.** A full Chromium run failed
 at `int('')`: the served child rewrote its call-count file with `write_text`,
@@ -247,6 +301,24 @@ using a connection in the middle of a statement.
 callbacks as non-reentrant unless the API explicitly guarantees otherwise. Read
 needed metrics before the long statement, keep callbacks bounded and in-memory,
 and verify the behavior against a real file-backed SQLite database.
+
+## Schema functions also belong on dedicated maintenance connections
+
+**TASK-32160, 2026-09-08.** Four physical trace-compaction/admission tests
+returned only the intentionally bounded `vacuum_failed` reason. An isolated
+real-schema probe exposed `no such function: canvas_revision_payload_valid`:
+ordinary ChaChaNotes connections registered the pure function, but the older
+maintenance opener did not. The Canvas CHECK constraint required it while
+preparing VACUUM even with an empty Canvas table. Registering only the existing
+real validator let the same logical-GC result compact and pass quick_check;
+checkpoint, lease, disk and exclusion policies did not need changes.
+
+**What to do.** When adding a connection-local function used by schema integrity
+constraints, test dedicated maintenance opens against that schema as well as
+ordinary CRUD. Share narrow pure-validator registration, not a wholesale set of
+mutation/deletion grants. Keep raw diagnostics confined to owned synthetic
+probes, and require populated-row preservation and invalid-payload rejection
+before treating the maintenance repair as verified.
 
 ## SQLite quiescence must cover result consumption and database identity
 
@@ -2998,6 +3070,25 @@ tree runs with none of the suite's safety and is functionally the same as a bare
 `Tests/` (even a temp file there) and delete it afterward — or better, promote whatever
 it measured into a real, permanently-checked-in test, as this incident did
 (`test_the_bare_word_will_appears_nowhere_in_the_corpus`).
+
+**Recurrence — TASK-32160, 2026-09-08.** An isolated-SQLite benchmark driver
+imported `TTS.profile_repository` before setting its scratch environment. That
+transitive import read the developer configuration and ensured an existing
+chat-dictionaries directory; the driver then opened its own temporary store and
+failed on a sandbox-denied process census before explicit repository close.
+No measurements were accepted. Metadata-only inspection found the config's
+mtime/ctime and the existing directory's metadata predated the run, with no
+observed changes there; this was not a comprehensive historical access audit.
+The initial helper PID was not captured, so a later empty process search was
+not described as captured-child cleanup evidence.
+
+The correction bootstraps `Tests.conftest` before **every** product import in
+both the driver and its app subprocesses, asserts owned effective config/home/
+data roots plus null-keyring/offline controls, and encloses measurements in
+owner-preserving `try/finally` cleanup. Setting only `HOME` or `TLDW_TEST_MODE`
+after import is too late; even an early HOME-only change leaves an ambient
+`TLDW_CONFIG_PATH` authoritative. A metrics failure must not abandon resources,
+and a setup failure must not be reported as behavioral RED.
 
 ---
 
@@ -10240,6 +10331,40 @@ that can recompose, await the mounted and visible target rather than only the fi
 state change. Include the scenario/root identity in bounded failure details so intermittent live
 failures remain attributable.
 
+**Recurrence — TASK-32160, 2026-09-08.** The actual Canvas-child recovery test
+acknowledged a successful saved-conversation load, then immediately invoked its
+synthetic F12 card action. Source-free stage markers reproduced the failure:
+load completion and F12 entry 46ms later both had zero mounted Canvas cards and
+an in-progress/coalesced UI sync. The adapter's synchronous `next(...)` failed
+before real button dispatch; the initial child in the same run had a matching
+mounted card and completed the real handler. Logical load completion was not
+rendered-target readiness. Preserve the failing run and distinguish adapter
+readiness from a production selection or database fault; do not treat a missing
+receipt alone as a crash diagnosis. Exact evidence and restored throwaway patch:
+`Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md`.
+
+## Page timeouts do not set Playwright assertion budgets (TASK-32160, 2026-09-08)
+
+**Incident.** The actual Canvas-child test configured a 45-second page timeout,
+then waited for the first-output body class with an unconfigured `expect()`.
+A saved failure stopped after 5000ms while the body still had only `-loaded`;
+the subsequent explicit 45-second Composer assertion was never reached. Reading
+the installed Playwright assertion constructor confirmed its independent default.
+The earlier diagnostic run observed the first-output assertion completing at
+4.883 seconds after login and Composer at 12.773 seconds. These observations
+show a narrow margin in one successful run, not the original delay's exact cause.
+
+**What to do.** Give a multi-stage readiness operation one explicit monotonic
+deadline and pass only positive remaining time to each assertion. Test consumed
+time, expiry and failure/cancellation rather than assuming the page default
+controls assertions. Changing an existing sub-limit requires explicit approval:
+here the owner approved replacing the implicit 5-second first-output plus
+45-second Composer waits with a shared 45-second deadline, retaining both real
+conditions without retries. Do not describe this test-contract correction as a
+production startup optimization or relax unrelated runtime/performance budgets.
+The approved correction, focused deadline/DOM tests and one actual-Chatbook pass
+are recorded in `Docs/superpowers/reviews/2026-09-08-canvas-startup-deadline-fix.md`.
+
 ## A verifier must not invalidate the evidence it is verifying (TASK-23019, 2026-08-28)
 
 The retained closeout verifier passed once but imported its adjacent task-local sources into a
@@ -11095,6 +11220,16 @@ and all of them failed identically without the change.
 * Paying for the baseline arm is the cost of an attributable answer. A cheaper
   run that cannot attribute is not cheaper — it is worthless.
 
+**Lint follow-up (TASK-32160, 2026-09-08).** Paired Ruff checks found six extra
+recommendations on identical baseline source solely from changing the explicit
+language target from py311 to the approved py312 floor. One affected alias had
+also moved modules, defeating an unchanged-location comparison. Use one target
+for both source arms, then a separate old-target control; distinguish unchanged
+spans, modified failing blocks and relocated diagnostics. Equal counts alone
+establish none of these. The twelve dirty formatter files were attributed by
+matching all 307 edit groups and adjacent lines, not by their file count.
+Evidence: `Docs/superpowers/reviews/2026-09-08-sqlite-static-attribution.md`.
+
 ## A manually pumped component path does not prove production wiring
 
 **TASK-22512 Task 15, 2026-09-01.** Persistent-terminal component tests passed
@@ -11869,6 +12004,25 @@ mechanism, and fail qualification on unexpected host/API/disposal errors.
 A generic exception or timeout is evidence of failure, not proof that the
 resource boundary under test enforced its configured limit.
 
+**TASK-31935, 2026-09-06.** Mermaid comment preprocessing initially replaced a
+6,000-byte ordinary comment with 6,000 spaces to preserve offsets. The aggregate
+input-budget test hit a real QuickJS `InternalError: interrupted` in the pinned
+flow lexer before reaching the expected third-diagram byte refusal. The strict
+probe failed instead of reporting quota success. Removing only the comment
+suffix while retaining its newline avoided pointless lexer work and preserved
+the line/column positions of actual tokens. Raw input bytes are still charged
+before preprocessing; the corrected test reaches the third-diagram input limit
+under the unchanged shared startup deadline.
+
+**TASK-31937, 2026-09-06.** The V2 worker inherited a failure classifier that
+treated any exception after its deadline as a runtime-timeout. A fault-injected
+native engine exception with an expired deadline therefore reported a quota
+refusal, despite no QuickJS interrupt. The regression failed with runtime-timeout
+and passed with runtime-error after removing elapsed-time-only classification
+from the new V2 closure. Require an observed interrupt to classify a time refusal;
+wall time alone does not explain an engine exception. Published V1 bytes remain
+unchanged under the immutable-profile contract.
+
 ## A tested quota helper is not evidence that the production owner uses it
 
 Incident (TASK-31232 final Canvas review, 2026-09-05): the standalone staging
@@ -11881,6 +12035,13 @@ temporary confirmed history or bound the earlier staged allocation.
 Rule: trace the actual provider-to-mutation-owner wiring before selecting a
 quota test target. Assert admission at the production owner with existing and
 concurrent work, not only on a similarly named helper or final durable commit.
+
+Follow-up (TASK-31938, 2026-09-06): V2 controller mutations passed, but the actual
+CanvasToolProvider returned `operation_failed` because both result serialization
+and projection still admitted only V1 metadata. A real provider transition test
+failed three V2 rows before those bounded metadata gates were corrected. Follow
+the successful mutation through its real result projection too: an owner-only
+test cannot prove that the caller receives the committed revision identity.
 
 The same review's raw Python probe imported application configuration before
 establishing owned test directories. Logs reported loading ambient config and
@@ -11953,6 +12114,18 @@ remained required rather than calling the local selection green.
 Rule: identify the failing allocation and compare the unchanged baseline before
 interpreting an OS resource message. Retain environmental qualifications; do not
 delete unrelated files, weaken gates or infer resource ownership from errno alone.
+
+**Follow-up, TASK-32160, 2026-09-08.** One isolated stdlib spawn-lock allocation
+failed errno 28 both inside and outside the sandbox; the host exposed a 10,000-name
+semaphore limit and 21 GiB free disk. A read-only handle census found only 48 visible
+POSIX semaphore handles, and the inspected long-running orphaned Python processes
+had none visible. Kernel name-cache capacity and process open-handle counts are
+different evidence: this did not identify the creator of exhausted capacity or
+justify terminating old processes. Preserve that attribution limit and use a
+clean qualification host or a coordinated restart, not arbitrary name deletion.
+Exact commands and source references are in
+`Docs/superpowers/reviews/2026-09-08-semaphore-allocation-diagnosis.md`.
+
 ## A "dead key" report can be an invisible open-then-undo toggle
 
 **task-31820 release UAT, 2026-09-05.** A live walkthrough reported Escape
@@ -12686,3 +12859,38 @@ cached Rich styles that otherwise concealed the uncached render failure. The
 test reproduced the exact CI exception before the fix and passed when panel
 removal used `app.batch_update()`. It also verifies nonce revocation and a normal
 post-close repaint, so a deferred timer alone cannot masquerade as clean teardown.
+
+## Canvas new-selection publication requires scope evidence (TASK-31941)
+
+The strengthened Mermaid revocation test stopped a separately owned served
+parent and every child with old browser loads and a pending receipt still live,
+then reopened the same durable revision under revoked test policy. A subsequent
+explicit new V1 Canvas saved successfully but its preview disconnected. Source-free
+tracing showed the parent event read stayed at epoch 0 on the old Canvas while
+the trusted child returned the new Canvas identity. This was distinct from the
+earlier selected-read race: successful reruns alone could not identify its cause.
+Guarded trusted snapshot reconciliation plus deterministic unchanged/disconnect/
+cross-session/rebind controls established the fix. Separately, a preview DOM
+assertion alone missed an old source dialog leaving the workbench inert; assert
+modal retirement and actual interaction availability after source-only recovery.
+
+## A strict runtime loader can prevent the recovery UI from starting (TASK-31941)
+
+The final Mermaid review found that correct missing/tampered asset rejection
+escaped through native Console, served-parent and actual served-child startup.
+Existing loader rejection tests and source-only browser tests passed: the latter
+started from an already verified snapshot with execution revoked. Neither proved
+the application could start after a damaged installation. New tests with four
+copied-package damages produced twelve expected startup failures while all four
+strict-loader controls passed. Application-owned inert snapshots then permitted
+source/history/download access with execution still refused; seventeen focused
+checks covered recovery, unchanged revisions, typed mutation refusal, both
+directions of healthy/unavailable handshake mismatch, and no live reactivation
+after repairing package files.
+
+When the contract promises source-only recovery, test the actual application's
+ownership boundary after verification fails, not just the rejecting loader or an
+already-started gateway. Matched unavailable parent/child states still need their
+authenticated inert-data channel; omitting the control client also blocks recovery.
+Do not solve availability by salvaging unverified catalog metadata or substituting
+an executable runtime.

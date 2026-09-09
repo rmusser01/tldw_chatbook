@@ -1,5 +1,22 @@
 # Lessons: verifying against the real thing
 
+## Check the target platform's exact interpreter build before pinning CI
+
+**TASK-32160 Task14, 2026-09-08.** A fresh macOS ARM64 evidence job pinned the
+local Python3.12.11 version to keep qualification comparable. The job passed
+checkout, then setup-python failed before any lock control or product test:
+GitHub's manifest contained 3.12.11 only for Linux, not Darwin. The same manifest
+listed 3.12.10 for Darwin ARM64/x64. Fifteen local workflow-contract tests and a
+scoped review validated the intended pin, not external build availability.
+[Run34292597991](https://github.com/rmusser01/tldw_chatbook/actions/runs/34292597991)
+had zero artifacts because setup failed before runtime metadata was written.
+
+**What to do.** Before dispatch, check the official installer manifest for the
+exact version/platform/architecture tuple. A local install or a release version
+does not establish hosted-installer availability. Preserve setup logs when
+runtime evidence cannot be created; do not relabel unrun cases as test failures
+or passes. A different patch pin qualifies that build, not the original one.
+
 ## A mount-started worker may run before is_mounted becomes true
 
 **TASK-31645 post-merge UAT, 2026-09-05.** Normal real-terminal Library entry
@@ -1252,6 +1269,29 @@ provenance probe was not in the run as unproven. The same shape applies
 to any machine with several checkouts sharing one venv — which, on this
 repo, is every machine.
 
+**Recurrence — TASK-32160, 2026-09-08.** The shared environment's
+`tldw_profile_core` editable `.pth` and `direct_url.json` still pointed at the
+removed `task-26042-workspace-files-read-only` checkout. The main Canvas
+qualification selection and five actual-child nodes failed collection; a
+26-file continuation passed 1,483 cases but included 22 subprocess performance
+failures from the missing package. Pointing the parent at the current local
+package source passed 26 interop tests and 22 performance checks, but nine
+subprocess guards rebuilt `PYTHONPATH` and remained blocked. Parent import
+success therefore did not qualify the children. The stale target was diagnosed
+by reading installation metadata and checking that exact path, without importing
+the app or modifying the shared environment. Preserve these setup failures and
+label source-path diagnostics; do not silently rewrite nested gates or install
+into a shared environment as part of read-only qualification.
+
+After explicit user approval, this incident was repaired by building the same
+local package version as a non-editable wheel from an archived commit and
+installing with `--no-index --no-deps`. The wheel and old metadata were retained;
+261 distribution names/versions stayed unchanged, and an unrelated-cwd isolated
+import resolved from the venv. The five exact Canvas nodes then passed without
+an override. The previously blocked startup guard exposed a real 979/972 budget
+failure (973/972 on the pre-correction archive): repairing setup enables the
+measurement, not an assumption that the measured behavior will pass.
+
 ## A DB append is invisible to a live Console *and* to the next mount — the STORE is what the transcript and the payload are built from (task-15860, Task 0 probe P1)
 
 **What happened.** Two of the three designs for headless wake rested on
@@ -2296,3 +2336,18 @@ the assertion while the app is effectively dead to the keyboard.
 **Incident.** Driving the app under tmux with `python -m tldw_chatbook.app 2>log` to catch tracebacks left a blank pane with a live process: Textual renders to stderr here, so the redirect took the UI with it. The pass cost a full relaunch.
 
 **Rule.** Never redirect stderr when driving the TUI; read loguru's file sink (or `[logging]` in the scratch config) for tracebacks instead. A fresh scratch profile's first-run wizard also does not reliably take Escape (PR O, same day) — set `[first_run] setup_completed = true` in the scratch config before the first launch.
+
+## Pass the existing browser path explicitly in private archives (TASK-32160, 2026-09-08)
+
+**Incident.** SQLite closeout Task16 verified an installed Chromium binary but
+the first Canvas benchmark sample in /private/tmp still failed before browser
+launch. Tests/conftest.py correctly replaced the home directory for privacy;
+canvas_live_harness.py's fallback also walked the archive's ancestors, which
+no longer included the developer's home. An executable existing on disk was
+not evidence that the isolated invocation could resolve it. The fail-stop
+series ended with one failed sample and no valid timing.
+
+**What to do.** For archive-based Canvas runs, pass the harness's existing
+TLDW_CANVAS_CHROMIUM_EXECUTABLE override explicitly in both compared arms and
+record the binary hash. Keep test-state isolation; do not restore the real home
+or install another browser to work around a missing invocation parameter.

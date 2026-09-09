@@ -22,7 +22,7 @@ from .limits import (
 )
 
 CanvasActorKind: TypeAlias = Literal["assistant", "user_rename", "user_import"]
-CanvasRuntimeProfile: TypeAlias = Literal["canvas-v1"]
+CanvasRuntimeProfile: TypeAlias = str
 _ACTOR_KINDS = frozenset({"assistant", "user_rename", "user_import"})
 
 
@@ -1057,7 +1057,6 @@ class CanvasRepository:
         actor_kind: object,
         origin_message_id: str,
         origin_turn_id: str,
-        allow_inert_profile: bool = False,
     ) -> _RevisionValues:
         title = _validated_text(title, "title", self._limits.max_title_bytes)
         try:
@@ -1066,15 +1065,14 @@ class CanvasRepository:
             raise CanvasValidationError("invalid_source") from exc
         if source_bytes > self._limits.max_source_bytes_per_revision:
             raise CanvasQuotaError("revision_source_bytes")
-        if allow_inert_profile:
-            from .archive import CanvasArchiveValidationError, validate_runtime_profile
+        # Storage preserves exact identifiers; execution admission belongs to the
+        # captured profile snapshot in the mutation/preview owner.
+        from .archive import CanvasArchiveValidationError, validate_runtime_profile
 
-            try:
-                runtime_profile = validate_runtime_profile(runtime_profile)
-            except CanvasArchiveValidationError as exc:
-                raise CanvasValidationError("invalid_runtime_profile") from exc
-        elif runtime_profile != "canvas-v1":
-            raise CanvasValidationError("unsupported_runtime_profile")
+        try:
+            runtime_profile = validate_runtime_profile(runtime_profile)
+        except CanvasArchiveValidationError as exc:
+            raise CanvasValidationError("invalid_runtime_profile") from exc
         if type(actor_kind) is not str or actor_kind not in _ACTOR_KINDS:
             raise CanvasValidationError("invalid_actor_kind")
         origin_message_id = _validated_opaque_id(
@@ -1199,7 +1197,6 @@ class CanvasRepository:
                 actor_kind=revision.actor_kind,
                 origin_message_id=revision.origin_message_id,
                 origin_turn_id=revision.origin_turn_id,
-                allow_inert_profile=True,
             )
             if (
                 revision.content_sha256 != values.content_sha256

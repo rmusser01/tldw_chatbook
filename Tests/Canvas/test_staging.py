@@ -16,6 +16,23 @@ def _html(text: str) -> str:
     return f"<!doctype html><html><body><main>{text}</main></body></html>"
 
 
+def test_candidate_staging_preserves_removed_diagram_profile(candidate_snapshot):
+    store = CanvasStagingStore(profile_snapshot=candidate_snapshot)
+    created = _create(
+        store, source='<pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre>'
+    )
+    updated = store.update_canvas(
+        owner=store.session_owner("session-a"),
+        run_id="run-b",
+        tool_call_id="remove",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        source=_html("Summary"),
+        origin_message_id="assistant-native-2",
+    )
+    assert updated.revision.runtime_profile == "canvas-v2-mermaid-1"
+
+
 def _create(
     store: CanvasStagingStore,
     *,

@@ -55,9 +55,6 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            python-version: "3.11"
-            io-encoding: utf-8
-          - os: ubuntu-latest
             python-version: "3.12"
             io-encoding: utf-8
           - os: ubuntu-latest

@@ -65,15 +65,100 @@ Classifications have these meanings:
 | C45 | tldw_chatbook/TTS/profile_migration_publication | connect_private_sqlite_descriptor | tts.profile_migration_publication_descriptor | read_only_uri | immutable descriptor-bound publication validation | Migrated via `connect_private_sqlite_descriptor`. Publisher validation uses an immutable `/dev/fd` URI derived from an already verified descriptor, then rechecks the original descriptor's exact identity and content. Path substitution cannot redirect validation. |
 | C46 | tldw_chatbook/TTS/profile_migration_recovery | connect_private_sqlite_descriptor | tts.profile_migration_recovery_descriptor | read_only_uri | immutable descriptor-bound recovery validation | Migrated via `connect_private_sqlite_descriptor`. Recovery validation uses an immutable `/dev/fd` URI derived from an already verified descriptor, then rechecks the original descriptor's exact identity and content. Path substitution cannot redirect validation. |
 | C47 | tldw_chatbook/TTS/profile_repository | restore version/qualification/publication source | tts.profile_restore_stage | read_only_uri | exact admitted restore source | Migrated via `connect_private_sqlite`. Every restore-stage connection is repository-owned under the exclusive lease. A close failure retains the live handle and exclusive lease, leaves the repository unavailable, and is retried only by later cleanup. |
-| C48 | tldw_chatbook/TTS/profile_schema | open_exact_current_profile_store | tts.profile_store_descriptor | read_only_uri | immutable descriptor-bound shared-startup proof | Migrated via `connect_private_sqlite_descriptor`. Shared startup retains the canonical parent/file descriptors, validates an immutable exact-v4 logical image, and requires the query-only path connection to serialize to the same image before writes are enabled; the returned live handle owns the proof descriptors for its lifetime. |
 | C49 | tldw_chatbook/DB/Subscriptions_DB | SubscriptionsDB._get_connection | db.subscriptions.agent_read | read_only_uri | external agent Watchlists read | Migrated via `connect_private_sqlite`. Opens only an existing Watchlists database through a read-only URI, preserves the source file mode owned by the mutable application database, and cannot create or migrate the database or write the main database file, schema, or rows. A WAL reader may create or update SQLite-managed `-wal`/`-shm` sidecars; suppressing that with `immutable=1` could ignore committed, uncheckpointed WAL frames. |
 | C50 | tldw_chatbook/Notes/notes_device_state_store | NotesDeviceStateStore._connect | notes.sync_state | private_file, read_only_uri | device-private import receipts and lasting-sync state | Migrated via `connect_private_sqlite`. The profile-local owner stores private import receipts plus bounded roots, bindings, cursors, journals, recovery, migration, and settings; public projections omit paths, content, hashes, recovery bytes, cursors, and exception text, read-only planning cannot create or migrate the owner, and it is excluded from portable export and centralized backup. |
 | C51 | tldw_chatbook/Utils/db_upgrade_notice | print_db_upgrade_notice_if_pending | utils.db_upgrade_notice | read_only_uri | pre-boot schema-version probe | Migrated via `connect_private_sqlite`. The pre-boot "upgrading database..." notice (task-21100) reads exactly one `db_schema_version` row through a validated read-only URI before the app constructs; it cannot create, migrate, or write the database, and every failure is swallowed so the courtesy line can never become a boot failure of its own. A WAL reader may create or update SQLite-managed `-wal`/`-shm` sidecars. |
 | C52 | tldw_chatbook/Personal_Context/repository | PersonalContextRepository._connect | personal_context.repository | private_file | encrypted profile read/write | Migrated via `connect_private_sqlite`. The dedicated profile store contains encrypted canonical objects and peer-local encrypted policy, binding, and outbox bodies directly below the secured user data directory; it is excluded from centralized backup. |
 | C53 | tldw_chatbook/Personal_Context/interview_draft_repository | InterviewDraftRepository._connect | personal_context.interview_drafts | private_file | encrypted local interview draft read/write | Migrated via `connect_private_sqlite`. The dedicated draft store contains only short-lived encrypted interview state under per-session protector keys, is local-only, and is excluded from centralized backup. |
 | C54 | tldw_chatbook/DB/Chunking_Lab_DB | CheckpointStore._connection | db.chunking_lab | private_file | profile-local experiment recovery | Migrated via `connect_private_sqlite`. One lazily opened worker-owned connection publishes checkpoint/blob references with WAL and synchronous FULL, epoch/generation CAS, and current/previous/undo retention. Clear commits a content-free tombstone; private storage and deletion are not encryption or secure erasure. Excluded from centralized backup. |
+| C55 | tldw_chatbook/Chat/console_trace_maintenance | PhysicalTraceCompactor._open_maintenance_connection | chat.trace_maintenance | private_file | same-file maintenance write | Migrated via `connect_private_sqlite`. Registered under its actual module owner. Reopens the existing conversation database with `must_exist=True` for leased physical maintenance, preserving path hardening, connection options and PRAGMAs. Memory compaction remains deferred; no centralized backup permission. |
+| C56 | tldw_chatbook/Library/collections_legacy_recovery | LegacyCollectionsRecovery._read_transaction | library.legacy_recovery | read_only_uri | schema-independent legacy recovery read | Migrated via `connect_private_sqlite`. Existing-file, read-only access without schema initialization or mode changes; namespace checks fail closed. No centralized backup authority. SQLite may maintain WAL/SHM sidecars while reading committed WAL frames. |
 
 ## SQLite backup and restore inventory
+
+### TASK-32160 exclusive descriptor disposition (ADR-125)
+
+C48 is retired permanently; its ID is not reused. The former
+`tts.profile_store_descriptor` parent SHARED-startup registration is removed.
+`open_exact_current_profile_store` now retains the Task4/5 helper proof and a
+directory-only local FD. No parent database/sidecar proof FD or full-image
+serialization remains in that live entry point. The separate child-only raw
+`TTSProof.initialize` seam in `TTS/profile_sqlite_proof.py` uses exactly its
+verified `self.file_fd` in the immutable `/dev/fd` URI. Its sole production
+constructor is the fixed helper request handler in `DB/private_sqlite_helper.py`;
+`_close_evidence` retains SQLite on close failure and `close` releases sidecar,
+main and directory pins only afterward. The inventory guard admits precisely
+that callsite and URI shape, alongside the existing exact literal-memory native
+capability probe; aliases, extra calls and other owners remain rejected.
+
+C45/C46 borrow the caller's verified descriptor during open. There is no
+`os.dup` or immediate raw close. Public descriptor arguments remain borrowed.
+Ordinary close failure transfers a source-free `ProfileMigrationCleanupError`
+whose `owner.close()` retries teardown only. Recovery transfers its borrowed
+invocation parent FD too. Publication cannot hash, rename, dispose candidates,
+or resume publication after that failure. Repository initialization/restore
+retain their EXCLUSIVE lease, all affected candidate owners and the worker;
+the existing `_has_cleanup_ownership` includes these owners. This retry is
+distinct from terminal helper-proof quarantine and does not latch admission.
+Original control-flow exceptions retain identity via guarded private exception
+dictionary metadata. Earlier carried owners are preserved, and ordinary public
+cleanup errors have no cause/context chain.
+The candidate stepper retains its own failed native close as well as any earlier
+boundary owner; later cancellation preserves its original identity. The outer
+candidate destination joins that carried owner before propagation, retaining its
+raw pins even when a callback itself supplies the cleanup error.
+The multi-slot publication rollback loop also stops at the first carried owner;
+the enclosing publisher retains it before another slot, journal update or
+namespace cleanup. Both that rollback handoff and a direct post-PONR close
+failure preserve the earlier deferred control-flow object. Ordinary rollback
+failure without a retained teardown owner keeps its bounded indeterminate
+`unavailable` reporting policy.
+
+The following is the concrete raw-close census, grouped by exact function. Each
+listed `os.close` is accounted for; directory-only closes cannot cancel SQLite
+file-inode locks. The precondition belongs to the operation, not an owner string,
+absence of sidecars, `_RECOVERY_LOCK`, or the immutable flag.
+
+| Module / exact functions | Raw descriptors and ownership proof |
+| --- | --- |
+| `DB/private_sqlite`: `_verify_profile_migration_destination`; `open_profile_migration_boundary_destination`; `migrate_profile_store_to_candidate` | Verified parent-directory/check FDs only. The migration callback's SQLite connection stays in the destination until closed; a returned live alias is refused and closed before any immutable validation. |
+| `DB/private_sqlite`: `_close_profile_migration_destination` | Original candidate file then directory, only after the destination's native close succeeds. Failed close leaves the exact connection and both pins in the destination. |
+| `DB/private_sqlite`: `open_canonical_profile_migration_destination` | Initialization-failure file/directory pins are released only after successful SQLite close; an unpublished setup failure transfers connection plus both pins through the typed cleanup owner. |
+| `DB/private_sqlite`: `backup_profile_migration_boundary` | Additional verified boundary file/directory pins; writable view is closed before these are opened. `_validate_closed_profile_migration_destination` transfers its failed immutable view and both additional pins; the carried cleanup group then closes the original destination pins. |
+| `TTS/profile_schema`: `_ExactCurrentProfileConnection._verify_directory`, `.close`; `open_exact_current_profile_store` | Directory-only parent-local verification/cleanup. Live main/sidecar pins belong to the helper, including failures. |
+| `TTS/profile_schema`: `capture_post_init_profile_store_authority` | Exact main file and parent, called by `_worker_initialize_store` after closing its initializing SQLite connection and before releasing EXCLUSIVE. Capture is skipped if any SQL close failed. |
+| `TTS/profile_schema`: `_close_candidate_fd` | Disposable snapshot and source-copy FDs. `_ProfileCandidateCleanupOwner` settles both upgrade/read-only SQLite views before either FD or temporary snapshot removal. The two product callers are `_worker_backup_to` (after destination native close) and `_worker_create_recovery_backup` (after source close and completed owned backup), via `_worker_validate_standalone_snapshot`. The exported leaf requires a closed standalone source; it is not admission for arbitrary live databases. |
+| `TTS/profile_errors`: `_ProfileMigrationValidationOwner.close` | Exact failed-validation file then parent pins; connection remains owned until native retry succeeds. Owner repr is source-free. |
+| `TTS/profile_migration_publication`: `_open_exact`, `_pin_content`, `_rename_exact`, `_fsync_exact` | Closed canonical candidate/prior/rollback artifacts under the repository EXCLUSIVE operation. All preflight SQL views settle before namespace work; `_open_exact` failure closes only its own acquired raw pins. Rename's original/reopened file pins are both closed artifacts. |
+| `TTS/profile_migration_publication`: `_immutable_validate` | Reopened file/check-directory pins only after its SQLite view closes successfully; the initial file/parent pair now belongs to the validation owner. Close-failure tests prohibit post-failure hashing and observe actual raw-close attempts. |
+| `TTS/profile_migration_publication`: `retain_profile_migration_destination`, `_require_absent` | Directory-only absence checks. |
+| `TTS/profile_migration_publication`: `_append_journal`, `_write_new_journal` | Operation-owned JSON journal file and parent; these are never SQLite connections. |
+| `TTS/profile_migration_recovery`: `_observe_artifact`, `_move_exact` | Journal-admitted closed prior/candidate/rollback files under repository EXCLUSIVE, before any live store open. The authoritative validator settles SQL before fresh content observations or journal removal. |
+| `TTS/profile_migration_recovery`: `_read_journal` | Fixed JSON journal, never a SQLite inode. |
+| `TTS/profile_migration_recovery`: `_require_configured_parent`, `recover_profile_migration_publication` | Directory-only reopened/invocation parent FDs. A failed authoritative SQLite close transfers the invocation FD and bypasses replay, final close and error remapping. |
+| `TTS/profile_migration_namespace`: `_open_parent` | Directory only. |
+| `TTS/profile_migration_namespace`: `require_reusable_tombstone`, `admit_zero_reusable_tombstone`, `prepare_reusable_tombstone`, `remove_zero_reusable_tombstone` | Exact retained cleanup or zero tombstones plus parent directories. These inodes have already left active/candidate SQL ownership; nonzero unknown tombstones are refused, not reused. Normal live repository close only settles its known retired tombstones, never its live main/sidecars. |
+| `TTS/profile_migration_namespace`: `move_exact_noreplace`, `remove_exact` | File pins for already-closed EXCLUSIVE publication/recovery artifacts, plus directory reopens. Callers stop before namespace disposal if any immutable close failed. Exact inode/content/link tests remain unchanged. |
+| `TTS/profile_migration_namespace`: `open_new_or_reused_private_file` | New O_EXCL file or exact zero tombstone, before SQLite is opened; acquisition failure closes file/holding FD and all directory checks. Successful returned pins transfer to canonical destination/journal owners. |
+| `TTS/profile_repository`: `_fsync_file`, `_fsync_directory` | Closed disposable backup/recovery file and directory respectively, after all validation SQL closes. Failed validation retains its source artifact and bypasses fsync/publication/unlink. |
+| `TTS/profile_repository`: `_worker_open_if_proven_current`, `_worker_prepare_reusable_tombstones` | Directory-only namespace observations. |
+| `TTS/profile_repository`: `_worker_backup_to`, `_worker_create_recovery_backup` | Fresh mkstemp empty-file FD, closed before first SQLite open. Subsequent validation handles are retained on close failure; no post-failure original-file inspection runs. |
+| `TTS/profile_sqlite_proof`: `_recheck_original_pins`, `close` | Helper-process directory check and sidecar/main/directory teardown. The isolated child first settles `_close_evidence`; these are never parent live-file FDs. |
+
+Qualification uses the DB/publication/recovery/schema/lifecycle selections and
+real temporary databases: close-once proxies, actual raw-close observations,
+callback escapes/failures, journal-authorized recovery with deferred cancellation,
+repository SHARED contenders refused during exclusive validation, closed source
+handle observations, and repeated cleanup with lease/worker retention. The
+multi-slot rollback evidence includes actual failed-close raw FD observations,
+no later rename/fsync/hash/validation/journal/cleanup work, unchanged retained
+journal/namespace through teardown-only retry, and real initialization retaining
+its EXCLUSIVE lease and worker until that retry succeeds. Existing
+shared-reader refusal, exact tombstone/content checks and source-immutability
+tests remain required. The three unrelated strict inventory failures (Collections
+legacy raw connection, console trace owner mismatch, base_db backup census) remain
+visible; this census does not waive or repair them. Windows and the previously
+SemLock-blocked spawned cases remain separate qualification limits.
 
 | ID | Module | Symbol | Owner ID | Classification | Operation | Migration disposition |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -152,7 +237,24 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains 53 classified connection sites and fourteen
-classified backup/restore operations. Production has one raw
-`sqlite3.connect` site and one direct `Connection.backup()` site, both inside
-`DB/private_sqlite.py`; Settings has no SQLite database `shutil.copy2()` site.
+The migrated boundary retains 54 classified connection sites and fourteen
+classified backup/restore operations. The centralized filesystem seam owns
+three raw `sqlite3.connect` calls inside `DB/private_sqlite.py`. One separate
+raw call in `TTS/profile_sqlite_policy.require_native_close_policy_support` is
+admitted only as an argument-free capability probe whose source is guarded to
+contain exactly `sqlite3.connect(":memory:")`, with no keywords, forwarded
+input, file, URI, or variable target. That probe creates no filesystem owner
+and therefore has no `C` row or registry entry. The child-only immutable proof
+call is separately admitted by the exact pinned-descriptor AST guard described
+above, not by a general raw-connection exemption.
+
+Both direct `Connection.backup()` calls are qualified by exact module, symbol,
+receiver and multiplicity. `DB/private_sqlite._backup_pages` invokes
+`source.backup()` for the existing centralized operations. When that source is
+the quiescent ChaChaNotes connection, virtual dispatch reaches
+`DB/base_db._QuiescentSQLiteConnection.backup`, whose `super().backup()` holds a
+use reservation for the same operation and releases it in `finally`. The wrapper
+does not open a destination or grant another owner backup authority. Negative
+scanner controls reject extra, duplicate, moved, receiver-changed and
+other-module calls; real SQLite tests cover reservation release after success
+and callback failure. Settings has no SQLite database `shutil.copy2()` site.
