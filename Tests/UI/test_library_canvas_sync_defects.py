@@ -236,8 +236,11 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    # task-32128 dropped "sort_open": this app pages a folder tree, and the
+    # Sort control is no longer composed there (the tree's order is the
+    # repository's). The two remaining triggers pin the same contract.
     "trigger",
-    ["select_toggle", "select_all", "sort_open"],
+    ["select_toggle", "select_all"],
 )
 async def test_converted_notes_sites_keep_focus_inside_the_canvas(
     monkeypatch, trigger, paged_notes_app_factory

@@ -3,6 +3,8 @@ create mode (Blank note + template rows)."""
 
 from __future__ import annotations
 
+from collections import Counter
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
@@ -51,6 +53,72 @@ from tldw_chatbook.Widgets.Library.library_notes_sync_roots_canvas import (
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
+
+#: Columns the list pane needs before the browse and transfer toolbars share
+#: one row. Their widest composition -- New, Select, Add from files…, Export,
+#: Manage sync folders, Last import, plus both toolbars' own padding -- is 97
+#: cells, so under this width the merged row clips its last action off the
+#: pane, which is worse than the third row it saves (task-32127, review 1).
+_TOOLBAR_MERGE_MIN_WIDTH = 100
+
+#: Columns a single action group needs to stay on one row. The transfer group
+#: (Add from files…, Export, Last import) is 47 cells and the folder actions
+#: (New folder, Rename, Move, Remove) are 46, so at the 44-column pane a
+#: 130-column terminal gives the list beside an open note, "Last import" and
+#: "Remove" were painted past the pane's right edge and could not be pressed
+#: (task-32127, final review). Below this width each group stacks, the way the
+#: delete receipt already stacks its recovery actions (task-32123) -- Textual
+#: toolbars do not wrap. NOT in a compact shell: there the split screen sheet
+#: pins these rows to `height: 1; overflow-x: hidden`, so a stacked column
+#: would be clipped to its first button instead of merely running off-pane.
+_TOOLBAR_STACK_MIN_WIDTH = 48
+
+
+def _toolbar_shape(pane_width: int, compact: bool) -> tuple[bool, bool]:
+    """Return the two toolbar decisions one pane width drives.
+
+    A width of 0 means "not measured yet": the canvas is composed before the
+    reader shell it lives in exists, so the first frame of a Notes visit has
+    no resolved Items width. That frame takes the conservative shape -- one
+    row per group, neither merged nor stacked -- which is what the list
+    rendered before either threshold existed; the first state sync then
+    composes at the real width (task-32127, review round 2).
+
+    Args:
+        pane_width: Columns the list pane has, or 0 when unmeasured.
+        compact: Whether the compact shell pins the toolbars to one row.
+
+    Returns:
+        ``(merged, stacked)`` -- whether the browse and transfer groups
+        share a row, and whether a group stacks its actions vertically.
+    """
+    return (
+        pane_width >= _TOOLBAR_MERGE_MIN_WIDTH,
+        0 < pane_width < _TOOLBAR_STACK_MIN_WIDTH and not compact,
+    )
+
+
+def compose_note_row_label(
+    title: str, *, folder_label: str = "", age_label: str = ""
+) -> str:
+    """Render one Notes list row label: title, folder, then age.
+
+    The single renderer for BOTH list paths (task-32137). The flat list used
+    to put the age on a second line of its own -- a branch nothing reached
+    once a folder tree existed -- while the tree rows carried no age at all,
+    so two notes titled "Reading list" rendered as identical rows.
+
+    Args:
+        title: The note title, already markup-escaped.
+        folder_label: The row's parent folder ("Unfiled", "Work / Q3"),
+            included only when the row needs telling apart from a sibling
+            with the same title, or when a filter has scattered the rows.
+        age_label: Relative age of the note ("3m", "1d"), if known.
+
+    Returns:
+        The row label, its present parts joined with " · ".
+    """
+    return " · ".join(part for part in (title, folder_label, age_label) if part)
 
 #: The storage authority every Database Notes surface answers to. Painted once
 #: per screen: the mounted list pane owns it, and a work pane beside it drops
@@ -230,6 +298,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         tree_deleted_folder_available: bool = False,
         title_placeholder_only: bool = False,
         compact: bool = False,
+        pane_width: int = 0,
         create_running: bool = False,
         create_status: str = "",
         load_state: str = "loading",
@@ -253,6 +322,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             title_placeholder_only: Render an empty title with an Untitled
                 placeholder for a pristine newly-created note.
             compact: Whether 60-column-safe controls and labels are active.
+            pane_width: Columns the mounted list pane has, from the resolved
+                reader layout. Only the toolbar reads it, to decide whether
+                one row can hold both action groups; ``0`` (unknown) keeps
+                them on their own rows.
             create_running: Whether note creation is in progress.
             create_status: Visible creation completion or recovery status.
             load_state: Editor-load state (``"loading"`` or ``"failed"``).
@@ -273,6 +346,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.tree_deleted_folder_available = tree_deleted_folder_available
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
+        self.pane_width = pane_width
         self.create_running = create_running
         self.create_status = create_status
         self.load_state = load_state
@@ -558,6 +632,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         tree_deleted_folder_available: bool,
         title_placeholder_only: bool,
         compact: bool,
+        pane_width: int,
         create_running: bool,
         create_status: str,
         load_state: str,
@@ -585,6 +660,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             tree_deleted_folder_available: Whether Undo folder removal is available.
             title_placeholder_only: Whether the title is placeholder-only.
             compact: Whether compact editor controls are enabled.
+            pane_width: Columns the mounted list pane has (see ``__init__``).
             create_running: Whether note creation is in progress.
             create_status: Current note-creation status copy.
             load_state: Current note-loading state identifier.
@@ -622,6 +698,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.tree_deleted_folder_available = tree_deleted_folder_available
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
+        self.pane_width = pane_width
         self.create_running = create_running
         self.create_status = create_status
         self.load_state = load_state
@@ -855,110 +932,136 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
         else:
-            browse_actions = Horizontal(
-                id="library-notes-browse-actions", classes="ds-toolbar"
-            )
-            browse_actions.styles.height = "auto"
-            browse_actions.display = not list_state.sort_choices_visible
-            with browse_actions:
-                # task-4023 AC#1 (RC-07): every disabled toolbar action
-                # carries the non-colour "○" marker plus an F-018 reason.
-                running = list_state.operation_running
-                running_tooltip = "Wait for the running notes operation to finish."
-                yield Button(
-                    library_disabled_action_label("New", running),
-                    id="library-notes-new",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=running,
-                    tooltip=running_tooltip if running else None,
+            # task-4023 AC#1 (RC-07): every disabled toolbar action carries
+            # the non-colour "○" marker plus an F-018 reason.
+            running = list_state.operation_running
+            running_tooltip = "Wait for the running notes operation to finish."
+            # task-32128: the folder tree's row order is a repository
+            # contract -- `page_note_placements` is ORDER BY title COLLATE
+            # NOCASE and every page offset (including the deep-link
+            # locator's) is computed against it -- so a Sort control there
+            # could only reorder the loaded window and lie about the rest.
+            # It stays on the flat list, which sorts its own records.
+            sort_available = self.tree_projection is None
+            sort_choices_visible = sort_available and list_state.sort_choices_visible
+            # task-32127: the browse and transfer actions share ONE row, so
+            # the toolbar is two rows rather than three -- but only where the
+            # pane can hold both groups. Below the threshold the merged row
+            # clipped its last action off the pane, which is worse than the
+            # third row it saves (review round 1).
+            merged, stacked = _toolbar_shape(self.pane_width, self.compact)
+            action_rows: Horizontal | None = None
+            if merged:
+                action_rows = Horizontal(id="library-notes-action-rows")
+                action_rows.styles.height = "auto"
+            with action_rows or nullcontext():
+                browse_actions = Horizontal(
+                    id="library-notes-browse-actions", classes="ds-toolbar"
                 )
-                sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
-                yield Button(
-                    library_disabled_action_label(sort_base, running),
-                    id="library-notes-sort",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=running,
-                    tooltip=running_tooltip if running else None,
-                )
-                select_disabled = rendered_count == 0 or running
-                yield Button(
-                    library_disabled_action_label("Select", select_disabled),
-                    id="library-notes-select-toggle",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=select_disabled,
-                    tooltip=(
-                        (
-                            running_tooltip
-                            if running
-                            else LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+                browse_actions.styles.height = "auto"
+                if action_rows is not None:
+                    browse_actions.styles.width = "auto"
+                browse_actions.display = not sort_choices_visible
+                with browse_actions:
+                    yield Button(
+                        library_disabled_action_label("New", running),
+                        id="library-notes-new",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=running,
+                        tooltip=running_tooltip if running else None,
+                    )
+                    if sort_available:
+                        sort_base = (
+                            f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
                         )
-                        if select_disabled
-                        else None
-                    ),
-                )
-            if list_state.sort_choices_visible:
-                # task-14902: composed through the ONE shared strip builder
-                # (this control is the pattern's precedent; the media type /
-                # prompts sort / skills sort / export quality strips share
-                # the same mechanism).
-                yield from compose_library_choice_strip(
-                    strip_id="library-notes-sort-choices",
-                    choice_class="library-notes-sort-choice",
-                    options=tuple(
-                        (f"library-notes-sort-{mode}", mode, label)
-                        for mode, label in _SORT_LABELS.items()
-                    ),
-                    active_value=self.sort_mode,
-                )
-            import_phase = (
-                self.import_snapshot.phase if self.import_snapshot is not None else ""
-            )
-            transfer_actions = Horizontal(
-                id="library-notes-transfer-actions", classes="ds-toolbar"
-            )
-            transfer_actions.styles.height = "auto"
-            with transfer_actions:
-                for label, button_id in (
-                    ("Add from files…", "library-notes-add-from-files"),
-                    ("Export", "library-notes-export"),
-                ):
-                    view_import = (
-                        button_id == "library-notes-add-from-files"
-                        and import_phase == "importing"
-                    )
-                    disabled = list_state.operation_running and not view_import
+                        yield Button(
+                            library_disabled_action_label(sort_base, running),
+                            id="library-notes-sort",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=running,
+                            tooltip=running_tooltip if running else None,
+                        )
+                    select_disabled = rendered_count == 0 or running
                     yield Button(
-                        library_disabled_action_label(
-                            "View import" if view_import else label, disabled
+                        library_disabled_action_label("Select", select_disabled),
+                        id="library-notes-select-toggle",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=select_disabled,
+                        tooltip=(
+                            (
+                                running_tooltip
+                                if running
+                                else LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+                            )
+                            if select_disabled
+                            else None
                         ),
-                        id=button_id,
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=disabled,
-                        tooltip=running_tooltip if disabled else None,
                     )
-                if self.lasting_sync_snapshot is not None and (
-                    self.lasting_sync_snapshot.roots
-                    or self.lasting_sync_snapshot.root_page_count > 1
-                ):
-                    yield Button(
-                        "Manage sync folders",
-                        id="library-notes-manage-sync-folders",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=list_state.operation_running,
+                if sort_choices_visible:
+                    # task-14902: composed through the ONE shared strip builder
+                    # (this control is the pattern's precedent; the media type /
+                    # prompts sort / skills sort / export quality strips share
+                    # the same mechanism).
+                    yield from compose_library_choice_strip(
+                        strip_id="library-notes-sort-choices",
+                        choice_class="library-notes-sort-choice",
+                        options=tuple(
+                            (f"library-notes-sort-{mode}", mode, label)
+                            for mode, label in _SORT_LABELS.items()
+                        ),
+                        active_value=self.sort_mode,
                     )
-                if self.import_receipt_available:
-                    yield Button(
-                        "Last import",
-                        id="library-notes-import-receipt",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=list_state.operation_running,
-                    )
+                import_phase = (
+                    self.import_snapshot.phase
+                    if self.import_snapshot is not None
+                    else ""
+                )
+                transfer_actions = (Vertical if stacked else Horizontal)(
+                    id="library-notes-transfer-actions", classes="ds-toolbar"
+                )
+                transfer_actions.styles.height = "auto"
+                with transfer_actions:
+                    for label, button_id in (
+                        ("Add from files…", "library-notes-add-from-files"),
+                        ("Export", "library-notes-export"),
+                    ):
+                        view_import = (
+                            button_id == "library-notes-add-from-files"
+                            and import_phase == "importing"
+                        )
+                        disabled = list_state.operation_running and not view_import
+                        yield Button(
+                            library_disabled_action_label(
+                                "View import" if view_import else label, disabled
+                            ),
+                            id=button_id,
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=disabled,
+                            tooltip=running_tooltip if disabled else None,
+                        )
+                    if self.lasting_sync_snapshot is not None and (
+                        self.lasting_sync_snapshot.roots
+                        or self.lasting_sync_snapshot.root_page_count > 1
+                    ):
+                        yield Button(
+                            "Manage sync folders",
+                            id="library-notes-manage-sync-folders",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=list_state.operation_running,
+                        )
+                    if self.import_receipt_available:
+                        yield Button(
+                            "Last import",
+                            id="library-notes-import-receipt",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=list_state.operation_running,
+                        )
             if self.tree_projection is not None:
                 yield from self._compose_tree_actions(
                     operation_running=list_state.operation_running
@@ -986,7 +1089,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             title = ellipsize_note_title_cells(
                 receipt.title or "Untitled", 18 if self.compact else 42
             )
-            receipt_row = Horizontal(
+            # task-32123: the copy and the two recovery actions are stacked,
+            # not laid side by side. A one-row receipt needed the title's 42
+            # cells PLUS both buttons, so in a narrow list pane Undo -- the
+            # only recovery path there is, with no Trash browser -- was
+            # painted past the pane edge and could not be pressed.
+            receipt_row = Vertical(
                 id="library-notes-delete-receipt", classes="ds-toolbar"
             )
             receipt_row.styles.height = "auto"
@@ -997,20 +1105,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-toolbar-count",
                     markup=False,
                 )
-                yield Button(
-                    "Undo",
-                    id="library-notes-delete-undo",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=list_state.operation_running,
+                receipt_actions = Horizontal(
+                    id="library-notes-delete-receipt-actions"
                 )
-                yield Button(
-                    "Dismiss",
-                    id="library-notes-delete-receipt-dismiss",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=list_state.operation_running,
-                )
+                receipt_actions.styles.height = "auto"
+                with receipt_actions:
+                    yield Button(
+                        "Undo",
+                        id="library-notes-delete-undo",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=list_state.operation_running,
+                    )
+                    yield Button(
+                        "Dismiss",
+                        id="library-notes-delete-receipt-dismiss",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=list_state.operation_running,
+                    )
         if self.tree_projection is not None:
             yield from self._compose_tree_rows(list_state)
             return
@@ -1025,19 +1138,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # (or crashing on an unmatched closing tag) -- the same
                 # fix class as the escaped search-history Button labels.
                 title = escape_markup(row.title)
+                label_rest = compose_note_row_label(title, age_label=row.age_label)
                 if select_mode:
                     # Notes rows had no marker at all before select mode
                     # existed -- normal mode keeps that markerless label
-                    # (no ``▸``, unlike the media/conversations rows). The 2-col
-                    # glyph shifts line 1, so indent the age line by 2 to keep it
-                    # aligned under the title rather than under the checkbox.
+                    # (no ``▸``, unlike the media/conversations rows).
                     glyph = "☑ " if row.checked else "☐ "
-                    label_rest = (
-                        f"{title}\n  {row.age_label}" if row.age_label else title
-                    )
                     label = f"{glyph}{label_rest}"
                 else:
-                    label_rest = f"{title}\n{row.age_label}" if row.age_label else title
                     label = label_rest
                 # task-31945: shared row press behaviour (no 0.2s flash
                 # swallowing the next click on the same row).
@@ -1068,6 +1176,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             return
         checked_ids = {row.note_id for row in list_state.rows if row.checked}
+        # task-32137: only a title that repeats under the SAME parent earns
+        # a folder suffix -- two rows with one title in two folders already
+        # sit under their own folder rows, and spending the width there
+        # ellipsized the semantic sync status instead.
+        sibling_counts = Counter(
+            (row.folder_id or "", row.label)
+            for row in projection.rows
+            if row.kind == "note"
+        )
+        duplicate_siblings = {
+            sibling for sibling, count in sibling_counts.items() if count > 1
+        }
         with Vertical(id="library-notes-list", classes="library-notes-tree"):
             for index, row in enumerate(projection.rows):
                 indent = "  " * row.depth
@@ -1113,10 +1233,23 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     yield button
                     continue
 
-                title = f"{indent}{escape_markup(row.label)}"
-                if self.filter_value and row.breadcrumb:
-                    parent_breadcrumb = row.breadcrumb.rsplit(" / ", 1)[0]
-                    title = f"{title}  — {escape_markup(parent_breadcrumb)}"
+                # A filter scatters rows out of their folders, and a
+                # repeated title is otherwise an identical row: both name
+                # their folder (task-32137).
+                folder_label = (
+                    row.breadcrumb.rsplit(" / ", 1)[0]
+                    if row.breadcrumb
+                    and (
+                        self.filter_value
+                        or (row.folder_id or "", row.label) in duplicate_siblings
+                    )
+                    else ""
+                )
+                title = indent + compose_note_row_label(
+                    escape_markup(row.label),
+                    folder_label=escape_markup(folder_label),
+                    age_label=row.age_label,
+                )
                 if row.status_text:
                     title = f"{title}  {row.status_text}"
                 if list_state.select_mode:
@@ -1163,7 +1296,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "This folder is managed by sync; change its sync root instead."
         )
         stale_reason = "This branch may be out of date; retry it before changing it."
-        with Horizontal(id="library-notes-tree-actions", classes="ds-toolbar"):
+        _, stacked = _toolbar_shape(self.pane_width, self.compact)
+        with (Vertical if stacked else Horizontal)(
+            id="library-notes-tree-actions", classes="ds-toolbar"
+        ):
             yield Button(
                 "New folder",
                 id="library-notes-folder-new",
