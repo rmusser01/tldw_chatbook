@@ -167,7 +167,8 @@ visibility, (3) gate resident-but-unselected canvases out of event handling and
 out of `_sync_library_canvas`, (4) move focus before hiding.
 
 C over A because their steady states are indistinguishable while C does not pay
-resident nodes for the nine canvas kinds a user never opens.
+resident nodes for the eleven canvas kinds (`_sync_library_canvas`'s own
+dispatch table) a user never opens.
 Rejected: **B** (2× worse on every column, and depends on re-mounting after
 `remove()`); **A eager** (unbounded at rest); **optimising the CSS restyle**
 (largest bucket at 39%, but it falls to 1.2 ms under residency — it is a

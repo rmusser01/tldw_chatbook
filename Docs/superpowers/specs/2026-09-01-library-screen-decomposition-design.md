@@ -438,18 +438,21 @@ precondition: while `_select_library_rail_row_after_source_admission` awaits
 4. Move focus before hiding (finding 2).
 
 **Why C over A:** their steady states are indistinguishable (block 29 vs 30 ms,
-cpu 14 vs 15 ms, both 0 mounts), but the Library has nine canvas kinds and
-eager residency would pay resident nodes for routes the user never opens.
+cpu 14 vs 15 ms, both 0 mounts), but `_sync_library_canvas` dispatches
+eleven canvas kinds and eager residency would pay resident nodes for routes the
+user never opens.
 Lazy residency bounds the cost to visited routes and its one-time entry cost
 (40–47 ms) is already 3× better than the switch it replaces.
 
 **Consequences.**
 * Steady-state DOM grows by one canvas subtree per visited route: measured
   **+17 nodes** for media + notes resident (119 → 136, +14%). Media's own
-  subtree is 29 and notes' is 19, so a user who visits every browse route pays
-  roughly +100 nodes. Node count is the memory proxy this instrument can
-  measure; if that becomes a concern the eviction policy is "keep the last N
-  visited", which C's lazy structure already supports and A's does not.
+  subtree is 29 widgets and notes' is 19; `_sync_library_canvas` dispatches
+  **eleven** canvas kinds, so a user who visits them all pays a resident
+  subtree for each (only the two measured here are known sizes). Node count is
+  the memory proxy this instrument can measure; if that becomes a concern the
+  eviction policy is "keep the last N visited", which C's lazy structure
+  already supports and A's does not.
 * The redundant sync storm (2–7 canvas rebuilds per click) is **not** fixed by
   residency — it becomes cheaper per rebuild but stays a rebuild. It is the
   obvious next motivated change and is deliberately out of Task 2's scope; the
@@ -468,7 +471,7 @@ Lazy residency bounds the cost to visited routes and its one-time entry cost
   could change in any 8.x release. Rejected on measured cost first, support
   second.
 * **A, eager residency of every canvas.** Identical on the switch, strictly
-  worse at rest, and unbounded across nine canvas kinds.
+  worse at rest, and unbounded across eleven canvas kinds.
 * **Optimising the CSS restyle instead.** It is the largest bucket (39% of
   285 ms) and looks like the obvious target, but under residency it falls to
   1.2 ms per switch: the restyle cost exists *because* the tree is rebuilt.
