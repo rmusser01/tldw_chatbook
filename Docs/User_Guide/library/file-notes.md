@@ -459,6 +459,8 @@ change shows "still working · Cancel" after three seconds, times out after
 abandoned or timed-out folder change stops its scan, so the next folder still
 links normally; the timeout reason is painted on the folder line and stays
 there; a slow scan reports its entry count and offers Keep waiting / Choose
-another. task-32136: Folder files keeps the Library rail and the source
-strip at wide sizes, and its empty state explains the mode and offers the
-configured `[notes] sync_directory` folder.)*
+another. task-32136: once a folder is linked, Folder files keeps the Library
+rail and the source strip at wide sizes; the empty state shown before any
+folder is linked explains the mode and offers the configured
+`[notes] sync_directory` folder, but is a full-width onboarding step without
+the Library rail until you link one.)*
