@@ -741,13 +741,10 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/profile_migration_recovery.py | _validate_authoritative_targets | connect_private_sqlite_descriptor | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_recovery.py | recover_profile_migration_publication | secure_private_directory | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_audio.py | _read_regular_source | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_reference_materialization.py | _clone_open | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _create_materialization_sync | mkdir | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_reference_materialization.py | _create_materialization_sync | open | 4 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _create_materialization_sync | write | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_reference_materialization.py | _prepare_runtime_root_sync | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _prepare_runtime_root_sync | secure_private_directory | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_reference_materialization.py | _sweep_orphans | open | 3 | unsupported | tts |
-| tldw_chatbook/TTS/profile_reference_materialization.py | _validate_materialization_sync | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_storage.py | write_reference_blob | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | _BackupNativeState.fsync_file | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | open | 1 | unsupported | tts |
@@ -1113,7 +1110,7 @@ The control owner now exclusively creates bounded version-1 before/after write i
 | tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._transcribe_audio | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_namespace.py | remove_zero_reusable_tombstone | os.unlink | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_reference_materialization.py | _create_materialization_sync | os.unlink | 2 | unsupported | tts |
+| tldw_chatbook/TTS/profile_reference_materialization.py | _create_materialization_sync | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _sweep_orphans | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _cleanup_materialization_sync | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _CandidateValidationJob.cleanup.remove_snapshot | os.unlink | 2 | unsupported | tts |
@@ -2722,3 +2719,44 @@ service/dirty UI/runtime14j, shared voices15, actual backend/model/audio/native-
 and full app/headless/startup aggregation remain Task10 work. Inherited SemLock,
 shared-voice census, pet AST and combined-order debts remain; diagnostic drift is
 Task26. Tests use private temporary sources and native observers on this host only.
+
+### Task10 phase14h: exact clone-reference materializer and response assets
+
+Rulings109–112 add concrete native outcomes to the actual materializer, retained
+on ordinary StorageLease.native_owner and the original opaque handle/record.
+New worker reservations precede queued to_thread work. Creation and orphan sweep
+record finite root/owner/lock/asset selections; unknown parents and foreign roots
+refuse before native admission. Traversal descriptors observed through optional
+secure_private_directory callbacks remain resource outcomes only, never direct
+child authority. Each allocation still obtains ordinary storage admission.
+
+Actual native return/rejection, unique unresolved allocation attempts, first close
+failures and namespace residue remain distinct. Positive independent cleanup does
+not erase an ambiguous close; later terminal calls never retry that numeric FD.
+Known unpublished records are cleaned by their original protocol. Failed-create
+cleanup verifies original native identities and preserves substitutions, renamed
+original bytes and siblings; residue stays a drain blocker, not disposable capture.
+Final cleanup retains original control signals and existing body precedence.
+
+The default build_default_tts_service receiver binds to its original configured
+module/selector/profile/root; drift refuses new work and resume while original
+handle cleanup remains possible. Its pre-binding get_user_data_dir still performs
+its existing config/base/profile directory work. Binding itself performs no clone
+sweep, adapter/model work, or archive capture. Explicit custom constructors and prebinding custom factory selectors remain
+ordinary and unqualified by pathname coincidence.
+
+The materializer exposes _maintenance_close_admission, async _maintenance_drain
+(deadline), and async _maintenance_resume on its owner loop; terminal seal/close
+remain distinct. Drain preserves live response WAVs and refuses while native,
+queued/result, cleanup or namespace work remains. Actual generation's existing
+response.add_cleanup(materialization.aclose) retains ownership until native
+cleanup, including failure after response._closed and terminal service follow-up.
+
+Source/native tests cover real files/locks and independent maintenance processes,
+including declared-profile enrollment. They do not qualify all response producers
+or consumers. TTSAudioResponse callback ordering/closed-field, managed response
+registry removal, synthesis/native process/adapter/model/audio shutdown, service
+maintenance composition, recovered runtime-root inventory/bytes, clone bundles,
+profile-service dirty UI and shared voices remain immediate Task10 work. Table
+rows remain unsupported at the whole-owner level. No runtime startup release,
+Complete backup, replacement, or Task31993 completion follows from this cohort.

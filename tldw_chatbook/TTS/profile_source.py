@@ -1,10 +1,11 @@
 """Exact app-created profile source checks, without descendant IO authority."""
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 
 from tldw_chatbook.Backup_Recovery import profile_paths
+
 from .profile_errors import ProfileRepositoryError
 
 
@@ -99,3 +100,93 @@ def check_repository_source(repository) -> None:
             _ConfiguredProfileSource.check(source, repository)
         except (ValueError, TypeError, OSError, AttributeError):
             raise ProfileRepositoryError("unavailable") from None
+
+
+@dataclass(eq=False)
+class _ConfiguredMaterializerSource:
+    materializer: object
+    materializer_module: object
+    materializer_class: type
+    bootstrap_module: object
+    factory: object
+    config: object
+    selectors: tuple
+    config_path: Path
+    profile: Path
+    root: Path
+
+    def check(self, materializer) -> None:
+        from .profile_reference_materialization import TTSCloneMaterializationError
+
+        config = self.config
+        cache = getattr(config, "_CONFIG_CACHE", None)
+        if (
+            materializer is not self.materializer
+            or type(materializer) is not self.materializer_class
+            or sys.modules.get("tldw_chatbook.TTS.profile_reference_materialization")
+            is not self.materializer_module
+            or self.materializer_module.TTSCloneReferenceMaterializer
+            is not self.materializer_class
+            or sys.modules.get("tldw_chatbook.TTS.adapter_bootstrap")
+            is not self.bootstrap_module
+            or self.bootstrap_module.build_default_tts_service is not self.factory
+            or sys.modules.get("tldw_chatbook.config") is not config
+            or self.bootstrap_module.get_user_data_dir is not self.selectors[1]
+            or config._get_effective_config_path is not self.selectors[0]
+            or config.get_user_data_dir is not self.selectors[1]
+            or cache is None
+            or profile_paths.lexical_path(config._get_effective_config_path())
+            != self.config_path
+            or config._CONFIG_CACHE_SOURCE != self.config_path
+            or profile_paths.user_data_dir(cache) != self.profile
+            or materializer._root != self.root
+        ):
+            raise TTSCloneMaterializationError("unavailable")
+
+
+def bind_default_materializer(materializer) -> None:
+    """Bind the original lazy factory receiver; explicit constructors stay ordinary."""
+    bootstrap = sys.modules.get("tldw_chatbook.TTS.adapter_bootstrap")
+    module = sys.modules.get("tldw_chatbook.TTS.profile_reference_materialization")
+    config = sys.modules.get("tldw_chatbook.config")
+    if (
+        bootstrap is None
+        or module is None
+        or config is None
+        or sys._getframe(1).f_code is not bootstrap.build_default_tts_service.__code__
+        or type(materializer) is not module.TTSCloneReferenceMaterializer
+        or getattr(config, "_CONFIG_CACHE", None) is None
+        or bootstrap.get_user_data_dir is not config.get_user_data_dir
+    ):
+        return
+    profile = profile_paths.user_data_dir(config._CONFIG_CACHE)
+    root = profile / "tts_clone_materializations"
+    if materializer._root != root:
+        return
+    source = _ConfiguredMaterializerSource(
+        materializer,
+        module,
+        type(materializer),
+        bootstrap,
+        bootstrap.build_default_tts_service,
+        config,
+        (config._get_effective_config_path, config.get_user_data_dir),
+        profile_paths.lexical_path(config._get_effective_config_path()),
+        profile,
+        root,
+    )
+    source.check(materializer)
+    materializer._configured_source = source
+
+
+def check_materializer_source(materializer) -> None:
+    from .profile_reference_materialization import TTSCloneMaterializationError
+
+    source = materializer._configured_source
+    if source is not None:
+        try:
+            if type(source) is not _ConfiguredMaterializerSource:
+                raise TTSCloneMaterializationError("unavailable")
+            _ConfiguredMaterializerSource.check(source, materializer)
+        except (ValueError, TypeError, OSError, AttributeError):
+            raise TTSCloneMaterializationError("unavailable") from None

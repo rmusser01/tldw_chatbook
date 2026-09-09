@@ -1347,9 +1347,16 @@ def secure_private_directory(
     *,
     create: bool,
     application_owned: bool,
+    _open: Callable[..., int] | None = None,
+    _close: Callable[[int], None] | None = None,
 ) -> PrivatePathResult:
     """Create or harden an application-owned directory."""
 
+    close = _close or _native_close
+    open_options = {} if _open is None else {"_open": _open}
+    observer_options = dict(open_options)
+    if _close is not None:
+        observer_options["_close"] = _close
     selected = lexical_path(path)
     if not application_owned:
         raise ValueError("Only application-owned directories may be changed")
@@ -1374,7 +1381,7 @@ def secure_private_directory(
 
     euid = os.geteuid()
     parts = selected.parts
-    current_fd = _native_open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    current_fd = (_open or _native_open)(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
     created_final = False
     hardened_final = False
     try:
@@ -1406,7 +1413,7 @@ def secure_private_directory(
 
             created_component = False
             try:
-                next_fd = _open_directory_component(current_fd, component)
+                next_fd = _open_directory_component(current_fd, component, **open_options)
             except FileNotFoundError:
                 if not create:
                     raise
@@ -1423,7 +1430,7 @@ def secure_private_directory(
                     mode=_PRIVATE_DIRECTORY_MODE,
                     dir_fd=current_fd,
                 )
-                next_fd = _open_directory_component(current_fd, component)
+                next_fd = _open_directory_component(current_fd, component, **open_options)
                 created_component = True
             except OSError as exc:
                 current_fd, symlink_hops = _follow_trusted_symlink(
@@ -1433,6 +1440,7 @@ def secure_private_directory(
                     hops=symlink_hops,
                     selected=selected,
                     exc=exc,
+                    **observer_options,
                 )
                 current_stat = os.fstat(current_fd)
                 continue
@@ -1498,11 +1506,11 @@ def secure_private_directory(
                 old_fd = current_fd
                 current_fd = next_fd
                 transferred = True
-                _native_close(old_fd)
+                close(old_fd)
                 current_stat = os.fstat(current_fd)
             finally:
                 if not transferred:
-                    _native_close(next_fd)
+                    close(next_fd)
 
         status = (
             PrivatePathStatus.CREATED_PRIVATE
@@ -1519,7 +1527,7 @@ def secure_private_directory(
     except OSError as exc:
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
-        _native_close(current_fd)
+        close(current_fd)
 
 
 def verify_trusted_directory(

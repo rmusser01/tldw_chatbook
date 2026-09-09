@@ -742,3 +742,40 @@ Actual pause evidence preserves preflight or durable publishing bytes and recove
 convergently after ordinary resume. A journal is not capture readiness, and this phase
 grants no PONR continuation authority. TTS materializer/bundle/voice/runtime/dirty UI,
 app/headless aggregation and startup release remain mandatory Task10 obligations.
+
+### Task10 phase14h: private clone materializer ownership (rulings109–112)
+
+Retain actual materializer native outcomes on ordinary source leases and its
+original opaque reference records. Reserve before queued workers; retain known
+returned descriptors before outer constructor errors and distinguish original
+native rejection from unreturned allocation. Every new allocation still obtains
+ordinary admission. Only exact selected root/owner/lock/asset members and known
+parents belong to direct helpers; secure-directory traversal observers preserve
+original trust/attribution and do not confer child or capture authority.
+
+First failed native close remains unresolved, including after actual closure.
+Close distinct known resources independently; never retry ambiguous numeric FDs,
+release remaining holds after uncertain lease retirement, or substitute registry
+size/closed fields for positive native retirement. Preserve original no-body
+control flow and existing body precedence. Failed-create cleanup checks earliest
+returned-native identities before removal, preserving substituted/renamed bytes
+and unknown siblings. Namespace residue remains a full safe-point blocker.
+
+Bind only the original default factory materializer to its original configured
+source/functions/profile/root. Recheck before async admission, worker/native IO,
+handle publication and resume; source drift cannot retarget existing cleanup.
+Explicit custom constructors retain ordinary behavior without source qualification.
+The existing factory selector may create/harden base/profile config directories
+before binding; no clone sweep, model/adapter work or capture is added by binding.
+
+Reversible maintenance closes new admission and waits for actual work but never
+deletes a live consumer's WAV. The existing generation-to-response cleanup transfer
+retains the reference until its native cleanup succeeds, including failures after
+response closure is marked. Whole service/backend/process/consumer shutdown and
+runtime-root inventory remain separate mandatory Task10 composition work.
+
+The first globally injected traversal fault was subsequently found to hit storage
+admission instead of the materializer's own selected-directory traversal. Only the
+corrected runtime-inode fault and observer-disabled counterfactual establish that
+shared edge; neither is an exported-BASE claim. Native POSIX evidence does not
+promote complete backup/replacement, Windows support, or startup/runtime readiness.

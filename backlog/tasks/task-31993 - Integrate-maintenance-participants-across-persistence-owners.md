@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 23:53'
-updated_date: '2026-09-09 02:14'
+updated_date: '2026-09-09 04:25'
 labels:
   - backup-recovery
 dependencies:
@@ -75,7 +75,6 @@ Reason: direct implementation of approved persistence lifecycle; preserve ADR074
 ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct implementation of approved maintenance lifetimes under ruling74; ADR067/074 separation and ADR032 package immutability remain.
-
 
 ### Phase14 implementation plan — TTS repository lifecycle foundation
 
@@ -153,16 +152,21 @@ ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct implementation of approved native storage lifetimes under controller rulings; preserve ADR028/040/051/023 and existing publication/recovery contracts.
 
+### Phase14h implementation plan — clone reference materializer
+
+1. Reproduce actual live-handle and native close uncertainty with real private WAV files and an independent maintenance process; obtain controller ruling before source/native production changes.
+2. Retain ordinary native allocation and cleanup outcomes on exact materializer records, preserving opaque handles, namespace identities, source selectors and custom ordinary behavior.
+3. Add reversible owner-loop admission/drain/resume that preserves response-owned assets and all unresolved work; retain actual workers through repeated cancellation.
+4. Verify bootstrap, sweep/create/validate/cleanup, native constructor/close faults, substitution, response transfer and exact affected request/app cases only.
+5. Update ADR126/source inventory/notes, self-review, scoped commit and dual reports; preserve In Progress and all three ACs unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of approved native/source lifetimes; preserve ADR051 exact clone-reference ownership.
 <!-- SECTION:PLAN:END -->
-
-## Design references
-
-- [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
-- [Implementation plan](../../Docs/superpowers/plans/2026-09-07-backup-recovery-02-inventory-admission.md#task-10)
-- [ADR-126](../decisions/126-complete-local-backup-and-recovery.md)
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Foundation phase only; Task10 remains In Progress and all criteria remain unchecked.
 Under ADR-126 and controller rulings50–51, added the native pause-hint observation
 and moved process lease acquisition/retirement waits outside the coordinator RLock.
@@ -483,7 +487,6 @@ private-interop/mutation checks passed36; final source census passed11. Full exa
 late RED/GREEN commands and the corrected report boundary are recorded in the phase
 report. No additional runtime coverage or Task10 completion is claimed.
 
-
 ### Phase7 implementation plan (before code)
 
 1. Inspect actual PromptHistory load/append and Console warm-load/recall/accepted-send callers, plus ChatScreen sidebar debounce, direct IO and unmount flush. Settle the exact two-source pending/queued/native cancellation strategy with the controller before production edits.
@@ -497,7 +500,6 @@ ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct implementation of the approved full-operation admission/retirement contract for two existing async file sources. No startup retirement, runtime coverage promotion, responder, Complete or replacement capability.
 
 Phase7 controller refinement: retain the no-transfer/no-ack job strategy. The creator's post-IO work is only cache/dirty/error bookkeeping under its original pending reservation. Actual process startup retains the native hold until future whole-process local drain sees all pending work retired; this phase does not retire it. All file writes/publication/cleanup/native-close effects stay inside the worker raw scope. An initial test demanding a standalone per-job native hold during cache delivery omitted actual startup; replace that unsupported assumption with actual startup plus local pending drain and independent native observer evidence. Do not add a worker waiting on event-loop acknowledgement or its shutdown deadlock risk.
-
 
 ### Phase7 implementation notes
 
@@ -765,7 +767,6 @@ production startup. No Complete/source qualification, full suite, live generatio
 network, user data, shared environment mutation, merge or publication. Status stays
 In Progress and all three ACs remain unchecked for controller whole-task review.
 
-
 ### Task10 phase14b implementation notes — outer TTS backup native retention
 
 Ruling80 bounds this phase to the actual outer backup native resources; immediate
@@ -802,7 +803,6 @@ source/test are reproduced in task10-phase14b-base-inventory.log. Controller own
 its mandatory Task10 correction after native continuation, separately from Task26
 diagnostic debt. Fatal Ruff, new-test format and diff checks passed. All counts
 are overlapping; see phase14b report for exact commands/limits.
-
 
 ### Phase14c implementation notes — ordinary standalone candidate job (ruling81)
 
@@ -937,3 +937,20 @@ Actual initialization, publication/recovery, restore and rebind retain native ow
 Direct implementation of ADR126 under controller rulings100–108, preserving ADR028/040/051/023. Genuine v3 restore uses the existing version-aware reference validator; proven query-only DELETE-mode partial open can retire under exact absent-sidecar checks. Current revalidation observes original parent IO on its held owner without fresh maintenance admission. Public-open mapping stays context-free while reservation cleanup timing remains. Preflight and PONR pause cases preserve exact source/reference bytes and verify real repeated recovery after ordinary resume; no callback/capture borrowing or new PONR continuation is granted.
 
 Scoped native tests, source/control/cancellation/deadline and publication/recovery compatibility, original opaque destination behavior, literal SQLite owner and exact source census, static checks and self-review are recorded in the identical dual phase14g report with precise RED versus fixture provenance. Modified source is confined to private_sqlite.py and TTS migration namespace/publication/recovery/native, repository and schema helpers; exact inventory and an incident-backed testing lesson accompany it. Task31993 remains In Progress with all three acceptance criteria unchecked. Materializer14h, bundles14i, service/dirty UI/runtime14j, shared voices15, actual app/headless/startup aggregation and inherited native/census/order debts remain mandatory. No full sweep, host cleanup, network/models/audio/user resources, merge or push.
+
+### Phase14h implementation notes — clone materializer and response assets
+
+Actual clone creation, orphan sweep, validation, cleanup and queued/result ownership now retain native descriptor/allocation outcomes on their exact operation and original opaque handle. Fresh allocations keep ordinary admission; unknown parents/foreign roots refuse. Ambiguous closes are never retried, first uncertain lease release retains remaining holds, and selected native identities protect foreign replacement/renamed-original bytes during failed-create cleanup. Reversible owner-loop maintenance preserves live response WAVs and refuses until actual native retirement; terminal close remains separate.
+
+The original build_default_tts_service edge binds its exact configured materializer source, checks drift before new work/publication/resume and keeps original-handle cleanup possible. Prebinding custom selectors and explicit custom constructors remain ordinary and unqualified. Optional private secure_private_directory observers preserve original helper primitives and default callers. Actual response.add_cleanup ownership is tested through consumer cleanup, exact materializer lease sets, known private startup retirement and independent native exclusion; full service/runtime shutdown is separate.
+
+ADR required: yes (reuse existing). ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: direct approved rulings109–112, with the explicitly withdrawn first-global-close attribution and corrected selected-inode counterfactual recorded. Exact owner census, scoped static and self-review accompany targeted native/source/response/domain/shared-helper tests. The original11-node app/factory order has six raw_source_selection_changed failures on both immutable BASE and current code; isolated coherent original cases pass, without clearing combined-order/source-rebinding Task10 debt. Full dual phase14h report preserves precise commands/logs, corrections and commit/clean addendum.
+
+Task31993 stays In Progress with all3 acceptance criteria unchecked. Bundles14i, profile-service/dirty UI, voices15, actual response consumers/adapter/model/process/audio retirement, runtime-root sensitive inventory, app/headless/startup composition and inherited debts remain mandatory. No full suite, network/model/audio/user resources, host cleanup, Complete/startup/replacement promotion, merge or push. Controller owns wholeTask10 review.
+<!-- SECTION:NOTES:END -->
+
+## Design references
+
+- [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
+- [Implementation plan](../../Docs/superpowers/plans/2026-09-07-backup-recovery-02-inventory-admission.md#task-10)
+- [ADR-126](../decisions/126-complete-local-backup-and-recovery.md)

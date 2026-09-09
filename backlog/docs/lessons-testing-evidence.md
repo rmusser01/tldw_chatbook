@@ -5910,3 +5910,15 @@ behavior. Count reached native failures separately from fixture timestamp errors
 observer-created sidecars, or broad monkeypatches that interrupt earlier optional opens.
 Historical fixtures must run real MIGRATIONS: a genuine v3 reference BLOB exposed a
 current-only restore validator that restamped current DDL would have hidden.
+
+## Shared native fault hooks need a selected-resource assertion (TASK-31993 phase14h)
+
+The first materializer preparation test patched the first global private-path
+close and observed lost native exclusion. Subsequent integration showed it had
+hit storage admission's bootstrap traversal before the intended runtime helper.
+Matching the close FD's device/inode to the precreated runtime directory, then
+disabling only that helper's observers, reached the intended failure; all17
+corrected traversal/allocation cases passed with observers restored. Assert the
+selected native resource at the fault seam; a reached shared callable alone does
+not identify which owner failed. Preserve the withdrawn result and corrected
+counterfactual provenance rather than relabeling either as a BASE test.
