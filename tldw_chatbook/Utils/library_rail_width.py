@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 LIBRARY_REFERENCE_WIDTH = 36
+LIBRARY_DEFAULT_EXTRA_WIDTH = 5
 LIBRARY_MIN_WIDTH = 24
 LIBRARY_DEFAULT_MIN_WIDTH = 29
 LIBRARY_DEFAULT_MAX_WIDTH = 39
@@ -55,7 +56,7 @@ def project_default_library_width(content_width: int) -> int:
         ValueError: If ``content_width`` is not a positive integer, including bool.
     """
     _require_positive_content_width(content_width)
-    fractional_width = (3 * content_width + 8) // 16 + 5
+    fractional_width = (3 * content_width + 8) // 16 + LIBRARY_DEFAULT_EXTRA_WIDTH
     return min(
         max(fractional_width, LIBRARY_DEFAULT_MIN_WIDTH), LIBRARY_DEFAULT_MAX_WIDTH
     )

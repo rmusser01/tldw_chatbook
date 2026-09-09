@@ -130,11 +130,8 @@ def _painted_rows_containing(app: _ProbeApp, widget: Widget, token: str) -> list
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("grip_width", "arrow"),
-    # task-31633 AC#2: the grip width is the destination profile's, and the
-    # arrow is as wide as the grip. Five columns is the shared default Notes,
-    # File Notes and Prompts still use; one column is Media's, and since
-    # task-31951 also Conversations', Skills' and Collections'.
-    [(PANE_GRIP_WIDTH, "<---"), (MEDIA_READER_LAYOUT_PROFILE.grip_width, "‹")],
+    # Library destinations retain the full five-cell pointer target.
+    [(PANE_GRIP_WIDTH, "<---"), (MEDIA_READER_LAYOUT_PROFILE.grip_width, "<---")],
 )
 async def test_shell_mounts_three_concrete_widgets_and_two_profile_width_grips(
     grip_width: int,
@@ -748,12 +745,8 @@ def _painted_lines(host, region) -> list[str]:
         # 56 is the profile's list comfort ceiling, the same one the
         # library-closed branch of the resolver already uses.
         ((235, 52), 56, 46),
-        # 100x30 was 44 cells / 39 painted title characters while the two pane
-        # grips still cost five columns each (task-31633 AC#2). The Reader is
-        # on its 46-cell minimum here, so the eight cells the grips gave back
-        # went to the list -- and the same 98-character title now survives to
-        # the same 46 characters at BOTH sizes.
-        ((100, 30), 52, 46),
+        # Five-cell controls reserve ten columns while preserving the reader.
+        ((100, 30), 44, 39),
     ],
 )
 @pytest.mark.asyncio
@@ -807,16 +800,11 @@ async def test_media_items_pane_grows_with_the_terminal_once_reader_is_comfortab
 
 
 # ---------------------------------------------------------------------------
-# task-31633 AC#2: no 5-cell dead gutter between rail, list and Reader.
-#
-# Painted, not region-only: the gutter is the pane grip's own columns, and a
-# region assertion is blind to what those columns actually carry. The slice
-# bounds come from the pane regions, but every assertion below reads glyphs --
-# the panes' own border glyphs anchor the slice, and the slice itself must be
-# dead (the grip's arrow paints on its own rows, not on a list row).
-# ---------------------------------------------------------------------------
+# Five intentionally wide controls separate the panes. Measure their full
+# painted span, including the columns around the arrows, to protect the
+# pointer target that was previously mistaken for wasted gutter space.
 
-MAX_PANE_GUTTER_CELLS = 2
+PANE_CONTROL_CELLS = 5
 
 
 def _dead_gutters(host, screen, shell) -> tuple[str, str]:
@@ -830,7 +818,7 @@ def _dead_gutters(host, screen, shell) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_no_dead_gutter_flanks_the_media_items_pane_at_235x52() -> None:
+async def test_full_width_collapse_controls_flank_the_media_items_pane_at_235x52() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -855,5 +843,5 @@ async def test_no_dead_gutter_flanks_the_media_items_pane_at_235x52() -> None:
 
         assert left_gutter.strip() == "", (left_gutter, painted)
         assert right_gutter.strip() == "", (right_gutter, painted)
-        assert len(left_gutter) <= MAX_PANE_GUTTER_CELLS, (left_gutter, painted)
-        assert len(right_gutter) <= MAX_PANE_GUTTER_CELLS, (right_gutter, painted)
+        assert len(left_gutter) == PANE_CONTROL_CELLS, (left_gutter, painted)
+        assert len(right_gutter) == PANE_CONTROL_CELLS, (right_gutter, painted)
