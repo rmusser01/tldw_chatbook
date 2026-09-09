@@ -128,7 +128,7 @@ def test_region_titles_cover_exactly_the_live_regions() -> None:
 
 @pytest.mark.parametrize(
     ("width", "centre_width"),
-    [(161, 44), (206, 89), (220, 103), (224, 107)],
+    [(171, 44), (206, 79), (220, 93), (224, 97)],
 )
 @pytest.mark.asyncio
 async def test_read_real_bundle_fills_wide_body_exactly(
@@ -141,7 +141,7 @@ async def test_read_real_bundle_fills_wide_body_exactly(
         assert app.layout.collapsed == frozenset()
         expected = {
             ".watchlists-region-left_rail": (28, 24),
-            ".watchlists-read-mode .watchlists-region-items": (40, 32),
+            ".watchlists-read-mode .watchlists-region-items": (50, 42),
             ".watchlists-region-right_rail": (34, 30),
         }
         for selector, (target, minimum) in expected.items():
@@ -157,7 +157,7 @@ async def test_read_real_bundle_fills_wide_body_exactly(
             read_mode=True,
             expected_widths={
                 "wl-region-left_rail": 28,
-                "wl-region-items": 40,
+                "wl-region-items": 50,
                 "wl-region-content": centre_width,
                 "wl-region-right_rail": 34,
             },
@@ -227,32 +227,32 @@ def _assert_real_bundle_geometry(
     ("width", "collapsed", "expected_widths"),
     [
         (
-            145,
+            155,
             frozenset(),
             {
                 "wl-region-left_rail": 24,
-                "wl-region-items": 32,
+                "wl-region-items": 42,
                 "wl-region-content": 44,
                 "wl-region-right_rail": 30,
             },
         ),
-        (144, frozenset({Region.RIGHT_RAIL}), {}),
+        (154, frozenset({Region.RIGHT_RAIL}), {}),
         (
-            115,
+            125,
             frozenset({Region.RIGHT_RAIL}),
             {
                 "wl-region-left_rail": 24,
-                "wl-region-items": 32,
+                "wl-region-items": 42,
                 "wl-region-content": 44,
             },
         ),
-        (114, frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}), {}),
+        (124, frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}), {}),
         (
-            91,
+            101,
             frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}),
-            {"wl-region-items": 32, "wl-region-content": 44},
+            {"wl-region-items": 42, "wl-region-content": 44},
         ),
-        (90, frozenset({Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}), {}),
+        (100, frozenset({Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}), {}),
         (60, frozenset({Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}), {}),
         (
             40,
