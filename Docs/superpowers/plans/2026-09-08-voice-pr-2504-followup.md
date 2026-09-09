@@ -294,6 +294,38 @@ final immutable commit belong in current-plan `dev733-rebase-report.md`.
 
 After scoped reviews, run one proportionate joined software gate covering changed seams and obtain a final read-only combined review. Refresh dev/PR/comments and account for any changes. Push the same branch with explicit force-with-lease, reply to each inline finding with the fix or grounded explanation, and resolve only addressed threads. Observe normal automatic checks; diagnose failures before more tests or changes. Record exact final head/check status and leave PR 2504 OPEN and UNMERGED. Preserve worktrees and recoverable evidence.
 
+### Publication-blocking dev5655 refresh
+
+ADR required: no new ADR.
+ADR path: existing ADR-098 and ADR-139; boot ADR-097 remains applicable.
+Reason: mechanical integration of reviewed Library changes and regeneration of
+derived diagnostics; no new schema, permission, runtime or voice behavior.
+
+After bridge checkpoint `efdb8e605cf2fabba84233b59a01caa0868baad8`, the
+read-only three-tree comparison against newly fetched dev
+`5655c4820733d24754f872c21cc6196d83bf1504` proves two conflicts in generated
+diagnostic metadata (app entry and aggregate), which block ordinary PR CI.
+This concrete blocker narrowly supersedes the earlier dev733 cutoff; it is not
+permission to repeat feature qualification or chase non-blocking later drift.
+
+1. Preserve a named backup of this clean reviewed series before rebasing all
+   commits from dev733 onto exact dev5655. Read-only review of all five shared
+   paths found no voice, schema or runtime-ownership conflict.
+2. Resolve only generated diagnostic conflicts from actual combined source:
+   inspect the app statement delta, regenerate with the official checker, and
+   require zero drift. Do not copy either branch's aggregate blindly.
+3. Prove every other incoming byte equals the replay delta and that the frozen
+   Buddy bridge, native tree, source-pin/Buddy/voice migrations and hard-off
+   authority are unchanged. Keep the independent bridge review on its immutable
+   efdb checkpoint while performing this mechanical replay.
+4. Run five exact safe Library/DB/source checks recorded in the current-plan
+   drift review, plus six actual startup/census cases (slow mount, three early
+   exits, UI-ready and worker census). The eight prior pure policy cases are
+   not a substitute for these real startup guards. No budget/snapshot increase.
+5. Complete immutable bridge specification and quality review, fresh clean
+   source/version/static checks, then update the same PR with exact lease
+   protection. Observe only normal automatic CI and leave OPEN/UNMERGED.
+
 ## Local verification checkpoint — 2026-09-08
 
 The final documentation-only dev update `03d1b253c8de9d22408ae93845937ae89c893fcb`
