@@ -361,6 +361,13 @@ name with the title the note will get. Available templates: Brainstorming
 session, Bug report, Code review, Daily journal entry, Meeting notes,
 Project planning, Research notes, Todo list.
 
+Opening this view parks keyboard focus on **Blank note**, so Enter creates
+a note straight away without tabbing to find it; ↑/↓ move between Blank
+note and the template rows, and the focused row carries the same left-edge
+bar the Notes list rows use. The footer's "enter create note" appears only
+while one of those rows genuinely has focus — move to "‹ Notes" and it
+drops, because Enter there goes back rather than creating anything.
+
 ### Add from files and lasting sync
 
 **Add from files…** first asks what relationship you want:
@@ -505,8 +512,10 @@ automatic-sync setting.
 | Key | Action |
 |---|---|
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
+| ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
+| Enter (New note view) | Create from the focused row |
 
-That is the only screen-specific key. In particular, Notes does not register
+Those are the only screen-specific keys. In particular, Notes does not register
 **Ctrl+S** and does not replace it with another save shortcut. Use the visible
 Database **Save** button for an immediate save; Folder Files saves
 automatically. Global navigation keys live in the [guide index](../index.md).
@@ -619,3 +628,9 @@ foreground approval, subagent draft boundary, credential refusal, and
 untrusted-retrieval contract added for TASK-24309 — 2026-08-30. See
 [ADR-105](../../../backlog/decisions/105-portable-notes-organization-and-agent-lessons.md)
 and [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md).*
+
+*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32052: the
+New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
+rows with a visible cursor, the footer's "enter create note" follows the
+focused control, and Tab no longer leaves the Library screen for the
+navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*
