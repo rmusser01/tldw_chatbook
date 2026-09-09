@@ -28938,7 +28938,10 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
         assert submit_running.disabled is True
         status_widget = screen.query_one("#library-export-status-line", Static)
         assert status_widget.display is True
-        assert str(status_widget.renderable) == "Exporting… (2 items)"
+        # task-32055: the running line is now the structural wait's own
+        # ("<label>…"), which starts saying "still working · Cancel" once
+        # the write outlives the patience window.
+        assert str(status_widget.renderable) == "Exporting (2 items)…"
 
         # Second attempt #1: through the button itself -- Textual refuses
         # to dispatch Pressed for a disabled Button, so this is a no-op.

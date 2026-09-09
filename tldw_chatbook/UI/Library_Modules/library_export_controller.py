@@ -239,6 +239,7 @@ from ...Library.library_export_state import (
     normalize_export_destination,
 )
 from ...Library.library_notes_session import NoteFlushOutcomeKind
+from ...Library.library_structural_wait import WAIT_OWNER_EXPORT
 from ...Library.library_shell_state import (
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_INGEST_EXPORT,
@@ -835,7 +836,15 @@ class LibraryExportController:
         media_quality = str(form.get("quality", DEFAULT_MEDIA_QUALITY))
         self._library_export_running = True
         self._library_export_error = ""
-        self._library_export_status = f"Exporting… ({total} items)"
+        self._library_export_status = f"Exporting ({total} items)…"
+        # task-32055: a bundle write that outlives the patience window says
+        # so and points at the Cancel this canvas already ships.
+        self._screen._begin_library_structural_wait(
+            f"Exporting ({total} items)",
+            WAIT_OWNER_EXPORT,
+            cancel=lambda: self.handle_library_export_cancel(None),
+            repaint=self._refresh_library_export_status_line,
+        )
         self._library_export_run_id += 1
         run_id = self._library_export_run_id
         self._library_export_cancel_event = threading.Event()
@@ -1108,8 +1117,9 @@ class LibraryExportController:
             return
         try:
             widget = self.query_one("#library-export-status-line", Static)
-            widget.update(self._library_export_status)
-            widget.display = bool(self._library_export_status)
+            line = self._screen._library_export_status_line()
+            widget.update(line)
+            widget.display = bool(line)
         except (NoMatches, QueryError):
             pass
 

@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path, PurePosixPath
 from threading import Lock, RLock
+from time import monotonic
 from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
@@ -29,6 +30,11 @@ from tldw_chatbook.config import (
     apply_settings_mutation_to_cli_config,
     get_cli_setting,
     get_user_data_dir,
+)
+from tldw_chatbook.Library.library_structural_wait import (
+    STRUCTURAL_WAIT_PATIENCE_SECONDS,
+    WAIT_OWNER_FILE_NOTES,
+    StructuralWait,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
@@ -247,6 +253,23 @@ _SAVE_STATE_COPY: dict[SaveState, str] = {
 }
 _UNSET = object()
 _SESSION_GIT_MUTATION_BUSY = "Git operation in progress; structural actions are busy."
+#: task-32055: a folder change waits this long before it gives up. Read at
+#: call time (never bound as a default argument) so tests can shorten it.
+ROOT_CHANGE_TIMEOUT_SECONDS = 30.0
+ROOT_CHANGE_CANCELLED_COPY = "Folder change cancelled · previous folder kept"
+ROOT_CHANGE_TIMEOUT_COPY = (
+    "Folder change timed out · previous folder kept. "
+    "Try again or choose a different folder."
+)
+#: Root persistence past its atomic file replacement is deliberately
+#: unstoppable: refusing to publish there would leave the on-disk config
+#: pointing at a folder the UI never adopted. When a cancel or the deadline
+#: loses that race, the receipt -- not the commit -- is what has to stay
+#: honest.
+ROOT_CHANGE_LANDED_COPY = (
+    "Folder change finished before it could be stopped · now linked to the "
+    "new folder."
+)
 FILE_TREE_BATCH_SIZE = 100
 
 
@@ -1123,6 +1146,12 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_transitioning = False
         self._path_transitioning = False
         self._shutdown = False
+        # task-32055: the one in-flight structural wait (a folder change),
+        # its cancellable task, and the timer that repaints it once the
+        # patience window closes.
+        self._structural_wait: StructuralWait | None = None
+        self._structural_wait_task: asyncio.Task[bool] | None = None
+        self._structural_wait_timer: Timer | None = None
 
         self._entries: dict[str, FileNoteEntry] = {}
         self._deleted_paths: tuple[str, ...] = ()
@@ -1874,6 +1903,16 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-choose-root",
                 compact=True,
             )
+            # task-32055: the way out of a structural wait, next to the
+            # control that starts one. Display-toggled (never conditionally
+            # yielded) so the in-place wait updates always find it.
+            structural_cancel = Button(
+                "Cancel",
+                id="library-structural-wait-cancel",
+                compact=True,
+            )
+            structural_cancel.display = False
+            yield structural_cancel
         with Horizontal(id="file-notes-body"):
             yield self._ensure_standalone_reader_shell()
 
@@ -2473,6 +2512,30 @@ class LibraryFileNotesWorkspace(Vertical):
         choose.disabled = (
             self._root_transitioning or self._path_transitioning or mutation_active
         )
+        wait = self._structural_wait
+        try:
+            structural_cancel = self.query_one(
+                "#library-structural-wait-cancel", Button
+            )
+        except NoMatches:
+            structural_cancel = None
+        if structural_cancel is not None:
+            structural_cancel.display = wait is not None and wait.cancel is not None
+        if wait is not None:
+            # task-32055: the wait owns this slot while it runs -- the line
+            # says what is happening, then that it is still working, and the
+            # button beside it is the way out.
+            self._root_status_detail = wait.status_line(monotonic())
+            self._root_status_summary = self._root_status_detail
+            status.tooltip = None
+            status.update(self._root_status_summary)
+            status.set_class(self._root is None, "-empty-root")
+            body.display = self._root is not None
+            details.display = self._root is not None
+            choose.display = True
+            self._render_status_channels()
+            self.call_after_refresh(self._fit_root_status)
+            return
         if self._root is None:
             self._root_status_detail = "Choose a notes folder."
             self._root_status_summary = self._root_status_detail
@@ -5847,11 +5910,130 @@ class LibraryFileNotesWorkspace(Vertical):
         if path is None or not self._active:
             return
         self.run_worker(
-            self.set_root(path),
+            self._change_root_with_deadline(path),
             name="file-notes-root-change",
             group="file-notes-root-change",
             exclusive=True,
         )
+
+    async def _change_root_with_deadline(self, path: Path) -> None:
+        """Run one folder change under a deadline the user can cut short.
+
+        task-32055: ``set_root`` itself is unbounded -- it scans a folder
+        that may live on an unreachable network volume -- and while it ran,
+        every leave guard that consults ``_root_transitioning`` refused,
+        which is how a folder change swallowed Escape, the back cue and the
+        palette. The wait now owns a cancellable task, publishes an honest
+        status line, and always leaves the previously linked folder in
+        place when it does not complete.
+        """
+        previous_root = self._root
+        change = asyncio.ensure_future(self.set_root(path))
+        wait = self._begin_structural_wait("Changing folder", change)
+        try:
+            await asyncio.wait_for(change, ROOT_CHANGE_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            # ``wait_for`` already cancelled the task, but ``set_root``'s own
+            # ``finally`` only clears the transition once it unwinds -- release
+            # the canvas now, on the same seam an explicit Cancel uses.
+            self._abandon_root_change_task(change)
+            self._abandon_root_change(
+                wait,
+                ROOT_CHANGE_TIMEOUT_COPY
+                if self._root == previous_root
+                else ROOT_CHANGE_LANDED_COPY,
+            )
+        except asyncio.CancelledError:
+            if not wait.cancelled:
+                raise
+            # The cancel receipt was written the moment Cancel was pressed;
+            # the commit may have crossed it since (see
+            # ROOT_CHANGE_LANDED_COPY). Both branches settle only once the
+            # task is done, so ``self._root`` is now final either way.
+            if self._root != previous_root:
+                self._set_action_status(ROOT_CHANGE_LANDED_COPY)
+        finally:
+            self._end_structural_wait(wait)
+
+    def _begin_structural_wait(
+        self,
+        label: str,
+        task: asyncio.Task[Any],
+    ) -> StructuralWait:
+        """Publish one cancellable wait and arm its patience repaint."""
+        wait = StructuralWait(
+            label=label,
+            started_at=monotonic(),
+            cancel=partial(self._abandon_root_change_task, task),
+            owner=WAIT_OWNER_FILE_NOTES,
+        )
+        self._structural_wait = wait
+        self._structural_wait_task = task
+        if self._structural_wait_timer is not None:
+            self._structural_wait_timer.stop()
+        self._structural_wait_timer = (
+            self.set_timer(
+                STRUCTURAL_WAIT_PATIENCE_SECONDS,
+                self._update_root_surface,
+            )
+            if self._active and self.is_mounted
+            else None
+        )
+        self._update_root_surface()
+        return wait
+
+    def _end_structural_wait(self, wait: StructuralWait | None = None) -> None:
+        """Clear the wait (and its timer) once its operation has settled."""
+        if wait is not None and self._structural_wait is not wait:
+            return
+        self._structural_wait = None
+        self._structural_wait_task = None
+        if self._structural_wait_timer is not None:
+            self._structural_wait_timer.stop()
+            self._structural_wait_timer = None
+        self._update_root_surface()
+        self._update_controls()
+
+    def _abandon_root_change_task(self, task: asyncio.Task[Any]) -> None:
+        """Cancel the wait's task and release the canvas in the same beat.
+
+        The transition flags are cleared HERE rather than in ``set_root``'s
+        own ``finally``: that only runs once the cancelled coroutine
+        unwinds, and every leave guard consulted in the meantime would
+        still refuse -- which is the swallowed-Escape bug. Bumping the
+        generation makes the abandoned run's late results stale, so it can
+        never commit the folder it was still scanning.
+        """
+        task.cancel()
+        self._root_generation += 1
+        self._root_transitioning = False
+
+    def _abandon_root_change(self, wait: StructuralWait, reason: str) -> None:
+        """Report why a folder change ended and keep the current folder."""
+        self._end_structural_wait(wait)
+        self._set_action_status(reason)
+
+    def cancel_structural_wait(self) -> bool:
+        """Abandon the in-flight structural wait, keeping the current folder.
+
+        The single seam for every exit: the Cancel button, Escape, the back
+        cue and the app's navigation flush all reach it, so a structural
+        wait can gate the WRITE (a second folder change) without ever
+        gating the way out.
+
+        Returns:
+            True when a wait was actually abandoned.
+        """
+        wait = self._structural_wait
+        if wait is None or not wait.request_cancel():
+            return False
+        self._abandon_root_change(wait, ROOT_CHANGE_CANCELLED_COPY)
+        return True
+
+    @on(Button.Pressed, "#library-structural-wait-cancel")
+    def _structural_wait_cancel_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.cancel_structural_wait()
 
     @on(Button.Pressed, "#file-notes-back")
     def _back_to_navigator(self, event: Button.Pressed) -> None:
