@@ -723,12 +723,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # while the filter already had focus -- insert a literal slash
             # (Screen.on_key's "/" handling bails as soon as an Input owns
             # focus, so it never gets a chance to redirect). Reuse the rail
-            # search box's fix (task-1584) instead of re-solving it: "/"
-            # re-arms (select-all) rather than typing when already focused.
+            # search box's widget instead of re-solving it -- but with
+            # ``swallow_slash_on_focus=False`` (fix round 1 Important 4,
+            # controller ruling): notes filter content can legitimately
+            # contain "/" (folder-style filters like "Work/Q3"), so once
+            # this box has focus "/" must be a plain typeable character,
+            # not an accelerator that swallows it. The screen-level "/"
+            # handler already only fires while this box is NOT focused.
             yield LibraryRailSearchInput(
                 placeholder="Filter notes… (Enter)",
                 id="library-notes-filter",
                 value=self.filter_value,
+                swallow_slash_on_focus=False,
             )
         select_mode = list_state.select_mode
         # Gate/label off the RENDERED rows, not any total-count field -- only
@@ -1865,7 +1871,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-delete",
         ):
             self.query_one(selector, Button).disabled = (
-                state.destructive_running or bulk_read_only
+                state.destructive_running or bulk_read_only or confirming_delete
             )
         for selector in (
             "#library-note-use-in-console",
@@ -1878,7 +1884,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-copy",
         ):
             self.query_one(selector, Button).disabled = (
-                state.destructive_running or state.transfer_running or bulk_read_only
+                state.destructive_running
+                or state.transfer_running
+                or bulk_read_only
+                # task-32132 fix round 1 Important 5: Info stays visible
+                # while confirming (this fix's own AC#1), so its Danger/
+                # Reuse & Export buttons -- Delete, Copy, Export, Use in
+                # Console -- were still live behind the confirmation
+                # prompt; a press could navigate away (Use in Console) or
+                # mutate (Copy/Export) with the delete admission still
+                # pending.
+                or confirming_delete
             )
         discard_new = self.query_one("#library-note-discard-new", Button)
         discard_new.display = state.discard_new_note

@@ -672,6 +672,22 @@ def _absolute_local_label(value: str) -> str:
     return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
+def _relative_age_with_ago(relative: str) -> str:
+    """Append " ago" to a ``format_console_relative_age`` label -- except
+    its own literal ``"now"`` for under a minute, which reads as "just
+    now" instead of the grammatically broken "now ago" (fix round 1
+    Important 3, live-caught: "Modified 2026-09-08 23:51 · now ago").
+    Every OTHER caller of ``format_console_relative_age`` across the
+    codebase never appends "ago" and is unaffected -- this is scoped to
+    the one new concatenation task-32142 AC#3 introduced.
+    """
+    if not relative:
+        return relative
+    if relative == "now":
+        return "just now"
+    return f"{relative} ago"
+
+
 def _keywords_text(detail: Mapping[str, Any]) -> str:
     keywords = detail.get("keywords")
     if isinstance(keywords, str):
@@ -727,20 +743,18 @@ def build_library_note_editor_state(
     parts: list[str] = []
     created = _text(detail.get("created_at"))
     if created:
-        relative = format_console_relative_age(created, now=reference_now)
-        absolute = _absolute_local_label(created)
-        parts.append(
-            f"Created {absolute} · {relative} ago" if absolute else f"Created {relative}"
+        relative = _relative_age_with_ago(
+            format_console_relative_age(created, now=reference_now)
         )
+        absolute = _absolute_local_label(created)
+        parts.append(f"Created {absolute} · {relative}" if absolute else f"Created {relative}")
     modified = _updated_raw(detail)
     if modified:
-        relative = format_console_relative_age(modified, now=reference_now)
-        absolute = _absolute_local_label(modified)
-        parts.append(
-            f"Modified {absolute} · {relative} ago"
-            if absolute
-            else f"Modified {relative}"
+        relative = _relative_age_with_ago(
+            format_console_relative_age(modified, now=reference_now)
         )
+        absolute = _absolute_local_label(modified)
+        parts.append(f"Modified {absolute} · {relative}" if absolute else f"Modified {relative}")
     if version is not None:
         parts.append(f"v{version}")
     return LibraryNoteEditorState(

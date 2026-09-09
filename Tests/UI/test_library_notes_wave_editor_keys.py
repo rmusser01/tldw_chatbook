@@ -7,6 +7,7 @@ acceptance criteria; each test below is named after the task it pins.
 
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -89,15 +90,13 @@ async def test_slash_focuses_the_notes_filter_without_inserting_itself():
 
 
 @pytest.mark.asyncio
-async def test_slash_on_the_already_focused_notes_filter_rearms_selection():
-    """AC#1: a SECOND '/' while the filter already has focus must not type
-    a literal slash -- reproduced live (task-32131 evidence): with the
-    filter already focused from an earlier interaction, pressing '/' then
-    typing 'Reading' produced '/Reading'. Screen.on_key never sees a
-    printable key once an Input owns focus (the isinstance guard bails
-    early), so this is the SAME class of bug task-1584/the rail search's
-    ``LibraryRailSearchInput`` already fixed -- the notes filter needs the
-    identical re-arm-on-second-slash behaviour.
+async def test_slash_types_normally_once_the_notes_filter_is_focused():
+    """Fix round 1 Important 4 (controller ruling): "/" only ever acts as
+    the focus-accelerator while the filter is NOT focused. Once focused,
+    it must be a plain typeable character -- notes filter content can
+    legitimately contain "/" (folder-style filters like "Work/Q3"), so
+    the rail search box's re-arm-on-second-"/" behaviour (right for that
+    box, wrong here) must NOT apply to this one.
     """
     host = _build_notes_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -108,14 +107,11 @@ async def test_slash_on_the_already_focused_notes_filter_rearms_selection():
         filter_input = screen.query_one("#library-notes-filter", Input)
         filter_input.focus()
         await pilot.pause()
-        await pilot.press("a", "b", "c")
+        await pilot.press("W", "o", "r", "k", "/", "Q", "3")
         await pilot.pause()
-        assert filter_input.value == "abc"
-
-        await pilot.press("/")
-        await pilot.pause()
-        assert filter_input.value == "abc", (
-            f"'/' leaked into the already-focused filter: {filter_input.value!r}"
+        assert filter_input.value == "Work/Q3", (
+            f"'/' typed inside the already-focused filter did not appear: "
+            f"{filter_input.value!r}"
         )
 
 
@@ -207,6 +203,50 @@ async def test_delete_confirmation_traps_tab_between_cancel_and_delete():
         assert screen.focused is confirm_button
 
 
+@pytest.mark.asyncio
+async def test_delete_confirmation_disables_the_other_info_buttons():
+    """Fix round 1 Important 5: Info's Danger/Reuse & Export buttons stay
+    LIVE behind the confirmation prompt (Info itself stays open per this
+    task's own AC#1) unless explicitly disabled. Delete/Copy/Export/Use in
+    Console must all be disabled while confirming -- and, concretely, a
+    press on Use in Console must not navigate away with the delete
+    admission still pending.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note_in_info(screen, pilot)
+        screen.query_one("#library-note-context-delete", Button).press()
+        await pilot.pause()
+        assert screen._notes_state.confirming_delete is True
+
+        for selector in (
+            "#library-note-context-delete",
+            "#library-note-context-copy",
+            "#library-note-context-export-md",
+            "#library-note-context-export-txt",
+            "#library-note-context-use-in-console",
+        ):
+            button = screen.query_one(selector, Button)
+            assert button.disabled, f"{selector} stayed live behind the prompt"
+
+        use_in_console = screen.query_one(
+            "#library-note-context-use-in-console", Button
+        )
+        use_in_console.press()
+        await pilot.pause()
+        assert screen._library_selected_row_id != "console", (
+            "Use in Console navigated away with a delete admission pending"
+        )
+        assert screen._notes_state.confirming_delete is True, (
+            "The delete confirmation was dismissed by a disabled button's press"
+        )
+        assert (
+            screen._library_note_session.destructive_admission is not None
+        ), "The delete admission was dropped by the (no-op) press"
+
+
 # --- task-32133: refused Escape notifies; a blank note reads as a draft ----
 
 
@@ -236,6 +276,48 @@ async def test_refused_escape_notifies_why_and_what_to_do():
         )
         screen.app_instance.notify.assert_called_once_with(
             "Can't leave yet — fix the title or press Discard new note.",
+            severity="warning",
+        )
+
+
+@pytest.mark.asyncio
+async def test_back_button_notifies_on_a_non_validation_veto_kind():
+    """Fix round 1 Important 1/2: the notify lives in the SHARED seam
+    (``_exit_library_note_editor_guarded``), reached here through the
+    "‹ Back to list" BUTTON, not Escape -- and a non-VALIDATION_VETO kind
+    gets its own copy, not the title-specific mandated sentence."""
+    from tldw_chatbook.Library.library_notes_session import (
+        NoteFlushOutcome,
+        NoteFlushOutcomeKind,
+    )
+
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        async def _fake_flush():
+            return NoteFlushOutcome(
+                NoteFlushOutcomeKind.CONFLICTED,
+                "Conflict — review the choices below.",
+            )
+
+        screen._flush_library_note_save = _fake_flush
+        screen.app_instance.notify = MagicMock()
+
+        screen.query_one("#library-note-back", Button).press()
+        await pilot.pause()
+
+        assert screen._notes_state.view == "editor", (
+            "The veto should have kept the editor open"
+        )
+        screen.app_instance.notify.assert_called_once_with(
+            "Can't leave yet — this note changed elsewhere; "
+            "choose Overwrite or Reload.",
             severity="warning",
         )
 
@@ -388,6 +470,27 @@ async def test_preview_shows_the_title_above_the_rendered_body():
         )
 
 
+def test_preview_title_css_class_is_no_longer_dead():
+    """Escalated minor (cheap): #library-note-preview-body-title carries
+    `.destination-section` like Info's Properties/Danger headers, but no
+    compact-mode selector reached it -- the class rendered no differently
+    than plain text there (confirmed: a 1-line title measures height==1
+    with or without the rule, so a live geometry assertion can't
+    discriminate this one). Pin the source instead: the selector must
+    exist, grouped with its Info siblings rather than inventing a new
+    rule nothing else in this canvas has."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    css_source = (
+        repo_root / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+    ).read_text(encoding="utf-8")
+    assert (
+        "#library-shell-grid.library-notes-compact "
+        "#library-note-preview-region .destination-section"
+    ) in css_source
+
+
 @pytest.mark.asyncio
 async def test_info_shows_saved_only_once():
     """AC#2: Info must not print the same status text twice."""
@@ -446,8 +549,6 @@ async def test_info_properties_show_an_absolute_timestamp_beside_the_relative_on
         assert "Created" in meta
         # An absolute local timestamp ("YYYY-MM-DD HH:MM"), not just a bare
         # relative age -- and never the raw ISO string reaching the user.
-        import re
-
         assert re.search(r"Created \d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+ ago", meta), (
             f"No absolute timestamp beside the relative age: {meta!r}"
         )

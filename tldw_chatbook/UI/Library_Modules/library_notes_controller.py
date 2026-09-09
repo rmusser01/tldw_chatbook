@@ -2910,16 +2910,11 @@ class LibraryNotesController:
             # flush, ...) used to return here silently -- live, with a
             # whitespace-padded title, Escape did nothing and said nothing,
             # and "Discard new note" had already disappeared, leaving no
-            # visible way out at all.
-            exited = await self._exit_library_note_editor_guarded()
-            if not exited:
-                notify = getattr(self.app_instance, "notify", None)
-                if callable(notify):
-                    notify(
-                        "Can't leave yet — fix the title or press Discard "
-                        "new note.",
-                        severity="warning",
-                    )
+            # visible way out at all. Fix round 1 Important 1: the notify
+            # now lives IN ``_exit_library_note_editor_guarded`` itself (the
+            # shared seam three other callers also use), not duplicated
+            # here -- this call gets it for free.
+            await self._exit_library_note_editor_guarded()
             return
         if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
             if self._library_note_create_running:

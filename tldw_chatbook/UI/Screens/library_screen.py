@@ -868,6 +868,31 @@ def _assign_library_reader_preferences_attribute(
     setattr(target, tail, value)
 
 
+def _library_note_editor_exit_veto_message(kind: NoteFlushOutcomeKind) -> str:
+    """The user-facing "why" and "what to do" for one flush-veto kind.
+
+    task-32133 AC#1 / fix round 1 Important 2: the mandated copy ("fix the
+    title or press Discard new note") is specific to VALIDATION_VETO; the
+    other four kinds each name their own real state and next step instead
+    of reusing that sentence verbatim. ``NoteFlushOutcome.message`` already
+    carries an accurate-but-technical string for these (meant for the
+    status line, e.g. "A destructive action is in progress."); this is the
+    same information reworded for a one-shot toast.
+    """
+    if kind is NoteFlushOutcomeKind.VALIDATION_VETO:
+        return "Can't leave yet — fix the title or press Discard new note."
+    if kind is NoteFlushOutcomeKind.FAILED:
+        return "Can't leave yet — the save failed; press Save to retry or Discard."
+    if kind is NoteFlushOutcomeKind.CONFLICTED:
+        return (
+            "Can't leave yet — this note changed elsewhere; "
+            "choose Overwrite or Reload."
+        )
+    if kind is NoteFlushOutcomeKind.BLOCKED:
+        return "Can't leave yet — another action is already in progress; wait for it to finish."
+    return "Can't leave yet — the note changed while saving; try again."  # STALE
+
+
 def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
     """The one warning both source-snapshot failure branches share.
 
@@ -27895,6 +27920,17 @@ class LibraryScreen(BaseAppScreen):
         note_id = self._notes_state.selected_note_id
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            # task-32133 AC#1 (fix round 1): notify from THIS shared seam,
+            # not just the Escape caller -- the "‹ Notes"/"‹ Back to list"
+            # button, action_library_note_editor_back, and the wide
+            # task-return control all reach this exact veto through this
+            # one function and were discarding the False silently too.
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    _library_note_editor_exit_veto_message(note_flush.kind),
+                    severity="warning",
+                )
             return False
         navigation_generation = self._supersede_library_notes_navigation()
         placement_id = self._notes_state.tree_selected_placement_id
