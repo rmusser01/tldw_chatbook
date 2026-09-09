@@ -5938,3 +5938,7 @@ accessor replay. Eagerly importing that module from a shared source helper would
 have changed default materializer laziness; original lazy factory tests are part
 of the evidence. A source check's successful return is not proof that it was pure:
 count custom accessor calls and assert ordinary custom behavior explicitly.
+
+## A swallowed hook mismatch can imitate the intended rejection (TASK-31993 phase14j)
+
+The original sample-replacement test wrapped `_read_bounded_regular_file` without accepting keywords. Adding private native-outcome plumbing supplied `_native`; best-effort evidence swallowed the hook's TypeError and still produced the test's expected empty cache. That assertion alone no longer proved replacement-after-read protection. The targeted test now forwards the original keyword arguments and asserts one actual successful bounded read before replacing the selected file, then checks the original rejection. When a production API intentionally maps collaborator errors to an empty result, count the intended native/body edge before accepting a negative assertion.

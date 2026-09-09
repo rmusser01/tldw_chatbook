@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 23:53'
-updated_date: '2026-09-09 05:07'
+updated_date: '2026-09-09 06:39'
 labels:
   - backup-recovery
 dependencies:
@@ -173,6 +173,21 @@ Reason: direct implementation of approved native/source lifetimes; preserve ADR0
 ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: direct approved native/source maintenance contract; Task10 remains In Progress with all three AC unchecked.
+
+### Phase14j implementation plan (before production)
+
+1. Establish source-backed sample native, post-DB caller, actual Library modal/action/export behavioral RED; obtain controller rulings before each coordination expansion.
+2. Retain complete original service calls and exact selected sample native outcomes through final result/evidence, preserving artifact-before-consumer order, public/custom APIs and ordinary source admission.
+3. Qualify original app/service source relationships after reached drift evidence, without accessor replay or callback authority.
+4. Add non-destructive Library safe point, reversible admission and retained action/page/review/export lifetimes after actual pilot/native evidence; preserve dirty drafts, generations and explicit consent.
+5. Run affected targeted native/domain/UI/app/request tests, census and scoped static checks; self-review, document exact evidence and remaining runtime obligations, then scoped commit and identical dual report.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct approved Task10 continuation, ruling115 and subsequent controller service/UI decisions; preserve ADR028/023/051/031. No startup/Complete qualification.
+
+Phase14j ruling118 continuation: coordinate only actual same-process fixed-root initialization on existing pending _Acquisition records under _lock/_changed, with waits outside lock, exact cancellation/identity checks and finally release. Preserve incomplete/foreign/control fail-closed outcomes and native-unqualified compatibility. Verify unwarmed original128 evidence, deterministic follower/pause/failure/recursive/fork/order cases; retain exact shared-source BASE reproduction provenance. ADR126 applies; no new mutex/registry/repair or startup qualification.
+
+Phase14j ruling119: preserve original export overwrite semantics using selected parent/target native descriptors and identity checks before truncation; ordinary target/parent admission precedes snapshots, missing output uses no-replace creation, stream and each FD have one explicit closer. Retain unknown/first cleanup outcomes; never delete caller/foreign output. Verify exact selected substitution, existing/new bytes and new FD cleanup edges. ADR126 applies.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -966,6 +981,18 @@ Implemented original bundle worker ownership on ordinary exact-path admission, r
 ADR required: yes (reuse existing). ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: direct rulings113–114 and their native/external/failed-create/custom-source refinements. Changed voice_bundle_service, profile_source, pure profile_service anchors and the actual app factory; new private bundle maintenance fixtures and narrowly corrected existing publication test seams; exact owner census/docs/lesson updated. Final targeted evidence: native73 passed before last bounded source/guard/control refinements; original domain92 passed; affected8, final control12, source/custom10 and app/request4 passed at documented later revisions; exact census1 passed, scoped Ruff/format and diff-check passed. Counts overlap; no combined total or full-suite claim. Exact commands, behavioral RED versus fixture/counterfactual provenance and native limits are in the dual phase14i report.
 
 Task31993 remains In Progress/all3AC unchecked. WholeTask10 review, whole app/startup source/order and existing guard debts, profile service/dirty UI/consumers/artifact/native runtime, shared voices and actual runtime-root inventory classification remain required. No Complete backup/replacement, native backend or other-platform qualification is inferred. Ordinary exported files remain user-selected outputs, not baseline roots.
+
+### Phase14j implementation notes — profile evidence, Library work and selected export
+
+Implemented rulings115–119 under ADR126: original profile-service complete async/synchronous evidence caller accounting, selected sample FD/codec native outcomes and pure original app-source binding; reversible Library admission/readiness preserving live/conflict/maintenance-refused drafts, review sessions, deferred page/error publication and exact action/cleanup lifetimes. Sanitized export retains queued/native jobs through repeated cancellation, verifies pinned parent/target before truncation, preserves existing/new output bytes and refuses substituted nonregular targets without blocking. First uncertain stream/FD/lease outcomes remain counted independently of public results; original body controls retain precedence. Supported concurrent first use now coordinates only same-process fixed-root initialization on existing pending records, preserving fail-closed incomplete/foreign evidence.
+
+Evidence is targeted and overlapping: original service39passed9.49s, shared/default15passed3.36s, source9passed34.04s, original bundle/source/custom plus Library review12passed39.83s, native controls12passed19.97s, post-result/cleanup4passed10.07s, final affected export27passed58.80s, FIFO/draft/paused bool contract3passed7.25s and source census1passed14.21s. Scoped Ruff fatal checks pass, seven new/small changed files format-check clean; selected large-file changed functions formatted. The full dual report records earlier failures, intended reached REDs, exact commands, private-source BASE reproduction and non-additive counts. Tests use private synthetic WAV/FLAC, actual file/codec/SQLite/native admission, original Textual pilot/factory paths and controlled provider collaborators; no model/live audio/network or full suite ran.
+
+Task10 remains INCOMPLETE, Task31993 In Progress and all three AC unchecked. Later runtime/app/startup/Speech caller/artifact/model/backend cohorts, runtime-root/shared-voices classification and prior six-factory combined-order debts remain mandatory. Source census is not qualification. This phase adds no generic capture authority, ownership relabeling, automatic draft disposal, startup release, cross-process bootstrap repair, merge or publication. See identical task-10-phase14j-report.md in the private scratch evidence directory and its external parent copy for commit/clean addendum.
+
+Phase14j ruling120 preserves original ordinary pathname export when original required pinned primitives are unavailable upfront; this route retains operation/stream lifetimes and stays explicitly unqualified for maintenance. No fallback follows failed or unknown pinned allocation and no global capability metadata is changed. Capability simulation is not a native cross-platform test.
+
+Final bounded119/120 verification: FIFO3passed7.25s; mounted ordinary capability fallback, corrected Library late callback and affected export/control selection30passed16deselected56.09s. The first late-callback3.64s failure was invalid fixture availability construction before callback, explicitly corrected; valid callback RED1failed3.16s precedes gate fix. These overlap earlier export checks and are not an additive aggregate. Full dual report preserves exact first-use diagnostic script/runner/archive source and final commit/clean provenance.
 <!-- SECTION:NOTES:END -->
 
 ## Design references

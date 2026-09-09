@@ -9530,6 +9530,9 @@ class TldwCli(
                 ),
             )
             self._tts_profile_service = profile_service
+            from tldw_chatbook.TTS.profile_source import bind_app_profile_service
+
+            bind_app_profile_service(self)
         return profile_service
 
     def _saved_audio_cpp_managed_consumers(

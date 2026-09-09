@@ -770,7 +770,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/profile_schema.py | peek_profile_store_schema_version | connect_private_sqlite | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _validate_profile_candidate | connect_private_sqlite | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_store_lock.py | ProfileStoreLease.acquire | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/sample_audio_validation.py | _read_bounded_regular_file | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/sample_audio_validation.py | _read_bounded_regular_file | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/sample_audio_validation.py | compressed_audio_has_decodable_frame | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/sample_audio_validation.py | wav_has_complete_frames | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/utils/download_models.py | ModelDownloader.__init__ | mkdir | 1 | unsupported | tts |
@@ -2802,3 +2802,17 @@ residue. Profile service and dirty Profile Library UI, consumer/artifact/native
 runtime, shared voice paths, existing combined app/source-order and other Task10
 guard debts remain pending. No source-backed disposition or complete capability
 is inferred from directory names, clean native workers or this cohort's tests.
+
+| tldw_chatbook/TTS/sample_audio_validation.py | _open_sample_container | open | 1 | unsupported | tts |
+| tldw_chatbook/UI/stts_profile_library.py | STTSProfileLibrary._write_profile_export | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/stts_profile_library.py | STTSProfileLibrary._write_profile_export | write | 1 | unsupported | miscellaneous |
+
+### Task10 phase14j source/native and caller boundary
+
+Original profile-service calls and synchronous evidence now retain complete caller accounting, and optional original sample validation holds actual selected FD/codec cleanup outcomes independently of content validity. The original app-created service has a pure configured-source relationship; standalone/custom callers retain ordinary semantics without inherited runtime authority. Library editor/conflict/submitted-on-pause drafts, actions, page publication, bundle review/invalidation and sanitized export have reversible local admission/readiness. Export remains caller-owned output with original overwrite semantics, never a baseline asset. Native uncertainty retains original outcomes and ordinary selected path/parent leases. Rows above remain unsupported at cohort level: syntactic call counts do not establish installed app-wide participation.
+
+Same-process ordinary first authority initialization uses existing pending acquisition records and coordinator condition to avoid observing its own marker before registration; incomplete/foreign records still refuse. Exact archived shared-source BASE reproduces the prior interval. This does not qualify cross-process first startup, existing runtime startup release, synthesis/model/provider/player jobs, complete Speech caller UI publication, artifact backend ownership, shared voices/default root selection or any remaining Task10 cohort. Accepted combined-order six-factory failures and all recorded later-cohort debts remain mandatory. Task31993 stays In Progress with every AC unchecked.
+
+Ruling119 refinement: the sanitized writer now pins the selected parent and target FD, verifies existing identity/type before truncation, creates absent output exclusively beneath that parent, and uses nonblocking opens to refuse a substituted FIFO without a reader. The stream uses closefd=False; its buffer/target FD and independent parent FD have explicit separate native retirement, with first/unknown outcomes retained. Late path replacement does not redirect writes to a foreign inode; no caller output is deleted. This adds concrete native effects beyond the syntactic alias census and does not promote the cohort classification.
+
+Ruling120 keeps an upfront original-primitive capability check and the original ordinary pathname stream export on unavailable platforms. This route is explicitly unqualified for Library maintenance, retains complete stream/result lifetimes, and never follows a failed/unknown pinned allocation. No global supports_dir_fd metadata is mutated. A mounted private capability simulation verifies ordinary public success/bytes/close separately from refused Library qualification; it is not a real cross-platform run.

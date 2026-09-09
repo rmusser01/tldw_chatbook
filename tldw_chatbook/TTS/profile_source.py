@@ -360,3 +360,108 @@ def check_bundle_source(service):
             _ConfiguredBundleSource.check(source, service)
         except (ValueError, TypeError, OSError, AttributeError):
             raise TTSVoiceBundleError("operation_failed") from None
+
+
+@dataclass(eq=False)
+class _ConfiguredProfileServiceSource:
+    service: object
+    module: object
+    service_class: type
+    app: object
+    app_module: object
+    app_class: type
+    factory: object
+    repository: object
+    dependency: object
+    coordinator: object
+    methods: tuple
+
+    def check(self, service):
+        if (
+            service is not self.service
+            or type(service) is not self.service_class
+            or sys.modules.get("tldw_chatbook.TTS.profile_service") is not self.module
+            or self.module.TTSProfileService is not self.service_class
+            or sys.modules.get("tldw_chatbook.app") is not self.app_module
+            or type(self.app) is not self.app_class
+            or self.app_module.TldwCli is not self.app_class
+            or self.app_class._ensure_tts_profile_service is not self.factory
+            or "_ensure_tts_profile_service" in vars(self.app)
+            or self.app_module.TTSProfileService is not self.service_class
+            or self.app._tts_profile_service is not service
+            or self.app._tts_profile_repository is not self.repository
+            or service._repository is not self.repository
+            or self.app.tts_service is not self.dependency
+            or service._tts_service is not self.dependency
+            or self.app._audio_cpp_artifact_lease_coordinator is not self.coordinator
+            or vars(service).get("_artifact_lease_coordinator") is not self.coordinator
+            or any(
+                vars(self.service_class).get(name) is not method
+                or name in vars(service)
+                for name, method in self.methods
+            )
+            or type(self.repository._configured_source) is not _ConfiguredProfileSource
+        ):
+            raise ProfileRepositoryError("unavailable")
+        check_repository_source(self.repository)
+
+
+def bind_app_profile_service(app):
+    """Pure original lazy composition; custom cached objects remain ordinary."""
+    app_module = sys.modules.get("tldw_chatbook.app")
+    module = sys.modules.get("tldw_chatbook.TTS.profile_service")
+    if (
+        app_module is None
+        or module is None
+        or type(app) is not app_module.TldwCli
+        or sys._getframe(1).f_code
+        is not app_module.TldwCli._ensure_tts_profile_service.__code__
+        or "_ensure_tts_profile_service" in vars(app)
+    ):
+        return
+    service = app._tts_profile_service
+    service_class = module._ORIGINAL_PROFILE_SERVICE_CLASS
+    if (
+        type(service) is not service_class
+        or module.TTSProfileService is not service_class
+        or app_module.TTSProfileService is not service_class
+    ):
+        return
+    methods = module._ORIGINAL_PROFILE_SERVICE_METHODS
+    if any(
+        vars(service_class).get(name) is not method or name in vars(service)
+        for name, method in methods
+    ):
+        return
+    repository = app._tts_profile_repository
+    if type(vars(repository).get("_configured_source")) is not _ConfiguredProfileSource:
+        return
+    if service._configured_source is not None:
+        check_profile_service_source(service)
+        return
+    source = _ConfiguredProfileServiceSource(
+        service,
+        module,
+        service_class,
+        app,
+        app_module,
+        type(app),
+        app_module.TldwCli._ensure_tts_profile_service,
+        repository,
+        app.tts_service,
+        app._audio_cpp_artifact_lease_coordinator,
+        methods,
+    )
+    source.check(service)
+    service._configured_source = source
+
+
+def check_profile_service_source(service):
+    source = vars(service).get("_configured_source")
+    if source is not None:
+        try:
+            if type(source) is not _ConfiguredProfileServiceSource:
+                raise ProfileRepositoryError("unavailable")
+            _ConfiguredProfileServiceSource.check(source, service)
+        except (ValueError, TypeError, AttributeError, OSError):
+            raise ProfileRepositoryError("unavailable") from None

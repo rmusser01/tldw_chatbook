@@ -13,6 +13,11 @@ seed, decorative cards, gradients, side stripes, or new visual identity.
 from __future__ import annotations
 
 import asyncio
+import io
+import stat
+import threading
+from functools import wraps
+from time import monotonic
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -1436,6 +1441,299 @@ _OwnedProfileModal = (
 _RetainedEditorDraft = tuple[tuple[int, UUID], TTSProfileDraft]
 
 
+_ORIGINAL_EXPORT_OPEN = io.open
+_ORIGINAL_EXPORT_DESCRIPTOR_OPEN = os.open
+_ORIGINAL_EXPORT_STAT = os.stat
+_ORIGINAL_EXPORT_DIRFD_SUPPORT = getattr(os, "supports_dir_fd", frozenset())
+
+
+def _profile_export_pins_available():
+    return (
+        getattr(os, "supports_dir_fd", None) is _ORIGINAL_EXPORT_DIRFD_SUPPORT
+        and _ORIGINAL_EXPORT_DESCRIPTOR_OPEN in _ORIGINAL_EXPORT_DIRFD_SUPPORT
+        and _ORIGINAL_EXPORT_STAT in _ORIGINAL_EXPORT_DIRFD_SUPPORT
+        and all(
+            getattr(os, flag, 0) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
+        )
+    )
+
+
+@dataclass(eq=False)
+class _ProfileExportOpenOutcome:
+    stream: object | None = None
+    rejected: bool = False
+
+
+def _open_profile_export_stream(path, *, _outcome):
+    primitive = io.open
+    try:
+        options = {"closefd": False} if type(path) is int else {}
+        stream = primitive(path, "w", encoding="utf-8", **options)
+    except OSError:
+        if primitive is _ORIGINAL_EXPORT_OPEN:
+            _outcome.rejected = True
+        raise
+    _outcome.stream = stream
+    return stream
+
+
+@dataclass(eq=False)
+class _ProfileExportDescriptorOutcome:
+    descriptor: int | None = None
+    rejected: bool = False
+
+
+def _open_profile_export_descriptor(path, flags, *, dir_fd=None, _outcome):
+    primitive = os.open
+    try:
+        descriptor = primitive(path, flags, 0o666, dir_fd=dir_fd)
+    except OSError:
+        if primitive is _ORIGINAL_EXPORT_DESCRIPTOR_OPEN:
+            _outcome.rejected = True
+        raise
+    _outcome.descriptor = descriptor
+    return descriptor
+
+
+class _ProfileExportOperation:
+    """One selected caller export, retained before its executor job is queued."""
+
+    def __init__(self, library, target):
+        self.library = library
+        self.target = target
+        self.path = None
+        self.pid = os.getpid()
+        self.thread = None
+        self.leases = []
+        self.pending = set()
+        self.streams = set()
+        self.descriptors = set()
+        self.parent_descriptor = None
+        self.target_descriptor = None
+        self.selected_path = None
+        self.pinned = None
+        self.parent_identity = None
+        self.target_identity = None
+        self.failed_closes = set()
+        self.errors = []
+        self.uncertain = False
+
+    def check(self):
+        if (
+            self.pid != os.getpid()
+            or self.thread is not threading.current_thread()
+            or self not in self.library._export_operations
+        ):
+            raise ValueError("export_operation_unavailable")
+
+    def admit(self):
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+        self.check()
+        if type(self.target) is not type(Path()):
+            raise ValueError("invalid_destination")
+        self.path = self.target.expanduser()
+        for selected in (self.path, self.path, self.path.parent):
+            lease = acquire_storage(selected)
+            lease.native_owner = self
+            self.leases.append(lease)
+
+        self.pinned = _profile_export_pins_available()
+        if not self.pinned or any(lease._key is None for lease in self.leases):
+            self.library._export_unqualified = True
+        self.selected_path = self.path.resolve()
+        if not self.pinned:
+            return
+        self.parent_identity = self._identity(self.selected_path.parent.stat())
+        try:
+            selected = self.selected_path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            self.target_identity = None
+        else:
+            if not stat.S_ISREG(selected.st_mode):
+                raise ValueError("invalid_destination")
+            self.target_identity = self._identity(selected)
+
+    @staticmethod
+    def _identity(info):
+        return info.st_dev, info.st_ino, info.st_mode
+
+    def _check_destination(self):
+        self.check()
+        if (
+            self.path.resolve() != self.selected_path
+            or self._identity(self.selected_path.parent.stat()) != self.parent_identity
+        ):
+            raise ValueError("export_destination_changed")
+        if self.target_descriptor is not None:
+            selected = self.selected_path.stat(follow_symlinks=False)
+            if self._identity(selected) != self._identity(
+                os.fstat(self.target_descriptor)
+            ):
+                raise ValueError("export_destination_changed")
+
+    def _open_descriptor(self, path, flags, *, dir_fd=None):
+        outcome = _ProfileExportDescriptorOutcome()
+        self.pending.add(outcome)
+        try:
+            return _open_profile_export_descriptor(
+                path, flags, dir_fd=dir_fd, _outcome=outcome
+            )
+        finally:
+            if outcome.descriptor is not None:
+                self.descriptors.add(outcome.descriptor)
+                self.pending.discard(outcome)
+            elif outcome.rejected:
+                self.pending.discard(outcome)
+
+    def open(self, path):
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+        self.check()
+        if self.uncertain or self.pending or path != self.selected_path:
+            raise ValueError("export_cleanup_unavailable")
+        lease = acquire_storage(path)
+        lease.native_owner = self
+        self.leases.append(lease)
+        stream_target = path
+        if self.pinned:
+            self._check_destination()
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            self.parent_descriptor = self._open_descriptor(path.parent, flags)
+            if self._identity(os.fstat(self.parent_descriptor)) != self.parent_identity:
+                raise ValueError("export_destination_changed")
+            flags = (
+                os.O_WRONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+            )
+            if self.target_identity is None:
+                flags |= os.O_CREAT | os.O_EXCL
+            self.target_descriptor = self._open_descriptor(
+                path.name, flags, dir_fd=self.parent_descriptor
+            )
+            target = os.fstat(self.target_descriptor)
+            if not stat.S_ISREG(target.st_mode) or (
+                self.target_identity is not None
+                and self._identity(target) != self.target_identity
+            ):
+                raise ValueError("export_destination_changed")
+            self._check_destination()
+            os.ftruncate(self.target_descriptor, 0)
+            stream_target = self.target_descriptor
+        outcome = _ProfileExportOpenOutcome()
+        self.pending.add(outcome)
+        try:
+            return _open_profile_export_stream(stream_target, _outcome=outcome)
+        finally:
+            if outcome.stream is not None:
+                self.streams.add(outcome.stream)
+                self.pending.discard(outcome)
+            elif outcome.rejected:
+                self.pending.discard(outcome)
+
+    def close_descriptor(self, descriptor):
+        self.check()
+        if descriptor not in self.descriptors or descriptor in self.failed_closes:
+            raise ValueError("export_cleanup_unavailable")
+        try:
+            os.close(descriptor)
+        except BaseException as error:
+            self.failed_closes.add(descriptor)
+            self.errors.append(error)
+            self.uncertain = True
+            raise
+        self.descriptors.remove(descriptor)
+
+    def close(self, stream):
+        self.check()
+        if stream not in self.streams or stream in self.failed_closes:
+            raise ValueError("export_cleanup_unavailable")
+        try:
+            stream.close()
+        except BaseException as error:
+            self.failed_closes.add(stream)
+            self.errors.append(error)
+            self.uncertain = True
+            raise
+        self.streams.remove(stream)
+
+    def finish(self):
+        self.check()
+        for stream in self.streams - self.failed_closes:
+            try:
+                self.close(stream)
+            except BaseException:
+                pass
+        # The pinned text stream does not own its FD. An unknown/live stream may still
+        # buffer writes, so keep that target FD; independent parent cleanup settles.
+        for descriptor in tuple(self.descriptors - self.failed_closes):
+            if descriptor == self.target_descriptor and (self.streams or self.pending):
+                continue
+            try:
+                self.close_descriptor(descriptor)
+            except BaseException:
+                pass
+        if self.streams or self.pending or self.descriptors or self.uncertain:
+            return False
+        while self.leases:
+            try:
+                self.leases[-1].close()
+            except BaseException as error:
+                self.errors.append(error)
+                self.uncertain = True
+                return False
+            self.leases.pop()
+        self.library._export_operations.discard(self)
+        return True
+
+    def run(self, content):
+        self.thread = threading.current_thread()
+        failed = False
+        try:
+            self.admit()
+            self.library._write_profile_export(self.path, content, _native=self)
+            if self.pinned:
+                self._check_destination()
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            if not self.finish() and not failed:
+                for error in self.errors:
+                    if not isinstance(error, Exception):
+                        raise error
+                raise ValueError("export_cleanup_unavailable")
+
+
+def _profile_library_action(function):
+    @wraps(function)
+    async def counted(self, *args, **kwargs):
+        if self._maintenance_admission_closed:
+            return (
+                False
+                if function.__name__
+                in {
+                    "delete_selected_profile",
+                    "export_selected_profile",
+                    "import_voice_bundle",
+                }
+                else None
+            )
+        token = object()
+        self._action_calls.add(token)
+        try:
+            return await function(self, *args, **kwargs)
+        finally:
+            self._action_calls.discard(token)
+
+    return counted
+
+
 class STTSProfileLibrary(Widget):
     """Bounded profile list whose repository rows precede capability status."""
 
@@ -1586,6 +1884,14 @@ class STTSProfileLibrary(Widget):
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
+        self._maintenance_admission_closed = False
+        self._maintenance_loop = None
+        self._maintenance_refresh = None
+        self._action_calls = set()
+        self._export_workers = set()
+        self._export_operations = set()
+        self._export_unqualified = False
+        self._bundle_cleanup_failed = False
         self._service_loader = service_loader
         # Task 5 (slice 3): reads the persisted `[app_tts] default_profile_id`
         # setting -- injected exactly like `TTSEventHandler`'s own reader
@@ -1637,6 +1943,101 @@ class STTSProfileLibrary(Widget):
         self._search = None if continuity is None else continuity.search
         self._offset = 0 if continuity is None else continuity.offset
         self._total = 0
+
+    def profile_maintenance_state(self) -> str:
+        """Inspect current UI work without saving, cancelling or discarding it."""
+        if self._retained_editor_draft is not None:
+            return "needs-user-save/discard"
+        modal = self._active_modal
+        if isinstance(modal, TTSProfileEditorModal) and modal.is_mounted:
+            fields = (
+                ("#stts-profile-editor-name", modal.initial_name),
+                ("#stts-profile-editor-model", modal.initial_model_id),
+                ("#stts-profile-editor-voice", modal.initial_voice_id or ""),
+            )
+            if any(
+                modal.query_one(selector, Input).value != initial
+                for selector, initial in fields
+            ):
+                return "needs-user-save/discard"
+        if modal is not None or self._active_bundle_handle is not None:
+            return "pending"
+        if self._bundle_cleanup_failed:
+            return "incomplete"
+        if (
+            self._action_calls
+            or self._export_workers
+            or self._bundle_invalidation_tasks
+            or self._active_page_task is not None
+            or self._retained_cleanup_task is not None
+        ):
+            return "pending"
+        if self._export_operations:
+            return "incomplete"
+        return "ready" if self._live and not self._export_unqualified else "unqualified"
+
+    def _maintenance_close_admission(self):
+        loop = asyncio.get_running_loop()
+        if self._maintenance_loop is None:
+            self._maintenance_loop = loop
+        if self._maintenance_loop is not loop:
+            raise RuntimeError("profile_library_wrong_loop")
+        self._maintenance_admission_closed = True
+        if self._active_page_task is not None or self._pending_page_request is not None:
+            self._maintenance_refresh = (self._search, self._offset)
+        if self._search_timer is not None:
+            self._search_timer.stop()
+            self._search_timer = None
+            self._submit_search()
+        self._sync_selected_actions()
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        self._maintenance_close_admission()
+        while True:
+            state = self.profile_maintenance_state()
+            if state == "ready":
+                return True
+            if (
+                state in {"needs-user-save/discard", "unqualified", "incomplete"}
+                or self._active_modal is not None
+                or self._active_bundle_handle is not None
+            ):
+                return False
+            if monotonic() >= deadline:
+                return False
+            await asyncio.sleep(min(0.01, max(0, deadline - monotonic())))
+
+    async def _maintenance_resume(self):
+        if self._maintenance_loop is not asyncio.get_running_loop() or not self._live:
+            raise RuntimeError("profile_library_unavailable")
+        self._maintenance_admission_closed = False
+        self._sync_selected_actions()
+        request = self._maintenance_refresh
+        self._maintenance_refresh = None
+        if request is not None:
+            self._queue_page_request(*request)
+
+    async def _run_profile_export(self, target, content):
+        native = _ProfileExportOperation(self, target)
+        self._export_operations.add(native)
+        worker = asyncio.create_task(asyncio.to_thread(native.run, content))
+        self._export_workers.add(worker)
+        cancellation = None
+        try:
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError as error:
+                    cancellation = cancellation or error
+                except BaseException:
+                    if not worker.done():
+                        raise
+            result = worker.result()
+            if cancellation is not None:
+                raise cancellation
+            return result
+        finally:
+            self._export_workers.discard(worker)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="stts-profile-header"):
@@ -1794,6 +2195,9 @@ class STTSProfileLibrary(Widget):
     ) -> None:
         if not self._live:
             return
+        if self._maintenance_admission_closed:
+            self._maintenance_refresh = (search, max(0, offset))
+            return
         same_page = search == self._search and max(0, offset) == self._offset
         if same_page and self._selected_profile is not None:
             self._refresh_continuity = self.navigation_continuity()
@@ -1848,6 +2252,9 @@ class STTSProfileLibrary(Widget):
         )
 
     def _start_page_pipeline(self, request: _PageRequest) -> None:
+        if self._maintenance_admission_closed:
+            self._maintenance_refresh = (request.search, request.offset)
+            return
         self._pending_page_request = None
         task = asyncio.create_task(
             self._run_page_pipeline(request),
@@ -1923,11 +2330,15 @@ class STTSProfileLibrary(Widget):
             service = self._service
             if service is None:
                 service = await self._service_loader()
-                if not self._request_is_current(request):
+                if self._maintenance_admission_closed or not self._request_is_current(
+                    request
+                ):
                     return
                 self._service = service
             if service is None:
-                if self._request_is_current(request):
+                if not self._maintenance_admission_closed and self._request_is_current(
+                    request
+                ):
                     self._publish_unavailable()
                 return
 
@@ -1943,17 +2354,23 @@ class STTSProfileLibrary(Widget):
                 store_unavailable = _is_store_unavailable(error)
                 if store_unavailable and self._service is service:
                     self._service = None
-                if self._request_is_current(request):
+                if not self._maintenance_admission_closed and self._request_is_current(
+                    request
+                ):
                     if store_unavailable:
                         self._publish_unavailable()
                     else:
                         self._set_status(_PROFILE_LOAD_FAILED_COPY)
                 return
-            if not self._page_can_publish(request, page):
+            if self._maintenance_admission_closed or not self._page_can_publish(
+                request, page
+            ):
                 return
             self._publish_page(request, page)
             await asyncio.sleep(0)
-            if not self._rendered_page_is_current(request, page):
+            if self._maintenance_admission_closed or not self._rendered_page_is_current(
+                request, page
+            ):
                 return
 
             self._active_page_phase = "availability"
@@ -1967,11 +2384,15 @@ class STTSProfileLibrary(Widget):
                         request,
                         page,
                     )
+                    and not self._maintenance_admission_closed
                     and self._availability_status_can_publish()
                 ):
                     self._set_status(_PROFILE_AVAILABILITY_FAILED_COPY)
                 return
-            if self._availability_can_publish(request, page, availability):
+            if (
+                not self._maintenance_admission_closed
+                and self._availability_can_publish(request, page, availability)
+            ):
                 pending_loaded = self._pending_verification_target(page)
                 self._publish_availability(
                     page,
@@ -1991,7 +2412,9 @@ class STTSProfileLibrary(Widget):
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - publish bounded failure only
-            if self._request_is_current(request):
+            if not self._maintenance_admission_closed and self._request_is_current(
+                request
+            ):
                 self._set_status(_PROFILE_LOAD_FAILED_COPY)
 
     def _request_is_current(self, request: _PageRequest) -> bool:
@@ -2291,6 +2714,9 @@ class STTSProfileLibrary(Widget):
     ) -> None:
         """Refresh one still-current row after matching sample evidence."""
 
+        if self._maintenance_admission_closed:
+            self._maintenance_refresh = (self._search, self._offset)
+            return
         if not self._live or type(availability) is not TTSProfileAvailability:
             return
         key = str(loaded.profile.profile_id)
@@ -2362,7 +2788,9 @@ class STTSProfileLibrary(Widget):
 
     def _sync_selected_actions(self) -> None:
         base_disabled = (
-            self._selected_profile is None or not self._rendered_request_is_current()
+            self._maintenance_admission_closed
+            or self._selected_profile is None
+            or not self._rendered_request_is_current()
         )
         for selector in (
             "#stts-profile-edit-btn",
@@ -2574,6 +3002,7 @@ class STTSProfileLibrary(Widget):
             return False
         return configured_id == loaded.profile.profile_id
 
+    @_profile_library_action
     async def create_from_artifact(
         self,
         display_name: str,
@@ -2608,6 +3037,7 @@ class STTSProfileLibrary(Widget):
             self._queue_page_request(self._search, self._offset)
         return loaded
 
+    @_profile_library_action
     async def edit_selected_profile(self) -> LoadedTTSProfile | None:
         """Edit the exact selected loaded version through the focused modal."""
 
@@ -2640,20 +3070,24 @@ class STTSProfileLibrary(Widget):
         except Exception:  # noqa: BLE001 - isolate modal lifecycle failure
             self._set_status(PROFILE_ACTION_FAILED_COPY)
             return None
-        if draft is None or not self._action_target_is_current(loaded):
+        if draft is None:
             return None
         if type(draft) is not TTSProfileDraft:
             self._set_status(_PROFILE_VALIDATION_COPY)
             return None
+        if not self._action_target_is_current(loaded):
+            self._retained_editor_draft = (loaded_key, draft)
+            return None
         try:
             updated = await service.update_profile(loaded, draft)
         except asyncio.CancelledError:
+            self._retained_editor_draft = (loaded_key, draft)
             raise
         except Exception as error:  # noqa: BLE001 - map to bounded UI copy
-            if isinstance(error, ProfileRepositoryError) and error.code in {
-                "conflict",
-                "stale",
-            }:
+            if self._maintenance_admission_closed or (
+                isinstance(error, ProfileRepositoryError)
+                and error.code in {"conflict", "stale"}
+            ):
                 self._retained_editor_draft = (loaded_key, draft)
             self._set_status(profile_action_error_copy(error))
             return None
@@ -2663,6 +3097,7 @@ class STTSProfileLibrary(Widget):
             self._queue_page_request(self._search, self._offset)
         return updated
 
+    @_profile_library_action
     async def duplicate_selected_profile(self) -> LoadedTTSProfile | None:
         """Duplicate the exact selected version under an explicit new name."""
 
@@ -2708,6 +3143,7 @@ class STTSProfileLibrary(Widget):
             self._queue_page_request(self._search, self._offset)
         return duplicated
 
+    @_profile_library_action
     async def delete_selected_profile(self) -> bool:
         """Delete only after an advisory count and final repository check."""
 
@@ -2806,6 +3242,9 @@ class STTSProfileLibrary(Widget):
             self._bundle_invalidation_tasks[handle] = task
 
             def _release_completed(candidate: asyncio.Task[None]) -> None:
+                if candidate.cancelled() or candidate.exception() is not None:
+                    self._bundle_cleanup_failed = True
+                    return
                 if self._bundle_invalidation_tasks.get(handle) is candidate:
                     self._bundle_invalidation_tasks.pop(handle, None)
 
@@ -2865,7 +3304,7 @@ class STTSProfileLibrary(Widget):
         return None if selected is None else Path(str(selected))
 
     @staticmethod
-    def _write_profile_export(target: Path, content: str) -> None:
+    def _write_profile_export(target: Path, content: str, *, _native=None) -> None:
         from tldw_chatbook.Utils.path_validation import validate_path
 
         expanded = target.expanduser()
@@ -2876,8 +3315,24 @@ class STTSProfileLibrary(Widget):
             base_directory=expanded.parent,
             redact_paths=True,
         )
-        validated.write_text(content, encoding="utf-8")
+        if _native is None:
+            validated.write_text(content, encoding="utf-8")
+            return
+        stream = _native.open(validated)
+        failed = False
+        try:
+            stream.write(content)
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            try:
+                _native.close(stream)
+            except BaseException:
+                if not failed:
+                    raise
 
+    @_profile_library_action
     async def export_selected_profile(self) -> bool:
         """Export sanitized JSON by default; bundle export is explicit and gated."""
 
@@ -2928,7 +3383,7 @@ class STTSProfileLibrary(Widget):
             target = await self._choose_profile_export_path()
             if target is None or not self._action_target_is_current(loaded):
                 return False
-            await asyncio.to_thread(self._write_profile_export, target, content)
+            await self._run_profile_export(target, content)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - never render path or profile values
@@ -2970,6 +3425,7 @@ class STTSProfileLibrary(Widget):
         self._set_status(PROFILE_BUNDLE_EXPORT_COMPLETE_COPY)
         return True
 
+    @_profile_library_action
     async def import_voice_bundle(self) -> bool:
         """Warn before path authority, then review and commit safe facts only."""
 
@@ -3107,6 +3563,8 @@ class STTSProfileLibrary(Widget):
     @on(Button.Pressed, "#stts-profile-preview-btn")
     def _handle_preview(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._maintenance_admission_closed:
+            return
         loaded = self._selected_profile
         if loaded is None or not self._action_target_is_current(loaded):
             return
@@ -3157,6 +3615,8 @@ class STTSProfileLibrary(Widget):
         """Execute only the operation projected for the selected fresh row."""
 
         event.stop()
+        if self._maintenance_admission_closed:
+            return
         loaded = self._selected_profile
         if loaded is None or not self._action_target_is_current(loaded):
             return
@@ -3197,6 +3657,8 @@ class STTSProfileLibrary(Widget):
     @on(Button.Pressed, "#stts-profile-edit-btn")
     def _handle_edit(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._maintenance_admission_closed:
+            return
         self.run_worker(
             self.edit_selected_profile(),
             name="edit_voice_profile",
@@ -3208,6 +3670,8 @@ class STTSProfileLibrary(Widget):
     @on(Button.Pressed, "#stts-profile-duplicate-btn")
     def _handle_duplicate(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._maintenance_admission_closed:
+            return
         self.run_worker(
             self.duplicate_selected_profile(),
             name="duplicate_voice_profile",
@@ -3219,6 +3683,8 @@ class STTSProfileLibrary(Widget):
     @on(Button.Pressed, "#stts-profile-export-btn")
     def _handle_export(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._maintenance_admission_closed:
+            return
         self.run_worker(
             self.export_selected_profile(),
             name="export_voice_profile",
@@ -3230,6 +3696,8 @@ class STTSProfileLibrary(Widget):
     @on(Button.Pressed, "#stts-profile-import-btn")
     def _handle_import(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._maintenance_admission_closed:
+            return
         self.run_worker(
             self.import_voice_bundle(),
             name="import_voice_bundle",
@@ -3241,6 +3709,8 @@ class STTSProfileLibrary(Widget):
     @on(Button.Pressed, "#stts-profile-delete-btn")
     def _handle_delete(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._maintenance_admission_closed:
+            return
         self.run_worker(
             self.delete_selected_profile(),
             name="delete_voice_profile",

@@ -187,6 +187,10 @@ def _repository_operation(participant):
 
 class _Acquisition:
     def __init__(self):
+        self.pid = os.getpid()
+        self.thread = threading.current_thread()
+        self.task = _task_identity()
+        self.initializing_root = None
         self.cancel = threading.Event()
         self.operation = getattr(_operation_local, "operation", None)
         with _lock:
@@ -205,6 +209,43 @@ class _Acquisition:
             _check_operation(self.operation, path)
         elif _pause is not None:
             raise bootstrap.RecoveryRequired("storage_locally_paused")
+
+    @contextmanager
+    def initializing(self, root, path):
+        # The marker and native registration are a single same-process first-use
+        # interval. Durable incomplete state from any other interval still refuses.
+        with _changed:
+            while True:
+                self.check(path)
+                if (
+                    self not in _pending_acquisitions
+                    or self.pid != os.getpid()
+                    or self.thread is not threading.current_thread()
+                    or self.task is not _task_identity()
+                ):
+                    raise bootstrap.RecoveryRequired("acquisition_provenance_invalid")
+                leader = next(
+                    (
+                        other
+                        for other in _pending_acquisitions
+                        if other.initializing_root == root and other.pid == self.pid
+                    ),
+                    None,
+                )
+                if leader is None:
+                    self.initializing_root = root
+                    break
+                if leader.thread is self.thread:
+                    raise bootstrap.RecoveryRequired(
+                        "recursive_authority_initialization"
+                    )
+                _changed.wait(0.01)
+        try:
+            yield
+        finally:
+            with _changed:
+                self.initializing_root = None
+                _changed.notify_all()
 
     def close(self):
         with _changed:
@@ -362,7 +403,9 @@ class StorageLease:
         if retired is not None:
             retired.thread.join()
             with _lock:
-                if retired.error is None or isinstance(retired.error, AdmissionCancelled):
+                if retired.error is None or isinstance(
+                    retired.error, AdmissionCancelled
+                ):
                     _retiring_holds.discard(retired)
                 _changed.notify_all()
 
@@ -452,29 +495,30 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
             and attempt.operation.key != (os.getpid(), str(root))
         ):
             raise bootstrap.RecoveryRequired("operation_native_scope_changed")
-    allowed, reason = bootstrap.startup_permission(selector, root)
-    if not allowed:
-        raise bootstrap.RecoveryRequired(reason)
-    if getattr(_local, "admitted", False):
-        raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
-    existing = root.parent
-    while not existing.exists():
-        existing = existing.parent
-    allowed, reason = qualified_for("admission", existing)
-    if not allowed:
-        # Preserve a positively disjoint startup decision, while still limiting
-        # each owner path to its verified scope. Native unavailability is not a
-        # conflict with an unrelated operation and never qualifies maintenance.
-        _scope(root, selector, lexical_path(path) if path is not None else None)
+    with attempt.initializing(root, path):
         allowed, reason = bootstrap.startup_permission(selector, root)
         if not allowed:
             raise bootstrap.RecoveryRequired(reason)
-        with _lock:
-            attempt.check(path)
-            return StorageLease(None)
-    # Opening existing authority can wait on the registry. Retiring unrelated
-    # owners must remain possible while that or a native gate is contended.
-    authority = admission_authority(root)
+        if getattr(_local, "admitted", False):
+            raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
+        existing = root.parent
+        while not existing.exists():
+            existing = existing.parent
+        allowed, reason = qualified_for("admission", existing)
+        if not allowed:
+            # Preserve a positively disjoint startup decision, while still limiting
+            # each owner path to its verified scope. Native unavailability is not a
+            # conflict with an unrelated operation and never qualifies maintenance.
+            _scope(root, selector, lexical_path(path) if path is not None else None)
+            allowed, reason = bootstrap.startup_permission(selector, root)
+            if not allowed:
+                raise bootstrap.RecoveryRequired(reason)
+            with _lock:
+                attempt.check(path)
+                return StorageLease(None)
+        # Opening existing authority can wait on the registry. Retiring unrelated
+        # owners must remain possible while that or a native gate is contended.
+        authority = admission_authority(root)
     with _lock:
         attempt.check(path)
         names = _scope(root, selector, lexical_path(path) if path is not None else None)
@@ -926,8 +970,12 @@ def _digest_recovery_file(
 ) -> tuple[int, str]:
     """Return actual byte count/SHA256 only after positive native retirement."""
     return _consume_recovery_file(
-        owner_id, candidate, max_bytes=max_bytes,
-        collect=False, cancel=cancel, digest=True,
+        owner_id,
+        candidate,
+        max_bytes=max_bytes,
+        collect=False,
+        cancel=cancel,
+        digest=True,
     )
 
 

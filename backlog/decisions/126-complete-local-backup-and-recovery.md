@@ -826,3 +826,27 @@ Runtime-root inventory classification (including empty roots and foreign residue
 whole service/backend/process and dirty UI/consumer safe points, app/startup
 release, shared voice paths and whole-Task10 review remain required. No Complete
 backup, replacement, startup release, or other-platform qualification is added.
+
+
+### Task10 phase14j ruling118 — original concurrent first initialization
+
+The same-process first authority initializer reserves its resolved root on its actual pending acquisition record under the existing coordinator condition. Followers wait outside the lock and recheck original cancellation and provenance before proceeding. The initializer runs original startup/native qualification and authority construction outside the coordinator lock and releases its reservation in finally. Same-thread recursion refuses rather than waiting for itself. Incomplete, failed, crashed or foreign-process evidence retains the original fail-closed behavior; this does not repair or retry durable uncertainty, add a registry/mutex, or qualify whole-app startup. Required evidence includes deterministic marker-before-register follower ordering and the supported uninitialized128-sample service case. Exact shared-source BASE reproduces the prior follower refusal at startup_permission; unchanged external dependencies do not make that a whole-repository BASE run.
+
+
+### Task10 phase14j rulings115–117 — profile evidence and Library work
+
+Original profile-service admission/drain/resume counts actual PID/Thread/Task callers through final evidence/result work; synchronous evidence legitimately runs on a worker thread. Original same-receiver nested calls can settle while admission closes, preserving artifact coordinator before consumer fence lock order. Fresh sample FD/codec work always reacquires ordinary selected file and required-parent admission before metadata/allocation. Optional private native outcomes preserve known returned resources before late errors, unknown allocations and first uncertain native/lease closes independently of content validity. Original body controls win over cleanup controls while both outcomes stay accounted. Default standalone/shared Settings validators keep their existing API/behavior.
+
+The original lazy app profile-service factory binds its exact original repository/config/profile/dependency/coordinator and static no-shadow identities through profile_source. It checks before admission, new native work, final evidence/result publication and resume. Custom/prebinding/proxy sources are not replayed or promoted; a source relationship does not qualify artifact runtime work.
+
+Profile Library readiness preserves exact mounted typed input, submitted conflict or maintenance-refused drafts, review handles and their original service sessions. Maintenance neither dismisses nor saves/discards them. It closes new action/page admission, defers late page/search publication, and retains actual result/cleanup lifetimes. Reopened-conflict Cancel preserves submitted text; original refresh/retry Save resolves it. Already submitted text is retained before stale action-target refusal. Sanitized export retains actual queued/running writer and native stream through repeated cancellation, original overwrite bytes/result and first uncertain cleanup; caller destinations are not baseline resources. Service/file completion alone cannot retire the remaining Speech caller's queued/post-thread UI work. Whole-app composition and all other Task10 debts remain open.
+
+
+### Task10 phase14j ruling119 — selected export before truncation
+
+A reached output-parent replacement after original path validation redirected the sanitized writer. The exact existing export operation now snapshots selected identities after ordinary admission, owns/verifies the parent descriptor, opens an existing output without truncation and verifies the selected regular-file FD before truncating it. Missing output uses exclusive creation beneath the verified parent; this preserves ordinary new/overwrite behavior without replacing or deleting existing output. Stream and parent/target FDs have explicit separate owning closers and retained first/unknown outcomes. Later pathname replacement cannot redirect writes through the already selected FD. This is one caller-selected writer, not a generic filesystem capability or baseline resource.
+
+
+### Task10 phase14j ruling120 — ordinary platform compatibility
+
+Pinned export is selected upfront from original primitive identity, required flags and original dir_fd support. When those primitives are unavailable before allocation, retain the original ordinary pathname stream route and its complete operation/stream outcomes; Library maintenance remains explicitly unqualified. A failed or unknown pinned allocation never selects fallback. OS Independent ordinary use is preserved without a Windows/native-platform qualification claim, mutation of global capability metadata or use of fallback as a capture capability.

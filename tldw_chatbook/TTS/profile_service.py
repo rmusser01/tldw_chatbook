@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
+import sys
+import threading
+from functools import wraps
+from time import monotonic
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -12,7 +17,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from itertools import islice
 from threading import RLock
@@ -1358,6 +1363,26 @@ class PortableProfileImportResult:
         object.__setattr__(self, "assignment", assignment)
 
 
+def _profile_call(function):
+    """Count a concrete original caller through its result, not its DB lease."""
+
+    @wraps(function)
+    async def counted(self, *args, **kwargs):
+        from .profile_source import check_profile_service_source
+
+        check_profile_service_source(self)
+        with self._service_call(function.__code__):
+            result = await function(self, *args, **kwargs)
+            check_profile_service_source(self)
+            return result
+
+    _PROFILE_CALL_CODES.add(function.__code__)
+    return counted
+
+
+_PROFILE_CALL_CODES = set()
+
+
 class TTSProfileService:
     """Manage native audio.cpp profiles over existing app-owned dependencies."""
 
@@ -1395,10 +1420,115 @@ class TTSProfileService:
         self._sample_evidence_lifecycle: dict[UUID, _ProfileEvidenceLifecycle] = {}
         self._sample_evidence_epoch = 0
         self._consumer_mutation_lock = asyncio.Lock()
+        self._maintenance_admission_closed = False
+        self._owner_loop = None
+        self._service_calls = {}
+        self._native_operations = set()
+        self._configured_source = None
         if artifact_lease_coordinator is not None:
             self._artifact_lease_coordinator = artifact_lease_coordinator
         if _uuid_factory is not None:
             self._uuid_factory = _uuid_factory
+
+    def _check_source(self):
+        from .profile_source import check_profile_service_source
+        check_profile_service_source(self)
+
+    @contextmanager
+    def _service_call(self, code):
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+        identity = (os.getpid(), threading.current_thread(), task)
+        caller = sys._getframe(3)
+        # Only original same-receiver method edges are nested bookkeeping.
+        nested = (
+            caller.f_code in _PROFILE_CALL_CODES
+            and caller.f_locals.get("self") is self
+            and identity in self._service_calls.values()
+        )
+        from .profile_source import check_profile_service_source
+
+        check_profile_service_source(self)
+        token = object()
+        with self._sample_evidence_lock:
+            if self._maintenance_admission_closed and not nested:
+                raise ProfileServiceError("operation_failed")
+            self._service_calls[token] = identity
+        try:
+            yield
+        finally:
+            with self._sample_evidence_lock:
+                self._service_calls.pop(token, None)
+
+    def _maintenance_close_admission(self):
+        loop = asyncio.get_running_loop()
+        if self._owner_loop is None:
+            self._owner_loop = loop
+        if self._owner_loop is not loop:
+            raise ProfileServiceError("operation_failed")
+        with self._sample_evidence_lock:
+            self._maintenance_admission_closed = True
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        self._maintenance_close_admission()
+        while True:
+            with self._sample_evidence_lock:
+                calls = bool(self._service_calls)
+                native = bool(self._native_operations)
+            if not calls:
+                return not native
+            if monotonic() >= deadline:
+                return False
+            await asyncio.sleep(min(0.01, max(0, deadline - monotonic())))
+
+    async def _maintenance_resume(self):
+        self._maintenance_close_admission()
+        from .profile_source import check_profile_service_source
+
+        check_profile_service_source(self)
+        with self._sample_evidence_lock:
+            self._maintenance_admission_closed = False
+
+    def _validate_sample_audio(self, artifact, profile):
+        from .sample_audio_validation import _SampleNativeOperation
+
+        from pathlib import Path
+
+        path = artifact.path
+        if (
+            type(path) is not type(Path())
+            or not path.is_absolute()
+            or ".." in path.parts
+        ):
+            return validate_playable_audio_file(
+                path,
+                profile.response_format,
+                artifact.content_type,
+                artifact.metadata,
+            )
+        native = _SampleNativeOperation(self, path)
+        with self._sample_evidence_lock:
+            self._native_operations.add(native)
+        failed = False
+        try:
+            return validate_playable_audio_file(
+                artifact.path,
+                profile.response_format,
+                artifact.content_type,
+                artifact.metadata,
+                _native=native,
+            )
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            native.finish()
+            if not failed:
+                for error in native.errors:
+                    if not isinstance(error, Exception):
+                        raise error
 
     def _require_portable_repository(self) -> _PortableProfileRepositoryProtocol:
         """Return portability operations without expanding constructor needs."""
@@ -1432,8 +1562,9 @@ class TTSProfileService:
     async def consumer_mutation_fence(self) -> AsyncIterator[None]:
         """Serialize one external repository mutation with bounded snapshots."""
 
-        async with self._consumer_mutation_lock:
-            yield
+        with self._service_call(TTSProfileService.consumer_mutation_fence.__wrapped__.__code__):
+            async with self._consumer_mutation_lock:
+                yield
 
     @asynccontextmanager
     async def _lease_artifact_consumers(
@@ -1480,6 +1611,7 @@ class TTSProfileService:
             raise cancellation
         return result
 
+    @_profile_call
     async def list_profiles(
         self,
         *,
@@ -1525,6 +1657,7 @@ class TTSProfileService:
         self._require_repository_generation(generation)
         return snapshot
 
+    @_profile_call
     async def bounded_profile_assignment_snapshot(
         self,
     ) -> tuple[tuple[TTSGenerationProfile, int], ...]:
@@ -1566,6 +1699,7 @@ class TTSProfileService:
                 raise ProfileServiceError("operation_failed")
             return tuple(captured)
 
+    @_profile_call
     async def get_assigned_profile(
         self,
         character_ref: CharacterRef,
@@ -1618,6 +1752,7 @@ class TTSProfileService:
             snapshot=snapshot,
         )
 
+    @_profile_call
     async def get_profile(self, profile_id: UUID) -> LoadedTTSProfile:
         """Load one exact stored profile revision by id, if it still exists.
 
@@ -1671,6 +1806,7 @@ class TTSProfileService:
             profile=profile,
         )
 
+    @_profile_call
     async def get_reference(
         self,
         profile_id: UUID,
@@ -1714,6 +1850,7 @@ class TTSProfileService:
         self._require_repository_generation(generation)
         return reference
 
+    @_profile_call
     async def observe_availability(
         self,
         page: TTSProfilePageSnapshot,
@@ -1944,6 +2081,7 @@ class TTSProfileService:
             profiles=availability,
         )
 
+    @_profile_call
     async def observe_portable_profile(
         self,
         profile: PortableTTSProfile,
@@ -2016,6 +2154,7 @@ class TTSProfileService:
             availability=availability,
         )
 
+    @_profile_call
     async def inspect_portable_profile_import(
         self,
         observation: PortableProfileAvailabilityObservation,
@@ -2087,6 +2226,7 @@ class TTSProfileService:
             copy_candidate=copy_candidate,
         )
 
+    @_profile_call
     async def commit_portable_profile_import(
         self,
         plan: PortableProfileImportPlan,
@@ -2189,6 +2329,7 @@ class TTSProfileService:
             assignment=None,
         )
 
+    @_profile_call
     async def create_from_artifact(
         self,
         display_name: str,
@@ -2264,6 +2405,17 @@ class TTSProfileService:
     ) -> None:
         """Remember exact successful sample provenance for this process only."""
 
+        try:
+            from .profile_source import check_profile_service_source
+
+            check_profile_service_source(self)
+            with self._service_call(self._record_sample_evidence.__func__.__code__):
+                self._record_sample_evidence(loaded, artifact)
+        except (ProfileServiceError, ProfileRepositoryError):
+            return  # Ordinary ineligible/refused evidence has no cache effect.
+
+    def _record_sample_evidence(self, loaded, artifact):
+
         if type(artifact) is not STTSGeneratedAudio:
             return
         try:
@@ -2299,15 +2451,7 @@ class TTSProfileService:
                 or audio_format.removeprefix(".") != profile.response_format
             ):
                 return
-            if (
-                validate_playable_audio_file(
-                    artifact.path,
-                    profile.response_format,
-                    artifact.content_type,
-                    artifact.metadata,
-                )
-                is None
-            ):
+            if self._validate_sample_audio(artifact, profile) is None:
                 return
             provider_revision = self._current_configuration_revision(
                 profile.provider_id
@@ -2333,6 +2477,12 @@ class TTSProfileService:
         except Exception:  # noqa: BLE001 - malformed artifacts are ineligible
             return
 
+        try:
+            from .profile_source import check_profile_service_source
+
+            check_profile_service_source(self)
+        except (ProfileRepositoryError, ProfileServiceError):
+            return
         with self._sample_evidence_lock:
             lifecycle = self._sample_evidence_lifecycle.get(evidence.profile_id)
             if (
@@ -2348,6 +2498,7 @@ class TTSProfileService:
                 oldest_profile_id = next(iter(self._sample_evidence))
                 self._sample_evidence.pop(oldest_profile_id, None)
 
+    @_profile_call
     async def create_clone_from_artifact(
         self,
         display_name: str,
@@ -2464,6 +2615,7 @@ class TTSProfileService:
         self._require_repository_generation(repository_generation)
         return LoadedTTSProfile(repository_generation, profile)
 
+    @_profile_call
     async def update_profile(
         self,
         loaded: LoadedTTSProfile,
@@ -2534,6 +2686,7 @@ class TTSProfileService:
             profile=profile,
         )
 
+    @_profile_call
     async def duplicate_profile(
         self,
         loaded: LoadedTTSProfile,
@@ -2603,6 +2756,7 @@ class TTSProfileService:
             profile=profile,
         )
 
+    @_profile_call
     async def assignment_count(self, loaded: LoadedTTSProfile) -> int:
         """Return the advisory count only for the loaded store generation."""
 
@@ -2626,6 +2780,7 @@ class TTSProfileService:
             raise ProfileValidationError("assignment_count")
         return value
 
+    @_profile_call
     async def set_assignment(
         self,
         character_ref: CharacterRef,
@@ -2728,6 +2883,7 @@ class TTSProfileService:
         self._require_repository_generation(repository_generation)
         return assignment
 
+    @_profile_call
     async def detach_assignment(
         self,
         assignment: CharacterTTSAssignment,
@@ -2811,6 +2967,7 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         self._require_repository_generation(expected_generation)
 
+    @_profile_call
     async def delete_profile(self, loaded: LoadedTTSProfile) -> None:
         """Delete one loaded profile while retaining repository protection."""
 
@@ -3512,3 +3669,10 @@ class TTSProfileService:
 # this service merely to bind a materializer or a standalone bundle constructor.
 _ORIGINAL_PROFILE_SERVICE_CLASS = TTSProfileService
 _ORIGINAL_CONSUMER_MUTATION_FENCE = TTSProfileService.consumer_mutation_fence
+
+_ORIGINAL_PROFILE_SERVICE_METHODS = tuple(
+    (name, value) for name, value in vars(TTSProfileService).items()
+    if callable(value) and (not name.startswith("_") or name in {
+        "_check_source", "_service_call", "_record_sample_evidence", "_validate_sample_audio",
+    })
+)

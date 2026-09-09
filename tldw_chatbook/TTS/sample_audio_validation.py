@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import threading
 import io
 import os
 import stat
 import wave
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -65,7 +68,9 @@ def wav_has_complete_frames(body: bytes) -> bool:
         return False
 
 
-def compressed_audio_has_decodable_frame(body: bytes, response_format: str) -> bool:
+def compressed_audio_has_decodable_frame(
+    body: bytes, response_format: str, *, _native=None
+) -> bool:
     """Decode at most one bounded audio frame, failing closed without PyAV."""
 
     av = get_safe_import("av", "av")
@@ -79,11 +84,12 @@ def compressed_audio_has_decodable_frame(body: bytes, response_format: str) -> b
         "aac": ("aac", frozenset({"aac"})),
     }[response_format]
     try:
-        with av.open(
-            io.BytesIO(body),
-            mode="r",
-            format=container_format,
-        ) as container:
+        context = (
+            av.open(io.BytesIO(body), mode="r", format=container_format)
+            if _native is None
+            else _native.container(av, body, container_format)
+        )
+        with context as container:
             streams = tuple(container.streams.audio)
             if len(streams) != 1:
                 return False
@@ -120,6 +126,7 @@ def audio_body_matches_format(
     channels: int | None = None,
     sample_width_bytes: int | None = None,
     max_bytes: int = MAX_PLAYABLE_AUDIO_BYTES,
+    _native=None,
 ) -> bool:
     """Return whether bounded bytes contain playable audio of the claimed type."""
 
@@ -141,7 +148,13 @@ def audio_body_matches_format(
     if response_format == "wav":
         return wav_has_complete_frames(body)
     if response_format in {"mp3", "opus", "flac", "aac"}:
-        return compressed_audio_has_decodable_frame(body, response_format)
+        return (
+            compressed_audio_has_decodable_frame(body, response_format)
+            if _native is None
+            else compressed_audio_has_decodable_frame(
+                body, response_format, _native=_native
+            )
+        )
     if response_format == "pcm":
         if (
             type(sample_rate_hz) is not int
@@ -168,10 +181,191 @@ def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
     )
 
 
+_ORIGINAL_SAMPLE_OPEN = os.open
+
+
+@dataclass(eq=False)
+class _SampleOpenOutcome:
+    descriptor: int | None = None
+    rejected: bool = False
+
+
+def _open_sample_descriptor(path, flags, *, _outcome):
+    primitive = os.open
+    try:
+        descriptor = primitive(path, flags)
+    except OSError:
+        if primitive is _ORIGINAL_SAMPLE_OPEN:
+            _outcome.rejected = True
+        raise
+    _outcome.descriptor = descriptor
+    return descriptor
+
+
+@dataclass(eq=False)
+class _SampleContainerOutcome:
+    container: object | None = None
+
+
+def _open_sample_container(av, body, container_format, *, _outcome):
+    container = av.open(io.BytesIO(body), mode="r", format=container_format)
+    _outcome.container = container
+    return container
+
+
+class _SampleNativeOperation:
+    """One original service sample read; no transferable source authority."""
+
+    def __init__(self, service, path):
+        self.service = service
+        self.path = path
+        self.pid = os.getpid()
+        self.thread = threading.current_thread()
+        try:
+            self.task = asyncio.current_task()
+        except RuntimeError:
+            self.task = None
+        self.leases = []
+        self.pending = set()
+        self.descriptors = set()
+        self.containers = set()
+        self.failed_closes = set()
+        self.errors = []
+        self.uncertain = False
+
+    def check(self, path):
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+        if (
+            type(path) is not type(Path())
+            or path != self.path
+            or self.pid != os.getpid()
+            or self.thread is not threading.current_thread()
+            or self.task is not task
+            or self not in self.service._native_operations
+        ):
+            raise ValueError("sample_operation_unavailable")
+
+    def admit(self):
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+        self.check(self.path)
+        from .profile_source import check_profile_service_source
+
+        check_profile_service_source(self.service)
+        if self.uncertain or self.pending:
+            raise ValueError("sample_operation_unavailable")
+        # Independent ordinary holds survive an uncertain first lease release.
+        for selected in (self.path, self.path, self.path.parent):
+            lease = acquire_storage(selected)
+            lease.native_owner = self
+            self.leases.append(lease)
+
+    def open(self, path, flags):
+        self.check(path)
+        self.admit()
+        outcome = _SampleOpenOutcome()
+        self.pending.add(outcome)
+        try:
+            return _open_sample_descriptor(path, flags, _outcome=outcome)
+        finally:
+            if outcome.descriptor is not None:
+                self.descriptors.add(outcome.descriptor)
+                self.pending.discard(outcome)
+            elif outcome.rejected:
+                self.pending.discard(outcome)
+
+    def close(self, descriptor):
+        self.check(self.path)
+        if descriptor in self.failed_closes or descriptor not in self.descriptors:
+            raise ValueError("sample_cleanup_unavailable")
+        try:
+            os.close(descriptor)
+        except BaseException as error:
+            self.failed_closes.add(descriptor)
+            self.errors.append(error)
+            self.uncertain = True
+            raise
+        self.descriptors.remove(descriptor)
+
+    @contextmanager
+    def container(self, av, body, container_format):
+        self.admit()
+        outcome = _SampleContainerOutcome()
+        self.pending.add(outcome)
+        container = None
+        failed = False
+        try:
+            try:
+                container = _open_sample_container(
+                    av, body, container_format, _outcome=outcome
+                )
+            finally:
+                if outcome.container is not None:
+                    self.containers.add(outcome.container)
+                    self.pending.discard(outcome)
+            yield container
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            if container is not None:
+                try:
+                    self.close_container(container)
+                except BaseException:
+                    if not failed:
+                        raise
+
+    def close_container(self, container):
+        self.check(self.path)
+        if container not in self.containers or container in self.failed_closes:
+            raise ValueError("sample_cleanup_unavailable")
+        try:
+            container.close()
+        except BaseException as error:
+            self.failed_closes.add(container)
+            self.errors.append(error)
+            self.uncertain = True
+            raise
+        self.containers.remove(container)
+
+    def finish(self):
+        self.check(self.path)
+        for container in tuple(self.containers - self.failed_closes):
+            try:
+                self.close_container(container)
+            except BaseException:
+                pass
+        for descriptor in tuple(self.descriptors - self.failed_closes):
+            try:
+                self.close(descriptor)
+            except BaseException:
+                pass  # Retained exact first outcome; never retry numeric FDs.
+        if self.pending or self.descriptors or self.containers or self.uncertain:
+            return False
+        while self.leases:
+            try:
+                self.leases[-1].close()
+            except BaseException as error:
+                self.errors.append(error)
+                self.uncertain = True
+                return False
+            self.leases.pop()
+        self.service._native_operations.discard(self)
+        return True
+
+
 def _read_bounded_regular_file(
     path: Path,
     max_bytes: int,
+    *,
+    _native=None,
 ) -> tuple[bytes, os.stat_result] | None:
+    if _native is not None:
+        _native.check(path)
+        _native.admit()
     try:
         validate_path(
             path,
@@ -184,11 +378,14 @@ def _read_bounded_regular_file(
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     descriptor = -1
+    failed = False
     try:
         before = os.lstat(path)
         if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= max_bytes:
             return None
-        descriptor = os.open(path, flags)
+        descriptor = (
+            os.open(path, flags) if _native is None else _native.open(path, flags)
+        )
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or not _same_file(before, opened):
             return None
@@ -211,12 +408,18 @@ def _read_bounded_regular_file(
         return body, after
     except (OSError, ValueError):
         return None
+    except BaseException:
+        failed = True
+        raise
     finally:
         if descriptor >= 0:
             try:
-                os.close(descriptor)
+                (os.close if _native is None else _native.close)(descriptor)
             except OSError:
                 pass
+            except BaseException:
+                if _native is None or not failed:
+                    raise
 
 
 def validate_playable_audio_file(
@@ -226,6 +429,7 @@ def validate_playable_audio_file(
     metadata: Mapping[str, object],
     *,
     max_bytes: int = MAX_PLAYABLE_AUDIO_BYTES,
+    _native=None,
 ) -> ValidatedPlayableAudio | None:
     """Validate one exact artifact-owned file without following replacements.
 
@@ -253,7 +457,11 @@ def validate_playable_audio_file(
         or max_bytes <= 0
     ):
         return None
-    read = _read_bounded_regular_file(path, max_bytes)
+    read = (
+        _read_bounded_regular_file(path, max_bytes)
+        if _native is None
+        else _read_bounded_regular_file(path, max_bytes, _native=_native)
+    )
     if read is None:
         return None
     body, opened = read
@@ -280,6 +488,7 @@ def validate_playable_audio_file(
             sample_width_bytes if type(sample_width_bytes) is int else None
         ),
         max_bytes=max_bytes,
+        **({"_native": _native} if _native is not None else {}),
     ):
         return None
     return ValidatedPlayableAudio(
