@@ -19001,7 +19001,7 @@ class TldwCli(
 
         loguru_logger.info("Application quit initiated")
         runtime = getattr(self, "console_runtime", None)
-        promotion_owner = getattr(runtime, "voice_promotion_owner", None)
+        promotion_owner = getattr(runtime, "_voice_promotion_owner", None)
         promotion_token = None
         promotion_permit = None
         promotion_permit_consumed = False

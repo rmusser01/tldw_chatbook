@@ -78,7 +78,6 @@ from tldw_chatbook.Widgets.Console.console_character_context import (
 )
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
-from tldw_chatbook.Widgets.Console.console_voice_preview import VoicePreviewProjection
 from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
 )
@@ -128,6 +127,7 @@ from .workspace import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Widgets.Console.console_voice_preview import VoicePreviewProjection
     from ..Screens.chat_screen import ChatScreen
 
 __all__ = ["build_console_controllers"]
@@ -394,7 +394,7 @@ def _sync_hands_free_presentation(screen: Any, active: bool) -> None:
     speech_controls.sync_hands_free_state(active)
 
 
-def _project_voice_preview(screen: Any, projection: VoicePreviewProjection) -> None:
+def _project_voice_preview(screen: Any, projection: "VoicePreviewProjection") -> None:
     """Project provisional voice text only into the mounted transcript view."""
     try:
         transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)

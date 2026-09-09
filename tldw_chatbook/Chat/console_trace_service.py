@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Generic, Literal, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast, overload
 from weakref import ReferenceType, ref
 
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
@@ -80,18 +80,16 @@ from tldw_chatbook.DB.transaction_observer import (
     register_transaction_completion,
 )
 
-from tldw_chatbook.Chat.console_voice_trace_gateway import (
-    _ClaimReleaseDisposition,
-    ProvisionalTraceEnvelope,
-    ProvisionalTraceManifest,
-    ProvisionalTraceRegistry,
-    ProvisionalTraceUnavailable,
-    VoiceTraceImportContext,
-)
-from tldw_chatbook.Chat.console_voice_trace_promotion import (
-    ConfirmedPreCommitTraceImportError,
-    PostDispatchTraceImportResult,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_trace_gateway import (
+        ProvisionalTraceEnvelope,
+        ProvisionalTraceManifest,
+        ProvisionalTraceRegistry,
+        VoiceTraceImportContext,
+    )
+    from tldw_chatbook.Chat.console_voice_trace_promotion import (
+        PostDispatchTraceImportResult,
+    )
 TRACE_VALUE_NORMALIZATION_VERSION = "canonical-json-v1"
 TRACE_VALUE_MEDIA_TYPE = "application/json"
 TRACE_CRITICAL_WRITE_WAL_AUTOCHECKPOINT_PAGES = 0
@@ -1678,6 +1676,15 @@ class ConsoleTraceService:
         is invoked once more to reconcile before the capability is consumed or
         abandoned.
         """
+        from tldw_chatbook.Chat.console_voice_trace_gateway import (
+            _ClaimReleaseDisposition,
+            ProvisionalTraceRegistry,
+            ProvisionalTraceUnavailable,
+            VoiceTraceImportContext,
+        )
+        from tldw_chatbook.Chat.console_voice_trace_promotion import (
+            ConfirmedPreCommitTraceImportError,
+        )
 
         if type(registry) is not ProvisionalTraceRegistry:
             raise TypeError("registry")

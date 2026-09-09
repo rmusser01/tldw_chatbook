@@ -39,19 +39,14 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     merge_pii_spans,
 )
 
-from tldw_chatbook.Chat.console_voice_trace_promotion import (
-    ConfirmedPreCommitTraceImportError,
-    MAX_PROMOTED_TRACE_BYTES,
-    MAX_PROMOTED_TRACE_CALLS,
-    PostDispatchTraceArtifact,
-    PostDispatchTraceCall,
-    PostDispatchTraceImport,
-    PostDispatchTraceImportResult,
-    PostDispatchTraceSurfaceComponent,
-    derive_post_dispatch_trace_ids,
-    derive_post_dispatch_trace_node_id,
-    derive_post_dispatch_trace_replacement_id,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_trace_promotion import (
+        PostDispatchTraceArtifact,
+        PostDispatchTraceCall,
+        PostDispatchTraceImport,
+        PostDispatchTraceImportResult,
+        PostDispatchTraceSurfaceComponent,
+    )
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -457,6 +452,10 @@ class ConsoleTraceRepository:
         It owns an immediate transaction and a connection-local exact-call grant;
         ordinary reservation APIs retain their pre-dispatch lifecycle.
         """
+        from tldw_chatbook.Chat.console_voice_trace_promotion import (
+            ConfirmedPreCommitTraceImportError,
+            PostDispatchTraceImport,
+        )
 
         if type(request) is not PostDispatchTraceImport:
             raise TypeError("request must be a PostDispatchTraceImport")
@@ -499,6 +498,12 @@ class ConsoleTraceRepository:
 
     @staticmethod
     def _validate_post_dispatch_request(request: PostDispatchTraceImport) -> None:
+        from tldw_chatbook.Chat.console_voice_trace_promotion import (
+            MAX_PROMOTED_TRACE_BYTES,
+            MAX_PROMOTED_TRACE_CALLS,
+            derive_post_dispatch_trace_ids,
+            derive_post_dispatch_trace_node_id,
+        )
         calls = request.calls
         if not 1 <= len(calls) <= MAX_PROMOTED_TRACE_CALLS:
             raise ValueError("promoted calls must be complete and bounded")
@@ -791,6 +796,11 @@ class ConsoleTraceRepository:
         cursor: sqlite3.Cursor,
         request: PostDispatchTraceImport,
     ) -> PostDispatchTraceImportResult:
+        from tldw_chatbook.Chat.console_voice_trace_promotion import (
+            PostDispatchTraceImportResult,
+            derive_post_dispatch_trace_ids,
+            derive_post_dispatch_trace_replacement_id,
+        )
         identities = derive_post_dispatch_trace_ids(
             request.import_id,
             call_count=len(request.calls),
@@ -1211,6 +1221,10 @@ class ConsoleTraceRepository:
         cursor: sqlite3.Cursor,
         request: PostDispatchTraceImport,
     ) -> None:
+        from tldw_chatbook.Chat.console_voice_trace_promotion import (
+            derive_post_dispatch_trace_ids,
+            derive_post_dispatch_trace_replacement_id,
+        )
         identities = derive_post_dispatch_trace_ids(
             request.import_id,
             call_count=len(request.calls),
@@ -1282,6 +1296,11 @@ class ConsoleTraceRepository:
         cursor: sqlite3.Cursor,
         request: PostDispatchTraceImport,
     ) -> PostDispatchTraceImportResult | None:
+        from tldw_chatbook.Chat.console_voice_trace_promotion import (
+            PostDispatchTraceImportResult,
+            derive_post_dispatch_trace_ids,
+            derive_post_dispatch_trace_replacement_id,
+        )
         calls = tuple(self.get_call(cursor, call.call_id) for call in request.calls)
         present = tuple(call for call in calls if call is not None)
         if not present:

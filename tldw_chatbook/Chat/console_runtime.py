@@ -142,11 +142,13 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     coerce_console_first_send_completed,
 )
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
-from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
-from tldw_chatbook.Chat.console_voice_promotion import (
-    VoicePromotionOwner,
-    VoicePromotionQuitPermit,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        VoicePromotionOwner,
+        VoicePromotionQuitPermit,
+        VoicePromotionSessionCloseToken,
+    )
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Chat.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
@@ -989,10 +991,13 @@ class ConsoleRuntime:
         self.trace_compatibility_metrics = _LazyTraceCompatibilityMetrics()
         self._scratch_spaces = ConsoleScratchSpaceManager()
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
-        self._voice_dispatch_supervisor = VoiceDispatchSupervisor()
+        self._voice_dispatch_supervisor: VoiceDispatchSupervisor | None = None
         self._voice_worker = None
         self._voice_process_supervisor = None
-        self._voice_promotion_owner = VoicePromotionOwner(lambda: self._chat_store)
+        self._voice_promotion_owner: VoicePromotionOwner | None = None
+        self._voice_promotion_pending_closes: dict[
+            str, VoicePromotionSessionCloseToken | None
+        ] = {}
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
             getattr(app, "persona_buddy_controller", None)
         )
@@ -1105,6 +1110,12 @@ class ConsoleRuntime:
     def voice_dispatch_supervisor(self) -> VoiceDispatchSupervisor:
         """The app-lifetime hands-free cleanup quarantine."""
 
+        if self._voice_dispatch_supervisor is None:
+            if self._disposed:
+                raise RuntimeError("voice_runtime_disposed")
+            from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
+
+            self._voice_dispatch_supervisor = VoiceDispatchSupervisor()
         return self._voice_dispatch_supervisor
 
     @property
@@ -1133,6 +1144,18 @@ class ConsoleRuntime:
     def voice_promotion_owner(self) -> VoicePromotionOwner:
         """The single app-lifetime owner for claimed voice publications."""
 
+        if self._voice_promotion_owner is None:
+            if self._disposed:
+                raise RuntimeError("voice_runtime_disposed")
+            from tldw_chatbook.Chat.console_voice_promotion import VoicePromotionOwner
+
+            self._voice_promotion_owner = VoicePromotionOwner(lambda: self._chat_store)
+            # A first voice entry may arrive while an ordinary close awaits
+            # its drain. Transfer those exact session fences synchronously.
+            for session_id in self._voice_promotion_pending_closes:
+                self._voice_promotion_pending_closes[session_id] = (
+                    self._voice_promotion_owner.begin_session_close(session_id)
+                )
         return self._voice_promotion_owner
 
     def trace_compatibility_snapshot(self) -> Mapping[str, int]:
@@ -3790,6 +3813,20 @@ class ConsoleRuntime:
         """Drain already-claimed voice publication before closing its session."""
 
         owner = self._voice_promotion_owner
+        if owner is None:
+            if session_id in self._voice_promotion_pending_closes:
+                raise RuntimeError("A voice-promotion session close is already active.")
+            self._voice_promotion_pending_closes[session_id] = None
+            try:
+                return await self._close_session_after_voice_drain(
+                    session_id,
+                    expected_revision=expected_revision,
+                    timeout_seconds=timeout_seconds,
+                )
+            finally:
+                token = self._voice_promotion_pending_closes.pop(session_id)
+                if token is not None:
+                    self._voice_promotion_owner.abort_session_close(token)
         token = owner.begin_session_close(session_id)
         completed = False
         try:
@@ -3969,9 +4006,10 @@ class ConsoleRuntime:
                     raise ConsoleLifecycleRevisionChanged(
                         "Console activity changed during shutdown."
                     )
-            if voice_promotion_permit is None:
-                raise RuntimeError("Voice-promotion quit permit is required.")
-            self._voice_promotion_owner.consume_quit_permit(voice_promotion_permit)
+            if self._voice_promotion_owner is not None:
+                if voice_promotion_permit is None:
+                    raise RuntimeError("Voice-promotion quit permit is required.")
+                self._voice_promotion_owner.consume_quit_permit(voice_promotion_permit)
         except BaseException:
             abort_provisional_fences()
             raise
@@ -4132,7 +4170,8 @@ class ConsoleRuntime:
                 try:
                     if self._voice_process_supervisor is not None:
                         await self._voice_process_supervisor.aclose()
-                    await self._voice_dispatch_supervisor.wait_for_cleanup()
+                    if self._voice_dispatch_supervisor is not None:
+                        await self._voice_dispatch_supervisor.wait_for_cleanup()
                     if self._voice_worker is not None:
                         await self._voice_worker.aclose()
                 except Exception as exc:

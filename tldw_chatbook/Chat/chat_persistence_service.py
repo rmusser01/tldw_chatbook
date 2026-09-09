@@ -75,13 +75,13 @@ from tldw_chatbook.Chat.console_trace_repository import (
     TraceForkBoundary,
 )
 from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
-from tldw_chatbook.Chat.console_voice_promotion import (
-    CompletedVoicePairCommit,
-    ResolvedVoicePromotionDestination,
-    VoicePromotionContext,
-    VoicePromotionIdentitySet,
-    derive_voice_promotion_identities,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        CompletedVoicePairCommit,
+        ResolvedVoicePromotionDestination,
+        VoicePromotionContext,
+        VoicePromotionIdentitySet,
+    )
 from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.conversation_local_marks_service import (
@@ -422,10 +422,14 @@ class ChatPersistenceService:
     @staticmethod
     def _validate_completed_voice_pair_destination(
         *,
-        destination: ResolvedVoicePromotionDestination,
-        context: VoicePromotionContext,
+        destination: "ResolvedVoicePromotionDestination",
+        context: "VoicePromotionContext",
     ) -> str:
         """Validate the store-resolved destination before opening a transaction."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ResolvedVoicePromotionDestination,
+            VoicePromotionContext,
+        )
         if type(destination) is not ResolvedVoicePromotionDestination:
             raise TypeError("destination must be a ResolvedVoicePromotionDestination")
         if type(context) is not VoicePromotionContext:
@@ -501,11 +505,14 @@ class ChatPersistenceService:
         *,
         conversation_id: str,
         expected_leaf_message_id: str | None,
-        context: VoicePromotionContext,
-        identities: VoicePromotionIdentitySet,
+        context: "VoicePromotionContext",
+        identities: "VoicePromotionIdentitySet",
         assistant_metadata_json: str,
-    ) -> CompletedVoicePairCommit | None:
+    ) -> "CompletedVoicePairCommit | None":
         """Adopt one complete exact-ID commit or fail closed on any residue."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            CompletedVoicePairCommit,
+        )
         messages = cursor.execute(
             """SELECT id, conversation_id, parent_message_id, sender, content,
                       image_data, image_mime_type, timestamp, ranking,
@@ -722,15 +729,19 @@ class ChatPersistenceService:
     def commit_completed_voice_pair(
         self,
         *,
-        destination: ResolvedVoicePromotionDestination,
-        context: VoicePromotionContext,
-    ) -> CompletedVoicePairCommit:
+        destination: "ResolvedVoicePromotionDestination",
+        context: "VoicePromotionContext",
+    ) -> "CompletedVoicePairCommit":
         """Atomically persist an already-complete no-tool voice pair.
 
         The transaction owns only this service's ChaChaNotes database. Retries
         reconcile the promotion-derived identities before checking the current
         active leaf, covering an exception reported after a successful commit.
         """
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            CompletedVoicePairCommit,
+            derive_voice_promotion_identities,
+        )
         conversation_id = self._validate_completed_voice_pair_destination(
             destination=destination,
             context=context,

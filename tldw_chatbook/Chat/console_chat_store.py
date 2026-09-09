@@ -201,19 +201,17 @@ from tldw_chatbook.Chat.console_speech import (
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
-from tldw_chatbook.Chat.console_voice_promotion import (
-    CompletedVoicePairCommit,
-    ConsoleSessionBindingOrigin,
-    ConsoleVoicePromotionClaim,
-    ConsoleVoicePromotionClaimStatus,
-    ConsoleVoicePromotionLease,
-    ConsoleVoicePromotionRebranch,
-    ConsoleVoicePromotionRecovery,
-    ConsoleVoicePromotionRecoveryKind,
-    ResolvedVoicePromotionDestination,
-    VoicePromotionContext,
-    derive_voice_promotion_identities,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        CompletedVoicePairCommit,
+        ConsoleSessionBindingOrigin,
+        ConsoleVoicePromotionClaim,
+        ConsoleVoicePromotionLease,
+        ConsoleVoicePromotionRebranch,
+        ConsoleVoicePromotionRecovery,
+        ResolvedVoicePromotionDestination,
+        VoicePromotionContext,
+    )
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsolePromotionTransactionContribution,
 )
@@ -4823,6 +4821,9 @@ class ConsoleChatStore:
         session_id: str,
     ) -> tuple[ConsoleSessionBindingOrigin, str | None, str | None]:
         """Freeze the binding and leaf identities used by a voice dispatch."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleSessionBindingOrigin,
+        )
 
         with self._voice_promotion_lock:
             session = self._session_or_raise(session_id)
@@ -15042,6 +15043,9 @@ class ConsoleChatStore:
 
         The caller owns ``_voice_promotion_lock`` and holds no other store lock.
         """
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ResolvedVoicePromotionDestination,
+        )
 
         session = self._sessions.get(context.origin.session_id)
         if session is None:
@@ -15102,6 +15106,12 @@ class ConsoleChatStore:
         self, context: VoicePromotionContext
     ) -> ConsoleVoicePromotionClaim:
         """Attempt the synchronous, content-safe voice-promotion claim."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionClaim,
+            ConsoleVoicePromotionClaimStatus,
+            ConsoleVoicePromotionLease,
+            VoicePromotionContext,
+        )
 
         if type(context) is not VoicePromotionContext:
             raise TypeError("context must be a VoicePromotionContext")
@@ -15161,6 +15171,9 @@ class ConsoleChatStore:
 
     def abort_voice_promotion(self, lease: ConsoleVoicePromotionLease) -> bool:
         """Idempotently release only the exact currently live capability."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionLease,
+        )
 
         if type(lease) is not ConsoleVoicePromotionLease:
             raise TypeError("lease must be a ConsoleVoicePromotionLease")
@@ -15179,6 +15192,9 @@ class ConsoleChatStore:
         self, lease: ConsoleVoicePromotionLease
     ) -> ConsoleVoicePromotionRecovery | None:
         """Read the exact provider-free retry projection for one live lease."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionLease,
+        )
 
         if type(lease) is not ConsoleVoicePromotionLease:
             raise TypeError("lease must be a ConsoleVoicePromotionLease")
@@ -15193,6 +15209,11 @@ class ConsoleChatStore:
         lease: ConsoleVoicePromotionLease,
     ) -> ConsoleVoicePromotionRebranch:
         """Replace one failed lease with the currently selected exact parent."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleSessionBindingOrigin,
+            ConsoleVoicePromotionLease,
+            ConsoleVoicePromotionRebranch,
+        )
 
         if type(lease) is not ConsoleVoicePromotionLease:
             raise TypeError("lease must be a ConsoleVoicePromotionLease")
@@ -15283,6 +15304,9 @@ class ConsoleChatStore:
         message_id: str | None,
     ) -> bool:
         """Select a Rebranch parent using only one exact live recovery lease."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionLease,
+        )
 
         if type(lease) is not ConsoleVoicePromotionLease:
             raise TypeError("lease must be a ConsoleVoicePromotionLease")
@@ -15381,6 +15405,10 @@ class ConsoleChatStore:
         retryable: bool,
     ) -> None:
         """Retain only the original sealed context for an exact live lease."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionRecovery,
+            ConsoleVoicePromotionRecoveryKind,
+        )
 
         context = self._voice_promotion_contexts.get(lease.session_id)
         if (
@@ -15410,6 +15438,9 @@ class ConsoleChatStore:
         self, lease: ConsoleVoicePromotionLease
     ) -> bool:
         """Explicitly discard one exact failed publication and its ownership."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionLease,
+        )
 
         if type(lease) is not ConsoleVoicePromotionLease:
             raise TypeError("lease must be a ConsoleVoicePromotionLease")
@@ -15428,6 +15459,11 @@ class ConsoleChatStore:
         self, lease: ConsoleVoicePromotionLease
     ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
         """Retry one failed in-memory projection without contacting a provider."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionLease,
+            ConsoleVoicePromotionRecoveryKind,
+            derive_voice_promotion_identities,
+        )
 
         if type(lease) is not ConsoleVoicePromotionLease:
             raise TypeError("lease must be a ConsoleVoicePromotionLease")
@@ -15607,6 +15643,11 @@ class ConsoleChatStore:
         self, lease: ConsoleVoicePromotionLease, context: VoicePromotionContext
     ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
         """Atomically expose a completed temporary pair without persistence."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionLease,
+            VoicePromotionContext,
+            derive_voice_promotion_identities,
+        )
 
         if (
             type(lease) is not ConsoleVoicePromotionLease
@@ -15643,6 +15684,12 @@ class ConsoleChatStore:
         context: VoicePromotionContext,
     ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
         """Expose an already-committed durable pair without another DB write."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            CompletedVoicePairCommit,
+            ConsoleVoicePromotionLease,
+            VoicePromotionContext,
+            derive_voice_promotion_identities,
+        )
 
         if (
             type(lease) is not ConsoleVoicePromotionLease

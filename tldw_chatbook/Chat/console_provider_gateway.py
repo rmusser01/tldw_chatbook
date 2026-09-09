@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from time import monotonic
 from types import GeneratorType, MappingProxyType
-from typing import Any, AsyncIterator, Callable, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, TypeVar, cast
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -158,15 +158,15 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
     sensitive_llm_request,
 )
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
-from tldw_chatbook.Chat.console_voice_trace_gateway import (
-    ProvisionalTraceAttempt,
-    ProvisionalTraceEnvelope,
-    ProvisionalTraceManifest,
-    ProvisionalTraceRegistry,
-    ProvisionalTraceUnavailable,
-    ProvisionalVoiceTraceCallBoundary,
-)
-from tldw_chatbook.Chat.console_voice_trace_promotion import PostDispatchTraceCall
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_trace_gateway import (
+        ProvisionalTraceAttempt,
+        ProvisionalTraceEnvelope,
+        ProvisionalTraceManifest,
+        ProvisionalTraceRegistry,
+        ProvisionalVoiceTraceCallBoundary,
+    )
+    from tldw_chatbook.Chat.console_voice_trace_promotion import PostDispatchTraceCall
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy
 
 
@@ -1863,6 +1863,9 @@ async def _settle_trace_response(
     signals: ConsoleProviderCallSignals | None = None,
 ) -> None:
     # ADR-097 boot ratchet: settlement loads on first trace settlement.
+    from tldw_chatbook.Chat.console_voice_trace_gateway import (
+        ProvisionalVoiceTraceCallBoundary,
+    )
     from tldw_chatbook.Chat.console_trace_settlement import TraceResponseOmission
 
     envelope = (
@@ -2516,9 +2519,7 @@ class ConsoleProviderGateway:
         self._adapter_admission_issuer = object()
         self._reasoning_metadata_cache: dict[str, tuple[float, str | None, bool]] = {}
         self.reasoning_policies: dict[str, ReasoningReplayPolicy] = {}
-        self._provisional_trace_registry = (
-            provisional_trace_registry or ProvisionalTraceRegistry()
-        )
+        self._provisional_trace_registry = provisional_trace_registry
         self._provisional_voice_trace_lock = threading.RLock()
         self._provisional_voice_traces: dict[int, _ProvisionalVoiceTraceRecord] = {}
 
@@ -2526,6 +2527,10 @@ class ConsoleProviderGateway:
     def provisional_trace_registry(self) -> ProvisionalTraceRegistry:
         """Return the app-lifetime registry backing gateway-issued handles."""
 
+        if self._provisional_trace_registry is None:
+            from tldw_chatbook.Chat.console_voice_trace_gateway import ProvisionalTraceRegistry
+
+            self._provisional_trace_registry = ProvisionalTraceRegistry()
         return self._provisional_trace_registry
 
     def begin_provisional_voice_trace(
@@ -2538,7 +2543,7 @@ class ConsoleProviderGateway:
     ) -> ProvisionalTraceAttempt | None:
         """Freeze dispatch-time eligibility for one provisional voice attempt."""
 
-        attempt = self._provisional_trace_registry.begin_attempt(
+        attempt = self.provisional_trace_registry.begin_attempt(
             promotion_id=promotion_id,
             attempt_id=attempt_id,
             eligibility=eligibility,
@@ -2558,6 +2563,9 @@ class ConsoleProviderGateway:
         call: PostDispatchTraceCall,
     ) -> ProvisionalTraceEnvelope | None:
         """Retain one typed provider observation inside the gateway boundary."""
+        from tldw_chatbook.Chat.console_voice_trace_gateway import (
+            ProvisionalTraceUnavailable,
+        )
 
         with self._provisional_voice_trace_lock:
             record = self._provisional_voice_traces.get(id(attempt))
@@ -2580,6 +2588,9 @@ class ConsoleProviderGateway:
         attempt: ProvisionalTraceAttempt,
     ) -> ProvisionalVoiceTraceCallBoundary:
         """Create one post-dispatch boundary under exact gateway custody."""
+        from tldw_chatbook.Chat.console_voice_trace_gateway import (
+            ProvisionalTraceUnavailable,
+        )
 
         with self._provisional_voice_trace_lock:
             record = self._provisional_voice_traces.get(id(attempt))
@@ -2599,6 +2610,9 @@ class ConsoleProviderGateway:
         attempt: ProvisionalTraceAttempt,
     ) -> tuple[ProvisionalTraceManifest, tuple[ProvisionalTraceEnvelope, ...]]:
         """Seal and return the exact typed call set retained by this gateway."""
+        from tldw_chatbook.Chat.console_voice_trace_gateway import (
+            ProvisionalTraceUnavailable,
+        )
 
         with self._provisional_voice_trace_lock:
             record = self._provisional_voice_traces.get(id(attempt))
@@ -2620,6 +2634,9 @@ class ConsoleProviderGateway:
         attempt: ProvisionalTraceAttempt,
     ) -> None:
         """Destroy one losing, cancelled, or tool-barrier capability."""
+        from tldw_chatbook.Chat.console_voice_trace_gateway import (
+            ProvisionalTraceUnavailable,
+        )
 
         with self._provisional_voice_trace_lock:
             record = self._provisional_voice_traces.pop(id(attempt), None)
@@ -4647,6 +4664,9 @@ class ConsoleProviderGateway:
             passed and the provider returned native tool-calls -- a final
             ``ProviderToolCalls``.
         """
+        from tldw_chatbook.Chat.console_voice_trace_gateway import (
+            ProvisionalTraceAttempt,
+        )
         require_durable_capture_admission(
             capture_mode=capture_mode,
             ephemeral=ephemeral,
@@ -5887,6 +5907,9 @@ class ConsoleProviderGateway:
         provenance_override: ProviderRequestProvenance | None = None,
     ) -> ProviderRequestShadowBundle | None:
         """Fail Capture On closed before any content-bearing shadow sink."""
+        from tldw_chatbook.Chat.console_voice_trace_gateway import (
+            ProvisionalVoiceTraceCallBoundary,
+        )
 
         if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
             return None

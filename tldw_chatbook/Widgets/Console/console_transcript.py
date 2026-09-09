@@ -138,14 +138,14 @@ from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCardSpec,
     video_card_signature,
 )
-from tldw_chatbook.Widgets.Console.console_voice_preview import (
-    ConsoleVoicePreview,
-    VoicePreviewProjection,
-)
 from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Widgets.Console.console_voice_preview import (
+        ConsoleVoicePreview,
+        VoicePreviewProjection,
+    )
     from textual.screen import Screen
 
 
@@ -3118,6 +3118,7 @@ class ConsoleTranscript(VerticalScroll):
         # Speculative voice text is a separate, ephemeral projection. It is
         # never inserted into ``_messages`` or the durable row/grouping path.
         self._voice_preview_projection: VoicePreviewProjection | None = None
+        self._voice_preview_widget: ConsoleVoicePreview | None = None
         #: TASK-371: last run status seen by `sync_jump_indicator`, so a scroll
         #: that detaches the reader can refresh the pill without a status source.
         self._last_run_status = "idle"
@@ -3247,10 +3248,15 @@ class ConsoleTranscript(VerticalScroll):
             self._row_widgets[row.key] = widget
             self._row_signatures[row.key] = row.signature
             yield widget
-        yield ConsoleVoicePreview(
-            self._voice_preview_projection,
-            id="console-voice-preview",
-        )
+        self._voice_preview_widget = None
+        if self._voice_preview_projection is not None:
+            from tldw_chatbook.Widgets.Console.console_voice_preview import ConsoleVoicePreview
+
+            self._voice_preview_widget = ConsoleVoicePreview(
+                self._voice_preview_projection,
+                id="console-voice-preview",
+            )
+            yield self._voice_preview_widget
         # TASK-371: docked (non-scrolling) jump-to-latest pill; hidden until
         # `sync_jump_indicator` shows it while the reader is scrolled up.
         pill = ConsoleTranscriptJumpPill(
@@ -3277,29 +3283,30 @@ class ConsoleTranscript(VerticalScroll):
 
     def set_voice_preview(self, projection: VoicePreviewProjection) -> None:
         """Show one ephemeral speculative voice projection."""
+        from tldw_chatbook.Widgets.Console.console_voice_preview import (
+            ConsoleVoicePreview,
+            VoicePreviewProjection,
+        )
 
         if type(projection) is not VoicePreviewProjection:
             raise TypeError("projection must be a VoicePreviewProjection")
         self._voice_preview_projection = projection
         if not self.is_mounted:
             return
-        try:
-            preview = self.query_one("#console-voice-preview", ConsoleVoicePreview)
-        except NoMatches:
-            return
-        preview.set_projection(projection)
+        if self._voice_preview_widget is None:
+            self._voice_preview_widget = ConsoleVoicePreview(
+                projection, id="console-voice-preview"
+            )
+            self.mount(self._voice_preview_widget, before="#console-transcript-jump-pill")
+        else:
+            self._voice_preview_widget.set_projection(projection)
 
     def clear_voice_preview(self) -> None:
         """Hide and forget provisional voice text without touching messages."""
 
         self._voice_preview_projection = None
-        if not self.is_mounted:
-            return
-        try:
-            preview = self.query_one("#console-voice-preview", ConsoleVoicePreview)
-        except NoMatches:
-            return
-        preview.clear()
+        if self._voice_preview_widget is not None:
+            self._voice_preview_widget.clear()
 
     async def recompose(self) -> None:
         """Detach screen-owned message overflow UI before rebuilding rows."""

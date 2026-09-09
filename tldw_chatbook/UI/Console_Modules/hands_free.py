@@ -123,10 +123,6 @@ from typing import Any, TYPE_CHECKING
 
 from loguru import logger
 
-from ...Audio.native_duplex_stream import (
-    AudioShutdownUnconfirmed,
-    NativeDuplexUnavailable,
-)
 from ...Chat import console_voice_input
 from ...Chat.console_voice_input import (
     acoustic_barge_in_enabled,
@@ -148,16 +144,15 @@ from ...Chat.console_hands_free import (
     SuppressReplySpeech,
 )
 from ...Chat.reply_sentence_sequencer import SentenceSequencer
-from ...Chat.console_voice_controls import ControlKind
-from ...Chat.console_voice_settings import speculative_voice_qualified
-from ...Widgets.Console import (
-    ConsoleComposerBar,
-    VoicePreviewProjection,
-    VoiceStatusAnnouncementThrottle,
-)
+from ...Widgets.Console import ConsoleComposerBar
 
 if TYPE_CHECKING:
+    from ...Chat.console_voice_controls import ControlKind
     from ...TTS.profile_types import CharacterRef
+    from ...Widgets.Console.console_voice_preview import (
+        VoicePreviewProjection,
+        VoiceStatusAnnouncementThrottle,
+    )
     from ...Widgets.Console.console_control_bar import (
         ConsoleAutoSpeakResumeRequested,
         ConsoleAutoSpeakRetryRequested,
@@ -259,6 +254,13 @@ class ConsoleHandsFreeSession:
     pending_existing_assistant_ids: frozenset[str] = frozenset()
 
 
+def speculative_voice_qualified() -> bool:
+    """Resolve the qualification gate only at requested voice entry."""
+    from ...Chat.console_voice_settings import speculative_voice_qualified as qualified
+
+    return qualified()
+
+
 class _SpeculativeHandsFreeFacade:
     """Preserve the existing dictation/mic exit contract for the new engine."""
 
@@ -282,15 +284,27 @@ class _SpeculativeHandsFreeFacade:
         )
 
     def on_exit_request(self) -> None:
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
         self._owner._close_qualified_console_voice(ControlKind.HANDS_FREE_EXIT)
 
     def on_escape_request(self) -> None:
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
         self._owner._close_qualified_console_voice(ControlKind.ESCAPE)
 
     def on_microphone_disabled(self) -> None:
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
         self._owner._close_qualified_console_voice(ControlKind.MICROPHONE_DISABLED)
 
     def on_stop_request(self) -> None:
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
         self._owner._close_qualified_console_voice(ControlKind.STOP)
 
     def on_segment_no_final(self) -> None:
@@ -460,9 +474,7 @@ class ConsoleHandsFreeController:
         self._runtime_accessor = runtime_accessor
         self._project_voice_preview_fn = project_voice_preview
         self._clear_voice_preview_fn = clear_voice_preview
-        self._voice_status_announcer = VoiceStatusAnnouncementThrottle(
-            self._announce_qualified_voice_status
-        )
+        self._voice_status_announcer: VoiceStatusAnnouncementThrottle | None = None
 
         # The pipeline engine's own state, moved verbatim from
         # `ChatScreen.__init__`.
@@ -548,6 +560,7 @@ class ConsoleHandsFreeController:
 
     def _project_qualified_voice_phase(self, generation: int, status: str) -> None:
         """Show a content-free startup/listening phase for one generation."""
+        from ...Widgets.Console.console_voice_preview import VoicePreviewProjection
 
         self._project_qualified_voice_preview(
             generation,
@@ -570,6 +583,12 @@ class ConsoleHandsFreeController:
         if not self._qualified_console_voice_is_current(generation):
             return
         try:
+            if self._voice_status_announcer is None:
+                from ...Widgets.Console.console_voice_preview import VoiceStatusAnnouncementThrottle
+
+                self._voice_status_announcer = VoiceStatusAnnouncementThrottle(
+                    self._announce_qualified_voice_status
+                )
             self._voice_status_announcer.observe(projection.status)
             self._project_voice_preview_fn(projection)
         except Exception:
@@ -591,6 +610,10 @@ class ConsoleHandsFreeController:
         self, generation: int, failure: BaseException | None
     ) -> bool:
         """Report categorical native failures once, without reviving a stale view."""
+        from ...Audio.native_duplex_stream import (
+            AudioShutdownUnconfirmed,
+            NativeDuplexUnavailable,
+        )
         if isinstance(failure, AudioShutdownUnconfirmed):
             message = (
                 "Audio shutdown unconfirmed. Voice is unavailable until audio "
@@ -617,6 +640,10 @@ class ConsoleHandsFreeController:
         self, result: Any, generation: int
     ) -> None:
         """Observe native closure on the UI loop after synchronous view fencing."""
+        from ...Audio.native_duplex_stream import (
+            AudioShutdownUnconfirmed,
+            NativeDuplexUnavailable,
+        )
         try:
             await result
         except (AudioShutdownUnconfirmed, NativeDuplexUnavailable) as failure:
@@ -626,6 +653,9 @@ class ConsoleHandsFreeController:
         self, generation: int, failure: BaseException | None = None
     ) -> None:
         """Fail one current startup closed without touching a replacement."""
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
 
         if not (
             self._qualified_console_voice_is_current(generation)
@@ -801,6 +831,9 @@ class ConsoleHandsFreeController:
         generation: int,
     ) -> None:
         """Load, compose, and enter one generation without a cold UI-loop import."""
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
 
         try:
             from ...Chat.console_voice_preflight import VoicePreparationError
@@ -896,9 +929,7 @@ class ConsoleHandsFreeController:
             self._fail_qualified_console_voice_entry(generation, entry_failure)
             return
         facade = _SpeculativeHandsFreeFacade(self, engine)
-        self._voice_status_announcer = VoiceStatusAnnouncementThrottle(
-            self._announce_qualified_voice_status
-        )
+        self._voice_status_announcer = None
         self._console_hands_free = ConsoleSpeculativeHandsFreeSession(
             controller=facade,
             engine=engine,
@@ -1111,6 +1142,9 @@ class ConsoleHandsFreeController:
         -- the toggle never tears state down directly, so the exit runs the
         same reasoned `ExitLoop` path every other exit route uses.
         """
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
         if self._qualified_voice_startup_generation is not None:
             self._close_qualified_console_voice(ControlKind.HANDS_FREE_EXIT)
             return
@@ -1228,6 +1262,9 @@ class ConsoleHandsFreeController:
         and closed the capture -- this just stops the tick timer and clears
         the composer's borrowed hands-free chip state.
         """
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
         session = self._console_hands_free
         if session is None:
             return
@@ -2011,6 +2048,9 @@ class ConsoleHandsFreeController:
         is a promise the docs make about hands-free, not about one
         engine's implementation of it.
         """
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
         if self._qualified_voice_startup_generation is not None:
             self._close_qualified_console_voice(ControlKind.ESCAPE)
         hands_free = self._console_hands_free
@@ -2036,6 +2076,9 @@ class ConsoleHandsFreeController:
 
     def prepare_for_navigation(self) -> None:
         """Fence provisional qualified voice when navigation is confirmed."""
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
 
         self._close_qualified_console_voice(ControlKind.NAVIGATION)
 
@@ -2051,6 +2094,9 @@ class ConsoleHandsFreeController:
         no further TTS/dictation calls are safe to issue against a screen
         that is being torn down.
         """
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
         if self._qualified_voice_startup_generation is not None:
             self._close_qualified_console_voice(ControlKind.TEARDOWN)
             return

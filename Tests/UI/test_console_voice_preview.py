@@ -19,6 +19,8 @@ from tldw_chatbook.Widgets.Console.console_voice_preview import (
 
 
 class _PreviewHarness(ConsolidatedCSSApp):
+    CSS = "ConsoleTranscript { height: 10; }"
+
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
 
@@ -77,6 +79,90 @@ async def test_preview_rows_are_separate_from_transcript_messages() -> None:
         )
         assert [message.id for message in transcript._messages] == ["durable-user"]
         assert all("voice-turn-1" not in key for key in transcript._row_widgets)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("clear", [False, True])
+async def test_first_preview_coalesces_updates_before_mount(clear: bool) -> None:
+    app = _PreviewHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        assert not transcript.query(ConsoleVoicePreview)
+        transcript.focus()
+        focus = app.focused
+        transcript.set_voice_preview(_projection())
+        transcript.set_voice_preview(_projection(epoch=2, user_text="latest correction"))
+        if clear:
+            transcript.clear_voice_preview()
+        await pilot.pause()
+
+        previews = list(transcript.query(ConsoleVoicePreview))
+        assert len(previews) == 1
+        preview = previews[0]
+        assert preview.display is not clear
+        assert str(preview.query_one(".console-voice-preview-user", Static).renderable) == (
+            "" if clear else "You · latest correction"
+        )
+        children = list(transcript.children)
+        assert children[children.index(preview) + 1].id == "console-transcript-jump-pill"
+        assert app.focused is focus and focus.is_attached
+
+
+@pytest.mark.asyncio
+async def test_active_preview_survives_recompose_and_accepts_the_next_update() -> None:
+    app = _PreviewHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_voice_preview(_projection(epoch=2, user_text="current projection"))
+        await pilot.pause()
+        old_preview = transcript.query_one(ConsoleVoicePreview)
+        await transcript.recompose()
+        preview = transcript.query_one(ConsoleVoicePreview)
+        assert preview is not old_preview
+        assert str(preview.query_one(".console-voice-preview-user", Static).renderable) == (
+            "You · current projection"
+        )
+        transcript.set_voice_preview(_projection(epoch=3, user_text="after recompose"))
+        await pilot.pause()
+        assert len(transcript.query(ConsoleVoicePreview)) == 1
+        assert str(preview.query_one(".console-voice-preview-user", Static).renderable) == (
+            "You · after recompose"
+        )
+        transcript.clear_voice_preview()
+        await transcript.recompose()
+        assert not transcript.query(ConsoleVoicePreview)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reading_history", [False, True])
+async def test_lazy_preview_preserves_reader_position_and_tail_follow(reading_history):
+    app = _PreviewHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([
+            ConsoleChatMessage(
+                id=f"history-{index}", role=ConsoleMessageRole.ASSISTANT,
+                content="First line\nSecond line\nThird line\nFourth line",
+            )
+            for index in range(12)
+        ])
+        await transcript.refresh_messages()
+        await pilot.pause()
+        assert transcript.max_scroll_y > 0
+        if reading_history:
+            transcript.release_anchor()
+            transcript.scroll_to(y=0, animate=False)
+            await pilot.pause()
+        position = transcript.scroll_y
+        transcript.focus()
+        focused = app.focused
+        transcript.set_voice_preview(_projection())
+        await pilot.pause()
+        assert transcript.scroll_y == (position if reading_history else transcript.max_scroll_y)
+        assert app.focused is focused and focused.is_attached
+        transcript.clear_voice_preview()
+        await pilot.pause()
+        assert transcript.scroll_y == (position if reading_history else transcript.max_scroll_y)
 
 
 @pytest.mark.asyncio

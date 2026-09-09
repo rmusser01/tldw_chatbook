@@ -70,12 +70,6 @@ from .console_terminal_messages import (
     ConsoleTerminalInputRequested,
 )
 from .console_transcript import ConsoleTranscript
-from .console_voice_preview import (
-    ConsoleVoicePreview,
-    VoicePreviewProjection,
-    VoiceStatusAnnouncementThrottle,
-    voice_status_label,
-)
 from .console_workbench_state import build_console_workbench_state
 from .console_workspace_context import ConsoleWorkspaceContextTray
 from .console_workspace_tree import (
@@ -98,6 +92,15 @@ from .console_workspace_switcher_modal import (
 
 def __getattr__(name: str):
     """Load deferred Console widgets when their public export is first used."""
+    if name in {
+        "ConsoleVoicePreview",
+        "VoicePreviewProjection",
+        "VoiceStatusAnnouncementThrottle",
+        "voice_status_label",
+    }:
+        from . import console_voice_preview
+
+        return getattr(console_voice_preview, name)
     if name == "ConsoleSettingsModal":
         from . import console_settings_modal
 

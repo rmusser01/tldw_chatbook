@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -94,6 +95,23 @@ class _ConfirmationHarness:
 
     def _close_boot_worker_gate(self, _reason: str) -> None:
         return None
+
+
+@pytest.mark.asyncio
+async def test_quit_without_voice_does_not_construct_a_promotion_owner(monkeypatch):
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat import console_voice_promotion
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("quit constructed an unused voice owner")
+
+    monkeypatch.setattr(console_voice_promotion, "VoicePromotionOwner", unexpected)
+    app = _ConfirmationHarness(_ConfirmationScreen())
+    app.console_runtime = ConsoleRuntime(SimpleNamespace())
+    await app._confirm_and_quit()
+    assert app.cleanup_calls == 1
+    assert app.console_runtime._disposed
+    assert app.console_runtime._voice_promotion_owner is None
 
 
 @pytest.mark.asyncio
@@ -255,6 +273,7 @@ class _QuitRuntime:
         self.disposed = False
         self.fail_fence = fail_fence
         self.voice_promotion_owner = _QuitOwner()
+        self._voice_promotion_owner = self.voice_promotion_owner
 
     def begin_dispose(
         self,
