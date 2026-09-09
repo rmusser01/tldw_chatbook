@@ -311,6 +311,28 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # below; 36 keeps that while letting the canvas fit its real slot.
         self.styles.min_width = 36
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Refuse row/action presses while this canvas is resident but hidden.
+
+        Phase C keeps both browse canvases mounted and toggles ``display``
+        (``UI/Library_Modules/library_browse_route_swap.py``). Textual 8.2.8's
+        ``Button.press()`` consults the BUTTON's own ``disabled``/``display``
+        and nothing above it, so a press aimed at a hidden canvas's row still
+        bubbles to the screen and would act on a route the user has left --
+        the design record's verified finding #3. Stop it here, at the canvas
+        that owns the residency state, rather than in each of the screen's
+        row handlers.
+
+        Args:
+            event: The bubbling press.
+
+        Returns:
+            None.
+        """
+        if not self.display:
+            event.stop()
+            event.prevent_default()
+
     def sync_state(
         self,
         canvas: LibraryMediaCanvasState,
