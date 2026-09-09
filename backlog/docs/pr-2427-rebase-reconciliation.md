@@ -3286,3 +3286,54 @@ review-owned Loguru record now moves to TASK-32183, with both active inbound
 pointers updated and original dates, previous renumberings and evidence preserved.
 The current branch's 3,708 records and all three uniqueness tests pass; final
 merge-candidate uniqueness is still checked again after rebasing.
+
+### Rebase onto dev 88b07c4f6f
+
+Saved repair checkpoint `a7eb557e99` rebased all 240 commits without conflicts
+onto `88b07c4f6f`, producing `0b15c5efebd2`. The complete binary patch between
+those two heads equals the upstream `e574c81d22..88b07c4f6f` patch exactly
+(SHA-256 `a3c3edc6d8017799c8844c7559283ff6fff687315d690ecec9808ec12a1e4500`).
+All four newly repaired Python files are byte-identical after rebase. All seven
+preflight checks pass, including 3,734 unique task records, unchanged diagnostic
+inventory and stylesheet reproduction; log:
+`/private/tmp/pr2427-recovery-rebase-preflight.log`.
+
+The seven complete newly affected picker/import files finish with 147 passed,
+one failed, two warnings in 31.12s (`/private/tmp/pr2427-picker-rebase.log`).
+The remaining failure is the Add-from-files history scroll test's zero
+`max_scroll_y` at 60x20. It reproduces alone; both test and canvas source match
+current dev. Read-only diagnosis is checking the plain-App stylesheet harness
+against real runtime loading before any repair or assertion change.
+
+Independent review clears the Settings fixture and review-task identity mapping.
+Final complete configuration-hub native qualification is active as session 3490,
+423 cases, `/private/tmp/pr2427-settings-owner-final.log`, receipt directory
+`$TMPDIR/pr2427-settings-owner-final.dYeCUD`. The separate 158-case
+architecture/delegate/diagnostic group is active as session 58123,
+`/private/tmp/pr2427-recovery-guards.log`. Do not infer terminal evidence for
+either from this checkpoint. The previous 110-case recovery native run covered
+the complete durability-controller, settings-failure-diagnostics and Chat
+settings-defaults files, not a repository-wide sweep.
+
+The architecture/delegate/diagnostic group is now terminal: 158 passed, eight
+warnings, 172.75s; all caps and diagnostics remain unchanged. The scroll defect
+is also attributed: the boot-only test host omits the real Library stylesheet.
+Four extra pauses leave history rows at one cell and body virtual/view heights
+17/17. An in-memory control adding only `LibraryScreen.CSS_PATH` yields three-cell
+rows and 43/17 heights, passing the unchanged overflow and pinned-action checks.
+Logs: `/private/tmp/pr2427-history-isolated.log`,
+`/private/tmp/pr2427-history-geometry.log`, and
+`/private/tmp/pr2427-history-library-sheet-control.log`. Step 134 limits the repair
+to those stylesheet inputs, followed by complete affected-file qualification.
+
+Step 134 is now verified: the exact boot-plus-Library stylesheet host change
+passes the complete 46-case Add-from-files file in 12.56s and all seven
+picker/import files, 148 passed, two warnings, in 32.28s. Logs:
+`/private/tmp/pr2427-history-file-green.log` and
+`/private/tmp/pr2427-picker-host-green.log`. Independent review confirms every
+overflow, literal scroll-cue, compositor visibility and pinned-containment
+assertion, the 60x20 viewport and original single pause are unchanged. Scoped
+Ruff/whitespace pass; the file's one inherited formatter difference is unchanged.
+Publication of this checkpoint permits fresh CI/review in parallel with final
+423-case Settings native qualification; it is not permission to merge before
+that run's terminal resource inventory and final-head review/checks are clear.
