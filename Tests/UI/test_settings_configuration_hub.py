@@ -30,6 +30,14 @@ from textual.widgets import (
     TextArea,
 )
 
+from Tests.app_thread_resource_fixtures import (
+    close_owned_app_initialization_connections as close_owned_app_initialization_connections,
+    close_owned_console_workers as close_owned_console_workers,
+)
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -134,6 +142,50 @@ PERSISTED_PROVIDER_ALIASES = (
     ("Custom OpenAI", "custom"),
     ("custom-openai-api", "custom"),
 )
+
+
+@pytest.fixture(autouse=True)
+async def close_owned_settings_tts(
+    request,
+    monkeypatch,
+    close_owned_console_workers,
+    close_owned_app_initialization_connections,
+    drain_test_app_user_data_dirs,
+):
+    """Close exact builder-owned TTS consumers before sandbox removal.
+
+    Args:
+        request: Importing module whose builder owns the app instances.
+        monkeypatch: Scoped builder replacement.
+        close_owned_console_workers: Existing bounded thread-drain owner.
+        close_owned_app_initialization_connections: Existing constructor owner.
+        drain_test_app_user_data_dirs: Sandbox lifetime enclosing this cleanup.
+
+    Yields:
+        None. Existing TTS shutdown preserves consumer-before-store ordering.
+    """
+    apps = []
+    build_app = request.module._build_test_app
+
+    def build_owned_app(*args, **kwargs):
+        app = build_app(*args, **kwargs)
+        apps.append(app)
+        return app
+
+    monkeypatch.setattr(request.module, "_build_test_app", build_owned_app)
+    yield
+
+    errors = []
+    try:
+        for app in reversed(apps):
+            try:
+                await app._close_owned_tts_resources()
+            except BaseException as error:
+                errors.append(error)
+    finally:
+        apps.clear()
+    if errors:
+        raise BaseExceptionGroup("Settings test app TTS cleanup failed", errors)
 
 
 @pytest.mark.asyncio

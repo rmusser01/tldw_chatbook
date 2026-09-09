@@ -10,6 +10,83 @@ import pytest
 from Tests import console_resource_fixtures as resources
 
 
+@pytest.mark.parametrize("failure", [None, "error", "cancel"])
+async def test_settings_tts_cleanup_preserves_foreign_owners_and_failures(
+    monkeypatch, tmp_path, failure
+) -> None:
+    """Close exact built TTS owners without hiding failures or foreign handles.
+
+    Args:
+        monkeypatch: Scoped builder replacement.
+        tmp_path: Directory for real owned and foreign handles.
+        failure: Optional error or cancellation raised during profile close.
+    """
+    from Tests.UI import test_settings_configuration_hub as settings_tests
+    from tldw_chatbook.app import TldwCli
+
+    fixture_function = getattr(settings_tests, "close_owned_settings_tts", None)
+    assert fixture_function is not None, (
+        "Settings must own its built apps' TTS teardown"
+    )
+    events = []
+    handles = []
+    close_error = (
+        asyncio.CancelledError("controlled profile close cancellation")
+        if failure == "cancel"
+        else RuntimeError("controlled profile close failure")
+    )
+
+    class Owner:
+        _close_owned_tts_resources = TldwCli._close_owned_tts_resources
+
+        def __init__(self, name):
+            self.name = name
+            self.handle = (tmp_path / "shared-owner-file").open("a+")
+            handles.append(self.handle)
+
+        async def _close_tts_voice_bundle_service(self):
+            events.append((self.name, "bundle"))
+
+        async def _close_tts_profile_repository(self):
+            events.append((self.name, "profile"))
+            self.handle.close()
+            if self.name == "second" and failure is not None:
+                raise close_error
+
+        async def _close_tts_service(self):
+            events.append((self.name, "service"))
+
+    module = SimpleNamespace(_build_test_app=Owner)
+    fixture = fixture_function.__wrapped__(
+        SimpleNamespace(module=module), monkeypatch, None, None, None
+    )
+    try:
+        foreign = Owner("foreign")
+        await anext(fixture)
+        first = module._build_test_app("first")
+        second = module._build_test_app("second")
+        if failure is None:
+            with pytest.raises(StopAsyncIteration):
+                await anext(fixture)
+        else:
+            with pytest.raises(BaseExceptionGroup) as caught:
+                await anext(fixture)
+            assert caught.value.exceptions == (close_error,)
+        assert first.handle.closed and second.handle.closed
+        assert not foreign.handle.closed
+        foreign.handle.write("still usable")
+        foreign.handle.flush()
+        assert events == [
+            (name, phase)
+            for name in ("second", "first")
+            for phase in ("bundle", "profile", "service")
+        ]
+    finally:
+        await fixture.aclose()
+        for handle in handles:
+            handle.close()
+
+
 @pytest.mark.parametrize(
     "failure",
     [

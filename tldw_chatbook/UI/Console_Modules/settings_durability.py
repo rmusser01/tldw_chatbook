@@ -1430,74 +1430,78 @@ class ConsoleSettingsDurabilityController:
             return state
         inflight.add(flight_key)
         try:
-            if request.action in {
-                ConsoleDefaultRecoveryAction.DISCARD_RETRY,
-                ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
-            }:
-                state = ConsoleDefaultDurabilityState(
-                    newest_intent_generation=state.newest_intent_generation,
-                    runtime_published_intent_generation=(
-                        state.runtime_published_intent_generation
-                    ),
-                )
-                self.app_instance.console_default_durability_state = state
-                self._sync_console_settings_recovery_surfaces()
-                return state
-            if (
-                request.action is ConsoleDefaultRecoveryAction.RETRY_SAVE
-                and failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
-            ):
-                outcome = await asyncio.to_thread(
-                    apply_console_default_intent,
-                    intent,
-                )
-            elif (
-                request.action is ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP
-                and failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
-            ):
-                refresh = await asyncio.to_thread(
-                    refresh_console_runtime_after_saved_default
-                )
-                outcome = ConsoleDefaultMutationOutcome(
-                    intent_generation=intent.generation,
-                    file_replaced=True,
-                    runtime_published=refresh.published,
-                    settings_view=refresh.settings_view,
-                    failure_phase=(
-                        None
-                        if refresh.published
-                        else ConsoleDefaultSavePhase.CACHE_PUBLICATION
-                    ),
-                )
-            else:
-                return state
-        except Exception:
-            logger.exception("Console default recovery failed")
+            try:
+                if request.action in {
+                    ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+                    ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+                }:
+                    state = ConsoleDefaultDurabilityState(
+                        newest_intent_generation=state.newest_intent_generation,
+                        runtime_published_intent_generation=(
+                            state.runtime_published_intent_generation
+                        ),
+                    )
+                    self.app_instance.console_default_durability_state = state
+                    self._sync_console_settings_recovery_surfaces()
+                    return state
+                if (
+                    request.action is ConsoleDefaultRecoveryAction.RETRY_SAVE
+                    and failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+                ):
+                    outcome = await asyncio.to_thread(
+                        apply_console_default_intent,
+                        intent,
+                    )
+                elif (
+                    request.action is ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP
+                    and failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
+                ):
+                    refresh = await asyncio.to_thread(
+                        refresh_console_runtime_after_saved_default
+                    )
+                    outcome = ConsoleDefaultMutationOutcome(
+                        intent_generation=intent.generation,
+                        file_replaced=True,
+                        runtime_published=refresh.published,
+                        settings_view=refresh.settings_view,
+                        failure_phase=(
+                            None
+                            if refresh.published
+                            else ConsoleDefaultSavePhase.CACHE_PUBLICATION
+                        ),
+                    )
+                else:
+                    return state
+            except Exception:
+                logger.exception("Console default recovery failed")
+                current = self._console_default_durability_state()
+                if (
+                    current.recovery_intent == intent
+                    and current.failure_phase is failure_phase
+                ):
+                    self._record_console_default_failure(intent, failure_phase)
+                return self._console_default_durability_state()
             current = self._console_default_durability_state()
             if (
-                current.recovery_intent == intent
-                and current.failure_phase is failure_phase
+                current.recovery_intent != intent
+                or current.failure_phase is not failure_phase
             ):
-                self._record_console_default_failure(intent, failure_phase)
+                return current
+            try:
+                published = await self._publish_console_default_outcome_off_event_loop(
+                    intent,
+                    outcome,
+                )
+            except Exception:
+                logger.exception("Console default recovery publication failed")
+                published = False
+            if not published:
+                phase = (
+                    outcome.failure_phase or ConsoleDefaultSavePhase.CACHE_PUBLICATION
+                )
+                self._record_console_default_failure(intent, phase)
+            self._sync_console_settings_recovery_surfaces()
             return self._console_default_durability_state()
         finally:
+            # Publication and its recovery projection still own this exact flight.
             inflight.discard(flight_key)
-        current = self._console_default_durability_state()
-        if (
-            current.recovery_intent != intent
-            or current.failure_phase is not failure_phase
-        ):
-            return current
-        try:
-            published = await self._publish_console_default_outcome_off_event_loop(
-                intent,
-                outcome,
-            )
-        except Exception:
-            logger.exception("Console default recovery publication failed")
-            published = False
-        if not published:
-            phase = outcome.failure_phase or ConsoleDefaultSavePhase.CACHE_PUBLICATION
-            self._record_console_default_failure(intent, phase)
-        self._sync_console_settings_recovery_surfaces()
-        return self._console_default_durability_state()

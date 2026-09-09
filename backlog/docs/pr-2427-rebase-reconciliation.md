@@ -214,7 +214,7 @@ were moved. Upstream identities and original dates/history remain intact:
 | Historical review ID | Current review ID | Subject |
 | --- | --- | --- |
 | TASK-31759 (intermediate TASK-32013, TASK-32040) | TASK-32110 | Assistant-turn production stylesheet harness |
-| TASK-31901 (intermediate TASK-32014, TASK-32108) | TASK-32136 | Loguru capture sink lifetime |
+| TASK-31901 (intermediate TASK-32014, TASK-32108, TASK-32136) | TASK-32183 | Loguru capture sink lifetime |
 | TASK-31902 (intermediate TASK-32015) | TASK-32109 | Deferred Chunking Lab imports |
 
 Historical IDs and evidence paths above remain incident references, not current
@@ -3222,3 +3222,67 @@ complete three-file native qualification is still running (session 1621,
 `$TMPDIR/pr2427-settings-oracle.yCQl8M`). Wait for that terminal inventory and
 exit status before claiming its complete resource qualification. Publication is
 a progress checkpoint, not a declaration that final-head merge gates are met.
+
+### Published c5a2 review and terminal Settings evidence
+
+The complete Settings run is now terminal: 443 passed, three warnings, exit 0 in
+659.79s (`/private/tmp/pr2427-settings-oracle.log`). These are 423 configuration-hub,
+15 snapshot Settings and five Canvas Settings cases. Its final native inventory
+is **not resource-clean**: 45 SQLite handles and three instance locks among 65
+descriptors, with exact paths attributable to the configuration-hub RAG guided
+defaults, keyboard-category focus and every-category banner tests. The two latter
+owners also retain TTS repository resources. Receipt:
+`$TMPDIR/pr2427-settings-oracle.yCQl8M/fd_identity.jsonl`. Session 1621 has ended;
+passing assertions do not close this resource gate. Plan step 132 scopes repair
+to existing exact-app test ownership and the established TTS shutdown operation,
+without production/global cleanup or forced collection.
+
+Qodo top-level comment 5606350372 on this published head identifies a valid
+Console recovery race: the generation/phase key is discarded before asynchronous
+runtime publication. The low-level intent lifecycle already prevents a second
+successful disk replacement, but the coordinator can still admit duplicate work
+and a late failure projection. Step 131 retains the existing guard through final
+publication/synchronization and requires controlled RED/GREEN evidence. This
+top-level finding remains actionable even though inline review threads are all
+resolved. The bot requests `/agentic_review` for subsequent reviews.
+
+Backlog Guard run 34385614720 and Fast Lane run 34385614735 both fail on the
+same TASK-32136 collision between the upstream Library Notes Folder-files task
+and this review's Loguru-capture task. Fast Lane otherwise passes 783 cases
+(two uniqueness failures, one warning, 497.20s;
+`/private/tmp/pr2427-c5a2-fastlane.log`). Step 133 requires exact provenance and
+reference-aware review-task-only renumbering, not a blanket ID substitution.
+Fetched dev is now `88b07c4f6f`, including the Notes picker/import repairs and
+critique task batch; the branch has not yet rebased onto it. Preserve active
+repair ownership, then verify the new integration before publication and normal
+protected merge. No final-head merge readiness is claimed.
+
+The recovery repair now has controlled RED evidence (three failed, four passed;
+`/private/tmp/pr2427-default-recovery-red.log`). The existing key is retained
+through publication and synchronization with one outer `finally`; no new owner
+or lock was introduced. Complete three-file qualification passes 110 cases,
+three warnings, in 16.10s; an unchanged native-observed repeat passes 110 in
+14.41s with only stdio, one kqueue and two sockets at exit (six descriptors,
+zero SQLite/locks). Logs: `/private/tmp/pr2427-default-recovery-green.log` and
+`/private/tmp/pr2427-default-recovery-native.log`; receipt directory
+`$TMPDIR/pr2427-default-recovery-native.Hxts67`. Independent correctness review
+clears the exact-key lifetime, cancellation/shutdown and newer-generation guards.
+
+Settings fixture repair reuses four existing ownership fixtures and invokes the
+established TTS aggregate shutdown only for this module's factory products.
+Three missing-fixture controls first failed; both complete resource-control
+files then pass 32 cases. The three attributed Settings cases pass in 14.69s
+with zero SQLite, instance-lock or TTS descriptors. Final eight descriptors are
+stdio, one kqueue and four sockets; the extra socket pair is consistent with
+the earlier isolated Chroma footprint, not newly proven application ownership.
+Logs: `/private/tmp/pr2427-settings-owner-{red,controls,native}.log`; receipt
+directory `$TMPDIR/pr2427-settings-owner-native.lj9gOC`. Full 423-case hub
+qualification remains pending until independent review and latest-dev rebase.
+
+Collision provenance establishes that Library adopted 32136 before this review
+renumbered its Loguru record to that ID. All-ref history plus physical registered
+worktrees found maximum 32182, with no 32183 path or content references. Only the
+review-owned Loguru record now moves to TASK-32183, with both active inbound
+pointers updated and original dates, previous renumberings and evidence preserved.
+The current branch's 3,708 records and all three uniqueness tests pass; final
+merge-candidate uniqueness is still checked again after rebasing.
