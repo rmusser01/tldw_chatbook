@@ -122,7 +122,8 @@ def _unmounted_console() -> ChatScreen:
     return ChatScreen(_build_test_app())
 
 
-def test_cached_row_actions_keep_late_bound_dependencies():
+def test_cached_row_actions_keep_late_bound_dependencies() -> None:
+    """Cached row actions must resolve current replacement dependencies at use."""
     screen = _unmounted_console()
     owner = screen._row_actions
     app, store, files = object(), object(), object()
@@ -150,7 +151,8 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
         )
 
 
-def test_message_canvas_ports_observe_replaced_screen_targets():
+def test_message_canvas_ports_observe_replaced_screen_targets() -> None:
+    """Message canvas ports must resolve replacement screen targets lazily."""
     screen = _unmounted_console()
     owner = screen._message
     runtime, composer, app = object(), object(), object()
@@ -167,7 +169,8 @@ def test_message_canvas_ports_observe_replaced_screen_targets():
     assert owner._clear_console_canvas_open_failure() == "clear"
 
 
-def test_message_citation_discovery_state_is_private_to_each_view_owner():
+def test_message_citation_discovery_state_is_private_to_each_view_owner() -> None:
+    """Each message view owner must keep citation discovery state private."""
     first, second = _unmounted_console(), _unmounted_console()
     first._message._console_citation_counts["message"] = 2
     first._message._console_citation_request_generation += 1
@@ -176,7 +179,8 @@ def test_message_citation_discovery_state_is_private_to_each_view_owner():
     assert second._message._console_citation_request_generation == 0
 
 
-def test_canvas_runtime_callbacks_keep_view_identity_across_store_reads():
+def test_canvas_runtime_callbacks_keep_view_identity_across_store_reads() -> None:
+    """Canvas callbacks stay stable across reads and rebind with a new view owner."""
     screen = _unmounted_console()
     store = screen._ensure_console_chat_store()
     store.ensure_session()
@@ -225,7 +229,14 @@ def test_canvas_runtime_callbacks_keep_view_identity_across_store_reads():
         "_discover_console_citation_counts",
     ],
 )
-def test_canvas_and_citation_private_helpers_have_one_message_owner(name):
+def test_canvas_and_citation_private_helpers_have_one_message_owner(
+    name: str,
+) -> None:
+    """Each private canvas or citation helper must have one message owner.
+
+    Args:
+        name: Private helper name whose owner boundary is pinned.
+    """
     assert not hasattr(ChatScreen, name)
     assert callable(getattr(ConsoleMessageController, name))
 

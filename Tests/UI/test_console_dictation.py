@@ -298,8 +298,14 @@ async def test_console_mic_failures_are_visible_preserve_draft_and_recover_idle(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("defer_suspend_cleanup", [False, True])
 async def test_retryable_parakeet_failure_confirms_one_replay_and_normal_insertion(
-    monkeypatch, defer_suspend_cleanup
-):
+    monkeypatch: pytest.MonkeyPatch, defer_suspend_cleanup: bool
+) -> None:
+    """Owned retry confirmation inserts once even when suspend cleanup is delayed.
+
+    Args:
+        monkeypatch: Installs fake dictation and the optional cleanup gate.
+        defer_suspend_cleanup: Whether suspend cleanup waits until after retry.
+    """
     fake = FakeDictationSession(
         stop_error="Parakeet transcription failed.",
         retry_available=True,
@@ -370,8 +376,14 @@ async def test_retryable_parakeet_failure_confirms_one_replay_and_normal_inserti
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", ["escape", "worker"])
 async def test_mounted_retry_cancellation_clears_audio_and_repaints_idle(
-    monkeypatch, cancel
-):
+    monkeypatch: pytest.MonkeyPatch, cancel: str
+) -> None:
+    """Cancelling a mounted retry discards audio and restores the unchanged draft.
+
+    Args:
+        monkeypatch: Installs the fake retryable dictation session.
+        cancel: Cancellation path, either Escape or the waiting worker.
+    """
     fake = FakeDictationSession(
         stop_error="Parakeet transcription failed.", retry_available=True
     )
@@ -416,8 +428,14 @@ async def test_mounted_retry_cancellation_clears_audio_and_repaints_idle(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cover", ["navigation", "other_confirmation"])
 async def test_suspend_abandons_recording_and_restores_mic_on_return(
-    monkeypatch, cover
-):
+    monkeypatch: pytest.MonkeyPatch, cover: str
+) -> None:
+    """Covering Console discards its recording and restores an idle microphone.
+
+    Args:
+        monkeypatch: Installs the fake recording session.
+        cover: Navigation or an unrelated confirmation that covers Console.
+    """
     fake = FakeDictationSession()
     monkeypatch.setattr(
         dictation_module.ConsoleDictationController,
@@ -449,8 +467,14 @@ async def test_suspend_abandons_recording_and_restores_mic_on_return(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cover", ["foreign_overlay", "navigation"])
 async def test_mounted_retry_losing_foreground_abandons_retained_audio(
-    monkeypatch, cover
-):
+    monkeypatch: pytest.MonkeyPatch, cover: str
+) -> None:
+    """A retry that loses foreground ownership cannot replay its retained audio.
+
+    Args:
+        monkeypatch: Installs the fake retryable dictation session.
+        cover: Foreign overlay or navigation that supersedes the owned dialog.
+    """
     fake = FakeDictationSession(
         stop_error="Parakeet transcription failed.", retry_available=True
     )
@@ -491,8 +515,13 @@ async def test_mounted_retry_losing_foreground_abandons_retained_audio(
 
 @pytest.mark.asyncio
 async def test_unrelated_confirmation_during_retry_wait_does_not_preserve_audio(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unrelated confirmation cannot retain audio or authorize a late replay.
+
+    Args:
+        monkeypatch: Installs the fake retryable dictation session.
+    """
     fake = FakeDictationSession(
         stop_error="Parakeet transcription failed.", retry_available=True
     )
