@@ -108,10 +108,10 @@ async def test_existing_note_opens_from_the_list_through_the_real_port(tmp_path)
         else:
             pytest.fail(
                 "note editor never rendered the stored body; load state is "
-                f"{screen._library_note_load_state!r}"
+                f"{screen._notes_state.load_state!r}"
             )
-        assert screen._selected_note_id == note_id
-        assert screen._library_note_load_state == "loaded"
+        assert screen._notes_state.selected_note_id == note_id
+        assert screen._notes_state.load_state == "loaded"
 
 
 @pytest.mark.asyncio
@@ -140,11 +140,11 @@ async def test_a_stuck_note_load_fails_with_retry_and_the_next_note_still_opens(
         await _click_note_row(pilot, screen, _note_id)
         for _ in range(200):  # 4 s at 20 ms
             await pilot.pause(0.02)
-            if screen._library_note_load_state == "failed":
+            if screen._notes_state.load_state == "failed":
                 break
         else:
             pytest.fail("a stuck note load never reached the failed state")
-        assert screen._library_note_load_message == (
+        assert screen._notes_state.load_message == (
             "Unable to load note — timed out after 3 s. Press Retry."
         )
         for _ in range(100):

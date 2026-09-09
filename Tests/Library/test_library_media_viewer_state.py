@@ -831,3 +831,68 @@ def test_build_state_video_transcript_without_markdown_syntax_stays_raw():
         }
     )
     assert state.is_markdown is False
+
+
+def test_info_keywords_line_drops_a_lone_half_flag_but_keeps_whole_pairs():
+    """task-32087 (critique #8 gap in 32044): the Info 'Keywords:' line must
+    not paint a lone half-flag.
+
+    A regional-indicator flag is a PAIR painted as one 2-cell glyph. task-32044
+    made the LIST-ROW keyword suffix drop a dangling half indicator (rich and
+    Textual measure it as 1 cell, a terminal paints it as a 2-cell box, drifting
+    the frame +2) but never touched the Reader Info line, which renders the raw
+    keyword. A keyword that is, or ends in, a lone indicator therefore still
+    drifted the Info frame. This asserts the Info line's trailing
+    regional-indicator run is always EVEN (measured width == painted width),
+    while whole flags survive and the edit form still prefills the raw value.
+    """
+    from rich.cells import cell_len
+
+    def _trailing_ri(text: str) -> int:
+        count = 0
+        for ch in reversed(text):
+            if 0x1F1E6 <= ord(ch) <= 0x1F1FF:
+                count += 1
+            else:
+                break
+        return count
+
+    jp = "\U0001F1EF\U0001F1F5"  # a whole JP flag: two indicators = one 2-cell glyph
+    half = "\U0001F1EF"  # a lone regional indicator = a half-flag
+
+    # (1) a keyword ending in a lone indicator: the Info line drops the half,
+    #     but the edit form keeps the stored value verbatim for a clean save.
+    state = build_library_media_viewer_state(
+        {"id": "m1", "title": "t", "type": "article", "keywords": ["crit8a", half]},
+        now=NOW,
+    )
+    kw_line = next(
+        line for line in state.metadata_lines if line.startswith("Keywords: ")
+    )
+    assert _trailing_ri(kw_line) % 2 == 0, kw_line
+    assert not kw_line.endswith(half), kw_line
+    assert state.edit_fields["keywords"] == "crit8a, \U0001F1EF"
+
+    # (2) a whole flag PAIR is measured as two cells by rich, matching the
+    #     terminal -- it survives untouched, so the line still names the flag.
+    paired = build_library_media_viewer_state(
+        {"id": "m2", "title": "t", "type": "article", "keywords": ["crit8a", jp]},
+        now=NOW,
+    )
+    paired_line = next(
+        line for line in paired.metadata_lines if line.startswith("Keywords: ")
+    )
+    assert jp in paired_line, paired_line
+    assert _trailing_ri(paired_line) % 2 == 0, paired_line
+    # rich measures the whole pair as two cells (what a terminal paints).
+    assert cell_len(jp) == 2
+
+    # (3) an odd run (pair + dangling half) keeps the whole pair, drops the half.
+    odd = build_library_media_viewer_state(
+        {"id": "m3", "title": "t", "type": "article", "keywords": [jp + half]},
+        now=NOW,
+    )
+    odd_line = next(
+        line for line in odd.metadata_lines if line.startswith("Keywords: ")
+    )
+    assert odd_line == "Keywords: " + jp, odd_line

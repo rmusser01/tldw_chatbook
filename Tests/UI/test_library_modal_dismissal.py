@@ -513,6 +513,12 @@ _COLLECTIONS_FILE = "tldw_chatbook/UI/Library_Modules/prompt_collections.py"
 _PROMPTS_CONTROLLER_FILE = (
     "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py"
 )
+#: Wave-8 task 2 moved 185 notes-cluster methods off `LibraryScreen` into
+#: `LibraryNotesController`; two of the edges below launch their modal from a
+#: body that now lives there, so discovery has to parse that file too or a
+#: repointed edge is simply never found (and the bidirectional assertion fails
+#: the other way) -- the same repoint the prompts controller needed at wave 6.
+_NOTES_CONTROLLER_FILE = "tldw_chatbook/UI/Library_Modules/library_notes_controller.py"
 _FILE_NOTES_WORKSPACE_FILE = (
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py"
 )
@@ -529,6 +535,7 @@ _SUPPORTED_OWNER_SCOPES = (
     _OwnerScope(_LIBRARY_SCREEN_FILE, "LibraryScreen"),
     _OwnerScope(_COLLECTIONS_FILE, "LibraryPromptCollectionsController"),
     _OwnerScope(_PROMPTS_CONTROLLER_FILE, "LibraryPromptsController"),
+    _OwnerScope(_NOTES_CONTROLLER_FILE, "LibraryNotesController"),
     _OwnerScope(_FILE_NOTES_WORKSPACE_FILE, "LibraryFileNotesWorkspace"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "LibraryFileNotesGitPanel"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "PushDestinationAuthorizationDialog"),
@@ -553,7 +560,12 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         "create_local_workspace",
         WorkspaceCreateModal,
     ),
-    _edge(_LIBRARY_SCREEN_FILE, "LibraryScreen", "_export_library_note", FileSave),
+    _edge(
+        _NOTES_CONTROLLER_FILE,
+        "LibraryNotesController",
+        "_export_library_note",
+        FileSave,
+    ),
     _edge(
         _LIBRARY_SCREEN_FILE,
         "LibraryScreen",
@@ -621,8 +633,8 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         FileOpen,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _NOTES_CONTROLLER_FILE,
+        "LibraryNotesController",
         "handle_library_notes_lasting_folder_requested",
         FileOpen,
     ),

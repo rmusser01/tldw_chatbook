@@ -65,27 +65,27 @@ def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
         "prompts",
         "skills",
     }
-    database = screen._library_notes_reader_preferences
-    folder = screen._library_file_notes_reader_preferences
+    database = screen._notes_state.reader_preferences
+    folder = screen._notes_state.file_notes_reader_preferences
     assert database is not folder
     assert database.library_open is folder.library_open is False
     assert database.library_width == folder.library_width == 31
     assert (database.items_open, database.items_width) == (False, 33)
     assert (folder.items_open, folder.items_width) == (True, 44)
-    assert screen._library_notes_reader_layout is not (
-        screen._library_file_notes_reader_layout
+    assert screen._notes_state.reader_layout is not (
+        screen._notes_state.file_notes_reader_layout
     )
     assert screen._library_reader_durable_preferences["notes_items"] is False
     assert screen._library_reader_durable_preferences["notes_file_items"] is True
     assert "notes_file_items" in screen._library_reader_persistence_generations
     assert "notes_file_items" in screen._library_reader_durable_generations
     assert (
-        screen._library_notes_reader_persistence_locks["library"]
-        is screen._library_file_notes_reader_persistence_locks["library"]
+        screen._notes_state.reader_persistence_locks["library"]
+        is screen._notes_state.file_notes_reader_persistence_locks["library"]
     )
     assert (
-        screen._library_notes_reader_persistence_locks["items"]
-        is not screen._library_file_notes_reader_persistence_locks["items"]
+        screen._notes_state.reader_persistence_locks["items"]
+        is not screen._notes_state.file_notes_reader_persistence_locks["items"]
     )
 
 @pytest.mark.asyncio
@@ -234,17 +234,19 @@ async def test_database_notes_capability_inventory_and_modes(
             _library_note_import_controller=SimpleNamespace(
                 revisit_receipt=revisit_receipt
             ),
-            _library_notes_lasting_origin="setup",
-            _library_notes_view="list",
+            _notes_state=SimpleNamespace(
+                lasting_origin="setup",
+                view="list",
+            ),
             _apply_library_notes_footer_context=Mock(),
         )
         await LibraryScreen.handle_library_notes_manage_sync_folders(task_screen, event)
         refresh_roots.assert_called_once_with()
-        assert task_screen._library_notes_view == "lasting_roots"
+        assert task_screen._notes_state.view == "lasting_roots"
         assert len(sync_calls) == 1
         await LibraryScreen.handle_library_notes_import_receipt(task_screen, event)
         revisit_receipt.assert_called_once_with()
-        assert task_screen._library_notes_view == "import"
+        assert task_screen._notes_state.view == "import"
         assert len(sync_calls) == 2
 
         mutations: list[tuple[str, dict[str, object]]] = []
@@ -273,8 +275,10 @@ async def test_database_notes_capability_inventory_and_modes(
             _schedule_library_notes_tree_mutation=lambda action, **kwargs: (
                 mutations.append((action, kwargs))
             ),
-            _library_notes_deleted_folder_receipt=SimpleNamespace(
-                folder_id="folder-deleted", expected_version=13
+            _notes_state=SimpleNamespace(
+                deleted_folder_receipt=SimpleNamespace(
+                    folder_id="folder-deleted", expected_version=13
+                ),
             ),
         )
         LibraryScreen.handle_library_notes_folder_new(tree_screen, event)
@@ -362,8 +366,10 @@ async def test_database_notes_capability_inventory_and_modes(
 
         export_screen = SimpleNamespace(
             _library_notes_mutation_fenced=lambda: False,
-            _library_notes_row_selection=SimpleNamespace(
-                count=1, export_scope=lambda: export_scope
+            _notes_state=SimpleNamespace(
+                row_selection=SimpleNamespace(
+                    count=1, export_scope=lambda: export_scope
+                ),
             ),
             _open_library_export_canvas=open_export,
         )
@@ -384,8 +390,10 @@ async def test_database_notes_capability_inventory_and_modes(
 
         undo_screen = SimpleNamespace(
             _library_notes_mutation_fenced=lambda: False,
-            _library_note_delete_receipt=receipt,
-            _library_notes_mutation_in_flight=False,
+            _notes_state=SimpleNamespace(
+                delete_receipt=receipt,
+                mutation_in_flight=False,
+            ),
             is_mounted=False,
             _undo_library_note_delete=undo,
             run_worker=lambda coroutine, *, exclusive, group: workers.append(
@@ -393,7 +401,7 @@ async def test_database_notes_capability_inventory_and_modes(
             ),
         )
         LibraryScreen.handle_library_note_delete_undo(undo_screen, event)
-        assert undo_screen._library_notes_mutation_in_flight
+        assert undo_screen._notes_state.mutation_in_flight
         assert undo_receipts == [receipt]
         assert [(exclusive, group) for _, exclusive, group in workers] == [
             (True, "library_note_mutation")
@@ -528,9 +536,9 @@ async def test_database_note_status_header_paints_actionable_detail() -> None:
             status_message,
             expected_next,
         ) in cases:
-            screen._library_note_autosave_state = autosave_state
-            screen._library_note_shortcut_status = shortcut_status
-            screen._library_notes_select_mode = read_only
+            screen._notes_state.autosave_state = autosave_state
+            screen._notes_state.shortcut_status = shortcut_status
+            screen._notes_state.select_mode = read_only
             screen._library_note_session._snapshot = replace(
                 snapshot,
                 dirty=autosave_state != "idle",
@@ -639,13 +647,13 @@ async def test_notes_reader_persistence_authorities_reconcile_independently(
     database_generation = screen._claim_library_reader_persistence("notes", "items")
     screen._replace_library_reader_preference("notes", "items_open", False)
     screen._mirror_library_notes_reader_preference("items_open", False)
-    assert screen._library_notes_reader_preferences.items_open is False
+    assert screen._notes_state.reader_preferences.items_open is False
     assert app.app_config["library"]["notes_reader"]["items_open"] is False
 
     folder_generation = screen._claim_library_reader_persistence("notes_files", "items")
     screen._replace_library_reader_preference("notes_files", "items_open", False)
     screen._mirror_library_file_notes_reader_preference("items_open", False)
-    assert screen._library_file_notes_reader_preferences.items_open is False
+    assert screen._notes_state.file_notes_reader_preferences.items_open is False
     assert app.app_config["library"]["notes_reader"]["files_tree_open"] is False
 
     await screen._persist_library_reader_preference(
@@ -659,8 +667,8 @@ async def test_notes_reader_persistence_authorities_reconcile_independently(
         ("library.notes_reader", "files_tree_open", False),
         ("library.notes_reader", "items_open", False),
     ]
-    assert screen._library_file_notes_reader_preferences.items_open is False
-    assert screen._library_notes_reader_preferences.items_open is True
+    assert screen._notes_state.file_notes_reader_preferences.items_open is False
+    assert screen._notes_state.reader_preferences.items_open is True
     assert app.app_config["library"]["notes_reader"] == {
         "items_open": True,
         "items_width": 33,
@@ -692,8 +700,8 @@ async def test_notes_reader_persistence_authorities_reconcile_independently(
         verify_failure_from_config=True,
     )
 
-    assert screen._library_notes_reader_preferences.items_open is False
-    assert screen._library_file_notes_reader_preferences.items_open is False
+    assert screen._notes_state.reader_preferences.items_open is False
+    assert screen._notes_state.file_notes_reader_preferences.items_open is False
     assert notifications == [
         (
             "Library reader layout could not be verified from configuration; the current pane choice was kept.",
@@ -780,8 +788,8 @@ async def test_notes_reader_opposite_generation_races_stay_authority_local(
         ("files_tree_open", False),
     }
     assert writes[2:] == [("files_tree_open", True), ("items_open", True)]
-    assert screen._library_notes_reader_preferences.items_open is True
-    assert screen._library_file_notes_reader_preferences.items_open is True
+    assert screen._notes_state.reader_preferences.items_open is True
+    assert screen._notes_state.file_notes_reader_preferences.items_open is True
     assert screen._library_reader_durable_preferences["notes_items"] is True
     assert screen._library_reader_durable_preferences["notes_file_items"] is True
     assert notes_reader["items_open"] is True
@@ -817,7 +825,7 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         )
 
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
         assert shell.effective_layout.library_open is True
         assert writes == []
@@ -827,19 +835,19 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
                 and not shell.effective_layout.library_open
             ),
             message="Database editable open did not activate work-first layout",
         )
-        assert screen._library_notes_reader_preferences.library_open is True
+        assert screen._notes_state.reader_preferences.library_open is True
         assert writes == []
 
         shell.library_grip.press()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase
+                screen._notes_state.work_session_phase
                 is NotesWorkSessionPhase.MANUALLY_CANCELLED
                 and shell.effective_layout.library_open
             ),
@@ -861,7 +869,7 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         ):
             screen._dispatch_library_notes_work_session(event)
         assert (
-            screen._library_notes_work_session_phase
+            screen._notes_state.work_session_phase
             is NotesWorkSessionPhase.MANUALLY_CANCELLED
         )
         assert shell.effective_layout.library_open is True
@@ -871,7 +879,7 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase
+                screen._notes_state.work_session_phase
                 is NotesWorkSessionPhase.INACTIVE
             ),
             message="Database identity clear did not reset work session",
@@ -882,14 +890,14 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
             lambda: writes == [("library.reader", "library_open", False)],
             message="Explicit saved-closed Library request did not persist",
         )
-        assert screen._library_notes_reader_preferences.library_open is False
+        assert screen._notes_state.reader_preferences.library_open is False
 
         writes.clear()
         screen.query_one("#library-notes-row-1", Button).press()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ),
             message="A new Database work session did not activate",
         )
@@ -901,14 +909,14 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
             message="Saved-closed manual expansion did not persist exactly once",
         )
         assert (
-            screen._library_notes_work_session_phase
+            screen._notes_state.work_session_phase
             is NotesWorkSessionPhase.MANUALLY_CANCELLED
         )
-        assert screen._library_notes_reader_preferences.library_open is True
+        assert screen._notes_state.reader_preferences.library_open is True
 
         await screen._select_library_rail_row("browse-media")
         assert (
-            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         )
 
 
@@ -1033,7 +1041,7 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
         body = await _wait_for_selector(screen, pilot, "#library-note-body")
         body.text = "parked reader-route draft"
         await pilot.pause()
-        assert screen._library_notes_autosave_timer is not None
+        assert screen._notes_state.autosave_timer is not None
         screen.query_one("#library-note-preview", Button).press()
         await pilot.pause()
 
@@ -1050,9 +1058,9 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
             "parked reader-route draft",
             True,
         )
-        assert screen._selected_note_id == "n-2"
-        assert screen._library_note_preview is True
-        assert screen._library_notes_autosave_timer is None
+        assert screen._notes_state.selected_note_id == "n-2"
+        assert screen._notes_state.preview is True
+        assert screen._notes_state.autosave_timer is None
         assert app.notes_scope_service.save_calls == []
 
         monkeypatch.setattr(
@@ -1061,12 +1069,12 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-preview-body")
 
-        assert screen._selected_note_id == "n-2"
-        assert screen._library_note_preview is True
+        assert screen._notes_state.selected_note_id == "n-2"
+        assert screen._notes_state.preview is True
         assert screen.query_one("#library-note-body", TextArea).text == (
             "parked reader-route draft"
         )
-        assert screen._library_notes_autosave_timer is not None
+        assert screen._notes_state.autosave_timer is not None
         assert app.notes_scope_service.save_calls == []
 
         await _wait_for_condition(
@@ -1107,7 +1115,7 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
         body.text = "queued autosave draft"
         await pilot.pause()
 
-        timer = screen._library_notes_autosave_timer
+        timer = screen._notes_state.autosave_timer
         assert timer is not None
         callback = getattr(timer._callback, "args", (None,))[0]
         assert callable(callback)
@@ -1123,7 +1131,7 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
         monkeypatch.setattr(screen, "run_worker", original_run_worker)
 
         assert len(queued_autosaves) == 1
-        assert screen._library_notes_autosave_timer is None
+        assert screen._notes_state.autosave_timer is None
         assert app.notes_scope_service.save_calls == []
 
         screen.query_one("#library-row-browse-media", Button).press()
@@ -1151,7 +1159,7 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
         await _wait_for_selector(screen, pilot, "#library-note-body")
 
         assert rearm_calls == 1
-        assert screen._library_notes_autosave_timer is not None
+        assert screen._notes_state.autosave_timer is not None
         assert screen.query_one("#library-note-body", TextArea).text == (
             "queued autosave draft"
         )
@@ -1183,7 +1191,7 @@ async def test_work_pane_focus_is_classified_as_notes_stage() -> None:
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
         await _open_note_editor(screen, pilot)
         body = screen.query_one("#library-note-body", TextArea)
-        screen._library_notes_stage = "rail"
+        screen._notes_state.stage = "rail"
         body.focus()
         await pilot.pause()
 
@@ -1377,7 +1385,7 @@ async def test_emergency_width_preserves_manual_collapse_and_notes_adaptive_owne
             message="Adaptive Notes did not release ordinary emergency ownership.",
         )
 
-        assert screen._library_notes_stage == "notes"
+        assert screen._notes_state.stage == "notes"
         assert screen._library_rail_collapsed is True
         assert isinstance(shell, LibraryAdaptiveReaderShell)
         assert shell.work.display is True
@@ -1399,15 +1407,15 @@ async def test_wide_editor_deep_link_keeps_reader_navigation_and_local_back() ->
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ),
             message=lambda: (
                 "Deep-linked Database editor did not settle work-first: "
-                f"phase={screen._library_notes_work_session_phase!r}, "
-                f"pending={screen._library_notes_work_session_activation_pending!r}, "
-                f"selected={screen._selected_note_id!r}, "
-                f"view={screen._library_notes_view!r}, "
-                f"source={screen._library_notes_source!r}, "
+                f"phase={screen._notes_state.work_session_phase!r}, "
+                f"pending={screen._notes_state.work_session_activation_pending!r}, "
+                f"selected={screen._notes_state.selected_note_id!r}, "
+                f"view={screen._notes_state.view!r}, "
+                f"source={screen._notes_state.source!r}, "
                 f"snapshot={screen._library_note_session.snapshot is not None!r}, "
                 f"reader_width={screen._library_notes_work_session_reader_width()!r}"
             ),
@@ -1508,7 +1516,7 @@ async def test_bulk_mode_keeps_last_note_as_labelled_read_only_preview() -> None
         ):
             assert screen.query_one(selector, Button).disabled is True
 
-        loaded_note_id = screen._selected_note_id
+        loaded_note_id = screen._notes_state.selected_note_id
         loaded_row = next(
             row
             for row in screen.query(".library-notes-row")
@@ -1530,11 +1538,11 @@ async def test_bulk_mode_keeps_last_note_as_labelled_read_only_preview() -> None
         await screen.action_library_notes_save()
         assert save_calls == 0
         assert await screen._exit_library_note_editor_guarded() is False
-        assert screen._library_notes_select_mode is True
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.select_mode is True
+        assert screen._notes_state.view == "editor"
 
         await screen.action_library_notes_escape()
         await pilot.pause()
 
-        assert screen._library_notes_select_mode is False
-        assert screen._library_notes_view == "editor"
+        assert screen._notes_state.select_mode is False
+        assert screen._notes_state.view == "editor"
