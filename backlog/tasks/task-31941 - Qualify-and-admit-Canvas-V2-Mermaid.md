@@ -1,11 +1,11 @@
 ---
 id: TASK-31941
 title: Qualify and admit Canvas V2 Mermaid
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:15'
-updated_date: '2026-09-09 05:28'
+updated_date: '2026-09-09 05:41'
 labels:
   - canvas
   - v2
@@ -17,6 +17,7 @@ documentation:
   - Docs/superpowers/specs/2026-09-06-chatbook-canvas-v2-mermaid-design.md
   - >-
     Docs/superpowers/plans/2026-09-06-chatbook-canvas-v2-mermaid-implementation.md
+  - Docs/superpowers/reviews/2026-09-08-canvas-v2-mermaid-acceptance-closeout.md
 priority: high
 ---
 
@@ -50,10 +51,11 @@ Reason: Qualification and admission of the exact approved immutable profile unde
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Current: the exact Mermaid profile passed fresh local candidate/admitted gates and
-is admitted. All acceptance criteria are evidenced; independent reviews and final
-closeout remain. The earlier blocked gate and prerequisite handoff below are
-historical checkpoints, not the current qualification outcome.
+Current: the exact Mermaid profile is locally qualified and admitted. Task review,
+whole-branch review, and the scoped recovery-fix review are complete, with no open
+Critical or Important findings. Existing M1 warning cleanup remains separately
+disclosed. The earlier blocked gates and prerequisite handoff below are historical
+checkpoints, not the current qualification outcome.
 
 ### Historical qualification — 2026-09-07
 
@@ -70,4 +72,8 @@ The SQLite prerequisite is now Done with reviewed acceptance closeout at Docs/su
 Final whole-branch review identified I1: an unavailable packaged profile snapshot propagates through parent, child and native Console startup, preventing ADR124 source-only recovery. The strict loader is correct; application-owner recovery needs a bounded correction before closeout. Task remains In Progress. Prior passing qualification and admitted immutable bytes remain recorded; no PR or merge.
 
 Final review I1 correction implemented under ADR124 item6: the strict profile loader is unchanged; native Console, served-parent and served-child owners retain one inert source-free snapshot on packaged integrity failure. This preserves ordinary startup and authenticated source/history/download while denying HTML mutations and all runtime delivery, with matched unavailable control state and healthy/unavailable mismatch rejection. Fresh frozen covering gate: 1400 passed, 2 optional engine skips, 1 existing warning, 712.32s, exit0. Final test-only picker/lineage fixture correction passed all 17 focused cases, 6.07s, exit0; product bytes remained identical to the covering gate. New/small files and changed legacy logical ranges pass scoped static checks with zero new diagnostics over the recorded baseline. Evidence /private/tmp/mermaid-recovery.MikmXD; recovery compatibility docs and testing lesson updated. Independent scoped fix review remains before Done. No PR, push, merge or cleanup.
+
+### Reviewed closeout — 2026-09-08
+
+Completed TASK-31941 under ADR124/ADR121. Admission745811a335 and recovery7464fe0c6c are independently reviewed; scoped review marks I1 addressed with no new breakage. Final covering gate1400pass/2optionalengine skips/1existingwarning and final17focusedpass are documented with exact unchanged runtime bytes, static scope, intermediate failures, and evidence hashes. All acceptance criteria are checked. The testing lesson records why strict-loader tests alone missed startup recovery. Acceptance closeout: Docs/superpowers/reviews/2026-09-08-canvas-v2-mermaid-acceptance-closeout.md. No new ADR, runtime privileges, dependencies, schema or immutable asset changes in the correction. M1 and existing lint debt remain explicit non-blocking limitations. Branch and evidence preserved; PR/rebase/push/merge remain a separate integration choice.
 <!-- SECTION:NOTES:END -->

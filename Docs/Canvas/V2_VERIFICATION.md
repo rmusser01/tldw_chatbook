@@ -1,7 +1,9 @@
 # Canvas V2 Mermaid qualification
 
 Task31941, ADR124. **Required local gates passed on 2026-09-08; the exact V2
-profile is admitted. Independent review is pending.** The historical withdrawn
+profile is admitted. Independent review and the scoped recovery fix are complete.**
+See the [acceptance closeout](../superpowers/reviews/2026-09-08-canvas-v2-mermaid-acceptance-closeout.md).
+The historical withdrawn
 admission and SQLite investigation below remain unchanged evidence, not passing
 results. This is local qualification, not hosted CI or merge approval.
 
@@ -16,7 +18,7 @@ Fresh candidate and admitted selections now pass against the unchanged immutable
 - Manifest: `17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466`.
 - Admitted policy: `cd4f0cdd756732e686b05031ce12c6bd086473cc72ff2f9d58340d8528b40f15`.
 
-Only the catalog's diagram default, policy identity, V2 execution flag and refusal
+For admission, only the catalog's diagram default, policy identity, V2 execution flag and refusal
 reason changed. V1 remains executable and the default without diagrams. No
 manifest, library, worker, renderer, engine, quota, schema, archive format or
 generated-code privilege changed. Unknown/revoked profiles remain source-only.
@@ -31,7 +33,7 @@ generated-code privilege changed. Unknown/revoked profiles remain source-only.
 | Focused unavailable-package owner recovery | 17 passed, 1 warning, 6.74s |
 | Post-I1 complete selected Canvas covering gate | 1400 passed, 2 optional browser skips, 1 warning, 712.32s |
 | Final fixture-fidelity owner selection | 17 passed, 1 warning, 6.07s |
-| Touched-file Ruff, formatter and whitespace checks | Passed |
+| Scoped Ruff, formatter and whitespace gates | Passed; existing legacy debt retained |
 
 ### Final-review unavailable-package recovery
 
@@ -81,9 +83,11 @@ the existing warning in 6.07s, and the complete scoped static command passed
 again. See `fixture-corrected-*`, `fixture-wire-green-*`, and
 `fixture-wire-static.log`. Root verified that every product diff byte is identical
 to the 1400-case covering run; no unchanged broader gate was rerun solely for this
-fixture correction. Independent scoped re-review remains pending.
+fixture correction. Independent scoped re-review marked I1 addressed with no new
+Critical/Important breakage; M1 remains separately disclosed warning cleanup.
 
-Root followed every pytest invocation through process exit. Both integrated JUnit
+Root followed every pytest invocation through process exit. The candidate and
+pre-I1 admitted integrated JUnit
 records contain 1385 cases, zero errors/failures and only missing Firefox/WebKit
 skips. Their collected node identities differ only by the two intentional
 admission-test renames. No required Chromium or offline rebuild gate was skipped.
