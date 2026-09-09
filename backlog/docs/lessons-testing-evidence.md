@@ -62,6 +62,24 @@ succeeds before disposal exposed the missing cleanup. For fail-closed behavior,
 establish a successful control and exercise the production sync/async entry;
 an unrelated exception can otherwise satisfy the failure assertion.
 
+## A headless Textual child has a second stdout forwarding path
+
+**PR #2427 / TASK-31932, 2026-09-09.** Fourteen real-app TTS shutdown tests
+failed while parsing their child phase messages. A local-variable reproduction
+showed a startup logging marker, not an empty message or a helper failure.
+Redirecting ordinary `sys.stdout` to stderr still left all fourteen failures:
+Textual had captured `sys.__stdout__` into the app's `_original_stdout` and
+forwarded headless print events there. Routing that fixture-owned stream to
+stderr before mounting, as well as ordinary stdout before imports, made all
+fourteen strict protocol/lifecycle cases pass. Explicit phase messages continued
+using the original stdout pipe; no parsing, timeout or foreign-file assertion
+was relaxed.
+
+**What to do.** For subprocess protocols, identify every framework-owned output
+path across construction and mounting. Keep diagnostics on a separate visible
+stream, preserve the exact protocol parser, and verify the mounted child rather
+than assuming a Python-level redirection covers framework forwarding.
+
 ## Cancellation waiters cannot own terminal acknowledgements
 
 **TASK-32115, Buddy/TTS integration, 2026-09-09.** Replacing a Buddy utterance

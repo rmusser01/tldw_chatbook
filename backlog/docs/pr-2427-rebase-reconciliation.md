@@ -2240,3 +2240,116 @@ observer completed successfully; the directory above holds exact source identity
 and terminal evidence. No connection monkeypatches or forced collection were
 used. The source freeze is now lifted. This qualifies that checkpoint, not the
 new Canvas/SQLite base still awaiting integration.
+
+### Wave-fifteen rebase and current-source qualification (2026-09-09 UTC)
+
+Saved checkpoint `54ac4102263400aa58e4adb9c29b8c9f1cb39984` is retained by
+`codex/pr2427-before-wave15-rebase-20260909`. The 224-commit rebase onto
+`a36fc6133c69f77b8b14596a59918de34261f8ef` completed at
+`cc6661100ab26fa2cb918994525d7b59aa23ff47`. Published head remains
+`3fe94c842e0cead1720465dfc25598abd8d42a72`; that exact lease is required for
+publication. The PR is open and not yet merge-qualified.
+
+Conflict resolution retained upstream SQLite registrations, C48 retirement,
+helper/native-probe restrictions and all five backup controls once. The obsolete
+duplicate ChaChaNotes factory dictionary entry was removed in favor of upstream
+`base_db._QuiescentSQLiteConnection`. Incoming TTS shutdown coverage was retained
+with its consistent owner labels and meeting-session initialization. Production
+DB/TTS files have no difference from this upstream base.
+
+Canvas import language identity and served-mode failure behavior were transferred
+to the existing `ConsoleMessageController`, without restoring the removed Screen
+methods. The browser child keeps the upstream exact-card readiness wait and
+button while calling the controller owner. Profile/snapshot fences and compiler
+keyword contracts remain. AST comparisons verified the moved bodies against
+upstream with only the existing owner/recovery-hook substitutions.
+
+Current-source completed checks:
+
+- All derived-artifact checks pass, including exact reproduction of all six
+  Mermaid outputs from eight size/hash-verified public source inputs. Cache:
+  `/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave15-mermaid-cqfbrd0w/inputs`.
+  Log: `/private/tmp/pr2427-wave15-preflight.log`.
+- Complete startup/size/private-delegate/moved-seam/packaging gate selection:
+  **166 passed, 5 warnings in 39.32s**, exit 0. Preimport measured 498/500
+  modules; parsed boot CSS measured 803716/804000 bytes. No limits changed.
+  Log: `/private/tmp/pr2427-wave15-gates.log`.
+- Complete SQLite/trace/legacy-recovery cohort: **679 passed, 2 Windows-only
+  skips, 2 warnings in 100.67s**. Log:
+  `/private/tmp/pr2427-cc6661100a-db-offline.log`.
+
+Remaining current-source runs are active: complete Canvas offline files,
+TTS/helper packaging, affected real Chromium served-flow/readiness files, and
+native complete Library qualification. The Library run uses the unchanged native
+observer without connection patches or forced GC in
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave15-native.MyCbEo`.
+Production and test bytes remain frozen during these runs. Initial sandbox
+Canvas failures must be classified from their completed output before any repair;
+an environment-restricted run is not application-failure proof. Review, exact-head
+publication and normal merge remain open.
+
+Wave-fifteen follow-up evidence:
+
+- Real installed Chromium, complete served-flow and startup-readiness files:
+  **65 passed, 3 warnings in 195.75s**, exit 0
+  (`/private/tmp/pr2427-wave15-browser.log`). Providers were scripted and servers
+  fixture-owned loopback; no model or browser download was needed.
+- Independent integration review found no actionable issue in the moved Canvas
+  behavior, current SQLite census/factory, or app TTS ownership. This does not
+  substitute for unfinished test/review/merge gates.
+- Initial sandbox Canvas run: **87 failed, 972 passed, 10 skipped**. The complete
+  failure census identifies loopback-bind denial directly or via the gateway's
+  bounded startup error. A full escalated rerun is in progress with verified
+  Mermaid inputs. Four QuickJS/esbuild archives were also acquired with the
+  existing SHA-512-integrity-checked downloader at
+  `/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave15-quickjs-pztpkqfs`
+  to enable the runtime reproduction test instead of leaving it cache-skipped.
+- TTS cohort: **993 passed, 14 failed, 2 skipped in 197.67s**. All fourteen
+  actual-app child cases receive the non-JSON line
+  `--- _setup_logging START (from Logging_Config.py) ---` on their phase pipe.
+  The isolated `--showlocals` reproduction confirms this exact line; it is not
+  an empty readiness message or a demonstrated semaphore failure. Logs:
+  `/private/tmp/pr2427-cc6661100a-tts-offline.log` and
+  `/private/tmp/pr2427-cc6661100a-tts-phase-diagnostic.log`.
+- Packaging/runtime-floor cohort: **43 passed, 1 failed**. The failing oracle
+  requires `3.12` literally for the derived-assets job, which accepted upstream
+  deliberately pins to `3.12.11` for reproducible Mermaid generation. The exact
+  local SQLite `[live]` case passed separately without enabling provider access.
+
+Task step 88 records the minimal test-only repairs before implementation. Only
+the two isolated TTS-child/runtime-floor test files may change while the native
+Library/Canvas runs continue; production, shared fixtures and those active runs'
+test bytes remain frozen. Strict phase parsing, foreign-cohort assertions,
+timeouts, runtime floor and immutable version pin are not relaxed.
+
+The complete escalated Canvas cohort passed **1068 tests, 1 cache skip in
+197.90s**; the complete runtime-assets follow-up with both caches passed
+**39 tests, no skips in 6.47s**. All 1069 distinct selected cases were exercised
+successfully. Evidence directories:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-canvas-loopback.kG7FJu`
+and `/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-canvas-assets.YvQ5Tw`.
+The 87 sandbox failures disappeared with the required loopback permission.
+
+Step 88's first stdout redirection still failed all fourteen child cases.
+Installed Textual saves `sys.__stdout__` in `app._original_stdout` and forwards
+headless prints to that saved stream. The fixture now redirects that app-owned
+diagnostic stream before mounting as well. All **14 child cases passed in
+64.08s**, preserving strict JSON phases and real foreign-file/lifecycle checks
+(`/private/tmp/pr2427-step88-children-green.log`). The complete TTS aggregate is
+being rerun on these frozen test bytes. The complete packaging/runtime-floor
+group is now **44 passed, 2 warnings in 34.68s**
+(`/private/tmp/pr2427-step88-packaging-green.log`). Scoped Ruff passes on both
+test files, and the refined fixture change received independent review. Fresh
+derived preflight also passes (`/private/tmp/pr2427-wave15-final-preflight.log`).
+
+The final complete eleven-file TTS aggregate now passes: **1007 passed, 2
+expected skips, 6 warnings in 195.88s**, exit 0
+(`/private/tmp/pr2427-step88-tts-full-green.log`). The separately authorized
+local SQLite `[live]` case also passed; none of the original spawned helper
+cases failed with semaphore errors on this run. Both test repairs are verified
+without modifying production, shared fixtures, helper authority or CI pins.
+Live remote dev still equals `a36fc6133c`; the published PR lease remains
+`3fe94c842e`. Native Library qualification is still active and is explicitly
+not included in these completed results. This checkpoint may be published for
+final-head review, but normal merge still requires its terminal cleanup result
+and current remote review/check status.

@@ -81,8 +81,12 @@ def test_active_terminal_qualification_example_uses_python_312() -> None:
 
 def test_ci_jobs_that_install_or_parse_chatbook_use_python_312() -> None:
     derived = _text(".github/workflows/derived-artifacts.yml")
-    for job_name in ("pr-fast-lane", "derived-artifacts"):
-        assert "python-version: '3.12'" in _job_block(derived, job_name)
+    # Derived artifacts preserve the immutable Mermaid builder's patch pin.
+    for job_name, version in (
+        ("pr-fast-lane", "3.12"),
+        ("derived-artifacts", "3.12.11"),
+    ):
+        assert f"python-version: '{version}'" in _job_block(derived, job_name)
 
     comprehensive = _text(".github/workflows/test.yml")
     assert 'python-version: ["3.12"]' in _job_block(
