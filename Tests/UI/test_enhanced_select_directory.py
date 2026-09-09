@@ -113,6 +113,72 @@ async def test_select_button_returns_viewed_directory(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_select_button_resolves_typed_but_unsubmitted_path(tmp_path):
+    """task-32122: typing a path (no Enter) then pressing Select must use it.
+
+    ``_select_viewed_directory`` used to return only ``_dir_nav().location``,
+    silently discarding whatever the user had typed but not yet submitted.
+    """
+    (tmp_path / "vault").mkdir()
+
+    dialog = EnhancedSelectDirectory(location=tmp_path, context="t_typed_select")
+    app = _DialogHost(dialog)
+
+    with (
+        patch.object(efp_module, "save_settings_to_cli_config"),
+        patch.object(efp_module, "save_setting_to_cli_config"),
+    ):
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            path_input = dialog.query_one("#dir-path-input", Input)
+            path_input.value = str(tmp_path / "vault")
+            dialog.query_one("#select", Button).press()
+            await pilot.pause()
+
+    assert app.result == (tmp_path / "vault").resolve()
+
+
+@pytest.mark.asyncio
+async def test_select_button_with_bad_typed_path_shows_error_and_stays_open(tmp_path):
+    """Select with a typed-but-nonexistent path must error, not substitute
+
+    the currently browsed directory (task-32122 AC#1).
+    """
+    dialog = EnhancedSelectDirectory(location=tmp_path, context="t_typed_bad_select")
+    app = _DialogHost(dialog)
+
+    with (
+        patch.object(efp_module, "save_settings_to_cli_config"),
+        patch.object(efp_module, "save_setting_to_cli_config"),
+    ):
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            path_input = dialog.query_one("#dir-path-input", Input)
+            path_input.value = str(tmp_path / "does-not-exist")
+            dialog.query_one("#select", Button).press()
+            await pilot.pause()
+
+            error_line = dialog.query_one("#error-line", Static)
+            assert "Path not found" in str(error_line.renderable)
+
+    assert not app.result_seen
+
+
+@pytest.mark.asyncio
+async def test_field_is_labelled_folder_path(tmp_path):
+    """AC#2: the field is labelled 'Folder path', never 'File name'."""
+    dialog = EnhancedSelectDirectory(location=tmp_path, context="t_label")
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        label = dialog.query_one("#dir-path-label")
+        text = getattr(label.renderable, "plain", str(label.renderable))
+        assert "Folder path" in text
+        assert "File name" not in text
+
+
+@pytest.mark.asyncio
 async def test_cancel_dismisses_with_none(tmp_path):
     dialog = EnhancedSelectDirectory(location=tmp_path, context="t_cancel_dir")
     app = _DialogHost(dialog)

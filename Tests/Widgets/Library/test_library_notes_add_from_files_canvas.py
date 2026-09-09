@@ -228,6 +228,32 @@ async def test_configure_posts_folder_direction_and_local_destination_messages()
     assert "✓ ⇄ Both ways" in painted
 
 
+async def test_configure_folder_summary_shows_absolute_path_with_basename_intact() -> (
+    None
+):
+    """task-32122 Step 3: the Keep-synced canvas must show the real path a
+
+    long selected folder middle-elides to, keeping the trailing folder name
+    (the part a user recognizes their pick by) intact.
+    """
+    long_folder = (
+        "/Users/robert/Documents/deeply/nested/somewhere/notes-review-vault"
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="configure",
+        setup=replace(initial_lasting_sync_snapshot().setup, folder=long_folder),
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        summary = app.query_one("#notes-sync-folder-summary", Static)
+        text = getattr(summary.renderable, "plain", str(summary.renderable))
+        assert "notes-review-vault" in text
+        assert "…" in text
+        assert "/Users/robert/Documents/deeply/nested/somewhere" not in text
+
+
 @pytest.mark.parametrize("phase", ("checking", "activating"))
 async def test_running_phases_show_honest_wait_status_without_dead_cancel(
     phase: str,

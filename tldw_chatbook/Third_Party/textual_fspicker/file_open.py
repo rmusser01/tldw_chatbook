@@ -10,7 +10,7 @@ from pathlib import Path
 
 ##############################################################################
 # Local imports.
-from .base_dialog import ButtonLabel
+from .base_dialog import ButtonLabel, resolve_default_location
 from .file_dialog import BaseFileDialog
 from .path_filters import Filters
 
@@ -55,7 +55,7 @@ class FileOpen(BaseFileDialog):
             default button label as a parameter and return the label to use.
         """
         super().__init__(
-            location,
+            resolve_default_location(location),
             title,
             select_button=self._label(open_button, "Open"),
             cancel_button=cancel_button,
@@ -66,6 +66,19 @@ class FileOpen(BaseFileDialog):
         """Must the file exist?"""
         self._offer_select_folder = offer_select_folder
         """Offer the "select the folder being viewed" action?"""
+
+    def _hint_text(self) -> str:
+        """Name both actions once "Select folder" is offered (task-32122).
+
+        Neither ``FileOpen(offer_select_folder=True)`` nor the vendored
+        ``SelectDirectory`` had any on-screen hint distinguishing "Enter
+        descends" from "the folder-confirming button uses this one" --
+        AC#4 requires that hint actually render.
+        """
+        if not self._offer_select_folder:
+            return ""
+        open_label = self._label(self._select_button, "Open")
+        return f"Enter {open_label}  ·  Select folder to use this folder"
 
     def _should_return(self, candidate: Path) -> bool:
         """Perform the final checks on the chosen file.
