@@ -24,6 +24,10 @@ from tldw_chatbook.Library.library_note_import_state import LibraryNoteImportSna
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
 )
+from tldw_chatbook.Notes.agent_lessons import (
+    AGENT_LESSONS_FOLDER,
+    AGENT_LESSONS_FOLDER_GLOSS,
+)
 from tldw_chatbook.Library.library_notes_tree_state import (
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
@@ -1175,6 +1179,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             return
+        # task-32126: a seeded folder (Agent_Lessons) gives the tree
+        # projection rows even when the library holds zero notes, so the
+        # "no rows" check above never fires and the empty state never
+        # renders. Render it above the tree whenever the library itself is
+        # empty, independent of whether the projection has folder rows.
+        # PR #2538 review (Qodo finding 5): a fresh visit renders with
+        # empty_kind == "source-empty" before the bulk source-count lookup
+        # resolves, while the tree's own root "folders"/"placements" slices
+        # are still loading (a loading pager row, not an empty projection).
+        # Skip the banner while any row is still in flight so a user who
+        # does have notes never sees "No notes yet" flash ahead of the
+        # load result.
+        if list_state.empty_kind == "source-empty" and not any(
+            row.loading for row in projection.rows
+        ):
+            yield Static(
+                list_state.empty_copy,
+                id="library-notes-empty",
+                markup=False,
+            )
         checked_ids = {row.note_id for row in list_state.rows if row.checked}
         # task-32137: only a title that repeats under the SAME parent earns
         # a folder suffix -- two rows with one title in two folders already
@@ -1213,6 +1237,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 if row.kind in {"folder", "unfiled"}:
                     glyph = "▾" if row.expanded else "▸"
                     label = f"{indent}{glyph} {escape_markup(row.label)}"
+                    # task-32126: gloss the seeded Agent_Lessons folder while
+                    # the library holds zero notes -- a first-time user's
+                    # first question is what this folder is and whether they
+                    # made it themselves.
+                    # ponytail: keyed off "the whole library is empty"
+                    # rather than "this folder has no children" (no per-
+                    # folder note count is loaded for a collapsed row) --
+                    # exactly the scoped scenario this task covers; widen to
+                    # a real per-folder empty check if Agent_Lessons ever
+                    # needs the gloss while sibling notes exist elsewhere.
+                    if (
+                        row.label == AGENT_LESSONS_FOLDER
+                        and list_state.empty_kind == "source-empty"
+                    ):
+                        label = f"{label} — {AGENT_LESSONS_FOLDER_GLOSS} (empty)"
                     if row.status_text:
                         label = f"{label}  {row.status_text}"
                     classes = "library-notes-folder-row"

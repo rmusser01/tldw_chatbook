@@ -16,6 +16,7 @@ from tldw_chatbook.Library.library_notes_state import (
     LibraryNoteSessionSnapshot,
     LibraryNotesListState,
     NormalizedDatabaseNote,
+    build_library_notes_list_state,
 )
 from tldw_chatbook.Library.library_note_import_state import (
     initial_note_import_snapshot,
@@ -33,6 +34,7 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
     NotesBranchKey,
     empty_notes_slice,
 )
+from tldw_chatbook.Notes.agent_lessons import AGENT_LESSONS_FOLDER
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
     NoteFolder,
@@ -1092,3 +1094,125 @@ async def test_deleted_folder_receipt_exposes_restore_action(widget_pilot):  # n
     ) as pilot:
         await pilot.pause()
         assert pilot.app.query_one("#library-notes-folder-restore", Button)
+
+
+# --- task-32126: empty state must render even when the seeded Agent_Lessons
+# folder gives the tree projection rows -------------------------------------
+
+
+def _seeded_agent_lessons_projection() -> LibraryNotesTreeProjection:
+    return LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow(
+                placement_id="folder:agent-lessons",
+                kind="folder",
+                label=AGENT_LESSONS_FOLDER,
+                depth=0,
+                folder_id="agent-lessons",
+                breadcrumb=AGENT_LESSONS_FOLDER,
+            ),
+        )
+    )
+
+
+async def test_zero_notes_with_seeded_folder_still_shows_empty_state_and_gloss(
+    widget_pilot,  # noqa: F811
+):
+    list_state = build_library_notes_list_state((), total_count=0)
+    assert list_state.empty_kind == "source-empty"
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=list_state,
+        tree_projection=_seeded_agent_lessons_projection(),
+    ) as pilot:
+        await pilot.pause()
+        empty = pilot.app.query_one("#library-notes-empty", Static)
+        assert str(empty.renderable) == "No notes yet. Create your first note."
+
+        folder = pilot.app.query_one(".library-notes-folder-row", Button)
+        assert str(folder.label) == (
+            f"▸ {AGENT_LESSONS_FOLDER} — where Console agents file reusable "
+            "lessons (empty)"
+        )
+
+
+async def test_one_note_with_seeded_folder_renders_no_empty_line(
+    widget_pilot,  # noqa: F811
+):
+    list_state = build_library_notes_list_state(
+        [{"id": "n1", "title": "Note"}], total_count=1
+    )
+    assert list_state.empty_kind == "populated"
+    projection = LibraryNotesTreeProjection(
+        rows=(
+            *_seeded_agent_lessons_projection().rows,
+            LibraryNotesTreeRow(
+                placement_id="unfiled:n1",
+                kind="note",
+                label="Note",
+                depth=0,
+                note_id="n1",
+                breadcrumb="Note",
+            ),
+        )
+    )
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=list_state,
+        tree_projection=projection,
+    ) as pilot:
+        await pilot.pause()
+        assert not pilot.app.query("#library-notes-empty")
+        folder = pilot.app.query_one(".library-notes-folder-row", Button)
+        assert str(folder.label) == f"▸ {AGENT_LESSONS_FOLDER}"
+
+
+# --- PR #2538 review (Qodo, finding 5): a fresh Notes visit starts with a
+# zero-note source snapshot (list_state.empty_kind == "source-empty") while
+# the tree's root "folders"/"placements" slices are still loading -- those
+# in-flight slices render as a loading pager row, not an empty projection,
+# so the source-empty banner must not race ahead of them for a user who may
+# still turn out to have notes. ----------------------------------------------
+
+
+def _loading_root_pager_projection() -> LibraryNotesTreeProjection:
+    return LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow(
+                placement_id="pager:folders:root",
+                kind="pager",
+                label="Loading folders…",
+                depth=0,
+                paging_action="retry",
+                status_text="Loading folders…",
+                focus_id="library-notes-pager-folders-root",
+                loading=True,
+                disabled=True,
+            ),
+        )
+    )
+
+
+async def test_source_empty_with_loading_root_slices_suppresses_empty_line(
+    widget_pilot,  # noqa: F811
+):
+    list_state = build_library_notes_list_state((), total_count=0)
+    assert list_state.empty_kind == "source-empty"
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=list_state,
+        tree_projection=_loading_root_pager_projection(),
+    ) as pilot:
+        await pilot.pause()
+        assert not pilot.app.query("#library-notes-empty"), (
+            "the source-empty banner rendered while the root slices were "
+            "still loading -- a user with real notes could see "
+            "'No notes yet' before the load result arrives"
+        )
+        pager = pilot.app.query_one(
+            "#library-notes-pager-folders-root", Button
+        )
+        assert "Loading" in str(pager.label)

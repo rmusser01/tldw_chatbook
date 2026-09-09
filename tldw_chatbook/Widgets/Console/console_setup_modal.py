@@ -42,6 +42,8 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_SETUP_CARD_SUBTITLE,
     CONSOLE_SETUP_CARD_TITLE,
+    CONSOLE_SETUP_NOTES_ACTION_LABEL,
+    CONSOLE_SETUP_NOTES_ACTION_TOOLTIP,
     ConsoleDetectedServerAction,
     ConsoleSetupCardState,
     ConsoleSetupStep,
@@ -53,6 +55,10 @@ CONSOLE_SETUP_MODAL_STEP_COUNT = 3
 CONSOLE_SETUP_MODAL_ACTION_ID = "console-setup-modal-action"
 CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID = "console-setup-modal-detected-action"
 CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION = "use-detected-local-server"
+# task-32140: a needs-no-provider secondary action alongside the detected-
+# server one -- same "extra affordance while blocking" shape.
+CONSOLE_SETUP_MODAL_NOTES_ACTION_ID = "console-setup-modal-notes-action"
+CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION = "write-note-library"
 CONSOLE_SETUP_MODAL_BACKDROP_ID = "console-setup-modal-snow"
 _DEFAULT_ACTION_LABEL = "Choose model"
 _DEFAULT_ACTION_TOOLTIP = "Choose the provider and model for this Console session."
@@ -278,6 +284,13 @@ class ConsoleSetupModal(Vertical):
         return self._card_state.mode == "card"
 
     def compose(self) -> ComposeResult:
+        """Build the backdrop and setup card, including its action buttons.
+
+        Returns:
+            The backdrop widget followed by the setup card's title, steps,
+            and action buttons (provider recovery, notes, and any
+            detected-server action).
+        """
         # Children mirror the container's blocking state so hidden-modal copy
         # never leaks into visible-text scrapes before the first guidance sync.
         blocking = self.is_blocking
@@ -332,6 +345,18 @@ class ConsoleSetupModal(Vertical):
             action.tooltip = self._action_tooltip
             action.display = blocking
             yield action
+            # task-32140: needs no provider -- shown whenever the card is
+            # blocking, unlike the detected-server action which depends on
+            # discovery finding something.
+            notes_action = Button(
+                CONSOLE_SETUP_NOTES_ACTION_LABEL,
+                id=CONSOLE_SETUP_MODAL_NOTES_ACTION_ID,
+                classes="console-setup-modal-action",
+                compact=True,
+            )
+            notes_action.tooltip = CONSOLE_SETUP_NOTES_ACTION_TOOLTIP
+            notes_action.display = blocking
+            yield notes_action
             detected = Button(
                 self._detected_action_label(),
                 id=CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID,
@@ -404,6 +429,14 @@ class ConsoleSetupModal(Vertical):
             staged_widget.update(self._staged_evidence_notice)
             staged_widget.display = blocking and bool(self._staged_evidence_notice)
         self._sync_detected_action_button()
+        try:
+            notes_action = self.query_one(
+                f"#{CONSOLE_SETUP_MODAL_NOTES_ACTION_ID}", Button
+            )
+        except Exception:
+            pass
+        else:
+            notes_action.display = blocking
         try:
             action = self.query_one(f"#{CONSOLE_SETUP_MODAL_ACTION_ID}", Button)
         except Exception:
@@ -490,11 +523,23 @@ class ConsoleSetupModal(Vertical):
             pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Route card actions through the owning Workbench screen."""
+        """Route card actions through the owning Workbench screen.
+
+        Args:
+            event: The button-press event; ``event.button.id`` selects
+                which ``WorkbenchActionRequested`` action id gets posted
+                (detected-server, notes, or provider recovery).
+        """
         if event.button.id == CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID:
             event.stop()
             self.post_message(
                 WorkbenchActionRequested(CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION)
+            )
+            return
+        if event.button.id == CONSOLE_SETUP_MODAL_NOTES_ACTION_ID:
+            event.stop()
+            self.post_message(
+                WorkbenchActionRequested(CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION)
             )
             return
         if event.button.id != CONSOLE_SETUP_MODAL_ACTION_ID:
