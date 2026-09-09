@@ -62,7 +62,7 @@ def require_runtime() -> tuple[Any, Any]:
             code="dependency_missing",
             message=(
                 "Kokoro PyTorch requires the optional kokoro runtime. "
-                "On Python 3.11 or 3.12, install 'tldw_chatbook[local_tts]'. "
+                "On Python 3.12, install 'tldw_chatbook[local_tts]'. "
                 "Python 3.13+ is not supported by kokoro 0.9.4; select ONNX instead."
             ),
             retryable=False,

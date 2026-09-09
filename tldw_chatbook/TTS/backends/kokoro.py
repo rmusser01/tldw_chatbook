@@ -648,7 +648,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                 code="dependency_missing",
                 message=(
                     "Kokoro PyTorch needs 'tldw_chatbook[local_tts]' on Python "
-                    "3.11 or 3.12; select ONNX on Python 3.13+."
+                    "3.12; select ONNX on Python 3.13+."
                 ),
                 retryable=False,
                 operation_id="kokoro_pytorch",
