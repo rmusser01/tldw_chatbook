@@ -156,6 +156,10 @@ target_include_directories(
 target_compile_features(webrtc_aec3 PUBLIC cxx_std_17)
 target_compile_definitions(webrtc_aec3 PUBLIC ${WEBRTC_COMPILE_DEFINES})
 
+if(WIN32)
+  target_link_libraries(webrtc_aec3 PUBLIC winmm)
+endif()
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i.86)$" AND NOT MSVC)
   target_compile_options(webrtc_aec3 PRIVATE -msse2)
 endif()

@@ -192,6 +192,18 @@ def test_winsock_header_definition_is_windows_only_and_target_scoped() -> None:
     )
 
 
+def test_windows_timer_library_is_owned_by_webrtc_and_transitive() -> None:
+    """File-only link contract; actual Windows linking is exercised by CI."""
+    cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert re.search(
+        r"if\(WIN32\)\s+"
+        r"target_link_libraries\(webrtc_aec3 PUBLIC winmm\)\s+endif\(\)",
+        cmake,
+    )
+    assert cmake.count("winmm") == 1
+    assert "target_link_libraries(_native PRIVATE webrtc_aec3)" in cmake
+
+
 @pytest.mark.parametrize(
     ("platform", "expected"),
     [
