@@ -30,10 +30,10 @@ Wide Database Notes keeps Library navigation beside the list while you scan:
 +----------------------+-----------------------------------------------+
 | Library              | Database | Files                              |
 | Browse               | Notes (N)                                     |
-|   Notes              | Filter...   Sort   Sync   Import   Export     |
-|   Media              |                                               |
-|   Conversations      |  Note title                           age     |
-| ...                  |  Note title                           age     |
+|   Notes              | Filter...  New  Select  Add from files… Export |
+|   Media              | New folder   Move   Remove                    |
+|   Conversations      |  Note title · age                             |
+| ...                  |  Note title · Folder · age                    |
 +----------------------+-----------------------------------------------+
 ```
 
@@ -77,16 +77,38 @@ editor's own Back control returns to its list.
   back from Folder files is the same control you switched in with. On
   compact terminals the strip becomes a **‹ Library / Notes** cue instead.
 - **Notes list** — the default view: a "Notes (N)" header, the
-  "Filter notes… (Enter)" field, a toolbar (**New** / sort / Add from
-  files… / Export… / Select), a **New folder** action beneath it, the
-  folder tree, and one row per note showing its title and age. Its own
-  grip collapses or restores the list without changing the Folder Files tree
-  choice. Renaming a note updates its list row as soon as the note saves —
-  returning to the list shows the new title with no filter re-query needed.
+  "Filter notes… (Enter)" field, a toolbar (**New** / Select / Add from
+  files… / Export, plus the folder and placement actions — two rows on a
+  wide list, three when the list is too narrow to seat two groups on one),
+  the folder tree, and one row per note showing its title and how long ago
+  it changed
+  ("3m", "1d"). When two notes in the same folder share a title, each row
+  also names its folder — "Reading list · Unfiled · 2h". While no note is
+  open the list takes the width the empty work area would otherwise waste,
+  so long titles are not truncated on a wide terminal; opening a note hands
+  that width back. Its own grip collapses or restores the list without
+  changing the Folder Files tree choice. Renaming a note updates its list
+  row as soon as the note saves — returning to the list shows the new title
+  with no filter re-query needed.
+
+  The folder tree is ordered by title, which is the order the database pages
+  notes in, so it carries no sort control; the sort control belongs to the
+  flat list shown when no folder tree is loaded.
 
   *Verified against fix/library-uat-31796-31797 — 2026-09-06 (task-31796: the
   list row no longer keeps the pre-rename "Untitled" title until a filter
   re-query).*
+
+  In a narrow list pane the toolbar's action groups stack one action per
+  line rather than running off the pane edge, so every action stays
+  pressable.
+
+  *Verified against fix/library-notes-list — 2026-09-09 (task-32127: the list
+  no longer sits at 38 columns beside an empty work area, and its action
+  groups stack rather than clip in a narrow pane; task-32137: rows
+  carry an age and same-folder duplicate titles name their folder;
+  task-32128: the tree's title order is the database's, so Sort is not
+  offered there).*
 - **Note work area** — opens when you click a note. **Edit** shows the title
   and body, **Preview** renders the Markdown, and **Info** holds keywords,
   dates, version details, copy/export actions, and Delete. Save status and
@@ -312,8 +334,13 @@ both stay closed until you choose to reopen one.
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
 | "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. |
 
-With no notes at all, the list reads "No notes yet. Create one to see it
-here."
+With no notes at all, the list reads "No notes yet. Create your first note."
+above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
+solutions with Agent Lessons" above) is the only row showing, so a
+first-time user is never left staring at one unexplained folder with no
+other cue. While the library holds zero notes, that folder row itself also
+carries a one-line gloss: "Agent_Lessons — where Console agents file
+reusable lessons (empty)".
 
 ### Edit, Preview, and Info
 
@@ -372,11 +399,18 @@ sort, selected note or placement, Notes-list scroll, Library-rail scroll, and
 semantic keyboard focus instead of starting over at the first row.
 
 After a confirmed delete, the receipt stays in the Notes list until you
-choose **Undo**, choose **Dismiss**, or complete a newer note deletion.
-**Undo** restores that exact database note and immediately returns its row
-and the Notes rail count. **Dismiss** removes only the receipt; the note
-remains deleted. Notes do not currently expose a separate Trash browser, so
-the receipt is the in-Library recovery action.
+choose **Undo**, choose **Dismiss**, or complete a newer note deletion. Its
+"✓ deleted · \<title\>" line sits above the two actions rather than beside
+them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
+**Undo** restores that exact database note and immediately returns its row —
+in its folder, or under Unfiled — along with the Notes rail count, and moves
+the selection to the restored row. **Dismiss** removes only the receipt; the
+note remains deleted. Notes do not currently expose a separate Trash browser,
+so the receipt is the in-Library recovery action.
+
+*Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
+receipt's actions are no longer composed off the pane; task-32124: Undo
+returns the row to the folder tree, not only the count).*
 
 ### New note view
 
@@ -735,6 +769,15 @@ New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
 rows with a visible cursor, the footer's "enter create note" follows the
 focused control, and Tab no longer leaves the Library screen for the
 navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*
+
+*Verified against fix/library-notes-onboarding — 2026-09-09 (task-32126:
+the empty-state line previously never rendered once the seeded
+Agent_Lessons folder existed, because the tree projection had a row and
+the "no rows" check never fired; the guide's copy also disagreed with the
+code's. Fixed to render "No notes yet. Create your first note." above the
+tree whenever the library holds zero notes, matching the code copy
+exactly, and to gloss the Agent_Lessons folder row while it does. Pinned
+in `Tests/Widgets/Library/test_library_notes_canvas.py`.)*
 
 *Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
 Import once and Keep-synced folder pickers used to commit the directory

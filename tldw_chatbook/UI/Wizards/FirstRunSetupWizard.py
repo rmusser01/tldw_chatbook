@@ -381,6 +381,14 @@ REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES: Mapping[str, str] = {
     wizard_state.STEP_SUMMARY: "diagnostics",
 }
 
+#: task-32140: the Summary step's "Write your first note" exit. Not a real
+#: tab id -- app.py's _continue_first_run_wizard_result rewrites it to
+#: TAB_LIBRARY with the LIBRARY_NAV_CONTEXT_NOTES_CREATE context, the same
+#: sentinel-then-rewrite shape TAB_LIBRARY itself uses for "Add your first
+#: document" (task-32072), just one level further since two different
+#: Library destinations both need to travel as one wizard exit_route.
+EXIT_ROUTE_LIBRARY_NOTES = "library_notes"
+
 
 def manual_settings_context_for_required_step(
     step_id: str,
@@ -7103,6 +7111,15 @@ class SummaryStep(SetupStep):
         self._render_worker = None
 
     def compose_step(self) -> ComposeResult:
+        """Build the read-back matrix and the Summary's exit actions.
+
+        Returns:
+            The scrolling read-back body (title, per-track defaults note,
+            summary rows, model-catalog consent checkbox, footer, and the
+            post-setup interview checkbox) followed by the docked exit
+            actions row (provider setup, add a document, write a note,
+            explore Home, review settings).
+        """
         with Vertical(classes="setup-summary"):
             yield Static("Setup summary", classes="setup-title")
             yield Static("", id="setup-summary-defaults-note", classes="setup-subtitle")
@@ -7140,15 +7157,27 @@ class SummaryStep(SetupStep):
         # CTAs on screen no matter how tall the read-back matrix gets
         # (TASK-1495 AC #3 -- full-track content previously pushed them
         # below the fold at 120x40).
-        with Horizontal(classes="setup-summary-actions"):
-            yield Button(
-                "Review provider setup", id="setup-exit-chat", variant="primary"
-            )
-            # task-32072: the Summary never said where content lives, so a
-            # finished setup handed the user no way to put a file anywhere.
-            yield Button("Add your first document", id="setup-exit-library")
-            yield Button("Explore Home", id="setup-exit-home")
-            yield Button("Review settings", id="setup-exit-settings")
+        # task-32140 review: five full-label buttons no longer fit in one
+        # non-wrapping row at either supported wizard size (80x24 or
+        # 120x40 -- Textual Horizontal never wraps). Two docked rows keep
+        # every action on screen instead of running it off the right edge.
+        with Vertical(classes="setup-summary-actions"):
+            with Horizontal(classes="setup-summary-actions-row"):
+                yield Button(
+                    "Review provider setup", id="setup-exit-chat", variant="primary"
+                )
+                # task-32072: the Summary never said where content lives,
+                # so a finished setup handed the user no way to put a
+                # file anywhere.
+                yield Button("Add your first document", id="setup-exit-library")
+            with Horizontal(classes="setup-summary-actions-row"):
+                # task-32140: a local-first user who came for notes was
+                # told the only thing they could do needed an API key.
+                yield Button(
+                    "Write your first note", id="setup-exit-library-notes"
+                )
+                yield Button("Explore Home", id="setup-exit-home")
+                yield Button("Review settings", id="setup-exit-settings")
 
     def on_show(self) -> None:
         super().on_show()
@@ -7363,6 +7392,11 @@ class SummaryStep(SetupStep):
         from tldw_chatbook.Constants import TAB_LIBRARY
 
         self._finish(TAB_LIBRARY)
+
+    @on(Button.Pressed, "#setup-exit-library-notes")
+    def _exit_library_notes(self) -> None:
+        """Finish setup on Library's New note view (task-32140)."""
+        self._finish(EXIT_ROUTE_LIBRARY_NOTES)
 
     @on(Button.Pressed, "#setup-exit-home")
     def _exit_home(self) -> None:

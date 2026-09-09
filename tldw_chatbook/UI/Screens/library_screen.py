@@ -3351,6 +3351,13 @@ class LibraryScreen(BaseAppScreen):
             push_library_note_import_picker=(
                 lambda *a, **k: self._push_library_note_import_picker(*a, **k)
             ),
+            reconcile_library_notes_tree_mutation=(
+                # task-32124: an unbound call, like every other
+                # `LibraryScreen.<x>(self, ...)` target in this cluster.
+                lambda *a, **k: LibraryScreen._reconcile_library_notes_tree_mutation(
+                    self, *a, **k
+                )
+            ),
             refresh_library_note_detail=(
                 lambda *a, **k: self._refresh_library_note_detail(*a, **k)
             ),
@@ -6147,6 +6154,10 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_NOTES_READER_PROFILE,
             previous=previous,
             priority=priority,
+            # task-32127: while the work pane holds only "Select a note to
+            # edit it here.", its width belongs to the list. Opening a note
+            # hands it straight back.
+            reader_has_item=self._notes_state.view != "list",
         )
         shell.sync_layout(layout, manual_reopen=manual_reopen)
         self._notes_state.reader_layout = layout
@@ -16219,7 +16230,23 @@ class LibraryScreen(BaseAppScreen):
         partial: bool = False,
         destination_membership: NoteFolderMembership | None = None,
     ) -> None:
-        """Patch committed truth, then reload only exact affected slices."""
+        """Patch committed truth, then reload only exact affected slices.
+
+        Every mutation below runs after an await, and unmounting the Notes
+        tree clears its branches and bumps the lifecycle generation. A
+        reconcile that outlives its visit would otherwise patch state and
+        start slice loads that capture the NEW generation, repopulating the
+        next visit's tree from the previous one's mutation, so the captured
+        generation is re-checked after each await point (review round 2;
+        undo is one of six callers reaching this seam).
+        """
+        lifecycle = getattr(self._notes_state, "tree_lifecycle_generation", 0)
+
+        def visit_is_current() -> bool:
+            return (
+                getattr(self._notes_state, "tree_lifecycle_generation", 0) == lifecycle
+            )
+
         folder = getattr(result, "folder", None)
         if folder is None and isinstance(result, NoteFolder):
             folder = result
@@ -16293,6 +16320,8 @@ class LibraryScreen(BaseAppScreen):
             )
         except Exception:
             after = None
+        if not visit_is_current():
+            return
 
         parents: set[str | None] = set()
         placement_parents: set[str | None] = set()
@@ -16577,6 +16606,8 @@ class LibraryScreen(BaseAppScreen):
             state = self._notes_state.tree_branches.get(key)
             if state is None:
                 continue
+            if not visit_is_current():
+                return
             await LibraryScreen._load_library_notes_tree_slice(
                 self,
                 key,

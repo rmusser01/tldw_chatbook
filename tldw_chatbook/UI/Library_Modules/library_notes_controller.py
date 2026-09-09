@@ -503,7 +503,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
@@ -608,6 +608,14 @@ if TYPE_CHECKING:
     from ..Screens.library_screen import LibraryScreen
 
 
+#: Commits one folder-tree mutation: patches the branches the operation
+#: touched, reloads exactly those slices, and settles the selection.
+#: ``(operation, payload, *, before, result, partial, destination_membership)``
+#: -- see ``LibraryScreen._reconcile_library_notes_tree_mutation``, the only
+#: implementation, which every screen wiring this controller must match.
+LibraryNotesTreeMutationReconciler = Callable[..., Awaitable[None]]
+
+
 class LibraryNotesController:
     """Owns the Library Notes cluster (185 methods).
 
@@ -707,6 +715,7 @@ class LibraryNotesController:
         patch_library_note_list_from_session,
         project_library_media_stage_classes,
         push_library_note_import_picker,
+        reconcile_library_notes_tree_mutation: LibraryNotesTreeMutationReconciler,
         refresh_library_note_detail,
         refresh_local_source_snapshot,
         register_footer_shortcuts,
@@ -826,6 +835,9 @@ class LibraryNotesController:
         self._patch_library_note_list_from_session_fn = patch_library_note_list_from_session
         self._project_library_media_stage_classes_fn = project_library_media_stage_classes
         self._push_library_note_import_picker_fn = push_library_note_import_picker
+        self._reconcile_library_notes_tree_mutation_fn = (
+            reconcile_library_notes_tree_mutation
+        )
         self._refresh_library_note_detail_fn = refresh_library_note_detail
         self._refresh_local_source_snapshot_fn = refresh_local_source_snapshot
         self._register_footer_shortcuts_fn = register_footer_shortcuts
@@ -1238,6 +1250,18 @@ class LibraryNotesController:
     @property
     def _push_library_note_import_picker(self) -> Any:
         return self._push_library_note_import_picker_fn
+
+    @property
+    def _reconcile_library_notes_tree_mutation(
+        self,
+    ) -> LibraryNotesTreeMutationReconciler:
+        """The screen's folder-tree mutation reconciler (task-32124).
+
+        Returns:
+            The awaitable injected at construction; see
+            ``LibraryNotesTreeMutationReconciler`` for its contract.
+        """
+        return self._reconcile_library_notes_tree_mutation_fn
 
     @property
     def _refresh_library_note_detail(self) -> Any:
@@ -3070,6 +3094,14 @@ class LibraryNotesController:
         return True
     def _library_notes_canvas_kwargs(self) -> dict[str, Any]:
         """Return every compose input for the mounted Database Notes canvas."""
+        tree_projection = self._build_library_notes_tree_projection()
+        if tree_projection is not None and self._library_notes_sort_choices_visible:
+            # task-32128 (review round 2): Sort exists only on the flat
+            # fallback, so the tree arriving while the chooser is open must
+            # close the MODE, not just stop rendering it -- otherwise the
+            # footer keeps offering "choose sort" and the first Escape is
+            # spent on a chooser nothing is painting.
+            self._library_notes_sort_choices_visible = False
         values: dict[str, Any] = {
             "list_state": None,
             "sort_mode": self._library_notes_sort,
@@ -3081,7 +3113,7 @@ class LibraryNotesController:
                 self._library_note_import_controller.snapshot.can_revisit_receipt
             ),
             "lasting_sync_snapshot": self._library_notes_lasting_sync_snapshot,
-            "tree_projection": self._build_library_notes_tree_projection(),
+            "tree_projection": tree_projection,
             "tree_selected_placement_id": getattr(
                 self, "_library_notes_tree_selected_placement_id", ""
             ),
@@ -3090,6 +3122,12 @@ class LibraryNotesController:
             ),
             "title_placeholder_only": False,
             "compact": self._library_notes_compact,
+            # task-32127: the toolbar merges its two action groups only when
+            # the pane can hold them; this is the width the reader layout
+            # just resolved for the Items pane.
+            "pane_width": getattr(
+                self._notes_state.reader_layout, "items_width", 0
+            ),
             "create_running": self._library_note_create_running,
             "create_status": self._library_note_create_status,
             "load_state": self._library_note_load_state,
@@ -5118,6 +5156,28 @@ class LibraryNotesController:
             self._library_notes_mutation_in_flight = False
             if self.is_mounted:
                 if restored_record is not None:
+                    # task-32124: the folder tree is projected from paged
+                    # branch state, not from the flat source records the
+                    # restore just patched, so re-syncing the canvas alone
+                    # brought the rail count back without the row. Reuse the
+                    # seam a create already commits through -- a restore is
+                    # "this note exists again" -- rather than adding a second
+                    # refresh mechanism. It reloads exactly the affected
+                    # branches (the note's folders, plus Unfiled) and selects
+                    # the restored placement.
+                    #
+                    # NOT the deep-link locator: repainting the canvas here
+                    # removes the receipt the pressed Undo button lives in,
+                    # and the focus move that follows is read as user intent
+                    # (`on_descendant_focus`), which supersedes the locator's
+                    # navigation before its first await returns. Proved live:
+                    # the count returned to 10 and the row never came back.
+                    await self._reconcile_library_notes_tree_mutation(
+                        "note_create",
+                        {"note_id": receipt.note_id},
+                        before=None,
+                        result=restored_record,
+                    )
                     identity = LibraryNotesFocusIdentity(
                         stage="notes",
                         region="navigator",
