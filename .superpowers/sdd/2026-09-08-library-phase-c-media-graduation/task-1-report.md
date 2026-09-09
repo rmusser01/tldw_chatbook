@@ -268,32 +268,39 @@ dev-side reds, not this task's:
 ### The media suites
 
 Working tree, all 19 `test_library_media_*.py` files plus
-`test_library_multiselect_media.py`: **24 failed, 686 passed** (15 min).
+`test_library_multiselect_media.py`: **24 failed, 686 passed**.
 
-Control, scratch worktree at the untouched HEAD, restricted to the four files
-carrying the bulk of those failures: `test_library_media_render_fixes.py` +
-`_side_by_side.py` + `_trash.py` gave **17 failed / 233 passed**, and
-`_reader_no_change_sync_t22208.py`'s wall-time probe was red too — **18
-failures, every name also failing in the working tree.**
+Control, scratch worktree at the untouched HEAD, on the four files carrying
+those failures: **19 failed, 236 passed** (`_reader_no_change_sync_t22208.py`,
+`_render_fixes.py`, `_side_by_side.py`, `_trash.py`).
 
-Two honest caveats rather than a clean pair:
+**The two failure sets are identical**, with one exception in one direction:
 
-1. **One working-tree failure the control did not reproduce**:
-   `test_library_media_trash.py::test_media_trash_back_and_escape_restore_
-   distinct_media_return[escape]`. Run on its own in the working tree it
-   **passes** (`2 passed in 5.65s`), so it is a flake, not a regression.
-2. **Five of the working tree's 24 failure names were never captured** — the
-   capture command ended in `tail -20` and kept only 19 of them — so the
-   file-by-file comparison covers 19 of 24. The five lost names are in the
-   alphabetically earliest media files.
+| | working | control |
+|---|---|---|
+| the 19 control failures | all 19 also fail | 19 |
+| `_trash.py::test_media_trash_back_and_escape_restore_distinct_media_return[escape]` | fails **only in the full-suite run** | passes |
+
+That single extra working-tree failure **passes when run on its own in the
+working tree** (`2 passed in 5.65s`), so it is a load flake, not a regression.
+
+One earlier reading of this comparison was wrong and is recorded rather than
+quietly fixed: the control appeared to fail
+`t22208::test_no_change_traversal_builds_no_preview_and_copies_no_content`
+where the working tree did not. It does not — the working tree fails it too
+(`2 failed, 3 passed` running that file alone). The name was missing from the
+working-tree list only because the capture command ended in `tail -20`, which
+kept 19 of the 24 names and dropped the collection-order-earliest ones. **A
+truncated capture looked exactly like a behavioural difference**, which is the
+same shape of error as the mount-by-region table that did not sum: a display
+limit read as data.
 
 Both runs shared the machine with **two other sessions' pytest processes** on
 overlapping Library files, and these suites read and write shared user-data
-databases under `~/.local/share/tldw_cli/default_user/`, so cross-run
-interference is a live hazard for the wall-clock and focus-ordering tests in
-particular. That is the most likely cause of caveat 1.
+databases under `~/.local/share/tldw_cli/default_user/`, which is the most
+likely source of the one flake.
 
-The evidence that actually carries the claim is structural, not statistical:
+The evidence that actually carries the claim remains structural:
 **`git diff --name-only b81cb98b0..HEAD` touches zero files under
 `tldw_chatbook/`.** The landed diff is one spec addendum, one test file, one
 Helper_Scripts probe and one SDD report; there is no mechanism by which it could
