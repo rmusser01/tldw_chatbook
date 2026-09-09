@@ -30,10 +30,10 @@ Wide Database Notes keeps Library navigation beside the list while you scan:
 +----------------------+-----------------------------------------------+
 | Library              | Database | Files                              |
 | Browse               | Notes (N)                                     |
-|   Notes              | Filter...   Sort   Sync   Import   Export     |
-|   Media              |                                               |
-|   Conversations      |  Note title                           age     |
-| ...                  |  Note title                           age     |
+|   Notes              | Filter...  New  Select  Add from files… Export |
+|   Media              | New folder   Move   Remove                    |
+|   Conversations      |  Note title · age                             |
+| ...                  |  Note title · Folder · age                    |
 +----------------------+-----------------------------------------------+
 ```
 
@@ -74,16 +74,31 @@ editor's own Back control returns to its list.
 - **Source strip** — a "Library notes | Folder files" toggle above the canvas.
   This page covers the Library notes side; see below for Folder files.
 - **Notes list** — the default view: a "Notes (N)" header, the
-  "Filter notes… (Enter)" field, a toolbar (**New** / sort / Add from
-  files… / Export… / Select), a **New folder** action beneath it, the
-  folder tree, and one row per note showing its title and age. Its own
-  grip collapses or restores the list without changing the Folder Files tree
-  choice. Renaming a note updates its list row as soon as the note saves —
-  returning to the list shows the new title with no filter re-query needed.
+  "Filter notes… (Enter)" field, a two-row toolbar (**New** / Select / Add
+  from files… / Export, then the folder and placement actions), the folder
+  tree, and one row per note showing its title and how long ago it changed
+  ("3m", "1d"). When two notes in the same folder share a title, each row
+  also names its folder — "Reading list · Unfiled · 2h". While no note is
+  open the list takes the width the empty work area would otherwise waste,
+  so long titles are not truncated on a wide terminal; opening a note hands
+  that width back. Its own grip collapses or restores the list without
+  changing the Folder Files tree choice. Renaming a note updates its list
+  row as soon as the note saves — returning to the list shows the new title
+  with no filter re-query needed.
+
+  The folder tree is ordered by title, which is the order the database pages
+  notes in, so it carries no sort control; the sort control belongs to the
+  flat list shown when no folder tree is loaded.
 
   *Verified against fix/library-uat-31796-31797 — 2026-09-06 (task-31796: the
   list row no longer keeps the pre-rename "Untitled" title until a filter
   re-query).*
+
+  *Verified against fix/library-notes-list — 2026-09-09 (task-32127: the list
+  no longer sits at 38 columns beside an empty work area; task-32137: rows
+  carry an age and same-folder duplicate titles name their folder;
+  task-32128: the tree's title order is the database's, so Sort is not
+  offered there).*
 - **Note work area** — opens when you click a note. **Edit** shows the title
   and body, **Preview** renders the Markdown, and **Info** holds keywords,
   dates, version details, copy/export actions, and Delete. Save status and
@@ -365,11 +380,18 @@ sort, selected note or placement, Notes-list scroll, Library-rail scroll, and
 semantic keyboard focus instead of starting over at the first row.
 
 After a confirmed delete, the receipt stays in the Notes list until you
-choose **Undo**, choose **Dismiss**, or complete a newer note deletion.
-**Undo** restores that exact database note and immediately returns its row
-and the Notes rail count. **Dismiss** removes only the receipt; the note
-remains deleted. Notes do not currently expose a separate Trash browser, so
-the receipt is the in-Library recovery action.
+choose **Undo**, choose **Dismiss**, or complete a newer note deletion. Its
+"✓ deleted · \<title\>" line sits above the two actions rather than beside
+them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
+**Undo** restores that exact database note and immediately returns its row —
+in its folder, or under Unfiled — along with the Notes rail count, and moves
+the selection to the restored row. **Dismiss** removes only the receipt; the
+note remains deleted. Notes do not currently expose a separate Trash browser,
+so the receipt is the in-Library recovery action.
+
+*Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
+receipt's actions are no longer composed off the pane; task-32124: Undo
+returns the row to the folder tree, not only the count).*
 
 ### New note view
 
