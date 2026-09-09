@@ -172,7 +172,11 @@ class LibraryNoteImportController:
         self.publish()
 
     def set_obsidian_mode(self, enabled: bool) -> None:
-        """Retain the vault-reading choice; the caller re-runs the read-only check."""
+        """Retain the vault-reading choice; the caller re-runs the read-only check.
+
+        Args:
+            enabled: True to read the selection as an Obsidian vault.
+        """
         if type(enabled) is not bool:
             raise TypeError("enabled must be a boolean.")
         self._state = replace(self._state, obsidian_mode=enabled)

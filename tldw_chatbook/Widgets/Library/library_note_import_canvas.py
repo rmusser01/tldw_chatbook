@@ -182,6 +182,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         """Report the requested Obsidian-vault reading mode."""
 
         def __init__(self, enabled: bool) -> None:
+            """Carry one toggle press.
+
+            Args:
+                enabled: True when the review should read the source as a vault.
+            """
             super().__init__()
             self.enabled = enabled
 
