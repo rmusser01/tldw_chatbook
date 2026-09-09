@@ -15,7 +15,7 @@
     "run": 34304689048,
     "job": 102318822301
   },
-  "derived_artifacts_failure": "Prerequisite gate rejected failed Fast Lane; no new artifact drift was evaluated.",
+  "derived_artifacts_failure": "The Fast Lane prerequisite gate failed; all six artifact checks still ran and passed.",
   "mcp_unbatched_reproduction": [
     {
       "attached": false,
@@ -101,5 +101,13 @@
   },
   "measured_tts_sources_match_final_wheel": true,
   "mcp_sources_match_test_receipt": true,
-  "user_configuration_unchanged": true
+  "user_configuration_unchanged": true,
+  "derived_artifacts_passed_steps": [
+    "Generated stylesheets reproduce from their sources",
+    "Profile-owned path census matches its approved exceptions",
+    "Production diagnostic inventory matches the source tree",
+    "Backlog task IDs are unique",
+    "ChaChaNotes table allowlist covers every migrated table",
+    "Every database index has a query-plan decision on record"
+  ]
 }
