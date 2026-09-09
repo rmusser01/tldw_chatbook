@@ -443,10 +443,12 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         screen.query_one("#library-notes-import-back").press()
         await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
 
-        # task-32128 dropped "#library-notes-sort": this list is a folder
-        # tree, which no longer composes a Sort control.
+        # task-32172 put "#library-notes-sort" back: the folder tree
+        # composes it again, and it fences with the rest while an import
+        # operation is running.
         for selector in (
             "#library-notes-new",
+            "#library-notes-sort",
             "#library-notes-select-toggle",
             "#library-notes-export",
         ):
@@ -481,10 +483,12 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         library_screen_module._sync_library_canvas(screen, "notes")
         await pilot.pause()
 
-        # task-32128 dropped "#library-notes-sort": this list is a folder
-        # tree, which no longer composes a Sort control.
+        # task-32172 put "#library-notes-sort" back: the folder tree
+        # composes it again, and it fences with the rest while an import
+        # operation is running.
         for selector in (
             "#library-notes-new",
+            "#library-notes-sort",
             "#library-notes-select-toggle",
             "#library-notes-export",
         ):

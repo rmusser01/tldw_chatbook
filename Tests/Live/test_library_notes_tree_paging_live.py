@@ -138,6 +138,16 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
     try:
         async with host.run_test(size=SIZES[0]) as pilot:
             screen = _active_library_screen(host)
+            # task-32172: the tree pages in the Sort value now. This
+            # fixture places its deep-link target on page 2 by TITLE
+            # ("Primary 30" of 45), and seeds every note in one tight loop
+            # so their `last_modified` values TIE -- under the default
+            # Newest the order falls through to the note-id tiebreaker and
+            # "Primary 30" lands wherever its UUID puts it. Pin the order
+            # the fixture's page arithmetic is written for. (The pager and
+            # the locator still agree under Newest -- that is the point of
+            # the change -- but they agree on a different page.)
+            screen._notes_state.sort = "title"
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-notes", Button).press()
             await _wait_for_condition(

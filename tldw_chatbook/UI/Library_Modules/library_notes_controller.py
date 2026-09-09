@@ -578,6 +578,7 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
 )
 from ...Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
+    notes_sort_is_blocked,
     resolve_database_note_status_channels,
 )
 from ...Widgets.Library.library_notes_sync_roots_canvas import (
@@ -3122,12 +3123,15 @@ class LibraryNotesController:
     def _library_notes_canvas_kwargs(self) -> dict[str, Any]:
         """Return every compose input for the mounted Database Notes canvas."""
         tree_projection = self._build_library_notes_tree_projection()
-        if tree_projection is not None and self._library_notes_sort_choices_visible:
-            # task-32128 (review round 2): Sort exists only on the flat
-            # fallback, so the tree arriving while the chooser is open must
-            # close the MODE, not just stop rendering it -- otherwise the
-            # footer keeps offering "choose sort" and the first Escape is
-            # spent on a chooser nothing is painting.
+        # task-32172 narrowed task-32128's "the tree arriving closes the
+        # chooser" pass: the tree composes Sort itself now, so only the one
+        # case the canvas still refuses to paint -- a filter window, whose
+        # order belongs to the search seam -- has to close the MODE too.
+        # Same predicate as the canvas, so the two cannot drift.
+        if self._library_notes_sort_choices_visible and notes_sort_is_blocked(
+            tree_projection=tree_projection,
+            filter_value=self._library_notes_filter,
+        ):
             self._library_notes_sort_choices_visible = False
         values: dict[str, Any] = {
             "list_state": None,
@@ -4338,10 +4342,17 @@ class LibraryNotesController:
         requested = str(getattr(event.button, "choice_value", "") or "")
         if requested not in {"newest", "oldest", "title"}:
             return
+        changed = requested != self._library_notes_sort
         self._library_notes_sort = requested
         self._library_notes_sort_choices_visible = False
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
+        if changed:
+            # task-32172: the sort value IS the tree's repository ORDER BY,
+            # so a new one has to be re-paged. Re-sorting the loaded window
+            # in place could not move a note across a page boundary, and the
+            # next page load would contradict it.
+            self._request_library_notes_tree_initial_load()
         _sync_library_canvas(self, "notes")
     @on(Button.Pressed, "#library-notes-new")
     async def handle_library_notes_new(self, event: Button.Pressed) -> None:

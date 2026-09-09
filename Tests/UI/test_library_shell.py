@@ -19001,20 +19001,21 @@ async def test_library_shell_notes_sort_opens_direct_choices_and_applies_one_val
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        # task-32128: this list is a folder tree, whose row order is the
-        # repository's (`page_note_placements` pages ORDER BY title, and
-        # every browse offset is computed against it), so it composes no
-        # Sort control and the direct-choices flow this test drove is
-        # unreachable here. The flow itself still ships for the flat list:
-        # Tests/UI/test_library_notes_wave_list.py::test_every_sort_option_
-        # renders_in_the_narrowest_pane pins that every option is composed
-        # and pressable, and ::test_pressing_a_sort_option_applies_that_sort
-        # pins the press -> apply round trip this test used to own. What
-        # survives here is the absence, and that the persisted sort key is
-        # untouched by it.
-        await _wait_for_selector(screen, pilot, "#library-notes-browse-actions")
+        # task-32172 restored this flow on the folder tree: the placement
+        # order is a repository PARAMETER now (paging and the deep-link
+        # locator's rank both take it), so the control is composed here
+        # again and picking a value really re-pages the tree.
+        await _wait_for_selector(screen, pilot, "#library-notes-sort")
         assert screen._notes_state.sort == "newest"
-        assert not screen.query("#library-notes-sort")
+        screen.query_one("#library-notes-sort", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-sort-title")
+        assert screen.query_one("#library-notes-sort-choices")
+        screen.query_one("#library-notes-sort-title", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.sort == "title",
+            message="The chosen notes sort never applied.",
+        )
         assert not screen.query("#library-notes-sort-choices")
 
 
@@ -19034,12 +19035,13 @@ async def test_library_shell_notes_navigator_has_named_action_groups_and_filter_
             str(screen.query_one("#library-notes-filter-label", Static).renderable)
             == "Filter"
         )
-        # task-32128 removed "library-notes-sort" from the folder tree's
-        # toolbar; it is composed only for the flat list.
+        # task-32172 put "library-notes-sort" back on the folder tree's
+        # toolbar, the order having become a repository parameter.
         assert {
             button.id for button in screen.query("#library-notes-browse-actions Button")
         } == {
             "library-notes-new",
+            "library-notes-sort",
             "library-notes-select-toggle",
         }
         assert {
@@ -27804,11 +27806,15 @@ async def test_library_shell_restored_notes_sort_and_filter_render_on_first_pain
         active_screen = _active_library_screen(host)
         await _wait_for_selector(active_screen, pilot, "#library-notes-filter")
 
-        # task-32128: the folder tree composes no Sort control, so the
-        # restored key is pinned on the state it is restored into rather
-        # than on a button label.
+        # task-32172: the restored key reaches the control's LABEL again.
+        # The restored filter is also active, and filter results keep the
+        # search seam's own order, so the control is composed disabled with
+        # its reason rather than silently reordering nothing.
         assert active_screen._notes_state.sort == "oldest"
-        assert not active_screen.query("#library-notes-sort")
+        sort_button = active_screen.query_one("#library-notes-sort", Button)
+        assert "Oldest" in str(sort_button.label)
+        assert sort_button.disabled
+        assert "Clear the filter" in str(sort_button.tooltip)
         filter_box = active_screen.query_one("#library-notes-filter", Input)
         assert filter_box.value == "retro"
 

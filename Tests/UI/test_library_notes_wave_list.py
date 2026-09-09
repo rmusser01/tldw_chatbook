@@ -534,17 +534,11 @@ async def _passthrough_service_call(call, *, isolate_in_worker=False, **kwargs):
 # -- task-32128: the Sort control tells the truth -------------------------
 
 
-@pytest.mark.asyncio
-async def test_sort_control_is_absent_from_the_folder_tree() -> None:
-    """task-32128 AC#1: the tree's order is a repository contract, so no Sort."""
-    app = _CanvasApp(
-        pane_width=143,
-        list_state=_list_state(),
-        tree_projection=_folder_selected_projection(),
-    )
-    async with app.run_test(size=WIDE) as pilot:
-        await pilot.pause()
-        assert not app.query("#library-notes-sort")
+# task-32172 retired `test_sort_control_is_absent_from_the_folder_tree`: the
+# repository order is a parameter of BOTH paging and the deep-link locator
+# now, so the tree offers Sort again. Its replacement, and the blocked state
+# that took over for the filter window, live in
+# Tests/UI/test_library_notes_riders_r_list.py.
 
 
 @pytest.mark.asyncio
@@ -606,6 +600,9 @@ async def test_pressing_a_sort_option_applies_that_sort(monkeypatch) -> None:
         _library_notes_row_selection=SimpleNamespace(
             clear=lambda: cleared.append(True)
         ),
+        # task-32172: a new sort value re-pages the tree rather than
+        # re-sorting the loaded window.
+        _request_library_notes_tree_initial_load=lambda: None,
     )
 
     async with app.run_test(size=WIDE) as pilot:
@@ -844,21 +841,10 @@ def _kwargs_fake(*, tree_projection, sort_choices_visible: bool):
     )
 
 
-def test_the_tree_taking_over_closes_the_flat_sort_chooser() -> None:
-    """Qodo review 6: the tree hides the chooser, so the STATE must go too.
-
-    Sort is only composed on the flat fallback. Opening it there and then
-    letting the tree arrive left the footer offering "choose sort" and
-    spent the first Escape on a mode nothing was rendering.
-    """
-    fake = _kwargs_fake(
-        tree_projection=_folder_selected_projection(), sort_choices_visible=True
-    )
-
-    values = LibraryNotesController._library_notes_canvas_kwargs(fake)
-
-    assert values["tree_projection"] is not None
-    assert fake._library_notes_sort_choices_visible is False
+# task-32172 retired `test_the_tree_taking_over_closes_the_flat_sort_chooser`
+# with the behaviour it pinned: the tree arriving no longer has to close the
+# chooser, because the tree composes Sort itself now. See
+# Tests/UI/test_library_notes_riders_r_list.py.
 
 
 def test_the_flat_list_keeps_its_open_sort_chooser() -> None:
