@@ -3628,3 +3628,51 @@ open. Review replies/resolution follow publication of this documentation batch.
 Main has now read incoming tasks 32126/32129/32140 completely. Step 149 records
 the read-only integration review's semantic unions and affected qualification
 owners; no rebase or incoming behavior change is applied during the active run.
+
+### 2026-09-09: terminal Notes cohort and bounded follow-up
+
+The original four-file native qualification is now terminal: **890 passed,
+23 failed**, ten warnings, 1967.26s, exit 1. Per-file results are import flow
+11 passed, shell 836 passed/22 failed, Notes reader 37 passed/1 failed, and
+phase-C resident canvas 6 passed. All 913 after-protocol receipts are present.
+Final inventory contains only stdio and the intentional process-lifetime
+faulthandler log: zero SQLite-family or instance-lock handles, sockets or
+kqueues. Log: `/private/tmp/pr2427-notes-four-native.log`; receipt:
+`$TMPDIR/pr2427-notes-four-native.3ok8FV/fd_identity.jsonl`. Session 65773 is
+closed; its source freeze has ended. This supersedes the active-run entries above.
+
+The failures comprise twelve custom-width expectations, one high-frequency
+resize expectation, one preferred rail title, eight consumers of the removed
+tree Sort control (seven shell cases and one reader case), and one title/age
+label expectation. Step 150 migrates the accepted tree contracts without
+skipping cases, restoring removed controls or dropping exact Back, keyboard,
+geometry, persistent preference and zero-nonlayout-work assertions. The reader
+capability inventory now pins tree Sort/chooser absence and passes its actual
+mounted scenario: one passed, three warnings, 7.81s;
+`/private/tmp/pr2427-reader-inventory-green.log`. Independent diff review is clear.
+The 37-case shell selection finishes 36 passed/1 failed, 821 deselected,
+three warnings, 95.18s (`/private/tmp/pr2427-shell-oracles-targeted.log`). All
+width, resize, rail, title, toolbar, compact and keyboard cases pass. The normal
+wide Back case now reaches its preserved assertion and exposes Filter focus and
+scroll zero instead of the selected row and scroll seven; its controlled delayed
+filter counterpart passes. This is a newly exposed runtime/ordering failure,
+not an oracle to relax. Read-only diagnosis continues. Independent shell diff
+review confirms the accepted contracts and retained assertions.
+
+Step 148 is published in `df5ef5291e295fd26305e6e10399034e4a056377`.
+All four named Qodo findings received published-fix replies and their exact
+threads were verified resolved. This does not establish current-head CI or
+review completion for the subsequent runtime changes.
+
+The user approved the bounded import-formatting design direction. The written
+[spec](../../Docs/superpowers/specs/2026-09-09-pr2427-import-review-formatting-design.md)
+passed independent review and is saved in `0b83367636`; user review of that
+written spec precedes implementation planning. Pure formatting alone does not
+close the whole controller size deficit; database/workflow ownership and caps
+are not silently expanded to make it pass.
+
+After the bounded step 147/150 repairs are verified and saved, integrate fetched
+`e1d6e8be2ffccdfc596d00ecc63acec2c1a1bd03` under step 149. Complete affected-file
+native qualification is intentionally deferred until that integrated source is
+stable; there is no claim that targeted controls replace it. Final-head checks,
+review and protected merge remain open.
