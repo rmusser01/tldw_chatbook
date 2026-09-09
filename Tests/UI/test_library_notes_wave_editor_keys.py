@@ -247,6 +247,38 @@ async def test_delete_confirmation_disables_the_other_info_buttons():
         ), "The delete admission was dropped by the (no-op) press"
 
 
+@pytest.mark.asyncio
+async def test_delete_confirmation_disables_the_context_back_button():
+    """PR #2547 review (Qodo finding 4): Back was left out of the disabled
+    selector list above, so it stayed live while every other Info action
+    was disabled. Pressing it ran ``handle_library_note_context_back``,
+    which clears ``_library_note_context`` without cancelling the pending
+    admission -- displacing the confirmation prompt out of Info instead of
+    leaving it in place or requiring Cancel/Delete.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note_in_info(screen, pilot)
+        screen.query_one("#library-note-context-delete", Button).press()
+        await pilot.pause()
+        assert screen._notes_state.confirming_delete is True
+
+        back_button = screen.query_one("#library-note-context-back", Button)
+        assert back_button.disabled, "Back stayed live behind the prompt"
+
+        back_button.press()
+        await pilot.pause()
+        assert screen._notes_state.confirming_delete is True, (
+            "Back displaced the delete confirmation instead of staying inert"
+        )
+        info_region = screen.query_one("#library-note-context-region")
+        assert info_region.display, (
+            "Back's (no-op) press moved the pane away from Info"
+        )
+
+
 # --- task-32133: refused Escape notifies; a blank note reads as a draft ----
 
 
@@ -322,6 +354,51 @@ async def test_back_button_notifies_on_a_non_validation_veto_kind():
         )
 
 
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (
+            "VALIDATION_VETO",
+            "Can't leave yet — fix the title or press Discard new note.",
+        ),
+        (
+            "FAILED",
+            "Can't leave yet — the save failed; press Save to retry or Discard.",
+        ),
+        (
+            "CONFLICTED",
+            "Can't leave yet — this note changed elsewhere; "
+            "choose Overwrite or Reload.",
+        ),
+        (
+            "BLOCKED",
+            "Can't leave yet — another action is already in progress; "
+            "wait for it to finish.",
+        ),
+        (
+            "STALE",
+            "Can't leave yet — the note changed while saving; try again.",
+        ),
+    ],
+)
+def test_exit_veto_message_covers_every_non_permitted_outcome_kind(kind, expected):
+    """PR #2547 review (Qodo finding 2): the two UI tests above exercise
+    only VALIDATION_VETO and CONFLICTED through the full editor; FAILED,
+    BLOCKED, and STALE had no direct assertion, so their copy could drift
+    silently. Direct unit coverage for every outcome the shared exit seam
+    (``_exit_library_note_editor_guarded``) can actually pass in.
+    """
+    from tldw_chatbook.Library.library_notes_session import NoteFlushOutcomeKind
+    from tldw_chatbook.UI.Screens.library_screen import (
+        _library_note_editor_exit_veto_message,
+    )
+
+    assert (
+        _library_note_editor_exit_veto_message(getattr(NoteFlushOutcomeKind, kind))
+        == expected
+    )
+
+
 @pytest.mark.asyncio
 async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
     """AC#2: a blank note must not claim 'Saved' before anything is typed."""
@@ -348,6 +425,42 @@ async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
         await pilot.pause()
 
         assert str(status.renderable) != "Draft — not saved yet"
+
+
+@pytest.mark.asyncio
+async def test_keyword_only_edit_through_info_clears_the_draft_status():
+    """PR #2547 review (Qodo finding 5): the main keywords field's handler
+    clears ``_library_note_pending_blank_gc_id`` before autosaving, but the
+    sibling Info (Context) properties field's handler did not -- so a user
+    who opened Info on a fresh blank note and typed only a keyword there
+    could autosave while the status kept claiming nothing was saved.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await pilot.press("n")
+        blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        blank.press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        status = screen.query_one("#library-note-status", Static)
+        assert str(status.renderable) == "Draft — not saved yet"
+
+        screen.query_one("#library-note-context", Button).press()
+        await pilot.pause()
+
+        context_keywords = screen.query_one("#library-note-context-keywords", Input)
+        context_keywords.value = "todo"
+        context_keywords.post_message(Input.Changed(context_keywords, "todo"))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert str(status.renderable) != "Draft — not saved yet", (
+            "A keyword-only edit through Info left the note reading as an "
+            "unsaved draft"
+        )
 
 
 # --- task-32138: ctrl+n and n both work on the landing and inside Notes ----

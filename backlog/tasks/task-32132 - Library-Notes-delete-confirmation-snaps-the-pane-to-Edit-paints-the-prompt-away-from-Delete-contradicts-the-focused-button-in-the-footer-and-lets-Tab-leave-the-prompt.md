@@ -7,7 +7,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 21:39'
-updated_date: '2026-09-09 06:57'
+updated_date: '2026-09-09 15:47'
 labels:
   - library
   - notes
@@ -41,4 +41,6 @@ Two bugs shared one cause: the canvas's show_context formula unconditionally exc
 Fix round 1 (Critical): the footer-copy change above (AC#2) broke an unrelated pre-existing pin, Tests/UI/test_library_honesty_accessibility.py::test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys -- its SimpleNamespace fake predates _library_focus_enter_label and lacked both the method and a `.focused` attribute, so the confirming_delete branch's new `self._library_focus_enter_label()` call raised AttributeError. Reconciled the same way the 32138 pin was: gave the fake the method (bound via `types.MethodType`, matching how it already binds `_notes_footer_tier`) and `focused=None`, and updated the expected tuple to `(("enter", "cancel"), ("tab", "switch button"), ("esc", "cancel"))` -- the real focus-dependent copy, not the old static "confirm delete" string.
 
 Fix round 1 (Important 5): Info staying open while confirming (this task's own AC#1) left its OTHER Danger/Reuse & Export buttons -- Delete, Copy, Export Markdown/text, Use in Console -- still live behind the prompt; a press could navigate away (Use in Console) or mutate (Copy/Export) with the delete admission still pending. Added `confirming_delete` to both existing disabled-state OR-conditions in library_notes_canvas.py's apply_session_state (the loop already covering destructive_running/bulk_read_only/transfer_running). New test presses the (now-disabled, so no-op per Textual's own Button.press() disabled check) Use in Console button while confirming and asserts no navigation occurred and the admission survived. Files: tldw_chatbook/Widgets/Library/library_notes_canvas.py. Deferred (no action, reviewer-accepted): the confirmation still renders as a sibling of the work pane rather than literally inside the Danger section's bordered box -- a single shared confirmation widget can't be in two DOM places; accepted on the live evidence above, with a compact-height caveat (a very tall Info pane could in principle push the confirmation off-screen at a short terminal -- not reproduced, not fixed this round).
+
+PR #2547 review (Qodo finding 4): the Important-5 disabled-selector loops above covered every other Info action but not #library-note-back / #library-note-context-back. Pressing Back while confirming ran handle_library_note_context_back, which cleared _library_note_context without cancelling the pending admission -- displacing the confirmation prompt into Edit instead of leaving Info in place. Added confirming_delete to both back buttons' disabled state in apply_session_state (library_notes_canvas.py). New test: test_delete_confirmation_disables_the_context_back_button.
 <!-- SECTION:NOTES:END -->

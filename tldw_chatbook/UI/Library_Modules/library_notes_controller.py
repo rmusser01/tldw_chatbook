@@ -3398,6 +3398,12 @@ class LibraryNotesController:
         ):
             return
         if self._library_note_session.mutate(keywords_text=event.value):
+            # PR #2547 review (Qodo finding 5): the sibling wide-keywords
+            # handler above clears this before scheduling autosave; this
+            # handler didn't, so a keyword typed only through Info could
+            # autosave while the status kept claiming "Draft — not saved
+            # yet" (``_library_note_is_pending_blank`` stayed true).
+            self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()

@@ -125,6 +125,17 @@ def compose_note_row_label(
     """
     return " · ".join(part for part in (title, folder_label, age_label) if part)
 
+
+def _library_note_back_label(compact: bool) -> str:
+    """The single Back wording (task-32139), sized by ``compact``.
+
+    PR #2547 review (Qodo finding 1): compose time and state-apply time
+    each inlined this same ternary; a wording change could update one
+    rendering path and leave the other stale. One function, both callers.
+    """
+    return "‹ Back to list" if compact else "‹ Notes"
+
+
 #: The storage authority every Database Notes surface answers to. Painted once
 #: per screen: the mounted list pane owns it, and a work pane beside it drops
 #: it rather than repeating the same sentence (task-32063).
@@ -1460,7 +1471,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # and BOTH said "‹ Notes" on a compact terminal where the guide
         # documents "‹ Back to list" (60x24). One label now, sized by
         # ``self.compact`` like the guide's own compact-vs-wide split.
-        back_label = "‹ Back to list" if self.compact else "‹ Notes"
+        back_label = _library_note_back_label(self.compact)
         with Horizontal(id="library-note-heading"):
             yield Button(
                 back_label,
@@ -1987,15 +1998,23 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.set_class(state.validation, "library-note-validation")
         # task-32139: one Back label, sized by compact -- see the matching
         # compose-time comment above.
-        back_label = "‹ Back to list" if state.compact else "‹ Notes"
+        back_label = _library_note_back_label(state.compact)
         back_button = self.query_one("#library-note-back", Button)
         if str(back_button.label) != back_label:
             back_button.label = back_label
         back_button.display = not show_context and not bulk_read_only
+        back_button.disabled = confirming_delete
         context_back_button = self.query_one("#library-note-context-back", Button)
         if str(context_back_button.label) != back_label:
             context_back_button.label = back_label
         context_back_button.display = show_context
+        # PR #2547 review (Qodo finding 4): Back was left out of the
+        # disabled-selector loops below, so it stayed live behind the
+        # confirmation prompt. A press ran the Back handler, which clears
+        # ``_library_note_context`` without cancelling the pending
+        # admission -- displacing the prompt instead of leaving Info in
+        # place like every other Danger/Reuse & Export action.
+        context_back_button.disabled = confirming_delete
         self.query_one("#library-note-editor-title").display = show_editor
         self.query_one("#library-note-preview-title").display = show_preview
         self.query_one("#library-note-context-title").display = show_context
