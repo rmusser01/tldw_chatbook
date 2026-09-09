@@ -74,7 +74,12 @@ DEFINES = {
     "common": ["WEBRTC_APM_DEBUG_DUMP=0", "WEBRTC_ENABLE_PROTOBUF=0"],
     "macos": ["WEBRTC_MAC", "WEBRTC_POSIX"],
     "linux": ["WEBRTC_LINUX", "WEBRTC_POSIX"],
-    "windows": ["WEBRTC_WIN", "NOMINMAX", "_CRT_SECURE_NO_WARNINGS"],
+    "windows": [
+        "WEBRTC_WIN",
+        "NOMINMAX",
+        "_CRT_SECURE_NO_WARNINGS",
+        "WIN32_LEAN_AND_MEAN",
+    ],
 }
 
 
@@ -140,6 +145,19 @@ def test_compiler_defines_are_generated_from_exact_provenance_mapping() -> None:
         == tool.render_compiler_defines_cmake()
     )
     assert "COMPILER_DEFINES.cmake" in {path for _, path in _manifest()}
+
+
+def test_winsock_header_definition_is_windows_only_and_target_scoped() -> None:
+    tool = _load_tool()
+
+    assert "WIN32_LEAN_AND_MEAN" in tool.COMPILER_DEFINES["windows"]
+    for platform in ("common", "macos", "linux"):
+        assert "WIN32_LEAN_AND_MEAN" not in tool.COMPILER_DEFINES[platform]
+    cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert (
+        "target_compile_definitions(webrtc_aec3 PUBLIC ${WEBRTC_COMPILE_DEFINES})"
+        in cmake
+    )
 
 
 @pytest.mark.parametrize(

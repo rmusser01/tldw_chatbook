@@ -69,7 +69,12 @@ COMPILER_DEFINES = {
     "common": ["WEBRTC_APM_DEBUG_DUMP=0", "WEBRTC_ENABLE_PROTOBUF=0"],
     "macos": ["WEBRTC_MAC", "WEBRTC_POSIX"],
     "linux": ["WEBRTC_LINUX", "WEBRTC_POSIX"],
-    "windows": ["WEBRTC_WIN", "NOMINMAX", "_CRT_SECURE_NO_WARNINGS"],
+    "windows": [
+        "WEBRTC_WIN",
+        "NOMINMAX",
+        "_CRT_SECURE_NO_WARNINGS",
+        "WIN32_LEAN_AND_MEAN",
+    ],
 }
 # Translation-unit roots are an explicit checked-in allowlist.  GN umbrella
 # targets such as rtc_base_approved deliberately are not traversed: doing so

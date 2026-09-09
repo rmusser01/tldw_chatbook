@@ -15,6 +15,7 @@ set(TLDW_WEBRTC_DEFINES_WINDOWS
   "WEBRTC_WIN"
   "NOMINMAX"
   "_CRT_SECURE_NO_WARNINGS"
+  "WIN32_LEAN_AND_MEAN"
 )
 
 function(tldw_webrtc_defines_for_platform platform output_variable)
