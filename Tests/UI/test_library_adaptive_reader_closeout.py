@@ -96,8 +96,13 @@ DESTINATION_CONTRACT = {
         "#library-row-browse-notes",
         "#library-notes-reader-shell",
         "#library-notes-tree-note-2",
-        "_library_notes_reader_preferences",
-        "_library_notes_reader_layout",
+        # Wave-8 task 3: notes' own reader_preferences/reader_layout fields
+        # moved to ``screen._notes_state.<field>`` -- the EIGHTH and last
+        # destination to take the extra hop, so every entry in this contract
+        # is dotted now and the ``operator.attrgetter`` reads that made the
+        # passthrough possible are no longer load-bearing for any of them.
+        "_notes_state.reader_preferences",
+        "_notes_state.reader_layout",
     ),
     "prompts": (
         "#library-row-browse-prompts",
@@ -449,7 +454,7 @@ async def _open_destination(screen, pilot, destination: str):
             str(screen._conversations_state.reader_state.selected_id or "")
             == str(second.conversation_id)
         ),
-        "notes": lambda: str(screen._selected_note_id or "") == str(second.note_id),
+        "notes": lambda: str(screen._notes_state.selected_note_id or "") == str(second.note_id),
         "prompts": lambda: str(screen._prompts_state.selected_prompt_id) == expected,
         "skills": lambda: (
             screen._skills_state.editor_state is not None
@@ -503,8 +508,8 @@ async def _open_destination(screen, pilot, destination: str):
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._selected_note_id == expected
-                and screen._library_note_load_state == "loaded"
+                screen._notes_state.selected_note_id == expected
+                and screen._notes_state.load_state == "loaded"
                 and screen._library_note_session.snapshot is not None
                 and screen._library_note_session.snapshot.note_id == expected
             ),
@@ -595,12 +600,12 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
     elif destination == "notes":
         mode = (
             "context"
-            if screen._library_note_context
+            if screen._notes_state.context
             else "preview"
-            if screen._library_note_preview
+            if screen._notes_state.preview
             else "edit"
         )
-        semantic = (screen._selected_note_id, mode)
+        semantic = (screen._notes_state.selected_note_id, mode)
     elif destination == "prompts":
         semantic = (screen._prompts_state.selected_prompt_id, screen._prompts_state.editor_mode)
     else:
@@ -668,18 +673,18 @@ def _durable_live_oracle(
     elif destination == "notes":
         snapshot = screen._library_note_session.snapshot
         record = {
-            "selected": screen._selected_note_id,
+            "selected": screen._notes_state.selected_note_id,
             "pending": (
-                screen._selected_note_id
-                if screen._library_note_load_state == "loading"
+                screen._notes_state.selected_note_id
+                if screen._notes_state.load_state == "loading"
                 else None
             ),
             "loaded": snapshot.note_id if snapshot is not None else None,
             "mode": (
                 "context"
-                if screen._library_note_context
+                if screen._notes_state.context
                 else "preview"
-                if screen._library_note_preview
+                if screen._notes_state.preview
                 else "edit"
             ),
         }
@@ -1151,7 +1156,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     shell.items_grip.press()
                     await _wait_for_condition(
                         pilot,
-                        lambda: not screen._library_notes_reader_preferences.items_open,
+                        lambda: not screen._notes_state.reader_preferences.items_open,
                         message="Notes Items preference did not close",
                     )
                     expected_items["notes"] = False
@@ -1297,7 +1302,7 @@ async def _exercise_closeout_single_app_route_cycle(
                 }
                 if destination == "notes" and "conversations" in revisit_receipts:
                     revisit_receipts["conversations"]["worker_fenced"] = True
-            assert screen._library_notes_reader_preferences.items_open is False
+            assert screen._notes_state.reader_preferences.items_open is False
             assert screen._media_state.reader_preferences.items_open is True
             assert (
                 tuple(dict(note) for note in app.notes_scope_service.notes)
@@ -1397,7 +1402,7 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
                 f"folders={len(screen.query('.library-notes-folder-row'))}, "
                 f"notes={len(screen.query('.library-notes-tree-note-row'))}, "
                 f"pagers={len(screen.query('.library-notes-tree-pager'))}, "
-                f"branches={screen._library_notes_tree_branches!r}"
+                f"branches={screen._notes_state.tree_branches!r}"
             ),
         )
         shell = screen.query_one("#library-notes-reader-shell")
@@ -1441,7 +1446,7 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             pilot,
             lambda: (
                 len(screen.query(".library-notes-folder-row")) == 26
-                and not screen._library_notes_tree_branches[
+                and not screen._notes_state.tree_branches[
                     NotesBranchKey(None, "folders")
                 ].loading
             ),
@@ -1553,11 +1558,11 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             message=lambda: (
                 f"Library pane did not collapse at {size}: "
                     f"shell={shell.effective_layout!r}, "
-                    f"prefs={screen._library_notes_reader_preferences!r}, "
+                    f"prefs={screen._notes_state.reader_preferences!r}, "
                     f"items_region={items.region!r}, "
                     f"selected={screen._library_selected_row_id!r}, "
-                    f"view={screen._library_notes_view!r}, "
-                    f"stage={screen._library_notes_stage!r}, "
+                    f"view={screen._notes_state.view!r}, "
+                    f"stage={screen._notes_state.stage!r}, "
                     f"shell_region={shell.region!r}, "
                     f"durable={screen._library_reader_durable_preferences!r}, "
                     f"generations={screen._library_reader_persistence_generations!r}"
@@ -1573,7 +1578,7 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             message=lambda: (
                 f"Items pane did not collapse at {size}: "
                 f"shell={shell.effective_layout!r}, "
-                f"screen={screen._library_notes_reader_layout!r}, "
+                f"screen={screen._notes_state.reader_layout!r}, "
                 f"display={shell.items.display!r}"
             ),
         )
@@ -1598,11 +1603,11 @@ async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_
         shell = await _wait_for_selector(
             screen, pilot, "#library-notes-reader-shell"
         )
-        if not screen._library_notes_reader_layout.library_open:
+        if not screen._notes_state.reader_layout.library_open:
             shell.library_grip.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_reader_layout.items_open,
+            lambda: screen._notes_state.reader_layout.items_open,
             message="Notes Items pane did not open initially",
         )
 
@@ -1610,16 +1615,16 @@ async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_
         await _wait_for_condition(
             pilot,
             lambda: (
-                not screen._library_notes_reader_preferences.items_open
-                and not screen._library_notes_reader_layout.items_open
+                not screen._notes_state.reader_preferences.items_open
+                and not screen._notes_state.reader_layout.items_open
             ),
             message="Explicit Notes Items close did not settle",
         )
 
         screen._sync_library_notes_reader_layout_from_shell()
         await pilot.pause()
-        assert screen._library_notes_reader_preferences.items_open is False
-        assert screen._library_notes_reader_layout.items_open is False
+        assert screen._notes_state.reader_preferences.items_open is False
+        assert screen._notes_state.reader_layout.items_open is False
 
         await pilot.resize_terminal(120, 35)
         await _wait_for_condition(
@@ -1627,26 +1632,26 @@ async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_
             lambda: screen.size == (120, 35),
             message="Notes resize did not settle",
         )
-        assert screen._library_notes_reader_preferences.items_open is False
-        assert screen._library_notes_reader_layout.items_open is False
+        assert screen._notes_state.reader_preferences.items_open is False
+        assert screen._notes_state.reader_layout.items_open is False
 
-        if not screen._library_notes_reader_layout.library_open:
+        if not screen._notes_state.reader_layout.library_open:
             shell.library_grip.press()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_notes_reader_layout.library_open,
+                lambda: screen._notes_state.reader_layout.library_open,
                 message="Notes Library pane did not open",
             )
-        assert screen._library_notes_reader_layout.items_open is False
+        assert screen._notes_state.reader_layout.items_open is False
 
         shell.library_grip.press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen._library_notes_reader_layout.library_open,
+            lambda: not screen._notes_state.reader_layout.library_open,
             message="Notes Library pane did not close",
         )
-        assert screen._library_notes_reader_preferences.items_open is False
-        assert screen._library_notes_reader_layout.items_open is False
+        assert screen._notes_state.reader_preferences.items_open is False
+        assert screen._notes_state.reader_layout.items_open is False
 
 
 @pytest.mark.asyncio
@@ -1666,14 +1671,14 @@ async def test_notes_explicit_close_never_resolves_against_stale_allocation(
         shell = await _wait_for_selector(
             screen, pilot, "#library-notes-reader-shell"
         )
-        if not screen._library_notes_reader_layout.library_open:
+        if not screen._notes_state.reader_layout.library_open:
             shell.library_grip.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_reader_layout.library_open,
+            lambda: screen._notes_state.reader_layout.library_open,
             message="Notes Library pane did not open initially",
         )
-        before = screen._library_notes_reader_layout
+        before = screen._notes_state.reader_layout
         monkeypatch.setattr(
             screen,
             "_library_adaptive_reader_allocation_is_current",
@@ -1683,5 +1688,5 @@ async def test_notes_explicit_close_never_resolves_against_stale_allocation(
         shell.library_grip.press()
         await pilot.pause()
 
-        assert screen._library_notes_reader_preferences.library_open is False
-        assert screen._library_notes_reader_layout == before
+        assert screen._notes_state.reader_preferences.library_open is False
+        assert screen._notes_state.reader_layout == before

@@ -1,6 +1,6 @@
 # ADR-029: Local Private Data Boundary
 
-Status: Accepted (amended 2026-07-28 for operational metadata events — TASK-1240)
+Status: Accepted (amended 2026-09-08 for credential/PII-only application logging — TASK-32047)
 Date: 2026-07-23
 Related Tasks: [TASK-943](../tasks/task-943%20-%20Establish-private-path-boundary-and-harden-config-bootstrap.md), [TASK-489](../tasks/task-489%20-%20Apply-private-storage-boundary-to-every-SQLite-owner-and-backup.md), [TASK-490](../tasks/task-490%20-%20Harden-persistent-log-and-tool-cache-file-lifecycles.md), [TASK-491](../tasks/task-491%20-%20Make-config-persistence-use-one-effective-path-and-live-runtime-boundary.md), [TASK-492](../tasks/task-492%20-%20Remove-private-payloads-from-persistent-diagnostics-and-tool-history.md), [TASK-493](../tasks/task-493%20-%20Contain-legacy-Notes-sync-paths-and-preserve-file-modes.md), [TASK-494](../tasks/task-494%20-%20Complete-metadata-only-boundary-across-remaining-production-diagnostics.md)
 Supersedes: N/A
@@ -82,7 +82,29 @@ Known residual gap, not resolved by this amendment: no test composes a real prod
 with a real installed sink (see [TASK-1330](../tasks/task-1330%20-%20Prove-app_started-is-never-emitted-before-the-persistent-sink-installs.md)).
 Full design and test rationale: [Design spec](../../Docs/superpowers/specs/2026-07-28-persistent-operational-diagnostics-design.md).
 
-## Context
+## Amendment (2026-09-08, TASK-32047) — application log readability
+
+The owner explicitly directs application logs to redact **credentials and PII
+only**. This supersedes this ADR's metadata-only restrictions for the application
+log file, in-app Logs view and both copy actions. Ordinary diagnostic messages,
+exception messages and stack frames remain available after targeted redaction.
+Passwords, API keys, authentication tokens and recognizable personal identifiers
+are masked; a record is not discarded or replaced just because it contains
+free-form text. Timestamps, software versions, correlation IDs, provider/model
+names, ordinary file names and non-secret diagnostic keys remain readable.
+
+All these application log surfaces use the same redaction policy. Existing
+retention bounds and private-file ownership/permission checks still apply.
+Pattern-based PII recognition does not identify every possible personal name or
+free-form identifier; documentation must describe the recognized categories
+without claiming universal anonymization. This amendment does not alter stored
+Console trace projections, trace capture policy or MCP execution-record schemas.
+
+The incident was a shared Console failure log in which Copy all replaced every
+ordinary application message with `***REDACTED***`. Only explicitly admitted
+metadata events remained, hiding the context needed to investigate the failure.
+
+## Original context
 
 The verified audit reproduced several violations of the intended local privacy
 boundary:

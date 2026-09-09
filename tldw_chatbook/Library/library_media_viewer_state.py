@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
+from tldw_chatbook.Library.library_media_state import _trailing_regional_indicators
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
@@ -165,6 +166,31 @@ def _keywords_text(detail: Mapping[str, Any]) -> str:
         items = [str(item).strip() for item in keywords if str(item).strip()]
         return ", ".join(items)
     return ""
+
+
+def _display_keywords_text(keywords_text: str) -> str:
+    """The Info 'Keywords:' line, with any dangling half-flag dropped (task-32087).
+
+    A regional-indicator flag is a PAIR of code points painted as one 2-cell
+    glyph; a LONE trailing indicator is measured as one cell by rich/Textual
+    but painted as a 2-cell box by a terminal, so the Reader Info frame drifts
+    +2 (critique #8: the "Keywords:" line the list-row suffix guard task-32044
+    never reached). Reuse that guard's ``_trailing_regional_indicators`` per
+    comma-separated keyword so only WHOLE flags -- which rich and the terminal
+    both measure as 2 cells -- ever paint here; the measured width is then the
+    painted width and the frame stays aligned. Display only: the RAW
+    ``_keywords_text`` still feeds the edit form so a save round-trips the
+    stored keyword verbatim. (Not covered: Textual's own ``Content.wrap`` can
+    still split a whole pair mid-grapheme when a single keyword is wider than
+    the pane -- a framework segmentation limit, not a value this seam owns.)
+    """
+    parts: list[str] = []
+    for part in keywords_text.split(", "):
+        if _trailing_regional_indicators(part) % 2:
+            part = part[:-1]
+        if part:
+            parts.append(part)
+    return ", ".join(parts)
 
 
 def _version(detail: Mapping[str, Any]) -> int | None:
@@ -352,8 +378,9 @@ def build_library_media_viewer_state(
         # user-meaningful link -- hide it from the metadata lines while
         # still prefilling it in the edit form's URL field (L3).
         lines.append(f"URL: {url}")
-    if keywords_text:
-        lines.append(f"Keywords: {keywords_text}")
+    keywords_display = _display_keywords_text(keywords_text)
+    if keywords_display:
+        lines.append(f"Keywords: {keywords_display}")
     if updated_age:
         lines.append(f"Updated: {updated_age}")
 

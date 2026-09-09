@@ -8,6 +8,8 @@ from loguru import logger
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.adapter_types import TTSOperationError
+from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.base_backends import APITTSBackend
 from tldw_chatbook.config import get_cli_setting
 
@@ -191,10 +193,36 @@ class ElevenLabsTTSBackend(APITTSBackend):
 
                 # Stream the audio data
                 chunk_size = 1024
+                converted_format = request.response_format in {"wav", "aac", "flac"}
+                buffered = bytearray()
+                received_bytes = 0
                 async for chunk in response.aiter_bytes(chunk_size=chunk_size):
-                    yield chunk
+                    received_bytes += len(chunk)
+                    if converted_format:
+                        check_buffered_audio_size(len(buffered) + len(chunk))
+                        buffered.extend(chunk)
+                    else:
+                        yield chunk
+
+                if not received_bytes:
+                    raise ValueError("TTS service returned no audio.")
+
+                if converted_format:
+                    from tldw_chatbook.TTS.audio_service import get_audio_service
+
+                    if not buffered or len(buffered) % 2:
+                        raise ValueError("ElevenLabs returned invalid PCM audio.")
+                    yield await get_audio_service().convert_audio(
+                        bytes(buffered),
+                        request.response_format,
+                        source_format="pcm",
+                        sample_rate=24000,
+                    )
 
             logger.info("ElevenLabsTTSBackend: Successfully completed TTS generation")
+
+        except TTSOperationError:
+            raise
 
         except httpx.HTTPStatusError as e:
             # Try to read error content safely
@@ -256,11 +284,11 @@ class ElevenLabsTTSBackend(APITTSBackend):
         # Simple format to ElevenLabs format mapping
         simple_format_map = {
             "mp3": "mp3_44100_192",  # High quality MP3
-            "opus": "opus",
-            "aac": "aac",
-            "flac": "flac",
-            "wav": "pcm_44100",  # WAV is PCM in ElevenLabs
-            "pcm": "pcm_44100",
+            "opus": "opus_48000_128",
+            "aac": "pcm_24000",
+            "flac": "pcm_24000",
+            "wav": "pcm_24000",  # Wrap one complete PCM response locally.
+            "pcm": "pcm_24000",
         }
 
         # If format is already an ElevenLabs format string, validate it

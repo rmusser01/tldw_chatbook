@@ -800,11 +800,29 @@ class LegacyTTSAdapter:
         route = resolve_legacy_route(internal_id)
         if route.provider_id != self.provider_id:
             raise ValueError("Legacy route does not match provider")
+        sample_rate = None
+        metadata = {}
+        if legacy_request.response_format == "pcm" and (
+            self.provider_id != "openai"
+            or normalize_openai_compatible_endpoint(
+                self.admitted_outbound_endpoint()
+            ).official
+        ):
+            # Retained backends normalize PCM to signed little-endian 16-bit,
+            # mono 24 kHz. Custom OpenAI-compatible servers have no such promise.
+            sample_rate = 24_000
+            metadata = {
+                "sample_rate": sample_rate,
+                "channels": 1,
+                "sample_encoding": "pcm_s16le",
+            }
         return TTSAudioResponse(
             provider_id=self.provider_id,
             model_id=request.model_id,
             audio_format=legacy_request.response_format,
             content_type=_content_type(legacy_request.response_format),
+            sample_rate=sample_rate,
+            metadata=metadata,
             byte_stream=self.host.generate(
                 route.internal_model_id,
                 legacy_request,

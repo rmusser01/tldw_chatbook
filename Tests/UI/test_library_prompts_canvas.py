@@ -4428,7 +4428,7 @@ async def test_library_prompts_unmount_revokes_late_apply_before_workspace_shutd
             started.set()
             await release.wait()
 
-    screen._library_file_notes_workspace = _GatedWorkspace()
+    screen._notes_state.file_notes_workspace = _GatedWorkspace()
     controller = screen._library_prompt_browse_controller
     scope = PromptBrowseScope()
     token = controller.begin(scope)

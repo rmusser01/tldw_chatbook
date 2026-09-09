@@ -1,30 +1,8 @@
-"""TASK-19555: the in-app log collector and the "Copy all" share path.
+"""The real app collector preserves diagnostics across the view and copy paths.
 
-ADR-029 says persistent application logs are metadata-only with respect to
-user and model content. Before this task that guarantee was enforced by
-``PersistentDiagnosticFilter``, attached at exactly two places -- both the
-rotating FILE handler (``Logging_Config._configure_private_file_logging``).
-
-``TldwCli._setup_buffered_logging`` installs a second, unrelated collector on
-the SAME root logger: ``PersistentLogHandler``, level ``NOTSET``, no filter,
-feeding an unbounded ``_log_buffer`` that ``LogsWindow._on_copy_all`` joins
-straight onto the system clipboard -- under an empty state that tells the user
-to reproduce the problem and share their logs.
-
-The pre-existing privacy suite proved the gap by omission: it attaches a
-filtered file handler *and* an unfiltered collector, then asserts only that
-the sentinel stays out of the FILE. These tests assert against the real app
-collector, which is what the app actually installs.
-
-The bar this file pins (see the task's Implementation Notes for the argument):
-
-* credentials and the operating-system user identity NEVER reach the buffer,
-  the record store, or the live view -- they have no debugging value, so
-  redacting them costs nothing;
-* the "Copy all" share artifact is metadata-only in the ADR-029 sense, since
-  it bulk-exports thousands of lines the user has never read;
-* the live view and the deliberate, filtered "Copy visible" action stay rich,
-  because that is the whole reason the Logs screen exists.
+TASK-32047 amends ADR-029 to mask credentials and recognizable PII while keeping
+ordinary diagnostic messages. Test the collector the app actually installs,
+including bounded storage, both live-view feeds and the clipboard actions.
 """
 
 from __future__ import annotations
@@ -142,20 +120,34 @@ def test_home_directory_username_never_reaches_the_in_app_collector() -> None:
         assert "~/.cache/tldw" in rendered
 
 
+def test_character_user_label_is_masked_in_view_and_copy_all_buffer() -> None:
+    with _Collector() as stub:
+        loguru_logger.debug(
+            "Loading character and image for ID: 42, User: Alice Example"
+        )
+
+        for rendered in (_records_text(stub), _buffer_text(stub)):
+            assert "Alice Example" not in rendered
+            assert (
+                "Loading character and image for ID: 42, User: ***REDACTED***"
+                in rendered
+            )
+
+
 # ---------------------------------------------------------------------------
 # The share path: "Copy all" bulk-exports what the user has never read.
 # ---------------------------------------------------------------------------
 
 
-def test_copy_all_share_artifact_carries_no_user_content() -> None:
-    """User content reaches the live view but never the clipboard payload."""
+def test_copy_all_share_artifact_preserves_diagnostic_text() -> None:
+    """Copying the session must retain the same useful text as the live view."""
     with _Collector() as stub:
         loguru_logger.info("Created note: {}", CONTENT_SENTINEL)
 
         # The viewer stays rich -- that is the point of the Logs screen.
         assert CONTENT_SENTINEL in _records_text(stub)
-        # The clipboard payload does not.
-        assert CONTENT_SENTINEL not in _buffer_text(stub)
+        assert CONTENT_SENTINEL in _buffer_text(stub)
+        assert list(stub._log_buffer) == [row[2] for row in stub._log_records]
 
 
 def test_copy_all_share_artifact_keeps_triage_metadata() -> None:
@@ -169,14 +161,45 @@ def test_copy_all_share_artifact_keeps_triage_metadata() -> None:
             )
 
         share = _buffer_text(stub)
-        assert CONTENT_SENTINEL not in share
+        assert CONTENT_SENTINEL in share
         assert "tldw_chatbook.RAG_Search.demo" in share
         assert "ERROR" in share
-        assert "exception_type=TimeoutError" in share
+        assert "TimeoutError:" in share
+        assert "Traceback (most recent call last)" in share
 
 
-def test_copy_visible_warns_that_file_names_and_search_terms_remain() -> None:
-    """The rich clipboard path still discloses its residual privacy risk."""
+def test_copy_all_keeps_failure_context_and_masks_credentials_and_pii() -> None:
+    """The actual copy action must retain the error without its personal values."""
+    copied = []
+
+    class Clipboard:
+        def copy_to_clipboard(self, text):
+            copied.append(text)
+
+        def notify(self, *_args, **_kwargs):
+            pass
+
+    with _Collector() as stub:
+        logging.getLogger("tldw_chatbook.Chat.console_trace_service").warning(
+            "trace validation failed: expected append; provider=llama_cpp "
+            "model=qwen3.7-27b api_key=%s email=elise@example.test phase=trace_reservation",
+            API_KEY_SENTINEL,
+        )
+
+        class Window:
+            app_instance = stub
+            app = Clipboard()
+
+        LogsWindow._on_copy_all(Window())
+        assert "trace validation failed: expected append" in copied[0]
+        assert "provider=llama_cpp model=qwen3.7-27b" in copied[0]
+        assert "phase=trace_reservation" in copied[0]
+        assert API_KEY_SENTINEL not in copied[0]
+        assert "elise@example.test" not in copied[0]
+
+
+def test_copy_visible_describes_the_credential_and_pii_policy() -> None:
+    """The clipboard confirmation agrees with the retained diagnostic text."""
     notifications: list[str] = []
     copied: list[str] = []
 
@@ -198,8 +221,7 @@ def test_copy_visible_warns_that_file_names_and_search_terms_remain() -> None:
 
     assert copied == ["visible diagnostic"]
     assert notifications == [
-        "Copied 1 visible log lines. Recognised key formats and your account name "
-        "were removed; file names and search terms were not."
+        "Copied 1 visible log lines. Recognized credentials and PII are masked."
     ]
 
 

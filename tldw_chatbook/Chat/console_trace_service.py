@@ -1389,6 +1389,24 @@ class _ParentState:
 
 
 @dataclass(frozen=True, slots=True)
+class _RenderedSystemSlot:
+    """Content-free binding for one per-call rendered-system header value."""
+
+    sequence: int
+    artifact_id: str
+    descriptor: ProviderArtifactTraceProvenance
+
+
+def _is_rendered_system_row(descriptor: object, value: object) -> bool:
+    return (
+        type(descriptor) is ProviderArtifactTraceProvenance
+        and descriptor.source is TraceProvenanceSource.RENDERED_SYSTEM
+        and isinstance(value, Mapping)
+        and value.get("role") == "system"
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class _PreparedState:
     provenance: ProviderRequestProvenance
     parent: object
@@ -1400,6 +1418,7 @@ class _PreparedState:
     surface_structure: Mapping[str, object] | None = None
     surface_policies: tuple[FrozenTracePolicy, ...] = ()
     verified_bundle: ReferenceType[ProviderRequestShadowBundle] | None = None
+    rendered_system_slot: _RenderedSystemSlot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1419,6 +1438,7 @@ class _ChildState:
     surface_structure: Mapping[str, object]
     surface_policies: tuple[FrozenTracePolicy, ...]
     completed_tool_turn: CompletedToolTurnWitness | None = None
+    rendered_system_slot: _RenderedSystemSlot | None = None
 
 
 class _ParentSurfaceCapability:
@@ -1915,6 +1935,22 @@ class ConsoleTraceService:
         )
         if bundle.available and child_state is None:
             raise ValueError("surface_child_binding")
+        rendered_system_slot = (
+            None if child_state is None else child_state.rendered_system_slot
+        )
+        if rendered_system_slot is not None:
+            message_binding = _binding(bundle, "messages_payload")
+            if message_binding is None or not message_binding.value:
+                raise ValueError("rendered_system_slot_unavailable")
+            self._validate_rendered_system_slot(
+                cursor,
+                projection.root,
+                rendered_system_slot,
+                message_binding.value[0],
+                current_policy_id=None
+                if reserved_call is None
+                else reserved_call.policy_id,
+            )
         delta_items = (
             ((replacement.item,) + surface_delta.items)
             if replacement is not None
@@ -2192,6 +2228,7 @@ class ConsoleTraceService:
             artifact_policy_id=(
                 ordered_policies[0].policy_id if ordered_policies else None
             ),
+            rendered_system_slot=rendered_system_slot,
         )
         if child_state is not None:
             root = _ProjectionRoot(
@@ -2432,9 +2469,25 @@ class ConsoleTraceService:
         )
 
         retained_artifact_values: dict[int, object] = {}
+        rendered_system: tuple[_RenderedSystemSlot, object] | None = None
 
         def matches(active_index: int, incoming_index: int) -> bool:
+            nonlocal rendered_system
             key = active[active_index][2]
+            if (
+                active_index == incoming_index == 0
+                and key[:2] == ("rendered_system", "artifact")
+                and _is_rendered_system_row(descriptors[0], values[0])
+                and isinstance(durable_values.get(key), Mapping)
+                and durable_values[key].get("role") == "system"
+            ):
+                # The positional surface source stays immutable. The exact
+                # current row is verified and stored in this call's header.
+                rendered_system = (
+                    _RenderedSystemSlot(active[0][1], key[2], descriptors[0]),
+                    values[0],
+                )
+                return True
             matched = _surface_reference_domain(key) == domains[
                 incoming_index
             ] and self._durable_reference_matches(
@@ -2668,6 +2721,7 @@ class ConsoleTraceService:
             reserved_call=reserved_call,
             known_credentials=known_credentials,
             retained_artifact_values=retained_artifact_values,
+            rendered_system=rendered_system,
         )
         return admission, boundary
 
@@ -2759,6 +2813,119 @@ class ConsoleTraceService:
                 return True
         return False
 
+    def discarded_turn_chain(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        previous_turn_id: str,
+        current_turn_id: str,
+        preceding_descriptors: tuple[TraceProvenance, ...],
+    ) -> tuple[str | None, tuple[tuple[str, str], ...]]:
+        """Find bounded, exact discarded owners through unsent follow-up users.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used for ledger and
+                message ownership reads.
+            conversation_id: Conversation that must own every linked message.
+            previous_turn_id: Original traced user message to reach.
+            current_turn_id: Current saved user message ending the chain.
+            preceding_descriptors: Provider-order descriptors before the current
+                user. Only the last MAX_SURFACE_REPLACEMENT_SPAN are inspected;
+                that window must include the original traced user.
+
+        Returns:
+            The original user's discarded assistant message ID and an
+            oldest-to-newest tuple of intervening (saved user revision ID,
+            discarded assistant message ID) pairs. The tuple is empty for a
+            direct link. Returns (None, ()) if exact ownership cannot be proven
+            within the window, including missing revisions or broken links;
+            no partial chain is returned.
+
+        Raises:
+            sqlite3.Error: If a revision or message ownership query fails.
+        """
+        followups = []
+        next_turn_id = current_turn_id
+        for descriptor in reversed(
+            preceding_descriptors[-MAX_SURFACE_REPLACEMENT_SPAN:]
+        ):
+            if type(descriptor) is not SavedRevisionTraceProvenance:
+                break
+            revision = self.repository.get_semantic_revision(
+                cursor, descriptor.revision_id
+            )
+            if (
+                revision is None
+                or revision.normalized_role != "user"
+                or revision.source_conversation_id != conversation_id
+            ):
+                break
+            assistant_id = self.discarded_turn_assistant(
+                cursor,
+                conversation_id=conversation_id,
+                previous_turn_id=revision.source_message_id,
+                current_turn_id=next_turn_id,
+            )
+            if assistant_id is None:
+                break
+            if revision.source_message_id == previous_turn_id:
+                return assistant_id, tuple(reversed(followups))
+            followups.append((revision.revision_id, assistant_id))
+            next_turn_id = revision.source_message_id
+        return None, ()
+
+    @staticmethod
+    def discarded_turn_assistant(
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        previous_turn_id: str,
+        current_turn_id: str,
+    ) -> str | None:
+        """Find the exact durable discarded owner between two saved user turns.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used for message
+                ownership and dispatch checkpoint reads.
+            conversation_id: Conversation that must own all three messages.
+            previous_turn_id: Saved user message parenting the discarded owner.
+            current_turn_id: Saved user message parented by the discarded owner.
+
+        Returns:
+            The intervening discarded assistant message ID when all three
+            messages are undeleted, the prior user has no other assistant child
+            (including deleted siblings), and no dispatch checkpoint remains
+            for that user. None means this exact ownership proof is unavailable.
+
+        Raises:
+            sqlite3.Error: If the ownership or checkpoint query fails.
+        """
+        row = cursor.execute(
+            """SELECT discarded.id FROM messages current
+                 JOIN messages discarded ON discarded.id = current.parent_message_id
+                 JOIN messages prior ON prior.id = discarded.parent_message_id
+                WHERE current.id = ? AND current.conversation_id = ?
+                  AND current.role = 'user' AND current.deleted = 0
+                  AND discarded.conversation_id = current.conversation_id
+                  AND discarded.role = 'assistant' AND discarded.deleted = 0
+                  AND discarded.assistant_generation_state = 'discarded'
+                  AND prior.id = ? AND prior.conversation_id = current.conversation_id
+                  AND prior.role = 'user' AND prior.deleted = 0
+                  AND NOT EXISTS (
+                      SELECT 1 FROM messages sibling
+                       WHERE sibling.conversation_id = prior.conversation_id
+                         AND sibling.parent_message_id = prior.id
+                         AND sibling.role = 'assistant' AND sibling.id != discarded.id)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM console_dispatch_checkpoints checkpoint
+                       WHERE checkpoint.conversation_id = current.conversation_id
+                         AND checkpoint.user_message_id = prior.id)
+            """,
+            (current_turn_id, conversation_id, previous_turn_id),
+        ).fetchone()
+        return None if row is None else row[0]
+
     def _validate_completed_tool_turn(
         self,
         cursor: sqlite3.Cursor,
@@ -2778,8 +2945,9 @@ class ConsoleTraceService:
         source_after_failure = (
             restoring_source and witness.assistant_revision_id is None
         )
+        discarded = witness.discarded_assistant_message_id is not None
         terminal_states = {TraceCallState.COMPLETE}
-        if restoring_source:
+        if restoring_source or discarded:
             terminal_states.update(
                 {
                     TraceCallState.ERROR,
@@ -2787,8 +2955,13 @@ class ConsoleTraceService:
                     TraceCallState.INTERRUPTED,
                 }
             )
-        if source_after_failure:
+        if source_after_failure and not discarded:
             terminal_states.remove(TraceCallState.COMPLETE)
+        if discarded:
+            # Explicit discard settles the assistant owner separately. A run
+            # interrupted during trace construction can leave earlier calls
+            # response-bearing but unsettled; do not invent their outcomes.
+            terminal_states.add(TraceCallState.RESPONSE_STARTED)
         project_transition = witness.project_context_count is not None
         self._validate_owner(cursor, owner_id=owner_id, segment_id=segment_id)
         owner = self.repository.get_owner(cursor, owner_id)
@@ -2893,7 +3066,11 @@ class ConsoleTraceService:
             or tail is None
             or latest_id != terminal.call_id
             or terminal.state not in terminal_states
-            or (restoring_source and terminal.settled_at is None)
+            or (
+                (restoring_source or discarded)
+                and terminal.state is not TraceCallState.RESPONSE_STARTED
+                and terminal.settled_at is None
+            )
             or (
                 chain_terminal.route_identity != "tool_loop"
                 and not (
@@ -2930,6 +3107,37 @@ class ConsoleTraceService:
             or plan.predecessor_head_id != tail.node_id
         ):
             raise ValueError("completed_tool_turn_unavailable")
+        if discarded:
+            next_turn_id = current_turn_id
+            seen_turns = {current_turn_id, origin.turn_id}
+            for revision_id, assistant_id in reversed(witness.discarded_followups):
+                revision = self.repository.get_semantic_revision(cursor, revision_id)
+                if (
+                    revision is None
+                    or revision.normalized_role != "user"
+                    or revision.source_conversation_id != owner.conversation_id
+                    or revision.source_message_id in seen_turns
+                    or self.discarded_turn_assistant(
+                        cursor,
+                        conversation_id=owner.conversation_id,
+                        previous_turn_id=revision.source_message_id,
+                        current_turn_id=next_turn_id,
+                    )
+                    != assistant_id
+                ):
+                    raise ValueError("completed_turn_discard_owner")
+                seen_turns.add(revision.source_message_id)
+                next_turn_id = revision.source_message_id
+            if (
+                self.discarded_turn_assistant(
+                    cursor,
+                    conversation_id=owner.conversation_id,
+                    previous_turn_id=origin.turn_id,
+                    current_turn_id=next_turn_id,
+                )
+                != witness.discarded_assistant_message_id
+            ):
+                raise ValueError("completed_turn_discard_owner")
         boundary_events = cursor.execute(
             """SELECT call_id, sequence FROM console_trace_events
                 WHERE segment_id = ? AND event_type = 'call_boundary'
@@ -3021,7 +3229,7 @@ class ConsoleTraceService:
         if (
             user is None
             or (
-                not source_after_failure
+                not (source_after_failure or discarded)
                 and (
                     assistant is None
                     or link is None
@@ -3270,6 +3478,7 @@ class ConsoleTraceService:
         admitted: tuple[TraceProvenance, ...],
         values: tuple[object, ...],
         known_credentials: tuple[str, ...] = (),
+        rendered_system: tuple[_RenderedSystemSlot, object] | None = None,
     ) -> tuple[
         object, ProviderRequestProvenance, tuple[object, ...], dict[int, object]
     ]:
@@ -3305,19 +3514,34 @@ class ConsoleTraceService:
             domain = _surface_reference_domain(key)
             descriptors, provider_values = domain_values[domain]
             ordinal = consumed[domain]
-            if ordinal >= len(descriptors) or not self._durable_reference_matches(
-                cursor,
-                descriptors[ordinal],
-                provider_values[ordinal],
-                key,
-                durable_values,
-                owner_id=owner_id,
-                known_credentials=known_credentials,
+            header_row = (
+                rendered_system is not None
+                and domain == "messages_payload"
+                and ordinal == 0
+                and sequence == rendered_system[0].sequence
+                and key
+                == ("rendered_system", "artifact", rendered_system[0].artifact_id)
+                and ordinal < len(descriptors)
+                and descriptors[ordinal] == rendered_system[0].descriptor
+                and _artifact_bytes(provider_values[ordinal])
+                == _artifact_bytes(rendered_system[1])
+            )
+            if ordinal >= len(descriptors) or not (
+                header_row
+                or self._durable_reference_matches(
+                    cursor,
+                    descriptors[ordinal],
+                    provider_values[ordinal],
+                    key,
+                    durable_values,
+                    owner_id=owner_id,
+                    known_credentials=known_credentials,
+                )
             ):
                 raise ValueError("surface_prefix_mismatch")
             prefix_descriptors.append((sequence, descriptors[ordinal]))
             prefix_domains.append((sequence, domain))
-            if key[1] == "artifact":
+            if key[1] == "artifact" and not header_row:
                 retained_artifact_values[sequence] = provider_values[ordinal]
             consumed[domain] += 1
         message_delta = message_descriptors[consumed["messages_payload"] :]
@@ -3392,6 +3616,7 @@ class ConsoleTraceService:
         reserved_call: TraceCallRecord | None = None,
         known_credentials: tuple[str, ...] = (),
         retained_artifact_values: Mapping[int, object] | None = None,
+        rendered_system: tuple[_RenderedSystemSlot, object] | None = None,
     ) -> _PreparedSurfaceBoundary:
         """Derive one full structural projection from an opaque parent and delta.
 
@@ -3415,6 +3640,9 @@ class ConsoleTraceService:
                 by active physical sequence. Each is independently verified;
                 saved revisions cannot be overridden. Values remain local to
                 the immutable dispatch boundary and are not persisted.
+            rendered_system: Optional leading provider-owned system slot and
+                its original row. The slot is revalidated independently and
+                the row is verified and persisted through the call header.
 
         Returns:
             An owned boundary with verified provenance and original dispatch
@@ -3467,6 +3695,7 @@ class ConsoleTraceService:
                         admitted=admitted,
                         values=values,
                         known_credentials=known_credentials,
+                        rendered_system=rendered_system,
                     )
                 )
                 retained_artifact_values.update(bootstrap_artifact_values)
@@ -3524,6 +3753,32 @@ class ConsoleTraceService:
                     )
                 ):
                     raise ValueError("surface_prefix_mismatch")
+        if rendered_system is not None:
+            slot, system_value = rendered_system
+            self._validate_rendered_system_slot(
+                cursor,
+                parent.root,
+                slot,
+                system_value,
+                current_policy_id=None
+                if reserved_call is None
+                else reserved_call.policy_id,
+            )
+            prior_descriptor = next(parent.descriptors.iter_domain("messages_payload"))[
+                1
+            ]
+            prior_policy = _artifact_policy(prior_descriptor)
+            if prior_policy is None or (
+                prior_policy.credential_filter_version,
+                prior_policy.pii_redaction_enabled,
+                prior_policy.pii_ruleset_revision_id,
+            ) != (
+                slot.descriptor.policy.credential_filter_version,
+                slot.descriptor.policy.pii_redaction_enabled,
+                slot.descriptor.policy.pii_ruleset_revision_id,
+            ):
+                raise ValueError("trace_policy_mismatch")
+            retained_artifact_values[slot.sequence] = system_value
         replacement_component_ordinal: int | None = None
         if admission.completed_tool_turn is not None:
             if replacement_range is None:
@@ -3779,7 +4034,12 @@ class ConsoleTraceService:
                     if value_domain == domain
                 )
                 for domain in {"messages_payload", "provider_continuations"}
-            },
+            }
+            | (
+                {"rendered_system_row": (rendered_system[1],)}
+                if rendered_system
+                else {}
+            ),
         )
         self._prepared_capabilities[id(projected)] = _PreparedState(
             projected,
@@ -3788,8 +4048,43 @@ class ConsoleTraceService:
             descriptor_root,
             id(boundary),
             prepared_items,
+            rendered_system_slot=None
+            if rendered_system is None
+            else rendered_system[0],
         )
         return boundary
+
+    def _validate_rendered_system_slot(
+        self,
+        cursor: sqlite3.Cursor,
+        root: _ProjectionRoot,
+        slot: _RenderedSystemSlot,
+        value: object,
+        *,
+        current_policy_id: str | None,
+    ) -> None:
+        first = next(root.iter_entries(), None)
+        if (
+            type(slot) is not _RenderedSystemSlot
+            or first
+            != (slot.sequence, ("rendered_system", "artifact", slot.artifact_id))
+            or not _is_rendered_system_row(slot.descriptor, value)
+            or self.repository.get_policy(cursor, slot.descriptor.policy.policy_id)
+            != slot.descriptor.policy
+            or (
+                current_policy_id is not None
+                and current_policy_id != slot.descriptor.policy.policy_id
+            )
+        ):
+            raise ValueError("rendered_system_slot_mismatch")
+        artifact = self.repository.get_artifact(cursor, slot.artifact_id)
+        if artifact is None:
+            raise ValueError("rendered_system_slot_unavailable")
+        # The source artifact must really be a system row; provenance alone
+        # cannot turn a saved user/tool slot into an overridable header.
+        original = json.loads(artifact.sanitized_bytes)
+        if not isinstance(original, dict) or original.get("role") != "system":
+            raise ValueError("rendered_system_slot_mismatch")
 
     def _extend_prepared_surface_boundary(
         self,
@@ -3862,6 +4157,17 @@ class ConsoleTraceService:
             == len(cast(Sequence[object], expected_values.get(domain, ())))
             for domain in offsets
         )
+        if prepared.rendered_system_slot is not None:
+            actual_messages = actual_values.get("messages_payload")
+            expected_system = expected_values.get("rendered_system_row")
+            matches = matches and (
+                isinstance(actual_messages, (list, tuple))
+                and bool(actual_messages)
+                and isinstance(expected_system, (list, tuple))
+                and len(expected_system) == 1
+                and _artifact_bytes(actual_messages[0])
+                == _artifact_bytes(expected_system[0])
+            )
         if matches:
             parent = self._parent_capabilities[id(prepared.parent)]
             delta_descriptors = tuple(item.provenance for item in prepared.items)
@@ -3875,7 +4181,13 @@ class ConsoleTraceService:
                 for policy in (*parent.surface_policies, *delta_policies)
             }
             policies = tuple(policies_by_id[key] for key in sorted(policies_by_id))
-            if (
+            if prepared.rendered_system_slot is not None:
+                slot = prepared.rendered_system_slot
+                structure, policies = _surface_projection_metadata(
+                    slot.descriptor if sequence == slot.sequence else descriptor
+                    for sequence, descriptor in prepared.descriptors.iter_entries()
+                )
+            elif (
                 cast(SurfaceDeltaAdmission, prepared.admission).completed_tool_turn
                 is not None
             ):
@@ -3990,6 +4302,7 @@ class ConsoleTraceService:
             prepared.surface_structure or _structural_provenance((), {}),
             prepared.surface_policies,
             admission.completed_tool_turn,
+            prepared.rendered_system_slot,
         )
         self._child_capabilities[id(binding)] = state
         self._prepared_capabilities.pop(id(provenance), None)
@@ -5216,6 +5529,7 @@ class ConsoleTraceService:
         surface_structure: Mapping[str, object],
         artifact_policy_id: str | None,
         response_projection: Mapping[str, object] | None = None,
+        rendered_system_slot: _RenderedSystemSlot | None = None,
     ) -> RequestHeaderRecord:
         route = _route(provenance)
         components: list[HeaderComponentRef] = []
@@ -5241,6 +5555,19 @@ class ConsoleTraceService:
                 )
             else:
                 adapter_system_composition = ()
+            if rendered_system_slot is not None:
+                # Bundle values have already passed credential filtering and
+                # exact dispatch verification. Never persist the raw row.
+                message_binding = bindings["messages_payload"]
+                self._header_component(
+                    cursor,
+                    components,
+                    omissions,
+                    kind="rendered_system_row",
+                    ordinal=0,
+                    descriptor=rendered_system_slot.descriptor,
+                    value=message_binding.value[0],
+                )
             tools = _binding(bundle, "tools")
             if tools is not None:
                 if not isinstance(tools.value, tuple):
@@ -5305,6 +5632,8 @@ class ConsoleTraceService:
             adapter_defaults["system_composition"] = list(adapter_system_composition)
         if response_projection is not None:
             adapter_defaults["response_projection"] = dict(response_projection)
+        if rendered_system_slot is not None:
+            adapter_defaults["rendered_system_slot"] = 0
         adapter_defaults["artifact_policy_id"] = artifact_policy_id
         literal = bundle.literal_payload_value if bundle.available else None
         if literal is not None:

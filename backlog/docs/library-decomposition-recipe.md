@@ -14,10 +14,23 @@ subsystem series):
 Everything here is Library-specific application of that doctrine, not a
 restatement of it.
 
+> **STATUS (2026-09-08): the extraction program is COMPLETE.** All nine
+> subsystems landed across eight waves; `library_screen.py` carries no
+> generated flat-state shim block for any subsystem. **§25 is the program
+> close** — the eight-wave trajectory, the landed architecture, the three
+> reusable catalogues, and the phase-C handoff. If you are here to start
+> phase C, read §25's handoff first; if you are here to run a decomposition
+> on some other screen, read §3 (six census spellings, the bypass catalogue),
+> §7 (the four-rung disposition ladder) and §24 (evidence discipline), which
+> are the parts that generalise.
+
 ## 1. The per-subsystem PR series
 
-Each of the eleven subsystems below (see §8) ships as a small series of
-pure-move PRs, always in this order:
+Each subsystem below (see §8) ships as a small series of pure-move PRs,
+always in this order. *(The plan's original enumeration said "eleven"; as
+landed it is NINE — search and RAG proved to be one combined series after
+wave-2's entanglement gate, and the "final shell pass" row is not an
+extraction series. §25 has the as-landed inventory.)*
 
 1. **State PR** — a `Library<Subsystem>State` dataclass in
    `UI/Library_Modules/library_<subsystem>_state.py` holding every field the
@@ -117,6 +130,33 @@ shared shell state by definition and is never moved by an extraction PR.
 Known examples from the spec: `_library_selected_row_id` (226 refs),
 `_library_lifecycle` (83), `_library_snapshot_state_generation` (35),
 `_pending_library_source_open` (29).
+
+**The read/write refinement, and it is load-bearing — the rule above is
+about WRITERS.** Read as an unqualified ban on cross-referenced fields, the
+sentence would have blocked media's own `view`, the prompts series'
+`_library_prompts_mutation_in_flight`, and all twelve of the notes series'
+cross-tagged fields — and the first two moved, three and two waves ago
+respectively, and are load-bearing precedents today. What four waves have
+actually applied, and what wave 8 made explicit rather than leaving to be
+re-derived from precedent, is:
+
+> **An other-subsystem-named WRITER blocks a move; an other-subsystem-named
+> READ is a route guard and does not.**
+
+A reader is asking "is the Library currently showing notes?" before it acts
+— a question, answered through the shim or (after cleanup) through the
+dotted path, with no ownership claim attached. A writer is a second owner,
+and two owners is the condition the ≥2-subsystems rule exists to catch. Per
+subsystem, state the split with the field names, not just the counts: the
+notes series' own decision was **12 cross-tagged → 2 BLOCKED / 10 MOVE**,
+the two blocked being `_library_notes_programmatic_focus_target` and
+`_library_notes_restoring_focus` (the only two with a media-named writer);
+the other ten were read-only from media and moved. Media's own wave-7
+decision was 1 BLOCKED (`_library_pending_list_entry_media_return`, a member
+of a four-field shell family whose writers span Media/Notes/Prompts/Skills
+— when a blocked field belongs to a FAMILY, the family stays screen-owned
+whole, or the next wave will move its twin alone and split an invariant
+across two objects).
 
 ## 3. Monkeypatch-name routing — do not move a patched name until cleanup
 
@@ -740,6 +780,85 @@ never have caught it. **Every future subsystem that takes the dotted form
 here should add its own three-line sibling**; without one, the census is a
 one-time check rather than a standing invariant.
 
+**The fifth spelling has a SECOND dimension the first two kinds hid: the
+RECEIVER. Census a shared dispatcher's receivers, not just its spellings.**
+Found by the notes series (wave-8 task 3), and it cost the media series a
+live production defect that shipped for two days.
+
+A dotted retarget is only correct *for the receiver it was written against*.
+When a subsystem's movers forward a bare `self` into a shared dispatcher,
+that dispatcher is handed a CONTROLLER as often as a SCREEN — and the two
+resolve the two spellings in opposite directions:
+
+| Spelling | on the SCREEN | on the CONTROLLER |
+|---|---|---|
+| flat `_library_<kind>_<field>` | dead after cleanup | **still resolves** (the controller's own permanent shim loop) |
+| dotted `_<kind>_state.<field>` | resolves | **raises**, unless the controller declares a `_<kind>_state` accessor property |
+
+So the mechanism is the INVERSE of the natural reading. It is not that the
+flat name stops resolving on the controller; it is that the NEW dotted
+spelling never resolved there in the first place, and the dispatcher's own
+`except Exception` swallows the `AttributeError` into the whole-screen
+recompose. Silent, live, and green on every test.
+
+Notes met this first and handled it: `LibraryNotesController` gained a
+`_notes_state` accessor property (no moved body spells it — the accessor
+exists solely for the shared dispatchers), and the guard is **parametrized
+over the receiver**, with both legs mutation-verified
+(`test_notes_row_toggle_resolves_the_dotted_state_path[screen|controller]`).
+The `[controller]` leg subclasses the REAL controller class, overriding only
+the framework-service properties a double cannot assign over, so the
+accessor under test is the production one.
+
+Running the same question at the sibling MEDIA branch found the defect
+wave 7 had already shipped: `_sync_library_canvas`'s media leg assigns
+through `screen._media_state.selected_media_id`, and
+`handle_library_media_select_all` / `handle_library_media_select_clear` —
+both movers — call it with a controller `self`, while
+`LibraryMediaController` declared `_media_state_accessor` and no
+`_media_state` property. Every media "Select all"/"Clear" press took the
+full-screen recompose the Tier-1 design exists to avoid. Fixed at the
+program close (`66e572868`) with the symmetric accessor property and a
+`[controller]` leg on the media guard, mutation-verified both ways: removing
+the property reds only `[controller]`, reverting the dotted branch reds only
+`[screen]`.
+
+**The census to run, and it is one line of `ast`:** for the dispatcher's own
+parameter (`screen`), walk every call site and resolve the first argument's
+STATIC type — a `LibraryScreen` method's `self` is a screen, a controller
+method's `self` is a controller. If any call site is a controller, the
+controller needs the accessor property and the guard needs a second leg.
+Report the two numbers separately: notes measured **31 call sites across 26
+distinct movers**, and the load-bearing one is the METHOD count, because
+what needs a resolvable receiver is the method's `self`.
+
+**A SIXTH spelling, found by the notes series (wave-8 task 2): an unbound
+`LibraryScreen.<name>` reference inside any enclosing expression.** The five
+above all assume the name is reached through an INSTANCE — `self.<name>`, a
+string a `setattr` consumes, a kwarg, a `def`, or a runtime-composed
+attribute. None covers the class-level reference:
+
+```python
+partial(LibraryScreen._restore_library_notes_browse_return_receipt, self, …)
+```
+
+which is the instance that task's battery hit. A variable assignment, a list
+literal, a decorator argument or a default parameter value would behave
+identically: the method is fetched off the CLASS and handed its `self`
+explicitly, so moving the body to a controller makes the expression raise
+`AttributeError` at the moment it is BUILT — and if it is built inside a
+`try`, or lazily, it is silent.
+
+**The census is exhaustive by construction and takes one `ast` walk: every
+`ast.Attribute` whose `value` is `Name("LibraryScreen")`, anywhere in
+`library_screen.py`, whatever encloses it.** Do not anchor it on `partial`,
+on `functools`, or on any call shape — the enclosing expression is exactly
+what varies. Notes ran it over the parent tree and got 27 targets, 22 of
+them notes candidates; run again over the LANDED tree it returns **zero for
+the movers and 196 for the exclusions**, which is the answer the census
+exists to produce: the 196 are the population the shape lives in, and they
+are why 19 of that series' 100 exclusions exist.
+
 **A cleanup-PR census this section did NOT previously require: the deleted
 FIELD names' own prose sweep.** Every cleanup PR to date censused the
 PRUNED METHOD names for stale prose. None censused the DELETED FIELD
@@ -789,6 +908,84 @@ both "the screen distinguishes ... by view state (`_library_prompts_view`)").
 That is the argument for making this a standing census rather than a
 review's incidental catch: two of six defects lived outside every file
 scope any task in the series had reason to open.
+
+**The wave-8 close ran the same census and found ELEVEN class-3 sites, of
+which only THREE were known** — the cleanup's own forward-noted survivors,
+which its ±3-line attribution filter had structurally dropped. Two of the
+other eight are worth the extra sentence because they are shapes the filter
+cannot see by design: a state module cross-referencing its OWN sibling field
+by that field's pre-move flat spelling (`library_notes_state.py:542`/`:552`,
+where the field is defined ten lines away under its new bare name), and a
+docstring in the widget the subsystem paints through
+(`library_notes_canvas.py:190`). **And one shape must be LEFT:** the
+controller's moved bodies carry comments spelling the flat names, and those
+bodies are frozen by the byte-for-byte canon (§1) — the flat names still
+resolve there through the controller's own shim loop, so the identical
+phrase is a defect in the state module and correct in the controller. A
+census that "fixed" both would have broken the canon.
+
+### The two holes every RECEIVER census in this program has had
+
+Both were found by the notes cleanup (wave-8 task 3), both by a PAIRED
+BASELINE rather than by a census, and together they hid **four of that
+task's six `_notes_state` seeds**. They generalise to any cleanup PR:
+
+1. **A census that enumerates receiver NAMES under-counts when the same name
+   binds a different object in a different scope. The count to trust is per
+   binding SITE.** One file reported `recv=self` (an `__init__`) and
+   `recv=app`; both were resolved, both belonged to classes of the same
+   shape — and the file had a SECOND `App` stand-in class, seeded at the
+   call site rather than in `__init__`, which the name-keyed census could
+   not distinguish from the first.
+2. **The dotted-shape census `<recv>._<kind>_state.<field>` cannot see a
+   `getattr` RECEIVER,** and a cleanup creates many: `getattr(self._notes_
+   state, "<field>", <default>)` puts the `_notes_state` node in a `Call`'s
+   argument list, not as the value of an enclosing `Attribute`, so a census
+   keyed on the dotted shape scores it ZERO. Notes created 43 of them on the
+   screen; one is driven unbound by a MEDIA fake, which reds three tests.
+
+**The generalized census is the same shape the sixth spelling took, for the
+same reason: walk EVERY `<recv>._<kind>_state` `ast.Attribute` node,
+whatever encloses it.** Over the notes tree it separates cleanly —
+`library_screen.py` shows 573 dotted accesses, **43 `Call` receivers**, 1
+`Lambda` and 1 `Assign`, and the 43 are exactly what the narrow census
+missed. The complementary census — for every screen method whose body now
+spells `self._<kind>_state` in ANY form, find every unbound
+`LibraryScreen.<name>(<first-arg>, …)` call across `Tests/` and resolve the
+first argument — returned 25 (file, receiver) pairs across 12 files,
+**including five files the cleanup never edited at all**. A cleanup PR's
+blast radius is not its changed-file set.
+
+And: **fixing the first instance of a shape does not close the shape.** The
+first media-trash seed fixed ONE of that file's three branch-unique names;
+the other two needed their own fakes, and only a SECOND paired round
+established that. Re-pair after a fix round rather than assuming the class
+is closed.
+
+### The thread hand-off spelling set — ten spellings, not one
+
+The move-task question "is any mover reached from a non-UI thread through a
+name this move deletes?" is a census, and it is only as good as the
+spellings it searches. Wave 8's first pass swept the `call_from_thread`
+attribute alone (**296 sites** across `tldw_chatbook/`) and reported zero.
+That is not an answer; it is one spelling failing to contradict a
+hypothesis. **All ten spellings hand work across a thread boundary and nine
+are invisible to a `call_from_thread` grep:**
+
+`asyncio.to_thread` · `App.call_from_thread` · `threading.Thread` ·
+`threading.Timer` · `Executor.submit` · `loop.run_in_executor` ·
+`loop.call_soon_threadsafe` · `asyncio.run_coroutine_threadsafe` ·
+`_thread.start_new_thread` · `apply_async`
+
+Re-run over all ten the sweep finds **1,478 sites** (`to_thread` 867,
+`call_from_thread` 296, `Thread` 100, `Timer` 77, `submit` 59,
+`run_in_executor` 48, `call_soon_threadsafe` 23, `run_coroutine_threadsafe`
+7, `apply_async` 1) and the same **zero** whose ±5-line neighbourhood names
+a cluster member — an answer worth having, unlike the first one. (An
+independent re-derivation with a slightly different spelling set measures
+1,419 and the same zero: the instrument differs, the answer does not, which
+is what makes it an answer.) The widened sweep is cheap; run it, and quote
+the site count so the next reader can tell a real zero from an unrun one.
 
 ## 4. The transform whitelist
 
@@ -1035,6 +1232,63 @@ dominates the tree.
   from "this task did it", and it costs one more `git worktree add` + `uv
   venv` (~5 s, §3).
 
+**The ladder is now COMPLETE, and the wave-8 close added the rung that
+closes it: a BIDIRECTIONAL unique split is not a disposition. It is a reason
+to run the third level.** Until wave 8 the folklore was that unique failures
+in *both* directions (some on the branch, some at the parent) are xdist's
+own signature, because a real regression can only point one way. That
+reading is wrong, and the wave-8 cleanup measured how wrong:
+
+> Batch: branch **52 failed / 760 passed** vs. parent **47 / 765** — 46
+> shared, **6 branch-unique, 1 parent-unique**, concentrated in exactly two
+> files, neither of them the subsystem being extracted, each carrying only
+> one or two of the task's 1,031 retargets, and all seven names
+> failure-path / stale-state / focus-survival tests. Every surface feature
+> said noise.
+>
+> Run through the third level (each node ALONE, n=3, trees INTERLEAVED),
+> the seven split: four at 0/3 on both trees — noise, as predicted — and
+> **three at 3/3 on the branch against 0/3 at the parent. A real,
+> deterministic, three-test regression the shape had disguised.**
+
+The mechanism is ordinary: a bidirectional split is what you get when a real
+regression lands INSIDE an xdist-noisy batch, which is the normal case for a
+batch of any size. The shape tells you the batch is noisy; it tells you
+nothing about any individual name. **Every unique name gets the third level,
+whichever direction it points, and the parent-unique names get it too** —
+one of them turned out to be flaky on both trees across two instruments,
+which is only visible once you measure it rather than filing it under
+"points the wrong way, therefore noise."
+
+**And the corollary that makes this cheap: a paired sweep is structurally
+blind to "already documented".** A red that is BOTH pre-existing and inside
+your batch is absorbed into the shared backdrop and never surfaces as
+branch-unique at all — which is correct behaviour for finding regressions
+and useless for triage. §7's own documented-failures list below is the
+authority on what is pre-existing, and it has to be consulted BY NAME,
+deliberately; it will not fall out of the sweep.
+
+`test_library_selection_updates.py::test_tier1_toggle_falls_back_to_
+recompose_on_query_one_failure` is the standing proof. It is recorded below
+(found by wave-1 Task 9), re-recorded in the wave-6 close's own list, and
+counted among wave 7's documented reds — and it has now been reported as
+NEW **three separate times**, by wave-7 task 3, by wave-8 task 2, and the
+second of those happened *after* the entry that exists solely because of the
+first. Each time the stated reason was some variant of "an earlier task in
+this wave did not run this file", and that reason is precisely the error:
+**the set of files an earlier task happened to run is not evidence about
+anything.** A parent-tree re-run proves a red is not YOUR regression; it
+never proves the red is undocumented.
+
+**An instrument note that costs an hour if you learn it the hard way:
+`grep -r` skips dot-directories, and this program's own evidence lives in
+one.** Task reports, briefs and progress ledgers sit under `.superpowers/`,
+so a repo-wide `grep -rn "<name>" .` silently misses every prior task's
+record of that name — including the report that already dispositioned it.
+Use `command grep` (or an explicit path) when searching there, and treat a
+zero result from a plain recursive grep as "the instrument did not look",
+not as "the name is new".
+
 This is the same technique and the same command PR 0a's Task 1 used to
 surface and confirm a real, deterministic regression (7 tests, 100%
 reproducible in every combination) against a backdrop of ~330+ ordinary
@@ -1043,6 +1297,17 @@ distinguished on its own. Report both counts and the diffed unique-failure
 list as the task's evidence; a CI run of the literal single-process command
 remains the authoritative confirmation once time permits, but is not
 required per-task.
+
+**Batch composition is not a style choice when the backdrop is
+timeout-shaped.** These suites' pre-existing failures are largely DOM-mount
+pollers that each burn a **30-second timeout** before failing
+(`#library-notes-row-0 never mounted within 30.0s`), so a batch's wall time
+is dominated by its FAILURE count, not its test count. A wave-8 batch of 21
+files run single-process reached **22% in 75 minutes** and was abandoned;
+the same files under this section's own prescribed `-n 8 --dist worksteal`
+finished in **3m14s**. The xdist prescription is not a nicety for large
+batches — for a batch containing timeout-shaped pre-existing failures it is
+what makes the batch finish at all.
 
 ### Documented pre-existing failures (do not re-derive these)
 
@@ -1644,7 +1909,44 @@ rediscover the same red from scratch.
   precisely because "mutation C ... survived every existing suite" — and
   the triage rule is the same: **ask what a pre-existing red is BLOCKING
   before filing it as "pre-existing, not mine".** Filed as **TASK-31880**;
-  remove this entry when that lands.
+  remove this entry when that lands. **Wave 8 is the second wave to pay
+  this bill**: the media receiver defect (§3, §23) had to be guarded by a
+  `[controller]` parametrization of the same ~15-line screen double, for the
+  identical reason — the one real-row test that would have caught it
+  end-to-end is this red. TASK-31880 is now the coverage gate for BOTH the
+  fifth spelling and its receiver dimension, and it is named in the phase-C
+  handoff (§25) for that reason.
+- **Wave-8 Task 1 (notes state PR) found 3 more:**
+  - `Tests/UI/test_library_recompose_ratchet.py::test_library_screen_whole_
+    screen_recompose_count_is_ratcheted` — *"statement-level whole-screen
+    recompose sites: 66 found, 63 allowed"*, **byte-identically on the
+    branch and at an isolated worktree on the wave-8 start `889e12b86`**.
+    Dev-side creep against a stale pin; no Library extraction PR added a
+    recompose site (a state PR moves fields only, and the method count was
+    unchanged at 1290 when it was found). Measured identically by tasks 1,
+    2, 3 and this close. Dev's row; dev re-pins it.
+  - `Tests/UI/test_library_file_notes_workspace.py::test_production_compact_
+    folder_files_disclosure_and_states_are_painted` — a paint settle race
+    (`assert 'Export exact copy' in 'Saved'` on
+    `Button(id='file-notes-save-copy')`), red on BOTH trees with the
+    identical assertion: **6/10 branch, 3/10 isolated parent** in a matched,
+    interleaved batch. BOTH rates recorded, per the disposition ladder — the
+    branch's 6/10 is not soft-pedalled, it is simply higher than the
+    parent's 3/10 on a test that is red on the parent too.
+  - `Tests/Notes/test_notes_sync_cutover.py::test_library_screen_has_no_
+    legacy_timer_worker_or_mutating_handler` — red at `889e12b86`, and
+    **turned GREEN by the notes state move for a reason the guard did not
+    intend**. It AST-walks `library_screen.py` for any `ast.Attribute` whose
+    name starts with `_library_notes_auto_sync_timer`; after the cleanup the
+    field is spelled only `self._notes_state.auto_sync_timer`, whose `attr`
+    is `auto_sync_timer`, so the census can never see it again, in any file,
+    at any revision. The guard is now **passing, permanently vacuous with
+    respect to the field it was written to catch, and not naively
+    retargetable** (pointed at `library_notes_controller.py` its method-name
+    prefix census reports exactly one violation,
+    `_library_notes_sync_controller` — the WIRING binding accessor, a false
+    positive). Disclosed rather than banked at every step; the product
+    decision is filed (§25).
 
 ## 8. Subsystem order (spec, "Order of work")
 
@@ -1663,22 +1965,27 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 3 | **ingest** — **complete** (wave-5 Tasks 1–3) | 23 | 20 fields moved to `LibraryIngestState` (single `_library_ingest_` prefix, no plural variant); 56 of 78 "ingest"-named method candidates moved to ONE `LibraryIngestController` (22 excluded: 4 `@work` framework-decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-monkeypatch); 6 of 56 screen delegators pruned at cleanup. This series' own state PR found the "seventh bypass shape" (an `object.__new__`-bypassed fixture's flat-name seed breaking the instant the state shim installs, not deferrable to cleanup) — a review-found CRITICAL: 2 tests left RED at HEAD in `Tests/UI/test_parakeet_v2_install_ui.py`, the one file whose filename and test names contain neither "ingest" nor "library" and which the task's own `-k`-filtered sweep therefore could not see, a no-red-ships violation (the same task's separate 24-vs-27-site count error in its own report was a distinct Important finding, not this CRITICAL) — and its controller PR's post-landing review found a SECOND review-found CRITICAL, the "eighth" bypass shape (a moved body's bare module global patched at the OLD module path by a green-but-vacuous test, `_resolve_ingest_source`) — both widened the bypass catalogue for every subsequent subsystem. See §20 for the series' actual, as-landed numbers, and §20's own "Wave-5 close" subsection for the wave-level pin trajectory, verification battery, and lessons |
 | 4 | **prompts** — **complete** (wave-6 Tasks 1–3) | 41 | 43 fields moved to `LibraryPromptsState` (a three-way prefix split, the skills precedent: 31 `_library_prompt_*` singular + 11 `_library_prompts_*` plural + 1 bare `_selected_prompt_id`, resolved by a single `prompt_state_shim_attr()`; 3 further prompt-named `__init__` attributes are WIRING — live `LibraryPromptHistoryController`/`LibraryPromptBrowseController`/`LibraryPromptCollectionsController` instances — and stayed on the screen); 139 of 161 "prompt"-named method candidates moved to ONE `LibraryPromptsController`, the largest single move of this program (22 excluded: 14 unbound-fake-self, 3 instance-attribute-monkeypatch, 2 screen-identity, 2 module-globals-coupling, 1 merely-delegate-to-existing-controller property); 39 of 139 screen delegators pruned at cleanup (~28%). This series' cleanup found a genuinely NEW delegator-prune hazard the prior five did not: Textual's `on_<Message>` NAME-dispatched handlers (`MessagePump._get_dispatch_methods` resolves them off `Message.handler_name`, not off `@on`), which a reference-count census reports as zero-referenced and whose deletion would silently unhook the screen from six messages — folded into §4's transform whitelist as its THIRD member, since media and notes both almost certainly own name-dispatched handlers too. See §21 for the series' actual, as-landed numbers, and §21's own "Wave-6 close" subsection for the wave-level pin trajectory, verification battery, sweep evidence and lessons |
 | 4 | **media** — **complete** (wave-7 Tasks 1–3) | 55 | 82 of 85 media-named attributes moved to `LibraryMediaState` (TWO prefix families, not three: `_library_media_*` for 81 + the bare `_selected_media_id`; "media" is already singular and plural, so no plural constant exists. The other 3 are 2 WIRING — live `LibraryMediaBrowseController`/`LibraryMediaTrashBrowseController` instances — and 1 BLOCKED, `_library_pending_list_entry_media_return`, a member of a four-field shell family whose writers span Media/Notes/Prompts/Skills); 140 of 251 media-named method candidates moved to ONE `LibraryMediaController` (**111 exclusions**, the largest exclusion set of this program: 73 unbound-fake-self, 16 instance-attribute-monkeypatch, 8 `inspect.getsource` source-census, 4 module-globals-coupling, 3 screen-identity in a MEMBERSHIP form — `self in <widget>.ancestors`, which §3's own `is`/`is not` census cannot see — 2 class-monkeypatch, 2 bypassed-construction lifecycle, 1 callback-identity, 1 shared shell helper, 1 generic dispatcher). At **44%** of the cluster that is by far the highest exclusion rate of the program, and the cause is TEST DEBT, not entanglement: **89 of the 111** are unbound-fake-self (73) or instance-attribute monkeypatch (16) — fixture shapes, each removable by retargeting a test — against just 4 module-globals-coupling and 5 genuine screen-identity/lifecycle couplings. **7 of the 16 monkeypatch exclusions have ZERO mover callers today** (`_analyze_one_library_media_item`, `_exit_library_media_select_mode`, `_focus_library_media_grip_if_current`, `_library_media_unanalyzed_ids`, `_notify_library_media_analysis_warning`, `_request_library_media_type`, `_start_library_media_analyze`), i.e. they are held by §3's conservative opening rule rather than by a demonstrated bypass, and are the named MOVE candidates for a later, separately-motivated PR — re-evaluated at the cleanup and DECLINED, see §22. 22 of 140 screen delegators pruned at cleanup (15.71%). Media owns ZERO `on_<message>` name-dispatched handlers, so §4's third whitelist member is inert here. Its cleanup is the largest of the program — 36 CHANGED `Tests/` files across four roots (UI 32, Architecture 2, Live 1, Media 1; zero in `Tests/Library`, whose only hit was prose), driven by a boundary-matched census of the 82 moved field names measuring 1,214 occurrences across 36 files at task 1 and 1,204 across 34 at the wave close's own re-derivation. The two 36s are DIFFERENT file sets whose roots do not coincide (census: UI 31 / Library 1 / Architecture 1 / Live 1, zero in `Tests/Media`); the "five roots" figure quoted earlier in this program is their union — see §22 — and added a FIFTH census spelling to §3: a COMPUTED attribute name (`ast.JoinedStr`) in a shared dispatcher, invisible to all four prior spellings and a silent production defect if missed. See §22 for the series' actual, as-landed numbers |
-| 4 | notes | 72 | most scarred; its sync controller (`canvas_sync.py`) already lives in `UI/Library_Modules/` from PR 0a |
-| 5 | final shell pass | — | residual focus/lifecycle plumbing, delegator table tidy, `compose_content` reduced to the region-yielding skeleton |
+| 4 | **notes** — **complete** (wave-8 Tasks 1–3) | 72 | The FINAL extraction wave. 100 of 105 notes-named `__init__` attributes moved to `LibraryNotesState` — FOUR prefix families, one more than any prior subsystem (73 `_library_notes_*`, 21 `_library_note_*`, 5 `_library_file_notes_*` and the bare `_selected_note_id`), because notes owns TWO reader destinations (`"notes"` and `"notes_files"`) and the Folder-Files family must keep its marker or all three reader-preferences pairs collapse onto one field. The other 5 are 3 WIRING (live `LibraryNoteImportController`/`LibraryNotesSyncController`/`DatabaseNoteSessionCoordinator` instances) and 2 BLOCKED (`_library_notes_programmatic_focus_target`, `_library_notes_restoring_focus` — the only 2 of 12 cross-tagged fields with an other-subsystem-named WRITER; the other 10 are read-only from Media and moved, which is the read/write refinement of §2's ≥2-subsystems rule this series made explicit). 185 of 285 notes-named method candidates moved to ONE `LibraryNotesController` (**100 exclusions** across 11 disjoint classes: 57 unbound-fake-self, 11 in-file `LibraryScreen.<x>(self, …)` targets, 8 callers of that shape, 8 instance-attribute-monkeypatch, 5 not-notes-owned, 4 `_library_note_session` projection-property family, 3 shared shell helper, 1 class-monkeypatch, 1 module-globals-coupling, 1 `partial(LibraryScreen.<x>, self, …)` target found by the BATTERY, 1 test-bound-and-captured). Notes owns ZERO `on_<message>` name-dispatched handlers — its 93 `@on` methods carry 36 Message-typed decorators over 35 names and NOT ONE `Message.handler_name` equals its method's name — so §4's third whitelist member is inert here too, proven both directions and pinned by `test_no_notes_handler_is_name_dispatched_by_textual`. 26 of 185 screen delegators pruned at cleanup (14.05%). The cleanup is the second largest of the program — 1,031 attribute retargets across 26 `Tests/` files in THREE roots (`Tests/UI` 24, `Tests/Live` 1, `Tests/ProductionApp` 1 — zero in `Tests/Architecture`), 12 fixture nestings, 571 screen-side retargets and 43 `getattr` receiver fixes. (**That breakdown shipped once as "26 files in four roots (UI 22, Live 1, ProductionApp 1, Architecture 2)" — a fourth, non-existent set**, splicing the RETARGET set's total onto the CHANGED set's roots. The changed set is 32 files in four roots: UI 27, Architecture 3, Live 1, ProductionApp 1. This is §22's own two-36s lesson recurring inside the very series that recorded it, and it is left visible here rather than quietly deleted: **when two derived counts describe overlapping file sets, name which set every component of a breakdown belongs to, or the breakdown will end up describing neither.**) It added a SIXTH census spelling to §3 (an unbound `LibraryScreen.<name>` `ast.Attribute` inside any enclosing expression, from task 2's `partial` incident) plus the first DUAL-RECEIVER form of §3's fifth spelling: notes hands the shared `canvas_sync.py` dispatchers a bare controller `self` from 26 moved bodies at 31 call sites, so a dotted `_notes_state.…` spelling that resolves only on the screen is half a fix, and the guard has to exercise both receivers or it passes vacuously (mutation-verified both ways). See §23 for the series' actual, as-landed numbers |
+| 5 | final shell pass | — | residual focus/lifecycle plumbing, delegator table tidy, `compose_content` reduced to the region-yielding skeleton — NOT part of the eight-wave extraction program, which closed at wave 8 |
 
-Roughly 35–50 small PRs total; every intermediate state ships (no feature
-freeze, per the plan's Global Constraints — never two subsystems'
-extraction PRs in flight at once).
+**All nine subsystems are landed.** Roughly 35–50 small PRs were planned;
+every intermediate state shipped (no feature freeze, per the plan's Global
+Constraints — never two subsystems' extraction PRs in flight at once).
+**§25 is the program close**: the whole-wave trajectory, the landed
+architecture, the reusable artifacts, and the phase-C handoff.
 
 Phase C (region ownership — moving canvas-origin `@on` handlers and state
 into the already-existing canvas widgets) is a separate, later, explicitly
 behaviour-changing series per subsystem, gated on that subsystem's phase-A
 series being fully landed including cleanup, dense mounted coverage, and a
-concrete motivating change. **First motivated candidates: media and
-notes**, motivated by the measured 139–380 ms rail-mode-switch main-thread
-freeze (§9's probe is that fix's before/after acceptance evidence). See the
-spec's "Phase C — region ownership" section; out of scope for this recipe's
-pure-move PRs.
+concrete motivating change. That gate is now open for every subsystem.
+**First motivated candidates: media and notes**, motivated by the measured
+139–380 ms rail-mode-switch main-thread freeze (§9's probe is that fix's
+before/after acceptance evidence). See the spec's "Phase C — region
+ownership" section and **§25's phase-C handoff** — which names the probe
+baseline, the mount-storm acceptance target, TASK-31880 as the coverage
+gate, and `canvas_sync.py` as the first surface — before starting; out of
+scope for this recipe's pure-move PRs.
 
 ## 9. Probe usage — before/after evidence
 
@@ -1715,6 +2022,48 @@ onto the baseline — a first-run warm-up artifact that a single pair would
 have reported as a uniform regression. Read the load-INDEPENDENT columns
 (`recompose`, `full-update`, `nodes`) as the verdict and the wall-clock
 columns as context; a real per-frame regression shows up in the former.
+
+**And probe the BRANCH from a scratch worktree too — both sides must sit at
+the same KIND of checkout location.** Added at the wave-8 close (§23), which
+spent 118 probe runs across five trees discovering that its one drifting
+wall-clock row was caused entirely by WHERE the tree was checked out. §3
+puts the isolated baseline at a scratch path; the branch is the working
+worktree under the user's home directory. That means every probe pair this
+program ran for eight waves compared two different checkout locations.
+(**Erratum, added at the reconciliation merge:** this rule was first written
+as "two different *filesystems*". It is not — `~/Documents/...` and
+`/private/tmp/...` are the same APFS volume, `/dev/disk3s5` mounted at
+`/System/Volumes/Data`, `stat -f %d` identical on both. The MEASUREMENT
+below is unaffected and the rule stands; only the stated cause was wrong,
+and §24's own rule is that a wrong reason is worse than a thin one, because
+the next series inherits it as precedent. Candidate mechanisms, none of them
+yet established: per-path Spotlight importer scope, directory metadata and
+tree density under a large home-directory checkout, and endpoint/AV scanners
+that scope on user-data paths. One candidate is already ELIMINATED on the
+machine that took the readings — `~/Documents` is a plain local directory
+there, not a "Desktop & Documents" iCloud file-provider root — so do not
+inherit that explanation either.) Measured: the
+IDENTICAL HEAD source (`git worktree add --detach <scratch> HEAD`, `diff -r`
+against the working tree empty) came out **+23 ms** in the working worktree
+and **−6 ms** in a scratch worktree, against the same baseline, on the same
+row — a 30 ms swing and a visibly dirtier distribution (max 702 ms vs
+490 ms) from location alone.
+
+The order swap protects against warm-up. Nothing protected against this,
+and the two are not distinguishable from the numbers: wave-6's "branch
+slower on all sixteen measurements", read then as a warm-up artifact, is
+equally consistent with it. **One extra `git worktree add --detach <scratch>
+HEAD` plus a `uv venv` (~5 s) is what makes the wall-clock columns mean
+anything at all.**
+
+The elimination order that finally isolated it, recorded because each step
+looked like the answer: the order-swapped pair (still directional) → an
+interleaved n=6 pair (narrowed to ONE row) → a third tree at the wave tip
+(non-monotonic in commit order, so not the wave) → a fourth tree bisecting
+the close's own commits (the whole delta attached to a step containing
+twelve comment lines and two backlog files, which cannot cost 20 ms) →
+rotating the run order (unchanged) → the same source in two locations. **A
+cheaper explanation is not a disposition either.**
 
 ## 10. `.git-blame-ignore-revs` — one-time setup and the per-PR rule
 
@@ -6185,3 +6534,916 @@ recorded; max gap 41–129 against 54–195, again faster at the low end).
    UNION and describes neither. **When two derived counts coincide, say
    which one each downstream fact belongs to before the coincidence hardens
    into a claim.**
+
+## 23. The notes series, as landed — the eighth and FINAL extraction wave
+
+Branch `refactor/library-decomp-wave8-notes`, wave start `889e12b86`. After
+this series `LibraryScreen` is a shell plus shell-owned surfaces: **no
+generated flat-state shim block remains in `library_screen.py` for any
+subsystem**, and phase C (the resident-canvas click-freeze fix, this
+program's founding motivation) begins as its own motivated series.
+
+### Fields/methods moved, per task
+
+| Task | What | Screen after |
+|---|---|---|
+| 1 | 100 of 105 notes-named `__init__` attributes → `LibraryNotesState` (3 WIRING instances and 2 BLOCKED fields stayed). FOUR prefix families — 73 `_library_notes_*`, 21 `_library_note_*`, 5 `_library_file_notes_*`, 1 bare `_selected_note_id` — resolved by one `notes_state_shim_attr()` | 35777 → 35621 lines, 1290 methods |
+| 2 | 185 of 285 notes-named methods → `LibraryNotesController` (100 exclusions across 11 disjoint classes) | 35621/1290 → 32325/1284; controller born-governed at 5254 |
+| 3 | Cleanup: 571 screen-side attribute retargets + 43 `getattr` receiver fixes + 4 dotted dispatch-dict values; 1,031 test attribute retargets across 26 files; shim block deleted; 26 delegators pruned; 11 dead imports removed | 32325/1284 → **32230/1258**; controller 5254 → 5276 |
+
+### The cleanup's own census — SIX spellings, before and after
+
+Over `tldw_chatbook/` + all of `Tests/` + `Docs/` + `backlog/` + `scripts/`
++ `Helper_Scripts/`, `ast`-based throughout (never substring or
+regex-over-source: `_library_notes_filter` is a proper prefix of
+`_library_notes_filter_records`, `_library_notes_filter_generation` and five
+more, so a substring retarget corrupts names — the wave-7 lesson, and here
+it has eight live instances rather than one).
+
+| Spelling | 100 field names | 185 mover names | 100 exclusion names |
+|---|---|---|---|
+| attribute | 2,061 | 685 | 492 |
+| `LibraryScreen.<name>` attribute (the SIXTH spelling) | 0 | **0** | 196 |
+| bare quoted string | 73 | 194 | 79 |
+| kwarg | 61 | 12 | 17 |
+| `def` | 4 | 371 | 149 |
+| bare `ast.Name` | 0 | 0 | 8 |
+| runtime f-string | 3 | 1 | 1 |
+| **total** | **2,202** | **1,263** | **942** |
+
+The sixth spelling's row is the one worth reading: **zero movers are
+referenced as an unbound `LibraryScreen.<name>`, and 196 exclusion
+references are** — which is exactly the shape task 2's battery found the
+hard way (`partial(LibraryScreen._restore_library_notes_browse_return_
+receipt, self, …)`), reclassified as an exclusion, and which this census
+re-confirms was the last of its kind in the cluster.
+
+After the cleanup the field census is **467** hits, and the residue is fully
+accounted for: 410 in `library_notes_controller.py` (its own permanent shim
+loop, which is what keeps the 185 moved bodies byte-for-byte), 17 in
+`Docs/superpowers/reviews/evidence/task-23019/task23019_scenarios.py` (a
+frozen evidence script — the standing precedent that leaves the skills
+series' own spelling there two waves on), 13 + 3 in
+`library_media_controller.py` / `library_conversation_reader_controller.py`
+(their own cross-subsystem accessor PROPERTY names, whose screen-side lambdas
+were retargeted), 10 in `Research_Workspace_Modules/quick_notes_section.py`
+(a FALSE POSITIVE — a different class's own `self._selected_note_id`; recipe
+§18's "check the RECEIVER, not just the string"), 9 + 3 in the notes and
+media wiring tests' literal pins, 1 in `canvas_sync.py` (the f-string leg,
+now unreachable for notes), and 1 in `test_notes_sync_cutover.py` (the guard
+task 4 files). **`library_screen.py` carries ZERO flat notes references in
+any spelling.**
+
+### The fifth spelling, in its first DUAL-RECEIVER form
+
+Notes is the third and last kind to need `canvas_sync.py`'s dotted branch —
+and the first where the dotted spelling has to resolve on TWO receivers.
+`_apply_library_row_toggle` is only ever handed the SCREEN in production
+(all four call sites are `library_screen.py` methods that stayed screen-
+resident), but its sibling `_sync_library_canvas` is handed a bare
+CONTROLLER `self` by 26 of the 185 movers (31 call sites), and its notes leg reads
+`_library_notes_focus_intent_generation` off that receiver. So:
+
+- the branch was added as `"_notes_state.row_selection" if kind == "notes"`,
+  and `canvas_sync.py:456`'s `partial(getattr, screen, "_library_notes_focus_
+  intent_generation")` became `partial(operator.attrgetter("_notes_state.
+  focus_intent_generation"), screen)` — attrgetter re-reads BOTH hops per
+  call, exactly as the `partial(getattr, …)` it replaces did;
+- `LibraryNotesController` gained a `_notes_state` accessor property (the
+  file's own existing `_media_state`/`_prompts_state` shape), so both dotted
+  spellings resolve on either receiver. No moved body spells
+  `self._notes_state`; the accessor exists solely for the shared dispatchers.
+
+**The guard is parametrized over the receiver, and both legs are
+mutation-verified** (`Tests/UI/test_library_selection_updates.py::test_notes_
+row_toggle_resolves_the_dotted_state_path[screen|controller]`; the controller
+leg subclasses the REAL `LibraryNotesController`, overriding only the three
+framework-service properties a double cannot assign over, so the accessor
+under test is the production one):
+
+| Mutation | `[screen]` | `[controller]` | conversations/media precedents |
+|---|---|---|---|
+| notes branch reverted in `canvas_sync.py` | **FAILS** (`fallback recompose must not fire`) | passes — the controller's own shim loop still resolves the flat name | both stay GREEN |
+| controller's `_notes_state` accessor removed | passes | **FAILS** (same fallback assertion) | both stay GREEN |
+
+The second row is the finding: **a screen-only guard would have passed while
+the controller receiver silently took the full-screen recompose fallback.**
+Any future subsystem whose movers forward a bare `self` into a shared
+dispatcher inherits this — census the RECEIVERS of the dispatcher, not just
+the spelling.
+
+### A live defect this census found in the MEDIA branch — FIXED at the wave close
+
+Running the same receiver analysis over the sibling branch showed wave-7's
+own dotted retarget was incomplete, and the failure mode was the silent one.
+`canvas_sync.py:448` does `screen._media_state.selected_media_id =
+media_state.selected_id` inside `_sync_library_canvas`'s media leg, and
+`handle_library_media_select_all` / `handle_library_media_select_clear` in
+`library_media_controller.py` (both movers, both reached from a real screen
+delegator's `@on(Button.Pressed)`) call `_sync_library_canvas(self, "media")`
+with a CONTROLLER `self` — the two calls were at `:2692` and `:2701` before
+the fix, and are at `:2731`/`:2740` after it. `LibraryMediaController` had no
+`_media_state` (only `_media_state_accessor`, assigned at `:691`; verified at
+runtime, `hasattr(LibraryMediaController, "_media_state") is False` against
+`True` for the notes controller), so that assignment raised `AttributeError`,
+the dispatcher's own `except Exception` at `canvas_sync.py:725` swallowed it
+into `logger.debug("Library media canvas sync failed.")` plus
+`screen.refresh(recompose=True)`, and **every media "Select all"/"Clear"
+press silently took the whole-screen recompose the Tier-1 design exists to
+avoid** — no exception, no red test, live for two days.
+
+*(All six line numbers above are stated against the tree they were measured
+on, which is §24's rule and which this passage originally broke: it shipped
+citing `:437` and `:710`, correct at the notes cleanup's PARENT and eleven
+and fifteen lines stale on the tree the hand-off pointed the next task at.)*
+
+Out of scope for a notes cleanup — a different subsystem's file, and a
+behaviour fix rather than a mechanical retarget — so it was handed to the
+wave close, which **FIXED it** rather than filing it, on the coordinator's
+ruling that the program closes here and no later series would own it.
+Commit `66e572868`, the wave's ONE deliberate behaviour change, in its own
+clearly-labelled commit and deliberately given NO `.git-blame-ignore-revs`
+entry (it is not a move). The remedy is symmetric with what the notes
+controller already carried: one `_media_state` accessor property returning
+`self._media_state_accessor()`, no moved body touched, plus a `[controller]`
+leg on `test_media_row_toggle_resolves_the_dotted_state_path` parametrized
+exactly like the notes guard. It shipped RED (`AttributeError: '_Controller'
+object has no attribute '_media_state'` at `canvas_sync.py:240`, swallowed
+into the `fallback recompose must not fire` assertion) and was
+mutation-verified BOTH ways:
+
+| Mutation | `[screen]` | `[controller]` |
+|---|---|---|
+| remove the `_media_state` accessor property | passes | **FAILS** |
+| revert `canvas_sync.py`'s media branch to the computed flat name | **FAILS** | passes (the controller's shim loop still resolves the flat name) |
+| neither | passes | passes |
+
+`library_media_controller.py` re-pinned 4630 → 4669 in the same commit (§6),
+the +39 being one property and its docstring. **The natural end-to-end
+coverage for this — the one real-row Pilot test that drives
+`_apply_library_row_toggle` — is TASK-31880's standing red**, which is why
+this fix, like wave 7's before it, had to be guarded by a screen double.
+
+### Delegator census — 159 KEEP, 26 PRUNED (14.05%)
+
+`ast`-based over the roots above, excluding only the controller module, each
+name's own delegator body, and the wiring test's own pin tuple; a `def` is
+never counted as a caller. Then re-checked one by one with a broad `git grep`
+over EVERY file type.
+
+| Class | N |
+|---|---|
+| KEEP — §4 whitelist, unconditional (**70 `@on` + 4 `action_*`**) | **74** |
+| KEEP — genuine external caller | **85** |
+| PRUNE — zero references, not whitelisted | **26** |
+
+`on_<message>` name-dispatched handlers: **0** — §4's third whitelist member
+is inert for notes exactly as it was for media, and task 2 proved it in BOTH
+directions (35 Message-typed decorators over 35 handler names, not one
+`Message.handler_name` equal to its own method's name; and of the 113 distinct
+`handler_name`s across `tldw_chatbook/Widgets/Library`, the only ones that ARE
+`LibraryScreen` methods are 4 Textual builtins and the 7 prompts-owned ones).
+`test_no_notes_handler_is_name_dispatched_by_textual` keeps it proven, so the
+member has now been exercised with evidence twice and fired once (prompts).
+
+Prune fraction **26/185 = 14.05%**, the second lowest of the program: export
+4.55% < ingest 10.71% < **notes 14.05%** < media 15.71% < skills 18.60% <
+collections 21.88% < prompts 28.06% < search+RAG 28.57% < conversations
+29.51%. **Idempotence re-derived on the post-cleanup tree**: 159 survivors,
+of which 74 are whitelist members and 85 have a genuine caller — zero further
+would-prune names.
+
+### Import verification — 11 dead, 1 saved
+
+Derived as a DIFFERENCE (AST-unused at the wave start `889e12b86` vs. now),
+never as an absolute unused list. **And derived twice**: a first pass that
+treated any name appearing inside ANY string as "used" (a conservatism for
+`TYPE_CHECKING` forward refs) returned 10 and MISSED two — `RowSelection`
+(which task 1 had already predicted would go dead) and `FileSave`, both of
+which survive only in long docstring prose. Re-run counting only
+annotation-shaped strings (≤80 chars) it returns both. **The lesson: a
+string-tolerant unused-import census is a lower bound; run the strict variant
+too and adjudicate the difference by reading.**
+
+The `_SURFACE` check by EXACT NAME against
+`Tests/Architecture/test_library_support_layer_surface.py` saved **1 of 12**:
+`LIBRARY_NOTE_CONTENT_MAX_CHARS`, which spells the subsystem word UPPERCASE —
+the fourth consecutive series in which that check pays, and the third in which
+the UPPERCASE spelling is what a lowercase grep would have missed. The
+alias-scoped re-export grep (wave-7's added rule: search every alias tests
+actually import the module AS — here `library_screen`, `library_screen_module`,
+`library_module`, `screen_module`, derived by `ast`) returned **zero** live
+consumers for the other 11, each of which was independently confirmed live
+inside the controller by a per-name occurrence count.
+
+### Test retarget — 26 files, THREE roots, and 12 fixture nestings
+
+1,031 attribute retargets (`<recv>.<flat>` → `<recv>._notes_state.<field>`),
+applied at `ast` attribute spans back-to-front, single-line only, the tool
+reporting and refusing rather than guessing (**zero refusals**). 61 flat
+kwargs became 12 nested `_notes_state=SimpleNamespace(...)` fixtures — 9
+mechanical contiguous runs, 3 hand-reordered first because a non-field entry
+sat inside the run (a WIRING attribute, a projection `@property` name, method
+stand-ins and test-local counters), each with a one-line comment saying why
+the moved kwarg is not a state field.
+
+**SIX `_notes_state` seeds were needed for doubles that are not
+`LibraryScreen`s, and only TWO were found by the census media's 19-test
+incident taught.** The other two were found by paired baselines, and each
+exposes a hole in that census:
+
+1. It enumerates receiver NAMES, so a second class binding the same name in a
+   different scope is invisible (`test_library_multiselect_notes.py` has TWO
+   `App` stand-ins `_apply_library_row_toggle` is driven against; the second
+   seeds at the call site rather than in `__init__`). **The count to trust is
+   per binding SITE, not per name.**
+2. It matches only the DOTTED shape `<recv>._notes_state.<field>`, so a
+   **`getattr(<recv>._notes_state, "<field>", <default>)` RECEIVER is
+   invisible** — the `_notes_state` node sits in a `Call`'s argument list, not
+   as the value of an enclosing `Attribute`. This cleanup created 43 such
+   receivers on the screen, and one of them
+   (`_restore_library_media_from_trash`, stamping
+   `_media_state.trash_focus_authority_generation` from the NOTES focus
+   counter) is driven unbound with a MEDIA fake, which reds 3 tests.
+
+**The census that finds all four, and the one to run:** for every screen
+method whose body spells `self._<subsystem>_state` **in any form**, find every
+unbound `<Screen>.<name>(<first-arg>, …)` call across `Tests/` and resolve the
+first argument. Run over notes' 112 such methods it returns 25 (file,
+receiver) pairs across 12 files — **including five files the cleanup never
+edited**, each driving a retargeted screen method with a duck-typed fake.
+**A cleanup PR's blast radius is not its changed-file set**: retargeting a
+screen method's receiver reaches every test that calls that method unbound,
+whichever subsystem the test belongs to. The generalized node-level form
+(walk EVERY `<recv>._<subsystem>_state` `ast.Attribute`, whatever encloses it)
+is the same shape §3's sixth spelling took, for the same reason.
+
+**And fixing the first instance of a shape does not close the shape.** The
+first media-trash seed fixed ONE of that file's three branch-unique names; the
+other two needed their own fakes seeded, and only a SECOND paired round
+established that. Re-pair after a fix round rather than assuming the class is
+closed — the same discipline §3's amended-RED-tuple rule already applies to
+counts.
+
+Two string-spelling retargets carry the whole invariant of their guard:
+
+- `Tests/UI/test_library_adaptive_reader_closeout.py`'s
+  `DESTINATION_CONTRACT["notes"]` → `"_notes_state.reader_preferences"` /
+  `"_notes_state.reader_layout"`. Notes is the EIGHTH and last destination to
+  take the dotted form, so every entry in that contract is dotted now and the
+  `operator.attrgetter` reads that made the passthrough possible are no
+  longer load-bearing for any of them.
+- `Tests/UI/test_screen_navigation.py::test_files_back_navigation_workspace_
+  contract_matches_real_workspace` AST-walks four screen methods for
+  attributes accessed on the workspace and matches the receiver by the
+  literal string `"_library_file_notes_workspace"`. After the retarget the
+  receiver is `self._notes_state.file_notes_workspace`, so the string became
+  `"file_notes_workspace"`. Left alone the visitor matches nothing and the
+  contract set goes EMPTY — a LOUD red, not a vacuous pass, which is why this
+  belongs in the same commit rather than deferred.
+
+### Modal inventory — 2 rows repointed, proven by construction
+
+`Tests/UI/test_library_modal_dismissal.py` gained
+`_OwnerScope(_NOTES_CONTROLLER_FILE, "LibraryNotesController")` FIRST (without
+it a repointed edge is never discovered and the bidirectional assertion fails
+the other way), then `_export_library_note` (`FileSave`) and
+`handle_library_notes_lasting_folder_requested` (`FileOpen`) were repointed.
+The other SIX notes rows stay on `LibraryScreen`: `_push_library_note_import_
+picker`, `handle_library_notes_folder_{new,rename,move,remove}` and
+`_choose_library_notes_placement_target` are all task-2 exclusions and are
+still screen-resident. The file is still the TASK-31815 blocked guard (pre-RED
+at discovery on the unrelated skills-era `_present_library_skills_import_
+choice_if_needed` constructor), so the repoint was proven by CONSTRUCTION:
+running the file's own `_discover_library_modal_edges` against the notes scope
+alone returns **2 discovered, 2 declared, zero undeclared, zero missing,
+exact match including each modal's concrete type**.
+
+### Sweep evidence — the heaviest consumer, byte-for-byte identical
+
+`test_library_shell.py -k "note"` (339 attribute retargets, the largest of any
+test file) run paired against an isolated worktree at the task parent, `-n 8
+--dist worksteal`, sequentially: **branch 171 failed / 83 passed (499.81s) vs.
+parent 171 failed / 83 passed (499.26s)**, and the two failure NAME SETS are
+identical — zero branch-unique, zero parent-unique. The 171-failure backdrop
+is §7's file-descriptor-exhaustion cascade and is the SAME 171/83 the media
+and notes controller PRs each measured for this file.
+
+**The sharpest evidence lesson of this series, and it nearly went the other
+way.** The 17-file batch measured branch 52 failed / 760 passed vs. parent
+47 / 765 — **6 branch-unique and 1 parent-unique**, a bidirectional split
+across exactly two files, both of which the cleanup had touched only once or
+twice, and all seven names failure-path / stale-state / focus-survival tests.
+Every surface feature said "xdist noise". Run through §7's THIRD level (each
+node ALONE, n=3, trees INTERLEAVED) the seven split cleanly: four at 0/3 on
+both trees (noise, as predicted) and **three at 3/3 on the branch against 0/3
+at the parent — a real regression this cleanup introduced.** Had the batch
+been dispositioned from its shape rather than from re-measurement, a
+three-test regression would have shipped. **A bidirectional unique split is
+not a disposition; it is a reason to run the third level.**
+
+The three heaviest notes suites (`test_library_notes_folder_navigator.py`,
+`test_library_multiselect_notes.py`, `test_library_notes_reader.py`; 419 of
+the 1,031 retargets between them) paired the same way: **branch 15/146 vs.
+parent 14/147, 14 shared, ONE branch-unique** — and that one was a REAL miss,
+a third `_notes_state` seed for an `App` double the static receiver census had
+under-counted, fixed with one line (10 passed afterwards). **The paired
+baseline is what turned a silent census miss into a one-line fix**, which is
+the argument for running it before believing a census rather than after.
+
+**A batch-composition lesson worth recording, because it cost this task an
+hour.** These suites' pre-existing failures are DOM-mount pollers that each
+burn a **30-second timeout** before failing, so a batch's wall time is
+dominated by its FAILURE count, not its test count: a 21-file single-process
+batch reached 22% in 75 minutes. Recipe §7 already prescribes `-n 8 --dist
+worksteal`; the lesson is that the prescription is not a nicety for large
+batches — for a batch containing timeout-shaped pre-existing failures it is
+what makes the batch finish at all.
+
+### Field-name prose sweep
+
+Tokenize-based (COMMENT and STRING tokens only) over the 100 deleted field
+names AND the 26 pruned method names, across `tldw_chatbook/`, all of
+`Tests/`, `Docs/`, `backlog/`, `scripts/` and `Helper_Scripts/`, plus a plain
+line scan of `*.md`/`*.toml`/`*.tsv`/`*.txt`.
+
+**462 raw prose occurrences across 112 files.** Narrowed by the recipe's own
+±3-line screen-attribution filter to 87, and then by excluding frozen
+historical records (`Docs/superpowers/{plans,specs,reviews}/`,
+`backlog/tasks/`, `backlog/docs/test-health-baseline-*`,
+`backlog/docs/lessons-*`, `.superpowers/`) to **9 candidates, every one
+read**. Verdicts: **6 class-3 defects, all fixed and all line-neutral** — two
+`library_conversation_reader_controller.py` docstring sites and one
+`library_conversations_controller.py` site naming `_selected_note_id` /
+`_library_notes_focus_intent_generation` as live screen fields (a DIFFERENT
+subsystem's file, the class the prompts series' review found and the reason
+this census is repo-wide), one `library_conversation_reader_controller.py`
+accessor docstring, `library_notes_state.py`'s own "the state PR keeps …"
+paragraph (past-tensed, and pointed at the controller's surviving copy), and
+one `test_library_shell.py` cross-reference. The remaining 3 are class 1/2 and
+were left: the successor comment in `library_screen.py`, and
+`library_notes_state.py`'s two-line past-tense narrative of the cutover
+guard's flipped red, which carries its own commit citation.
+
+**A refinement to the census's own method:** the ±3-line filter alone gave 87
+candidates, of which 78 were frozen-record noise — and a third of the raw 462
+were FILENAME matches (`test_library_file_notes_workspace.py` contains the
+field name `_library_file_notes_workspace`). Excluding frozen roots and
+filename-shaped matches is what makes the read tractable at this subsystem's
+scale; state both filters when quoting the count, because the raw number is a
+property of the filter, not of the tree.
+
+The wave close re-ran the same census over both name sets and fixed **eleven**
+class-3 sites, only three of which were the cleanup's own forward-noted
+survivors — see §3's prose-sweep subsection for the two shapes the ±3-line
+filter cannot see and the one shape (a moved body's own comment, frozen by
+the byte-for-byte canon) that must be LEFT.
+
+### Wave-8 close
+
+#### Pin trajectory — full wave-8 chain, re-derived per COMMIT
+
+Read by `git show <commit>:<path>` at every commit in `889e12b86..HEAD` plus
+the base itself, never carried over from a report. Both the screen row in
+`test_screen_size_ratchet.py` and the `library_notes_controller.py` row in
+`test_library_modules_size_ratchet.py`; the screen's method count is an
+`ast` walk of the `LibraryScreen` class body, not `wc -l`. Oldest-first:
+
+| Task | PR | Commit | Screen `_BUDGETS` after | Controller pin after |
+|---|---|---|---|---|
+| — | (wave-8 start) | `889e12b86` | 35777 / 1290 | — (file does not exist yet) |
+| 1 | Notes state (GREEN — 100 of 105 attributes → `LibraryNotesState`) | `ec7318181` | 35621 / 1290 | — |
+| 1 | (blame-ignore, no functional change) | `2641ff0a0` | 35621 / 1290 (unchanged) | — |
+| 1 | Close — ledger + durable evidence | `915e76b71` | 35621 / 1290 (unchanged) | — |
+| 2 | Notes controller (RED — full-cluster wiring pins only) | `afaf2320c` | 35621 / 1290 (unchanged) | — |
+| 2 | Notes controller (GREEN, born-governed — 186 movers) | `9e13f0207` | **32286 / 1284** | **5232 (born)** |
+| 2 | (blame-ignore, no functional change) | `a1bdd25a0` | 32286 / 1284 (unchanged) | 5232 (unchanged) |
+| 2 | Fix round 1 — one mover REVERTED to the screen (185 movers); two path censuses retargeted | `a529dbd3e` | **32325 / 1284** | **5214** |
+| 2 | (blame-ignore, no functional change) | `56999dbf6` | 32325 / 1284 (unchanged) | 5214 (unchanged) |
+| 2 | `LibraryScreen.<x>` census-figure correction (doc-only) | `6f50060f7` | 32325 / 1284 (unchanged) | 5216 |
+| 2 | Fix round 2 — review errata, comment growth (series complete) | `991758c1f` | 32325 / 1284 (unchanged) | **5254** |
+| 2 | Close — ledger + one-line citation fix | `81bffe809` | 32325 / 1284 (unchanged) | 5254 (unchanged) |
+| 3 | Notes cleanup (GREEN — shim deleted, 26 delegators pruned) | `3d670ee38` | **32230 / 1258** | **5276** |
+| 3 | (blame-ignore, no functional change) | `d3528342c` | 32230 / 1258 (unchanged) | 5276 (unchanged) |
+| 3 | Fix round 1 — three `_notes_state` seeds (a REAL 3-test regression) | `9d8244c72` | 32230 / 1258 (unchanged) | 5276 (unchanged) |
+| 3 | (blame-ignore, no functional change) | `4aca7171a` | 32230 / 1258 (unchanged) | 5276 (unchanged) |
+| 3 | Review round — count and claim accuracy (series complete) | `652503886` | 32230 / 1258 (unchanged) | 5276 (unchanged) |
+| 3 | Close — ledger + durable evidence | `4ab86c34d` | 32230 / 1258 (unchanged) | 5276 (unchanged) |
+| 4 | **Media receiver defect — BEHAVIOUR FIX** (`library_media_controller.py` 4630 → **4669**) | `66e572868` | 32230 / 1258 (unchanged) | 5276 (unchanged) |
+| 4 | Stale-prose sweep (comment-only, line-neutral) | `96409c16e` | **32230 / 1258 (wave-8 final)** | **5276 (wave-8 final)** |
+
+Full chain, screen: `35777/1290 → 35621/1290 → 32286/1284 → 32325/1284 →
+32230/1258` (final). Full chain, controller: born **5232** → `5214` →
+`5216` → `5254` → `5276`.
+
+**Two things only the per-COMMIT derivation shows, and neither is in any
+report:**
+
+1. **The controller was born at 5232, not 5216 and not 5254.** 5214 is the
+   value after fix round 1 reverted a mover; 5216 after a two-line docstring
+   correction; 5254 after fix round 2's comment growth. The birth commit
+   `9e13f0207` reads 5232. This is the same correction the wave-7 close had
+   to make for its own controller (born 4474, reported 4461) — the second
+   consecutive wave in which a report's "born at" figure was a
+   post-fix-round value.
+2. **The screen pin went DOWN and back UP inside task 2**, exactly as it did
+   in wave 7: the GREEN pinned 32286 and fix round 1 put 39 lines back by
+   reverting `_restore_library_notes_browse_return_receipt` to the screen
+   (§3's sixth spelling, found by the BATTERY). A task-level summary
+   reporting only `35621 → 32325` is not wrong but hides the shape, and the
+   shape is what a battery-found exclusion looks like in the ratchet.
+
+**Net wave-8 shrink: 3,547 screen lines and 32 methods** — the SECOND
+largest single-wave line reduction of the program, behind prompts' 3,819 and
+ahead of media's 2,868, skills' 2,070, wave-2's 1,554 (two subsystems),
+ingest's 1,480, conversations' 1,169 and search+RAG's 1,037. **The 32
+methods are NOT 32 pruned delegators**: 26 are, and the other 6 are the
+duplicate definitions the move collapsed (§25). This is the one measured
+exception to "a pure move is net-zero on the method count" in the program's
+history.
+
+Task 4's own fresh `_measure()` calls — each ratchet file's own semantics —
+give **32230 lines / 1258 methods** for the screen and **5276** for the
+notes controller: exact matches to both recorded pins, zero drift, nothing
+to lower. `library_media_controller.py` measured 4669 after this close's own
+behaviour fix and was re-pinned in that same commit.
+
+#### Verification battery (Task 4, this close)
+
+All runs `-p no:randomly`, `.venv/bin/python -m pytest`, branch venv Python
+**3.14.2**. Isolated baseline worktree at the wave start `889e12b86` with its
+own `uv venv --python 3.14`: **interpreter parity proven** (3.14.2 both),
+**package parity proven** (`uv pip list` name lists `diff`ed to identical,
+106 rows), and the isolated venv verified to resolve its OWN tree.
+
+| Check | Result |
+|---|---|
+| **10 guard suites** — 9 wiring (collections, conversations, export, ingest, media, notes, prompts, search+RAG, skills) + `test_library_support_layer_surface.py` — plus BOTH size ratchets, the recompose ratchet, `test_library_preimport_closure.py`, `test_ui_ready_module_census.py` and `test_library_selection_updates.py`, in ONE process | **145 passed / 6 failed**, 40.25s |
+| the 6 | EXACTLY the documented standing reds: 2 × `chat_screen.py`, `library_media_browse_controller.py`'s 371-pin, `library_conversations_controller.py`'s slack mirror, the 66/63 recompose ratchet, and `test_tier1_toggle_falls_back_to_recompose_on_query_one_failure`. `library_screen.py` GREEN at 32230/1258, `library_notes_controller.py` GREEN at 5276, `library_media_controller.py` GREEN at 4669 |
+| `test_library_screen_reuse.py` + `test_library_notes_characterization.py` + `test_library_modal_dismissal.py` + `test_library_inspection_admission.py` | **219 passed / 2 failed**, 146.59s — both TASK-31249's, and both re-confirmed by their exact failure text rather than by name: `AttributeError: 'LibraryScreen' object has no attribute '_unavailable_navigation'` at `library_screen.py:7867`, and `unresolved modal constructor … SkillImportChoiceModal(snapshot.candidates)` at `test_library_modal_dismissal.py:856` |
+| **BOTH dual-receiver guards** | notes `[screen]`+`[controller]` and media `[screen]`+`[controller]` all pass; the media pair was mutation-verified both ways at this close (§23) |
+| `./scripts/preflight.sh` | **all derived-artifact checks passed** — including "No duplicate task IDs across 3438 task files", which is what certifies this close's own two filings |
+| fresh `_measure()` | screen **(32230, 1258)** vs pin `(LibraryScreen, 32230, 1258)`; notes controller **5276** vs 5276; media controller **4669** vs 4669. Exact matches, zero drift, nothing to lower |
+
+**Documented reds only.** Every failure was checked against §7 BY NAME
+before being called anything, per the meta-lesson this wave earned twice.
+
+#### Full paired xdist sweep — §7's net, whole-wave span
+
+`Tests/UI -k "library" -p no:randomly -q -n 8 --dist worksteal`, identical
+command on both trees, run SEQUENTIALLY (branch first, then the isolated
+worktree at `889e12b86`).
+
+| | failed | passed | wall |
+|---|---|---|---|
+| branch | **397** | 4381 | 1460.60s (24:20) |
+| isolated parent `889e12b86` | **397** | 4375 | 1529.22s (25:29) |
+
+**393 shared, 4 branch-unique, 4 parent-unique** — a bidirectional split,
+which under this recipe's own new rung is *not* a disposition. All eight
+were run through the third level (each node ALONE, trees INTERLEAVED inside
+one load window), n=3 first and n=10 for the three timing-shaped ones:
+
+| Node | branch | parent | verdict |
+|---|---|---|---|
+| `test_screen_navigation.py::test_search_route_round_trips_to_the_library_rag_row` | **3/3** | **3/3** | deterministic on BOTH — a member of §7's documented 32-name `test_screen_navigation.py` regression |
+| `test_screen_navigation.py::test_search_all_palette_command_lands_on_library_with_honest_toast` (parent-unique) | **3/3** | **3/3** | same file, same standing regression |
+| `test_audio_cpp_model_library_handoff.py::…reveals_slow_load_once_and_keeps_error_retry` | 3/10 | **7/10** | flaky on both; the PARENT is the worse tree |
+| `test_library_media_reader_traversal_t22207.py::test_focus_traversal_builds_zero_bodies_for_pass_through_rows` | 4/10 | **6/10** | flaky on both; parent worse |
+| `test_library_media_reader_traversal_t22207.py::test_loading_banner_paints_in_place_without_body_rebuild` (parent-unique) | 3/10 | **4/10** | flaky on both; parent worse |
+| `test_library_media_reader_flow.py::test_filter_uses_authoritative_search_and_restores_page_three_anchor` | 0/3 | 0/3 | xdist noise |
+| `test_library_multiselect_conversations.py::…toggles_it_in_select_mode` (parent-unique) | 0/3 | 0/3 | xdist noise |
+| `test_library_prompts_canvas.py::…undo_refreshes_applied_page_and_preserves_basket` (parent-unique) | 0/3 | 0/3 | xdist noise |
+
+**Zero real regressions.** Two things are worth carrying forward. First, the
+two 3/3-on-both `test_screen_navigation.py` names are a clean illustration
+of the backdrop-absorption warning above: they belong to a documented
+32-name standing regression, and xdist happened to scatter one into the
+branch's run and one into the parent's, manufacturing a bidirectional split
+out of a shared backdrop. Second, **every one of the three timing-shaped
+names is worse at the PARENT** — which is the outcome the interleaved
+third level exists to make visible and which a back-to-back batch reliably
+gets backwards.
+
+229 of the branch's 397 failures are `test_library_shell.py`, the
+~226–230-red whole-file backdrop TASK-31249 records as an environment fact
+for this machine.
+
+#### Probe run — the LAST pre-phase-C baseline, and a methodology defect it exposed
+
+`Helper_Scripts/library_click_probe.py` is byte-identical across the wave
+(`git diff 889e12b86 HEAD --` on it is empty). This close ran **118 probe
+invocations across five trees**, and the reason it took five is the finding.
+
+**Round 1/2, §9's standing order-swapped pair, showed the branch slower on
+15 of 16 wall-clock measurements.** An interleaved n=6 pair narrowed it to
+ONE row — `media (switch-in)`, +21 ms median, branch slower in 6/6 — with
+every load-independent column identical. Adding the wave TIP as a third tree
+(§7's technique, applied to the probe rather than to a test) put the tip
+*below* the parent, i.e. the effect was not monotonic in commit order.
+Bisecting onto this close's own two commits localised the entire delta to
+the step between the behaviour fix and HEAD — **a step whose whole diff is
+twelve comment lines and two backlog files.** Rotating the run order within
+each round did not move it either (branch last: still +23).
+
+**The remaining variable was the checkout LOCATION, and it was the whole
+effect.** §3 puts the isolated baseline at a scratch path; the branch is the
+working worktree under the user's home directory. Every probe pair this
+program has ever run therefore compared two different checkout LOCATIONS.
+(It does **not** compare two filesystems: `~/Documents/...` and
+`/private/tmp/...` are the same APFS volume — `/dev/disk3s5` on
+`/System/Volumes/Data`, identical `stat -f %d`. The close first labelled it
+"two filesystems"; the label failed its spot-check at the final review and
+was corrected here. See the erratum in §9 for the candidate mechanisms and
+for the one already eliminated.) Checking
+the IDENTICAL HEAD source out into a scratch worktree
+(`git worktree add --detach <scratch> HEAD`, `diff -r` against the working
+tree empty) and re-running the same interleaved batch:
+
+| same source, two locations | `media (switch-in)` median | vs parent |
+|---|---|---|
+| HEAD in the working worktree (`~/Documents/...`) | 500 ms [482–702] | **+23** |
+| HEAD in a scratch worktree (`/private/tmp/...`) | 470 ms [428–490] | **−6** |
+| wave-start parent, scratch worktree | 476 ms [471–505] | — |
+
+Identical bytes, a 30 ms median swing and a visibly dirtier distribution
+(max 702 vs 490) purely from where the tree sits. **The order swap protects
+against warm-up; nothing protected against location.** Wave-6's "branch
+slower on all sixteen measurements", read then as a first-run artifact, is
+equally consistent with this.
+
+**The rule §9 now carries: probe the BRANCH from a scratch worktree too, so
+both sides sit at the same kind of checkout location.** It costs one `git worktree add
+--detach <scratch> HEAD` plus a `uv venv` (~5 s) and it is the only thing
+that makes the wall-clock columns comparable at all.
+
+**The valid pair, same checkout location, n=10 interleaved** (branch = HEAD at a
+scratch path; base = `889e12b86` at a scratch path), medians:
+
+| interaction | settle br / base | max gap br / base | recompose | full-update | mounts br / base | nodes |
+|---|---|---|---|---|---|---|
+| media (switch-in) | 470 / 476 | 134 / 124 | 0 / 0 | 2 / 2 | 177–179 / 177 | 119 / 119 |
+| media (re-click same) | 303 / 308 | 46 / 46 | 0 / 0 | 2 / 2 | 85–89 / 85–89 | 119 / 119 |
+| media (re-click same, 2nd) | 302 / 304 | 46 / 47 | 0 / 0 | 2 / 2 | 85–89 / 85–89 | 119 / 119 |
+| notes (switch) | 350 / 355 | 128 / 132 | 0 / 0 | 2 / 2 | 114 / 114 | 114 / 114 |
+| notes (re-click same) | 258 / 258 | 42 / 43 | 0 / 0 | 1 / 1 | 38 / 38 | 114 / 114 |
+| media (switch-back) | 384 / 388 | 89 / 91 | 0 / 0 | 1 / 1 | 175–179 / 175–179 | 119 / 119 |
+| notes (switch, 2nd) | 368 / 374 | 157 / 160 | 0 / 0 | 2 / 2 | 114 / 114 | 114 / 114 |
+| media (switch-back, 2nd) | 384 / 390 | 84 / 84 | 0 / 0 | 1 / 1 | 175–179 / 175–179 | 119 / 119 |
+
+**The branch is equal or FASTER on all eight rows.** The load-independent
+columns are the verdict and they are exact: `recompose` is **0 on every row
+of all 118 runs across all five trees**; `full-update` follows the identical
+`2/2/2/2/1/1/2/1` pattern on every tree; `nodes` is identical row-for-row
+(119 media / 114 notes); and the `mounts` value SETS are identical, wobbling
+by 2–4 within each tree exactly as prior closes recorded.
+
+*(The `full-update` pattern is `2/2/2/2/1/1/2/1`, where waves 2–7 recorded
+`2/2/2/1/1/1/1/1`: the two notes-switch rows moved from 1 to 2. That change
+is present at `889e12b86` as well as on the branch, i.e. it landed in dev's
+churn between the wave-7 close and the wave-8 start, not in this wave.
+Recorded rather than smoothed over, because the next close will otherwise
+re-derive it as new.)*
+
+Load averages: 3.51–7.41 throughout, recorded per round. Machine quieter at
+the end than at the start, which is why absolute medians here sit below
+§22's.
+
+#### Lessons
+
+1. **A bidirectional unique split is not a disposition — it is a reason to
+   run the third level.** Wave-8 task 3's cleanup measured 6 branch-unique
+   and 1 parent-unique across two files it had barely touched, every surface
+   feature saying "xdist noise"; three of the seven were a deterministic
+   3/3-vs-0/3 regression. The folklore ("a real regression can only point one
+   way") is wrong because a real regression normally lands INSIDE a noisy
+   batch. Folded into §7 as the ladder's fourth rung.
+2. **The probe's wall-clock columns are sensitive to the checkout's
+   LOCATION, and this program has been comparing two of them for eight
+   waves.** (Written first as "FILESYSTEM"; corrected at the reconciliation
+   merge — both paths are the same APFS volume. The phenomenon and the rule
+   are unchanged, the mechanism is unidentified, and §9 carries the erratum
+   with the candidates. Recorded rather than quietly fixed, because §24 item
+   3 is this section's own rule: a wrong reason is worse than a thin one.)
+   Identical HEAD source measured +23 ms in the working worktree and
+   −6 ms in a scratch worktree against the same baseline. Five trees and 118
+   probe runs to establish it, because each cheaper explanation — warm-up,
+   run order, the wave's own moves, this close's own commits — had to be
+   eliminated by measurement rather than by argument. §9 now requires
+   probing the branch from a scratch worktree too.
+3. **Census a shared dispatcher's RECEIVERS, not just its spellings.** The
+   media defect this close fixed had been live for two days behind an
+   `except Exception`, and the census that found it was a question nobody had
+   asked of `canvas_sync.py`: *which objects reach this leg?* §3 carries the
+   resolution table, and TASK-32089 carries the standing guard (filed as 32041, then 32047 —
+   TASK-32041; renumbered at the reconciliation merge — `dev` had minted its
+   own 32041 in the interim).
+4. **A `file:line` is a number and nothing in the battery reads one.** Four
+   citation defects in one wave, one of them inside the review round convened
+   to fix citation defects. §24 is the ledger.
+5. **"A pure move is net-zero on the method count" is false when a method is
+   defined twice.** Wave 8's move took the screen 1290 → 1284 while pruning
+   nothing; the DISTINCT-name count (1277) is the invariant that actually
+   held. Seven duplicated names still sit on `LibraryScreen`.
+6. **The wave-close prose sweep keeps earning its place.** Eleven class-3
+   defects, only three of them known — the fourth consecutive wave in which
+   the close finds stale prose in files no task's ruled scope covered, and
+   the first to find the state module cross-referencing its own sibling
+   fields by their pre-move spellings.
+
+## 24. Evidence discipline — the citation-accuracy ledger
+
+§6 already says a NUMBER has copies and every copy must be re-derived. This
+section says the thing §6 leaves implicit and which wave 8 paid for four
+times in one wave:
+
+> **A `file:line` reference is a number.** A line range is two numbers. They
+> decay exactly like a count decays, they are copied forward exactly like a
+> count is copied forward, and — unlike a count — **nothing in the battery
+> ever reads one**, so a wrong one survives every green run and is
+> discovered only when a human opens the file.
+
+Three rules, each earned:
+
+1. **Derive a citation from the tree you are shipping against, and say which
+   tree that is.** A citation is a fact about one revision. Wave-8 task 3's
+   hand-off to this close cited `canvas_sync.py:437` (the media assignment)
+   and `:710` (the swallowing `except`). Both were correct — at the task's
+   PARENT. On the tree the hand-off pointed the next task at, its own
+   cleanup had added eleven lines above them and they are `:448` and `:725`.
+   Nothing was wrong when written; everything was wrong when read. **A
+   hand-off citation must be measured on the tree the receiver will open.**
+2. **Re-measure a range, do not adjust it.** Task 2's close shipped a
+   one-line fix for `test_library_shell.py:17651-17655` → `:17652-17656`, an
+   off-by-one at both ends, found by re-reading rather than by any check.
+   This close's own brief repeated the shape: it cited the notes
+   controller's `_notes_state` accessor at `library_notes_controller.py:
+   956-976`; the property spans **957–977** (decorator 957, `def` 958,
+   `end_lineno` 977). An `ast` node knows its own `lineno`/`end_lineno` —
+   ask it, and quote what it says.
+3. **A citation used as a REASON is load-bearing, and a wrong reason is
+   worse than a thin one.** Wave-8 task 2 justified a callback-identity
+   exclusion on `test_screen_navigation.py:3225` comparing against a
+   controller-bound method. Re-read, the callback captured at that site is a
+   CLOSURE defined inside the method (`finish_list_projection`), which no
+   move can rebind — and the test is red at the parent regardless. The
+   exclusion was right and survived on §3's conservative opening rule; the
+   Form-E *mechanism* was withdrawn. Had nobody re-read it, the next series
+   would have inherited a bypass shape that does not exist.
+
+**The third strike is the one worth remembering, because of where it
+happened.** Wave-8 task 3's review round was convened explicitly to fix
+count and claim accuracy across the notes cleanup — and inside that round,
+the statement that `library_conversation_reader_controller.py` declares
+`_library_notes_source` was itself wrong. Measured by an `ast` sweep of both
+class bodies against the 100-name set, that controller's only such property
+is `_library_notes_focus_intent_generation`, which *duplicates* the media
+controller's rather than adding a third name. The aggregate (4 `def` sites)
+was right; the attribution was not. **An accuracy round is not
+self-verifying: it needs the same instrument as the work it is correcting,
+pointed at its own output.**
+
+The cheap discipline that catches all four: before shipping any prose that
+contains a colon followed by digits, re-open the file at that line and read
+it. It costs seconds, it is the only check there is, and every one of these
+four survived a full green battery.
+
+## 25. Program close — eight waves, nine subsystems, and the phase-C handoff
+
+The Library decomposition program is complete. `LibraryScreen` is a shell
+plus shell-owned surfaces: **no generated flat-state shim block remains in
+`library_screen.py` for any subsystem.** Phase C — region ownership, the
+resident-canvas click-freeze fix that motivated the whole program — begins
+as its own motivated series, per subsystem, and is out of scope for the
+pure-move recipe above.
+
+### The eight-wave trajectory, measured
+
+**Every cell below was re-measured at the close** by `git show
+<commit>:tldw_chatbook/UI/Screens/library_screen.py` piped through an `ast`
+walk of the `LibraryScreen` class body — the ratchet's own semantics, not
+`wc -l`, and not carried over from any report. All sixteen boundary
+measurements agree with the `_BUDGETS` row recorded at that commit.
+
+| Wave | Subsystem(s) | Start (commit) | Final (commit) | Screen delta |
+|---|---|---|---|---|
+| 1 | conversations (exemplar) | 45134 / 1300 (`49733bda7`) | 43965 / 1282 (`847cdde7f`) | **−1,169 / −18** |
+| 2 | export + collections | 43965 / 1282 (`2b20ebbb9`) | 42411 / 1267 (`39a976321`) | **−1,554 / −15** |
+| 3 | search + RAG | 43977 / 1316 (`315cd4c3c`) | 42940 / 1304 (`5ee7b60b9`) | **−1,037 / −12** |
+| 4 | skills | 43225 / 1311 (`2372ea764`) | 41155 / 1295 (`f42f75d98`) | **−2,070 / −16** |
+| 5 | ingest | 41574 / 1302 (`9e62dd8f7`) | 40094 / 1296 (`5b9c7bdf4`) | **−1,480 / −6** |
+| 6 | prompts | 41393 / 1321 (`e5e03846a`) | 37574 / 1282 (`33cffc4a4`) | **−3,819 / −39** |
+| 7 | media | 37537 / 1282 (`83e17323e`) | 34669 / 1260 (`014f695fc`) | **−2,868 / −22** |
+| 8 | notes | 35777 / 1290 (`889e12b86`) | **32230 / 1258** (`841261666`) | **−3,547 / −32** |
+
+**The eight waves' own PRs removed 17,544 lines and 160 `FunctionDef`s.**
+The screen went 45,134 → 32,230, a net of −12,904 — and the 4,640-line gap
+between those two figures is the fact this table exists to make visible:
+
+> **Dev put 4,640 lines and 118 methods back into `library_screen.py`
+> BETWEEN the waves.** There are **seven** inter-wave gaps and they are
+> **five positive, one ZERO, one negative**: `0` (wave 1 → 2), +1,566,
+> +285, +419, +1,299, −37 (wave 6 → 7), +1,108. The
+> arithmetic closes exactly: 45,134 − 17,544 + 4,640 = 32,230, and
+> 1,300 − 160 + 118 = 1,258.
+>
+> *Footnote on the zero-width window.* Wave 1 ended at `847cdde7f` and
+> wave 2 started at `2b20ebbb9`, both **43965 / 1282** — the only gap in
+> which dev landed nothing that touched `LibraryScreen`. It is not a
+> measurement artifact and it is not evidence against the give-back; it is
+> one narrow window. Called out because this line first read "every gap is
+> positive except one" and listed only six values — the zero was silently
+> absorbed into the positives. On the METHOD side there are **two** zeros
+> (`0, +49, +7, +7, +25, 0, +30`): wave 6 → 7 is flat in methods while
+> −37 in lines, i.e. that window was pure body churn inside existing
+> methods. Corrected at the reconciliation merge; every one of the sixteen
+> boundary cells above re-reproduced to the digit at the same time, so
+> only the classification was ever wrong.
+
+That is a **26.4% give-back** (4,640 / 17,544) against the program's own
+extraction, landed by ordinary feature work in the windows between waves,
+and it is the strongest available argument for the ratchet itself: the
+screen was never going to stay smaller merely because it had been made
+smaller. The ratchet is what turns each wave's reduction into a floor
+instead of a dip. Against the design spec's own
+2026-09-01 measurement (**46,109 lines / 1,270 `ast` methods**, taken before
+the foundation PRs), the program's net is **−13,879 lines, −30.1%**.
+
+**The 160 methods are 154 pruned dead delegators plus SIX collapsed
+duplicate definitions**, and the six are the one measured exception to a
+rule this recipe stated eight times. Every prior series wrote "a pure move
+is net-zero on the method count: N bodies out, N one-line delegators in."
+Wave 8's move commit took the screen 1290 → **1284** without pruning
+anything, because six notes methods were defined TWICE, byte-identically, in
+the class body, and one delegator replaced both copies of each. Measured by
+`ast` at the two commits either side of the move:
+
+| | `FunctionDef`s | distinct names | duplicated names |
+|---|---|---|---|
+| before (`915e76b71`) | 1290 | **1277** | 13 |
+| after (`9e13f0207`) | 1284 | **1277** | 7 |
+
+The distinct count is identical on both sides — which is the real invariant a
+pure move preserves, and the one to assert. The six that collapsed are
+`_library_notes_work_session_reader_width`,
+`_dispatch_library_notes_work_session`, `_library_notes_work_first_
+preferences`, `_set_library_notes_source`,
+`_dispatch_database_note_identity_cleared` and
+`_activate_database_note_work_session`. **Seven duplicated names survive on
+the screen today** (six skills-import properties plus
+`_seed_local_source_snapshot_from_cache`), so this is not a notes-specific
+accident and the next reader of that file should expect it.
+
+**Before writing "the method count is unchanged", run
+`Counter(m.name for m in class_body)`** — and prefer the DISTINCT-name count
+as the pure-move invariant, since it is the one that survives a duplicated
+definition. If any mover is duplicated, state the collapse in the same
+breath as the count.
+
+### The landed architecture
+
+| | Count | Lines (measured at this close) |
+|---|---|---|
+| State dataclasses (`library_*_state.py`) | **9** | 2,698 |
+| Controllers created by the program | **10** | 28,329 |
+
+Nine subsystems across eight waves — wave 2 landed export and collections
+together, and the conversations exemplar is the only subsystem that split
+into TWO controllers (reader + browse), a decision every later wave
+re-derived by connected components and every later wave declined.
+
+(Twenty `*_controller.py` files exist under `Library_Modules/`; the other
+ten are dev-owned and predate or run alongside this program. Membership was
+derived from each file's `git log --diff-filter=A` creation commit, not from
+its name — `library_collections_capture_controller.py` and
+`library_media_browse_controller.py` read like program output and are not.)
+
+| Subsystem | State | Fields | Controller(s) | Movers | Pruned |
+|---|---|---|---|---|---|
+| conversations | `LibraryConversationsState` | 28 | `LibraryConversationReaderController` (943) + `LibraryConversationsController` (1,686) | 61 | 18 (29.51%) |
+| export | `LibraryExportState` | 13 | `LibraryExportController` (1,307) | 22 | 1 (4.55%) |
+| collections | `LibraryCollectionsState` | 26 | `LibraryCollectionsController` (1,689) | 64 | 14 (21.88%) |
+| search + RAG | `LibraryRagSearchState` | 20 | `LibraryRagSearchController` (1,898) | 42 | 12 (28.57%) |
+| skills | `LibrarySkillsState` | 36 | `LibrarySkillsController` (3,142) | 86 | 16 (18.60%) |
+| ingest | `LibraryIngestState` | 20 | `LibraryIngestController` (2,721) | 56 | 6 (10.71%) |
+| prompts | `LibraryPromptsState` | 43 | `LibraryPromptsController` (4,998) | 139 | 39 (28.06%) |
+| media | `LibraryMediaState` | 82 | `LibraryMediaController` (4,669) | 140 | 22 (15.71%) |
+| notes | `LibraryNotesState` | 100 | `LibraryNotesController` (5,276) | 185 | 26 (14.05%) |
+| **total** | | **368** | | **795** | **154** |
+
+**368 fields and 795 method bodies moved, byte-for-byte**, every controller
+born governed by `test_library_modules_size_ratchet.py`'s glob (§17) and
+every move commit recorded in `.git-blame-ignore-revs` (§10).
+
+*(Line counts above are MEASURED at this close, not read off `_BUDGETS` —
+and one of the ten disagrees with its pin: `library_conversations_
+controller.py` measures 1,686 against a 1,738 row, which is §7's documented
+dev-side slack red, dev's shrink to lower rather than this program's. Quoting
+the pin would have inflated the total by 52 lines and hidden a known open
+item, which is §24's point about a number's copies.)*
+
+### The reusable artifacts
+
+Three catalogues in this document outlived the program that produced them,
+and they are what a future decomposition should read first:
+
+1. **§3's six census spellings**, in the order they were earned: the direct
+   attribute; the fully-qualified string; the two-argument
+   `monkeypatch.setattr`; the bare quoted string anywhere in the file; the
+   COMPUTED name (`ast.JoinedStr`) in a shared dispatcher — plus its
+   RECEIVER dimension, which is the sixth thing a census must ask and the
+   only one that has produced a live production defect twice; and the
+   unbound `LibraryScreen.<name>` `ast.Attribute` inside any enclosing
+   expression. Plus the two receiver-census HOLES (per-name instead of
+   per-binding-SITE; the `getattr` receiver a dotted census scores zero) and
+   the ten-spelling thread hand-off set. **Every one of these was earned by
+   a defect, and five of the six were invisible to the census that preceded
+   them.**
+2. **§3's bypass-shape catalogue** — the eight test shapes that make a
+   method un-movable (unbound-fake-`self`, instance-attribute monkeypatch,
+   class monkeypatch, module-globals coupling, screen identity including its
+   `ancestors` MEMBERSHIP form, `inspect.getsource` source-census,
+   `object.__new__` bypassed construction, callback identity) plus §4's
+   three-member delegator-prune whitelist (`@on`, `action_*`,
+   `on_<Message>` name dispatch). Across the program these accounted for
+   **the overwhelming majority of every exclusion set**, and media's 111
+   exclusions — 44% of its cluster, the program's high-water mark — were 89
+   fixture shapes against 9 genuine couplings. **Exclusion rate measures
+   TEST DEBT, not entanglement**, which is the single most useful thing this
+   program learned about estimating a subsystem.
+3. **§7's disposition ladder**, now complete in four rungs: "passes in
+   isolation" is not a disposition; n>1 and paired against the parent; the
+   two trees INTERLEAVED, not back-to-back; and a bidirectional unique split
+   is not a disposition either. Each rung was added because the previous one
+   returned a confidently wrong answer, and the fourth caught a real
+   three-test regression eight commits before the program closed.
+
+### Phase-C handoff
+
+Phase C moves canvas-origin `@on` handlers and state INTO the already-mounted
+canvas widgets. It is explicitly behaviour-changing, it is gated per
+subsystem on that subsystem's phase-A series being fully landed (all nine
+now are), and its first motivated candidates remain **media and notes**.
+
+**1. The probe baseline, and it is the last pre-phase-C measurement.**
+`Helper_Scripts/library_click_probe.py` (§9) is the acceptance instrument
+for the click-freeze fix. The numbers phase C will be measured against, from
+§23's same-checkout-location n=10 interleaved pair on a quiet machine (load
+3.5–4.8), median settle / max gap in ms:
+
+| interaction | settle | max gap | recompose | full-update | mounts | nodes |
+|---|---|---|---|---|---|---|
+| media (switch-in) | 470 | 134 | **0** | 2 | 177–179 | 119 |
+| media (re-click same) | 303 | 46 | **0** | 2 | 85–89 | 119 |
+| media (re-click same, 2nd) | 302 | 46 | **0** | 2 | 85–89 | 119 |
+| notes (switch) | 350 | 128 | **0** | 2 | 114 | 114 |
+| notes (re-click same) | 258 | 42 | **0** | 1 | 38 | 114 |
+| media (switch-back) | 384 | 89 | **0** | 1 | 175–179 | 119 |
+| notes (switch, 2nd) | 368 | 157 | **0** | 2 | 114 | 114 |
+| media (switch-back, 2nd) | 384 | 84 | **0** | 1 | 175–179 | 119 |
+
+Overall band across both trees: **settle 243–494 ms, max gap 37–179 ms.**
+Read the load-INDEPENDENT columns as the verdict (`recompose`,
+`full-update`, `nodes`, `mounts`) and the wall-clock columns as context.
+Run the pair TWICE with the tree order swapped — and **check out the branch
+into a scratch worktree so both sides sit at the same kind of location**, which
+§9 now requires and which this close had to discover the hard way: without
+it, the wall-clock columns carry a ~30 ms location artifact that looks
+exactly like a regression.
+
+**2. The mount storm is the target, and the probe already measures it.**
+Every recorded probe run across four waves shows the same shape: a single
+rail-mode switch mounts **114 widgets for notes and 177–179 for media**,
+against a steady-state node count of 114 / 119. A re-click of the SAME
+already-selected row still mounts 38 (notes) or 85–89 (media). Those mounts
+are the freeze — the whole-canvas remove/remount phase C exists to replace
+with in-place `sync_state`. The counts are load-independent and identical
+row-for-row between trees, which is what makes them a usable acceptance
+target rather than a timing anecdote: **phase C's success condition is that
+the re-click rows go to ~0 mounts with `recompose` still 0.**
+
+**3. The coverage gate is TASK-31880, and it must be closed FIRST.**
+`Tests/UI/test_library_honesty_accessibility.py::test_row_toggle_patcher_
+rebuilds_marker_label_both_directions` is the only real-row Pilot test that
+drives the `_apply_library_row_toggle` path end to end, and it has been red
+on both trees since wave 6, failing on a label-truncation assertion BEFORE
+the body under test matters. Two waves have now had to guard a
+targeted-sync fix with a hand-built screen double instead — wave 7 for the
+fifth spelling, wave 8 for its receiver dimension — and the receiver defect
+the double eventually caught had already been LIVE in production for two
+days. Phase C changes exactly this path, in the widgets, for real. **Going
+in with the only real-row coverage red is how a silent recompose ships
+again.**
+
+**4. `canvas_sync.py` is phase C's first surface, and it is where this
+program's last two defects lived.** Both dispatchers (`_apply_library_row_
+toggle`, `_sync_library_canvas`) are shared across every kind, both resolve
+attribute names their source never spells, both swallow every failure into
+`screen.refresh(recompose=True)`, and both are handed a SCREEN by some
+callers and a CONTROLLER by others. That combination — computed names, a
+blanket `except`, and two receiver types — is why §3 needed a fifth spelling
+and then a receiver dimension, and it is exactly the code phase C will
+replace with widget-resident handlers. Whoever does that work should start
+by reading §3's fifth-and-sixth-spelling entries and this file's
+`test_library_selection_updates.py` guards, all three of which are now
+parametrized or mutation-verified for a reason.

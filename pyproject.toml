@@ -241,7 +241,10 @@ media_processing = [
     # pip install -e ".[media_processing,transcription_parakeet]"
 ]
 chatterbox = [
-    "chatterbox-tts",
+    "chatterbox-tts>=0.1.7",  # Avoid older releases' broken pkuseg source install
+    # Perth 1.0.1 needs pkg_resources at runtime (removed in setuptools 82).
+    # Remove this cap once Perth replaces that import and declares its runtime deps.
+    "setuptools<82",
     "torchaudio",
     "torch",
     "faster-whisper",  # For validation of generated audio
@@ -415,7 +418,8 @@ all-tools = [
     "librosa",
     
     # === TTS (Text-to-Speech) ===
-    "chatterbox-tts",
+    "chatterbox-tts>=0.1.7",
+    "setuptools<82",  # Perth runtime compatibility; see the chatterbox extra above
     "torchaudio",
     "kokoro-onnx",
     "onnxruntime",

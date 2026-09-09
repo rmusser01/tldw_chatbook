@@ -922,6 +922,81 @@ async def test_zero_result_filter_clears_the_reader_it_was_painting():
 
 
 @pytest.mark.asyncio
+async def test_zero_result_filter_repaints_the_mounted_reader_placeholder():
+    """task-32086 (critique #8 gap in 32043): the MOUNTED Reader must repaint.
+
+    task-32043 cleared the Reader SESSION on a 0-result filter (verified by
+    ``test_zero_result_filter_clears_the_reader_it_was_painting``), but this
+    seam rebuilds only the Items pane through ``_sync_library_canvas`` and
+    leaves the sibling ``LibraryMediaViewer`` untouched -- so the mounted
+    widget kept its ``#library-media-viewer-title`` and full document
+    standing while the Items list read "Media (0)" (critique #8 caps 07/65:
+    a stale item + "‹ Back" into an empty list). Drives the live auto-follow
+    path -- a filter WITH a hit re-points the Reader, then narrowing to zero
+    -- and asserts the mounted Reader repainted its empty placeholder.
+    """
+    app, service = _flow_app(count=5)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+
+        # A filter WITH a match auto-follows the Reader to the sole hit.
+        screen.query_one("#library-media-filter", Input).value = "Media item 03"
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_browse_controller.applied_scope is not None
+                and screen._library_media_browse_controller.applied_scope.query
+                == "Media item 03"
+                and not screen._library_media_browse_controller.loading
+            ),
+            message="Matching filter did not apply.",
+        )
+        match_id = str(
+            screen._library_media_browse_controller.retained_items[0]["id"]
+        )
+        for match in screen._library_media_browse_controller.retained_items:
+            service.release(int(str(match["id"]).rsplit(":", 1)[-1]))
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._media_state.reader_session.loaded_id == match_id
+                and bool(screen.query("#library-media-viewer-title"))
+            ),
+            message="Matched filter did not paint the Reader item.",
+        )
+        await pilot.pause()
+
+        # Narrowing that filter to zero must repaint the empty placeholder.
+        screen.query_one("#library-media-filter", Input).value = "Media item 03zzz"
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_browse_controller.applied_scope is not None
+                and screen._library_media_browse_controller.applied_scope.query
+                == "Media item 03zzz"
+                and not screen._library_media_browse_controller.loading
+            ),
+            message="Zero-result filter did not apply.",
+        )
+        assert len(screen._library_media_browse_controller.retained_items) == 0
+        assert screen._media_state.reader_session.loaded_id is None
+
+        # The MOUNTED Reader stops painting the filtered-out item and shows
+        # its "Select a media item…" placeholder -- not just the session.
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-reader-empty")),
+            message="Reader placeholder did not repaint after the 0-result filter.",
+        )
+        assert not screen.query("#library-media-viewer-title")
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
 async def test_bulk_deleting_the_open_reader_item_clears_the_reader():
     """task-32043 Pin B: bulk-deleting the loaded item stops the Reader painting it.
 

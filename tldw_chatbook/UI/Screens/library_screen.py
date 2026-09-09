@@ -201,10 +201,8 @@ from ...Library.library_notes_state import (
     LibraryNotesFocusIdentity,
     LibraryNotesListState,
     LibraryNotesOperationState,
-    build_library_note_editor_state,
     build_library_notes_list_state,
     build_note_export_content,
-    notes_autosave_status_text,
     patch_note_records_after_save,
     resolve_note_template_placeholders,
     sort_notes_records,
@@ -230,17 +228,13 @@ from ...Library.library_notes_tree_paging import (
 )
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
 from ...Library.library_notes_session import (
-    ConflictAction,
-    ConflictOutcomeKind,
     DatabaseNoteSessionCoordinator,
     DestructiveAdmission,
-    DestructiveAdmissionOutcomeKind,
     DestructiveKind,
     NoteFlushOutcome,
     NoteFlushOutcomeKind,
     NoteLoadOutcomeKind,
     NoteSaveOutcome,
-    NoteSaveOutcomeKind,
 )
 from ...Library.library_notes_tree_state import (
     UNFILED_PLACEMENT_ID,
@@ -355,7 +349,6 @@ from ...Local_Ingestion.parakeet_v2_artifact import (
     run_parakeet_v2_provision,
 )
 from ...Local_Ingestion.stt_batch_routing import resolve_batch_stt_route
-from ...Library.row_selection import RowSelection
 from ...Notes.note_folder_models import (
     FolderCapabilityError,
     FolderCollisionError,
@@ -376,7 +369,7 @@ from ...STT.parakeet_sources import (
     ParakeetSourceKey,
     PreparedExternalSelection,
 )
-from ...Third_Party.textual_fspicker import FileOpen, FileSave, SelectDirectory
+from ...Third_Party.textual_fspicker import FileOpen, SelectDirectory
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import (
@@ -459,7 +452,6 @@ from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.glyph_fallback import ascii_glyph_mode
 from ...Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
-    resolve_database_note_status_channels,
 )
 from ...Widgets.Library.library_note_import_canvas import LibraryNoteImportCanvas
 from ...Widgets.Library.library_notes_add_from_files_canvas import (
@@ -504,10 +496,12 @@ from ..Library_Modules.library_ingest_state import LibraryIngestState
 from ..Library_Modules.library_media_state import (
     LibraryMediaState,
 )
+from ..Library_Modules.library_notes_state import (
+    LibraryNotesState,
+)
 from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
-    reduce_notes_work_session,
 )
 from ..Library_Modules.library_prompts_state import LibraryPromptsState
 from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
@@ -2082,6 +2076,9 @@ class LibraryScreen(BaseAppScreen):
             InertLastingSyncRuntime,
             LibraryNotesSyncController,
         )
+        from ..Library_Modules.library_notes_controller import (
+            LibraryNotesController,
+        )
         from ..Library_Modules.library_prompts_controller import (
             LibraryPromptsController,
         )
@@ -2118,21 +2115,26 @@ class LibraryScreen(BaseAppScreen):
         self._library_graduation_announcement_visible = False
         self._library_lifecycle_pending_persist: LibraryLifecycle | None = None
         self._library_lifecycle_persist_worker: Worker | None = None
-        self._library_notes_source: Literal["database", "files"] = (
-            LIBRARY_NOTES_SOURCE_DATABASE
-        )
-        self._library_notes_work_session_phase = NotesWorkSessionPhase.INACTIVE
-        self._library_notes_work_session_activation_pending = False
-        self._library_file_notes_workspace: LibraryFileNotesWorkspace | None = None
+        # Constructed early -- see LibraryNotesState's own module docstring
+        # (forced-early-construction paragraph): this is the position of the
+        # first removed field, and it must precede the Folder-Files
+        # workspace-factory `if`/`else`, the shared reader-preferences
+        # tuple-unpack, the two reader-layout derivations, the two
+        # persistence-lock dicts and the two controller snapshots -- nine
+        # fields whose original lines keep running untouched at their own
+        # positions and route through the generated shim into this object.
+        # No constructor arguments: unlike Media's three, every default this
+        # cluster folds is a static literal or a pure no-argument factory call.
+        self._notes_state = LibraryNotesState()
         if file_notes_workspace_factory is None:
             def build_file_notes_workspace() -> LibraryFileNotesWorkspace:
                 return LibraryFileNotesWorkspace(
                     session_owner=app_instance.file_notes_session_owner,
                 )
 
-            self._library_file_notes_workspace_factory = build_file_notes_workspace
+            self._notes_state.file_notes_workspace_factory = build_file_notes_workspace
         else:
-            self._library_file_notes_workspace_factory = file_notes_workspace_factory
+            self._notes_state.file_notes_workspace_factory = file_notes_workspace_factory
         self._local_source_records: dict[str, tuple[Mapping[str, Any], ...]] = {
             "notes": (),
             "media": (),
@@ -2269,7 +2271,7 @@ class LibraryScreen(BaseAppScreen):
             library_loaded_accessor=lambda: self._library_loaded,
             library_lookup_error_accessor=lambda: self._library_lookup_error,
             notes_focus_intent_generation_accessor=(
-                lambda: self._library_notes_focus_intent_generation
+                lambda: self._notes_state.focus_intent_generation
             ),
             selected_row_id_accessor=lambda: self._library_selected_row_id,
             selected_conversation_id_accessor=lambda: self._selected_conversation_id,
@@ -2802,11 +2804,11 @@ class LibraryScreen(BaseAppScreen):
             library_list_entry_focus_generation_accessor=(
                 lambda: self._library_list_entry_focus_generation
             ),
-            library_notes_compact_accessor=lambda: self._library_notes_compact,
+            library_notes_compact_accessor=lambda: self._notes_state.compact,
             library_notes_focus_intent_generation_accessor=(
-                lambda: self._library_notes_focus_intent_generation
+                lambda: self._notes_state.focus_intent_generation
             ),
-            library_notes_source_accessor=lambda: self._library_notes_source,
+            library_notes_source_accessor=lambda: self._notes_state.source,
             library_pending_list_entry_focus_accessor=(
                 lambda: self._library_pending_list_entry_focus
             ),
@@ -3059,13 +3061,302 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._toggle_library_media_select_mode(*a, **k)
             ),
         )
+        # wave-8 task 2 (notes series 2/N): constructed right after the
+        # Media controller, matching every other controller in this file.
+        # Imported function-locally above, per the born-lazy rule.
+        self._notes_controller = LibraryNotesController(
+            self,
+            notes_state_accessor=lambda: self._notes_state,
+            # -- shared shell state this cluster READS (getter-only).
+            library_canvas_projection_depth_accessor=(
+                lambda: self._library_canvas_projection_depth
+            ),
+            library_lifecycle_accessor=(
+                lambda: self._library_lifecycle
+            ),
+            library_note_dirty_accessor=(
+                lambda: self._library_note_dirty
+            ),
+            library_note_version_accessor=(
+                lambda: self._library_note_version
+            ),
+            library_onboarding_all_empty_accessor=(
+                lambda: self._library_onboarding_all_empty
+            ),
+            library_rail_collapsed_accessor=(
+                lambda: self._library_rail_collapsed
+            ),
+            library_snapshot_state_generation_accessor=(
+                lambda: self._library_snapshot_state_generation
+            ),
+            local_source_counts_accessor=(
+                lambda: self._local_source_counts
+            ),
+            local_source_records_accessor=(
+                lambda: self._local_source_records
+            ),
+            media_state_accessor=(
+                lambda: self._media_state
+            ),
+            prompts_state_accessor=(
+                lambda: self._prompts_state
+            ),
+            rag_search_state_accessor=(
+                lambda: self._rag_search_state
+            ),
+            # -- shared shell state this cluster also WRITES.
+            library_canvas_resync_pending_accessor=(
+                lambda: self._library_canvas_resync_pending
+            ),
+            set_library_canvas_resync_pending=(
+                lambda value: setattr(self, "_library_canvas_resync_pending", value)
+            ),
+            library_navigation_context_generation_accessor=(
+                lambda: self._library_navigation_context_generation
+            ),
+            set_library_navigation_context_generation=(
+                lambda value: setattr(self, "_library_navigation_context_generation", value)
+            ),
+            library_notes_programmatic_focus_target_accessor=(
+                lambda: self._library_notes_programmatic_focus_target
+            ),
+            set_library_notes_programmatic_focus_target=(
+                lambda value: setattr(self, "_library_notes_programmatic_focus_target", value)
+            ),
+            library_notes_restoring_focus_accessor=(
+                lambda: self._library_notes_restoring_focus
+            ),
+            set_library_notes_restoring_focus=(
+                lambda value: setattr(self, "_library_notes_restoring_focus", value)
+            ),
+            library_selected_row_id_accessor=(
+                lambda: self._library_selected_row_id
+            ),
+            set_library_selected_row_id=(
+                lambda value: setattr(self, "_library_selected_row_id", value)
+            ),
+            pending_library_source_open_accessor=(
+                lambda: self._pending_library_source_open
+            ),
+            set_pending_library_source_open=(
+                lambda value: setattr(self, "_pending_library_source_open", value)
+            ),
+            # -- the 3 prior-extracted notes WIRING coordinator instances.
+            library_note_import_controller_accessor=(
+                lambda: self._library_note_import_controller
+            ),
+            library_note_session_accessor=(
+                lambda: self._library_note_session
+            ),
+            library_notes_sync_controller_accessor=(
+                lambda: self._library_notes_sync_controller
+            ),
+            # -- screen-resident methods a moved body still calls: general
+            #    shell helpers and named late-binding callables for this
+            #    cluster's own exclusions.
+            acknowledge_library_destination_change=(
+                lambda *a, **k: self._acknowledge_library_destination_change(*a, **k)
+            ),
+            active_library_rail=(
+                lambda *a, **k: self._active_library_rail(*a, **k)
+            ),
+            advance_library_stage_interaction=(
+                lambda *a, **k: self._advance_library_stage_interaction(*a, **k)
+            ),
+            apply_library_emergency_geometry=(
+                lambda *a, **k: self._apply_library_emergency_geometry(*a, **k)
+            ),
+            apply_library_notes_stage_visibility=(
+                lambda *a, **k: self._apply_library_notes_stage_visibility(*a, **k)
+            ),
+            apply_library_notes_stage_visibility_for_resize=(
+                lambda *a, **k: self._apply_library_notes_stage_visibility_for_resize(*a, **k)
+            ),
+            arm_library_list_entry_focus=(
+                lambda *a, **k: self._arm_library_list_entry_focus(*a, **k)
+            ),
+            arm_library_note_editor=(
+                lambda *a, **k: self._arm_library_note_editor(*a, **k)
+            ),
+            begin_library_note_create=(
+                lambda *a, **k: self._begin_library_note_create(*a, **k)
+            ),
+            build_library_notes_state=(
+                lambda *a, **k: self._build_library_notes_state(*a, **k)
+            ),
+            build_library_notes_tree_projection=(
+                lambda *a, **k: self._build_library_notes_tree_projection(*a, **k)
+            ),
+            build_library_shell_input=(
+                lambda *a, **k: self._build_library_shell_input(*a, **k)
+            ),
+            capture_library_notes_browse_return_receipt=(
+                lambda *a, **k: self._capture_library_notes_browse_return_receipt(*a, **k)
+            ),
+            capture_library_notes_focus_identity=(
+                lambda *a, **k: self._capture_library_notes_focus_identity(*a, **k)
+            ),
+            compose_library_rail_top_action=(
+                lambda *a, **k: self._compose_library_rail_top_action(*a, **k)
+            ),
+            compose_workspaces_rail_body=(
+                lambda *a, **k: self._compose_workspaces_rail_body(*a, **k)
+            ),
+            create_library_note=(
+                lambda *a, **k: self._create_library_note(*a, **k)
+            ),
+            delete_library_note_claimed=(
+                lambda *a, **k: self._delete_library_note_claimed(*a, **k)
+            ),
+            discard_new_library_note=(
+                lambda *a, **k: self._discard_new_library_note(*a, **k)
+            ),
+            exit_library_note_editor_guarded=(
+                lambda *a, **k: self._exit_library_note_editor_guarded(*a, **k)
+            ),
+            file_notes_active=(
+                lambda *a, **k: self._file_notes_active(*a, **k)
+            ),
+            flush_library_note_save=(
+                lambda *a, **k: self._flush_library_note_save(*a, **k)
+            ),
+            focus_library_control=(
+                lambda *a, **k: self._focus_library_control(*a, **k)
+            ),
+            hide_library_adaptive_reader_rail_collapse=(
+                lambda *a, **k: self._hide_library_adaptive_reader_rail_collapse(*a, **k)
+            ),
+            invalidate_library_workspace_depth_state=(
+                lambda *a, **k: self._invalidate_library_workspace_depth_state(*a, **k)
+            ),
+            library_compose_scoped_ref=(
+                lambda *a, **k: self._library_compose_scoped_ref(*a, **k)
+            ),
+            library_entry_route_key=(
+                lambda *a, **k: self._library_entry_route_key(*a, **k)
+            ),
+            library_header_line=(
+                lambda *a, **k: self._library_header_line(*a, **k)
+            ),
+            library_layout_ref=(
+                lambda *a, **k: self._library_layout_ref(*a, **k)
+            ),
+            library_note_keywords_from_input=(
+                lambda *a, **k: self._library_note_keywords_from_input(*a, **k)
+            ),
+            library_note_template_fields=(
+                lambda *a, **k: self._library_note_template_fields(*a, **k)
+            ),
+            library_notes_compact_stage_applies=(
+                lambda *a, **k: self._library_notes_compact_stage_applies(*a, **k)
+            ),
+            library_notes_compact_workflow_active=(
+                lambda *a, **k: self._library_notes_compact_workflow_active(*a, **k)
+            ),
+            library_notes_focused_task_active=(
+                lambda *a, **k: self._library_notes_focused_task_active(*a, **k)
+            ),
+            library_notes_footer_shortcuts=(
+                lambda *a, **k: self._library_notes_footer_shortcuts(*a, **k)
+            ),
+            library_notes_restore_guard_is_current=(
+                lambda *a, **k: self._library_notes_restore_guard_is_current(*a, **k)
+            ),
+            library_notes_workflow_active=(
+                lambda *a, **k: self._library_notes_workflow_active(*a, **k)
+            ),
+            library_rail_preferences=(
+                lambda *a, **k: self._library_rail_preferences(*a, **k)
+            ),
+            library_rail_search_placeholder=(
+                lambda *a, **k: self._library_rail_search_placeholder(*a, **k)
+            ),
+            library_workspace_depth_state=(
+                lambda *a, **k: self._library_workspace_depth_state(*a, **k)
+            ),
+            locate_library_notes_tree_target=(
+                lambda *a, **k: self._locate_library_notes_tree_target(*a, **k)
+            ),
+            open_library_export_canvas=(
+                lambda *a, **k: self._open_library_export_canvas(*a, **k)
+            ),
+            patch_library_note_list_from_session=(
+                lambda *a, **k: self._patch_library_note_list_from_session(*a, **k)
+            ),
+            project_library_media_stage_classes=(
+                lambda *a, **k: self._project_library_media_stage_classes(*a, **k)
+            ),
+            push_library_note_import_picker=(
+                lambda *a, **k: self._push_library_note_import_picker(*a, **k)
+            ),
+            refresh_library_note_detail=(
+                lambda *a, **k: self._refresh_library_note_detail(*a, **k)
+            ),
+            refresh_local_source_snapshot=(
+                lambda *a, **k: self._refresh_local_source_snapshot(*a, **k)
+            ),
+            register_footer_shortcuts=(
+                lambda *a, **k: self._register_footer_shortcuts(*a, **k)
+            ),
+            replace_library_canvas_child=(
+                lambda *a, **k: self._replace_library_canvas_child(*a, **k)
+            ),
+            request_library_notes_tree_initial_load=(
+                lambda *a, **k: self._request_library_notes_tree_initial_load(*a, **k)
+            ),
+            request_library_notes_tree_slice=(
+                lambda *a, **k: self._request_library_notes_tree_slice(*a, **k)
+            ),
+            return_to_library_database_notes=(
+                lambda *a, **k: self._return_to_library_database_notes(*a, **k)
+            ),
+            run_library_note_import_execution=(
+                lambda *a, **k: self._run_library_note_import_execution(*a, **k)
+            ),
+            run_library_service_call=(
+                lambda *a, **k: self._run_library_service_call(*a, **k)
+            ),
+            save_library_note=(
+                lambda *a, **k: self._save_library_note(*a, **k)
+            ),
+            schedule_library_note_autosave=(
+                lambda *a, **k: self._schedule_library_note_autosave(*a, **k)
+            ),
+            select_library_rail_row=(
+                lambda *a, **k: self._select_library_rail_row(*a, **k)
+            ),
+            set_library_destination_with_conversation_fence=(
+                lambda *a, **k: self._set_library_destination_with_conversation_fence(*a, **k)
+            ),
+            source_record_id=(
+                lambda *a, **k: self._source_record_id(*a, **k)
+            ),
+            supersede_library_notes_navigation=(
+                lambda *a, **k: self._supersede_library_notes_navigation(*a, **k)
+            ),
+            sync_library_ingest_rail_for_width=(
+                lambda *a, **k: self._sync_library_ingest_rail_for_width(*a, **k)
+            ),
+            sync_library_notes_reader_layout_from_shell=(
+                lambda *a, **k: self._sync_library_notes_reader_layout_from_shell(*a, **k)
+            ),
+            sync_library_ordinary_rail_width_contract=(
+                lambda *a, **k: self._sync_library_ordinary_rail_width_contract(*a, **k)
+            ),
+            transition_library_notes_presentation=(
+                lambda *a, **k: self._transition_library_notes_presentation(*a, **k)
+            ),
+            write_library_note_export_file=(
+                lambda *a, **k: self._write_library_note_export_file(*a, **k)
+            ),
+        )
         (
             self._library_reader_shared_preferences,
             self._media_state.reader_preferences,
             self._collections_state.reader_preferences,
             self._conversations_state.reader_preferences,
-            self._library_notes_reader_preferences,
-            self._library_file_notes_reader_preferences,
+            self._notes_state.reader_preferences,
+            self._notes_state.file_notes_reader_preferences,
             self._prompts_state.reader_preferences,
             self._skills_state.reader_preferences,
         ) = self._load_library_reader_preference_snapshot()
@@ -3084,17 +3375,17 @@ class LibraryScreen(BaseAppScreen):
             self._collections_state.reader_preferences,
             LIBRARY_COLLECTIONS_READER_PROFILE,
         )
-        self._library_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
+        self._notes_state.reader_layout: AdaptiveReaderEffectiveLayout = (
             resolve_adaptive_reader_layout(
                 0,
-                self._library_notes_reader_preferences,
+                self._notes_state.reader_preferences,
                 LIBRARY_NOTES_READER_PROFILE,
             )
         )
-        self._library_file_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
+        self._notes_state.file_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
             resolve_adaptive_reader_layout(
                 0,
-                self._library_file_notes_reader_preferences,
+                self._notes_state.file_notes_reader_preferences,
                 LIBRARY_FILE_NOTES_READER_PROFILE,
             )
         )
@@ -3138,8 +3429,8 @@ class LibraryScreen(BaseAppScreen):
             "library": self._conversations_state.reader_preferences.library_open,
             "collections_items": self._collections_state.reader_preferences.items_open,
             "conversations_items": self._conversations_state.reader_preferences.items_open,
-            "notes_items": self._library_notes_reader_preferences.items_open,
-            "notes_file_items": self._library_file_notes_reader_preferences.items_open,
+            "notes_items": self._notes_state.reader_preferences.items_open,
+            "notes_file_items": self._notes_state.file_notes_reader_preferences.items_open,
             "prompts_items": self._prompts_state.reader_preferences.items_open,
             "skills_items": self._skills_state.reader_preferences.items_open,
         }
@@ -3151,11 +3442,11 @@ class LibraryScreen(BaseAppScreen):
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
-        self._library_notes_reader_persistence_locks = {
+        self._notes_state.reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
-        self._library_file_notes_reader_persistence_locks = {
+        self._notes_state.file_notes_reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
@@ -3216,51 +3507,6 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.reader_layout: MediaReaderEffectiveLayout = (
             resolve_media_reader_layout(0, self._media_state.reader_preferences)
         )
-        self._library_notes_view: str = "list"
-        self._library_notes_lasting_origin: str | None = None
-        self._library_notes_select_mode: bool = False
-        self._library_notes_row_selection = RowSelection("notes")
-        self._library_notes_sort: str = "newest"
-        self._library_notes_sort_choices_visible: bool = False
-        self._library_notes_filter: str = ""
-        self._library_notes_filter_records: list | None = None
-        self._library_notes_filter_generation: int = 0
-        self._library_notes_tree_filter_state: LibraryNotesFilterState | None = None
-        self._library_notes_filter_navigation_generation: int | None = None
-        self._library_notes_navigation_status: str = ""
-        self._library_notes_notice: str = ""
-        self._library_notes_tree_expanded_ids: set[str] = set()
-        self._library_notes_tree_branches: dict[
-            NotesBranchKey, NotesBranchSliceState
-        ] = {}
-        self._library_notes_tree_topology_epoch: int = 0
-        self._library_notes_tree_lifecycle_generation: int = 0
-        self._library_notes_tree_request_generations: dict[NotesBranchKey, int] = {}
-        self._library_notes_tree_navigation_requests: dict[NotesBranchKey, int] = {}
-        self._library_notes_tree_target_offsets: dict[NotesBranchKey, int] = {}
-        self._library_notes_tree_status_by_slice: dict[
-            NotesBranchKey, dict[str, tuple[int, str]]
-        ] = {}
-        self._library_notes_tree_status_revision: int = 0
-        self._library_notes_tree_protected_folder_ids: frozenset[str] = frozenset()
-        self._library_notes_tree_inactive_managed_folder_ids: frozenset[str] = (
-            frozenset()
-        )
-        self._library_notes_tree_selected_placement_id: str = ""
-        self._library_notes_tree_pending_target_placement_id: str = ""
-        self._library_notes_filter_browse_receipt: LibraryNotesTreeReceipt | None = None
-        self._library_notes_deleted_folder_receipt = None
-        self._library_note_create_counter: int = 0
-        self._library_note_create_token: str | None = None
-        self._library_note_create_running: bool = False
-        self._library_note_create_status: str = ""
-        # TASK-15100 / ADR-055: create, delete, and Undo all mutate the same
-        # cached Notes rows/count/receipt. One admission flag keeps those
-        # writes serialized instead of letting separate workers race.
-        self._library_notes_mutation_in_flight: bool = False
-        self._library_note_delete_receipt: LibraryNoteDeleteReceipt | None = None
-        self._library_notes_operation_counter: int = 0
-        self._library_notes_operation: LibraryNotesOperationState | None = None
         self._library_note_import_controller = LibraryNoteImportController(
             bounds=ImportBounds(
                 max_files=1_000,
@@ -3285,7 +3531,7 @@ class LibraryScreen(BaseAppScreen):
             publish_snapshot=self._publish_library_note_import_snapshot,
             refresh_after_settlement=self._refresh_after_library_note_import,
         )
-        self._library_note_import_snapshot: LibraryNoteImportSnapshot = (
+        self._notes_state.import_snapshot: LibraryNoteImportSnapshot = (
             self._library_note_import_controller.presentation_snapshot
         )
         # TASK-19010 is presentation-only. The app owns runtime lifecycle;
@@ -3297,7 +3543,7 @@ class LibraryScreen(BaseAppScreen):
             import_controller=self._library_note_import_controller,
             publish_snapshot=self._publish_library_notes_lasting_sync_snapshot,
         )
-        self._library_notes_lasting_sync_snapshot = (
+        self._notes_state.lasting_sync_snapshot = (
             self._library_notes_sync_controller.snapshot
         )
         # Prompts list/detail/editor/delete-batch canvas state now lives in
@@ -3400,7 +3646,6 @@ class LibraryScreen(BaseAppScreen):
         # A Library screen may be replaced while the accepted mutation keeps
         # running, so screen construction must never reset that shared receipt.
         self._skills_state.reader_mode = coerce_skill_reader_mode(None)
-        self._selected_note_id: str = ""
         note_session_port = _LibraryDatabaseNoteSessionPort(
             run_service_call=self._run_library_service_call,
             notes_scope_service=getattr(app_instance, "notes_scope_service", None),
@@ -3412,20 +3657,6 @@ class LibraryScreen(BaseAppScreen):
             note_session_port,
             clock=lambda: datetime.now(timezone.utc),
         )
-        self._library_note_load_state: str = "idle"
-        self._library_note_load_message: str = ""
-        self._library_note_autosave_state: str = "idle"
-        self._library_notes_autosave_timer: Timer | None = None
-        self._library_note_autosave_generation: int = 0
-        self._library_note_confirming_delete: bool = False
-        self._library_note_preview: bool = False
-        self._library_note_context: bool = False
-        self._library_note_delete_origin_context: bool = False
-        self._library_note_delete_origin_preview: bool = False
-        # Task 7 owns measured breakpoint transitions. Task 5 consumes this
-        # explicit presentation input now so compact/wide utility grouping is
-        # testable without coupling the canvas to terminal geometry.
-        self._library_notes_compact: bool = False
         self._library_rail_collapsed: bool = False
         # Every field below is a static literal/no-argument factory call with
         # zero entanglement with another subsystem's shared init code (see
@@ -3433,7 +3664,6 @@ class LibraryScreen(BaseAppScreen):
         # analysis) -- constructed once here, at the position of the first
         # removed field, with no constructor arguments.
         self._ingest_state = LibraryIngestState()
-        self._library_notes_stage: Literal["rail", "notes"] = "rail"
         # TASK-23025: cheap-state gates for the per-frame resize/focus paths.
         # ``_library_layout_ref_cache`` holds positive widget references for
         # the invariant shell chrome (validated by the O(1) ``is_mounted``
@@ -3450,14 +3680,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_layout_ref_cache: dict[str, Widget] = {}
         self._library_compose_ref_cache: dict[str, Widget | None] = {}
         self._library_resize_applied_signature: tuple[Any, ...] | None = None
-        # TASK-23151: the resize legs' stage-visibility call runs ABOVE the
-        # compact-crossing early-out, because the emergency band (64 cells)
-        # is a different band from the compact breakpoint (120) and a 63<->64
-        # crossing must still re-apply geometry. This records the signature
-        # ``_apply_library_notes_stage_visibility`` last settled -- refreshed
-        # by that function on EVERY call, so no seam can leave it stale --
-        # and a resize frame matching it skips the leg entirely.
-        self._library_notes_stage_applied_signature: tuple[Any, ...] | None = None
         self._library_compose_generation = 0
         self._library_reader_shell_ref: Widget | None = None
         self._library_reader_shell_probe_generation = -1
@@ -3466,126 +3688,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_emergency_restore_receipt: (
             _LibraryEmergencyRestoreReceipt | None
         ) = None
-        self._library_notes_explicit_stage_intent = False
-        self._library_notes_pending_focus_identity: LibraryNotesFocusIdentity | None = (
-            None
-        )
-        self._library_notes_pending_focus_waits_for_snapshot = False
-        self._library_notes_navigation_generation = 0
-        self._library_notes_pending_focus_generation: int | None = None
-        self._library_notes_responsive_focus_memory: (
-            LibraryNotesFocusIdentity | None
-        ) = None
-        self._library_notes_last_presented_focus: LibraryNotesFocusIdentity | None = (
-            None
-        )
-        self._library_notes_pre_resize_focus: LibraryNotesFocusIdentity | None = None
         self._library_landing_responsive_focus_id: str = ""
-        self._library_notes_interaction_focus: LibraryNotesFocusIdentity | None = None
-        self._library_notes_resize_epoch = 0
-        self._library_notes_resize_settling = False
         self._library_notes_restoring_focus = False
-        self._library_notes_scroll_intent_generation = 0
-        self._library_notes_transition_scroll_generation = 0
-        self._library_notes_focus_intent_generation = 0
-        self._library_notes_transition_focus_generation = 0
         self._library_notes_programmatic_focus_target: Widget | None = None
-        self._library_notes_authority_focus: dict[
-            Literal["database", "files"], Widget | None
-        ] = {"database": None, "files": None}
-        self._library_notes_last_user_scroll_focus: LibraryNotesFocusIdentity | None = (
-            None
-        )
-        self._library_notes_last_user_focus: LibraryNotesFocusIdentity | None = None
-        self._library_notes_browse_return_receipt: LibraryNotesTreeReceipt | None = None
-        self._library_notes_recompose_generation = 0
-        self._library_note_shortcut_status: str = ""
-        self._library_note_presentation_syncing: bool = False
-        # Guards against the spurious ``Input.Changed`` that Textual fires
-        # when an ``Input(value=...)`` widget mounts with a non-empty
-        # initial value: without this, opening a note (or leaving a
-        # conflict) would immediately mark the note dirty and arm an
-        # autosave even though the user never typed anything. Re-armed via
-        # ``call_after_refresh`` after every notes-editor (re)compose.
-        self._library_note_editor_armed: bool = False
-        # LIB-14: display-only flag for a note created via "Blank note"
-        # that has not been touched YET -- cleared on the FIRST real edit
-        # (``_mark_library_note_dirty``) or an explicit Save. Drives ONLY
-        # the title Input's placeholder-vs-value rendering (see
-        # ``LibraryNotesCanvas``'s ``title_placeholder_only``): while this
-        # is set for the open note, the title Input shows empty with an
-        # "Untitled" placeholder instead of a literal editable "Untitled"
-        # value -- the fix for typing landing at the cursor's end and
-        # producing e.g. "UntitledAtlas follow-ups". Deliberately NOT used
-        # to decide GC-vs-save at exit (see ``_library_note_session_blank_id``
-        # below) -- clearing on the first keystroke is correct for "stop
-        # showing the placeholder" but wrong for "should this be GC'd",
-        # since a user can type then delete everything back to empty
-        # (review round 1, task-2858 T3): that sequence must still GC, so
-        # the GC decision needs a flag that survives edits.
-        self._library_note_pending_blank_gc_id: str | None = None
-        # LIB-14 (review round 1 fix): the id of a note created via "Blank
-        # note" THIS SESSION, tracked for the whole session regardless of
-        # intermediate edits -- unlike ``_library_note_pending_blank_gc_id``
-        # above, ``_mark_library_note_dirty`` never clears this. Read by
-        # ``_flush_library_note_save`` to decide GC-vs-save at exit: when
-        # the note being flushed IS this session's blank AND its FINAL live
-        # state (title/body/keywords, read fresh, never the stale detail)
-        # is empty, the row is GC'd even if it was typed into and emptied
-        # out again mid-session (dirty=True) -- covering "type then delete
-        # everything" the same as "never touched", which the narrower
-        # dirty-gated check above could not. A PRE-EXISTING note the user
-        # empties out is never a session blank (this is only ever set by
-        # the "Blank note" create path), so it still saves via the normal
-        # branch -- the scope guard is structural, not a runtime check.
-        # Cleared by: an explicit Save (the user's own "keep it" act,
-        # regardless of emptiness -- mirrors ``_library_note_pending_blank_
-        # gc_id``'s existing Save-press exemption), or a full editor
-        # reset/note switch (``_reset_library_note_editor_state``, the
-        # note-row-selection and note_id-deep-link switch sites).
-        # Deliberately NOT cleared by autosave persisting non-empty content
-        # mid-session: an autosave is not a deliberate "keep this" signal
-        # the way an explicit Save press is, so a session blank that got
-        # autosaved with real text and was then emptied out again before
-        # exit must still GC -- the row is session-created and finally
-        # empty, which is exactly the row AC#5 forbids, regardless of what
-        # happened to it in between.
-        self._library_note_session_blank_id: str | None = None
-        # (P0, xhigh review + live-verify round) Whether the user has
-        # TOUCHED the title widget during this editor session. The
-        # untouched-blank GC used to key blankness on
-        # ``raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE`` -- a pure string
-        # comparison -- so a note the user deliberately titled "Untitled"
-        # (body still empty) was destroyed on navigate-away with no
-        # prompt and no undo. A string can never distinguish the seed the
-        # create seam wrote from the identical string a human typed; only
-        # provenance can, so the GC reads THIS instead. Set on the first
-        # title edit (``handle_library_note_title_changed``) and cleared
-        # only when a new editor session begins (create / row switch /
-        # deep link / full editor reset) -- deliberately NOT cleared by a
-        # save, so the distinction survives a save round-trip.
-        self._library_note_title_user_edited: bool = False
-        # Notes sync panel state. Seeded from config lazily on first entry
-        # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
-        # here in __init__, so tests/screens that never open the sync panel
-        # never pay for a config read.
-        self._library_notes_sync_config_loaded: bool = False
-        self._library_notes_sync_direction: str = "bidirectional"
-        self._library_notes_sync_conflict: str = "newer_wins"
-        self._library_notes_sync_auto: bool = False
-        self._library_notes_sync_status: str = "idle"
-        self._library_notes_sync_activity: tuple[str, ...] = ()
-        self._library_notes_sync_counter: int = 0
-        self._library_notes_sync_active_token: int | None = None
-        self._library_notes_sync_running: bool = False
-        self._library_notes_auto_sync_timer: Timer | None = None
-        # The folder box's live (possibly uncommitted) text. Typing updates
-        # only this field -- persisting to the TOML config on every
-        # Input.Changed meant a full config rewrite + cache reload per
-        # keystroke. It commits to config on Enter, Browse…, or a validated
-        # Sync now run. None = not edited this panel visit; fall back to the
-        # persisted config value.
-        self._library_notes_sync_folder_text: str | None = None
         self._transcribe_cpp_configured = False
         # One provisional external-root scope exists only while its captured
         # submission is being verified or awaiting VAD consent.
@@ -3849,7 +3954,7 @@ class LibraryScreen(BaseAppScreen):
                 shortcuts.append(("esc", escape_label))
             return tuple(shortcuts)
         if self._file_notes_active():
-            workspace = self._library_file_notes_workspace
+            workspace = self._notes_state.file_notes_workspace
             if workspace is not None and workspace.reload_confirmation_active:
                 return self.LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS
             return self.LIBRARY_NOTES_FILES_SHORTCUTS
@@ -4158,285 +4263,41 @@ class LibraryScreen(BaseAppScreen):
     @property
     def _library_note_preview_snapshot(self) -> LibraryNoteEditorState | None:
         """Return the canonical draft presentation while preview is active."""
-        if not self._library_note_preview:
+        if not self._notes_state.preview:
             return None
         return self._library_note_editor_state()
 
     def _library_note_editor_state(self) -> LibraryNoteEditorState | None:
-        """Project the one canonical session snapshot into incumbent canvas state."""
-        snapshot = self._library_note_session.snapshot
-        if snapshot is None:
-            return None
-        baseline_state = build_library_note_editor_state(
-            {
-                "id": snapshot.note_id,
-                "title": snapshot.baseline.title,
-                "content": snapshot.baseline.body,
-                "keywords": snapshot.baseline.keywords,
-                "version": snapshot.version,
-                "created_at": snapshot.baseline.created_at,
-                "last_modified": snapshot.baseline.modified_at,
-            }
-        )
-        if snapshot.in_conflict:
-            status = notes_autosave_status_text(
-                "conflict", word_count=self._note_word_count(snapshot.body)
-            )
-            if snapshot.status_message != "Conflict — review the choices below.":
-                status = f"{status} · {snapshot.status_message}"
-        else:
-            status = snapshot.status_message
-        meta_line = baseline_state.meta_line
-        if status:
-            meta_line = f"{meta_line} · {status}" if meta_line else status
-        return LibraryNoteEditorState(
-            note_id=snapshot.note_id,
-            title=snapshot.title,
-            content=snapshot.body,
-            keywords_text=snapshot.keywords_text,
-            version=snapshot.version,
-            meta_line=meta_line,
-            has_note=True,
-        )
-
-    def _library_note_status_line(self) -> str:
-        """Return the persistent, text-labeled save state for both regions."""
-        snapshot = self._library_note_session.snapshot
-        if snapshot is None:
-            return "No note open"
-        if self._library_note_shortcut_status:
-            return self._library_note_shortcut_status
-        if self._library_note_autosave_state == "saving" or snapshot.saving:
-            return "Saving…"
-        if snapshot.in_conflict:
-            return snapshot.status_message or "Conflict — review the choices below."
-        if snapshot.status_message:
-            return snapshot.status_message
-        return "Unsaved changes" if snapshot.dirty else "Saved"
+        return self._notes_controller._library_note_editor_state()
 
     def _library_note_presentation_state(self) -> LibraryNotePresentationState:
-        """Project the canonical session into presentation-only canvas state."""
-        snapshot = self._library_note_session.snapshot
-        if snapshot is None:
-            raise RuntimeError("A note presentation requires an active session.")
-        base_meta = self._library_note_meta_base_line()
-        word_count = self._note_word_count(snapshot.body)
-        word_copy = f"{word_count} words" if word_count != 1 else "1 word"
-        status_line = self._library_note_status_line()
-        metadata_line = " · ".join(part for part in (base_meta, word_copy) if part)
-        operation = self._library_notes_operation_for_active_region()
-        status_channels = resolve_database_note_status_channels(
-            conflict=snapshot.in_conflict,
-            read_only=self._library_notes_select_mode,
-            save_failed=self._library_note_autosave_state in {"error", "validation"},
-            saving=snapshot.saving or self._library_note_autosave_state == "saving",
-            dirty=snapshot.dirty,
-        )
-        if self._library_note_shortcut_status:
-            status_channels = dataclasses.replace(
-                status_channels,
-                content_recovery=status_line,
-                safe_next_action=None,
-            )
-        elif snapshot.in_conflict or self._library_note_autosave_state in {
-            "error",
-            "validation",
-        }:
-            status_channels = dataclasses.replace(
-                status_channels,
-                content_recovery=status_line,
-            )
-        return LibraryNotePresentationState(
-            snapshot=snapshot,
-            metadata_line=metadata_line,
-            status_line=status_line,
-            region="context" if self._library_note_context else "editor",
-            presentation="preview" if self._library_note_preview else "edit",
-            compact=self._library_notes_compact,
-            validation=self._library_note_autosave_state == "validation",
-            conflict=snapshot.in_conflict,
-            conflict_running=self._library_note_session.conflict_resolution_running,
-            confirming_delete=self._library_note_confirming_delete,
-            destructive_running=self._library_note_session.destructive_running,
-            discard_new_note=(
-                self._library_note_session.untouched_create_token is not None
-            ),
-            transfer_status=operation.status_line if operation is not None else "",
-            transfer_running=bool(operation and operation.running),
-            bulk_read_only=self._library_notes_select_mode,
-            bulk_included=self._library_notes_row_selection.is_selected(
-                snapshot.note_id
-            ),
-            status_channels=status_channels,
-        )
+        return self._notes_controller._library_note_presentation_state()
 
-    def _library_notes_active_region(
-        self,
-    ) -> Literal["navigator", "editor", "context", ""]:
-        """Return the currently visible Notes operation-status region."""
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_notes_view == "editor"
-        ):
-            return "context" if self._library_note_context else "editor"
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_notes_view == "list"
-        ):
-            return "navigator"
-        return ""
+    def _library_notes_active_region(self) -> Literal['navigator', 'editor', 'context', '']:
+        return self._notes_controller._library_notes_active_region()
 
-    def _library_notes_operation_for_active_region(
-        self,
-    ) -> LibraryNotesOperationState | None:
-        operation = self._library_notes_operation
-        if operation is None or operation.region != self._library_notes_active_region():
-            return None
-        return operation
+    def _library_notes_operation_for_active_region(self) -> LibraryNotesOperationState | None:
+        return self._notes_controller._library_notes_operation_for_active_region()
 
     def _library_note_import_execution_active(self) -> bool:
-        """Return whether reviewed import currently owns Notes mutations."""
-        controller = getattr(self, "_library_note_import_controller", None)
-        snapshot = getattr(controller, "snapshot", None)
-        return getattr(snapshot, "phase", None) is NoteImportPhase.IMPORTING
+        return self._notes_controller._library_note_import_execution_active()
 
     def _library_notes_mutation_fenced(self) -> bool:
-        """Keep Database Notes single-writer while reviewed import executes."""
-        return bool(
-            getattr(self, "_library_notes_mutation_in_flight", False)
-            or self._library_note_import_execution_active()
-        )
+        return self._notes_controller._library_notes_mutation_fenced()
 
-    def _library_notes_operation_is_current_and_active(
-        self, operation: LibraryNotesOperationState
-    ) -> bool:
-        """Return whether a running token still owns the visible region."""
-        current = self._library_notes_operation
-        return bool(
-            current is not None
-            and current.running
-            and current.token == operation.token
-            and current.kind == operation.kind
-            and current.region == self._library_notes_active_region()
-        )
+    def _begin_library_notes_operation(self, kind: Literal['import', 'export', 'copy', 'console']) -> LibraryNotesOperationState | None:
+        return self._notes_controller._begin_library_notes_operation(kind)
 
-    def _apply_library_notes_operation_state(self) -> None:
-        """Synchronize the one active Notes operation status surface."""
-        if not self.is_mounted:
-            return
-        if self._library_notes_active_region() == "navigator":
-            _sync_library_canvas(self, "notes")
-            return
-        if self._library_notes_active_region() in {"editor", "context"}:
-            try:
-                canvas = self.query_one("#library-note-work-pane", LibraryNoteWorkPane)
-            except (NoMatches, QueryError):
-                return
-            if canvas.mode != "editor":
-                self.call_after_refresh(self._apply_library_notes_operation_state)
-                return
-            self._apply_library_note_presentation_state()
-
-    def _begin_library_notes_operation(
-        self, kind: Literal["import", "export", "copy", "console"]
-    ) -> LibraryNotesOperationState | None:
-        """Claim one typed transfer token before invoking an external seam."""
-        if self._library_notes_mutation_fenced():
-            return None
-        current = self._library_notes_operation
-        if current is not None and current.running:
-            return None
-        region = self._library_notes_active_region()
-        if region not in {"navigator", "editor", "context"}:
-            return None
-        if kind not in {"import", "export", "copy", "console"}:
-            return None
-        self._library_notes_notice = ""
-        self._library_notes_operation_counter += 1
-        operation = LibraryNotesOperationState(
-            kind=kind,
-            token=self._library_notes_operation_counter,
-            phase="running",
-            region=region,
-        )
-        self._library_notes_operation = operation
-        self._apply_library_notes_operation_state()
-        return operation
-
-    def _move_library_notes_operation(
-        self,
-        token: int,
-        region: Literal["navigator", "editor", "context"],
-    ) -> bool:
-        """Move a current operation to the region its success opened."""
-        operation = self._library_notes_operation
-        if (
-            operation is None
-            or operation.token != token
-            or region not in {"navigator", "editor", "context"}
-        ):
-            return False
-        self._library_notes_operation = dataclasses.replace(operation, region=region)
-        return True
-
-    def _finish_library_notes_operation(
-        self,
-        operation: LibraryNotesOperationState,
-        *,
-        success: bool,
-        completion_next_action: str = "",
-        failure_next_action: str = "try again",
-    ) -> bool:
-        """Terminalize the current token and render only in its active region."""
-        current = self._library_notes_operation
-        active_region = self._library_notes_active_region()
-        if (
-            current is None
-            or current.token != operation.token
-            or current.kind != operation.kind
-        ):
-            return False
-        terminal = dataclasses.replace(
-            current,
-            phase="complete" if success else "failed",
-            completion_next_action=completion_next_action,
-            failure_next_action=failure_next_action,
-        )
-        if current.region != active_region:
-            # The side effect belongs to the matching token, but its former
-            # status surface is no longer visible. Release the global claim
-            # without leaking completion copy into the user's new region.
-            self._library_notes_operation = None
-            return False
-        self._library_notes_operation = terminal
-        self._apply_library_notes_operation_state()
-        return True
+    def _finish_library_notes_operation(self, operation: LibraryNotesOperationState, *, success: bool, completion_next_action: str='', failure_next_action: str='try again') -> bool:
+        return self._notes_controller._finish_library_notes_operation(operation, success=success, completion_next_action=completion_next_action, failure_next_action=failure_next_action)
 
     def _apply_library_note_presentation_state(self) -> None:
-        """Synchronize the mounted canvas without changing its composition."""
-        if not self.is_mounted or self._library_note_session.snapshot is None:
-            return
-        try:
-            canvas = self.query_one("#library-note-work-pane", LibraryNoteWorkPane)
-        except (NoMatches, QueryError):
-            return
-        canvas.title_placeholder_only = bool(
-            self._library_note_pending_blank_gc_id
-            and self._library_note_pending_blank_gc_id == self._selected_note_id
-        )
-        self._library_note_presentation_syncing = True
-        try:
-            canvas.apply_session_state(self._library_note_presentation_state())
-        finally:
-            self._library_note_presentation_syncing = False
-
-        self._apply_library_notes_stage_visibility()
-        self._apply_library_notes_footer_context()
+        return self._notes_controller._apply_library_note_presentation_state()
 
     def _library_notes_workflow_active(self) -> bool:
         """Return whether the current Library route is owned by Database Notes."""
         return (
-            self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
             and self._library_selected_row_id
             in {
                 LIBRARY_ROW_BROWSE_NOTES,
@@ -4453,48 +4314,21 @@ class LibraryScreen(BaseAppScreen):
         return self._file_notes_active() or (
             self._library_notes_workflow_active()
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_notes_view == "editor"
+            and self._notes_state.view == "editor"
         )
 
-    def _library_notes_focus_region(
-        self,
-    ) -> Literal[
-        "",
-        "navigator",
-        "editor",
-        "preview",
-        "context",
-        "create",
-        "lasting_add",
-        "lasting_roots",
-        "import",
-    ]:
-        """Return the semantic Notes region currently presented by the host."""
-        if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
-            return "create"
-        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_NOTES:
-            return ""
-        if self._library_notes_view in {"lasting_add", "lasting_roots"}:
-            return self._library_notes_view
-        if self._library_notes_view == "import":
-            return "import"
-        if self._library_notes_view == "list":
-            return "navigator"
-        if self._library_note_context:
-            return "context"
-        if self._library_note_preview:
-            return "preview"
-        return "editor"
+    def _library_notes_focus_region(self) -> Literal['', 'navigator', 'editor', 'preview', 'context', 'create', 'lasting_add', 'lasting_roots', 'import']:
+        return self._notes_controller._library_notes_focus_region()
 
     @staticmethod
     def _library_notes_widget_is_within(widget: Widget, ancestor: Widget) -> bool:
-        """Return whether ``widget`` belongs to ``ancestor``'s live subtree."""
-        return ancestor in widget.ancestors_with_self
+        from ..Library_Modules.library_notes_controller import LibraryNotesController
+        return LibraryNotesController._library_notes_widget_is_within(widget, ancestor)
 
     def _active_library_rail(self) -> LibraryRail | None:
         """Return the rail owned by the currently visible Library authority."""
         if self._file_notes_active():
-            workspace = self._library_file_notes_workspace
+            workspace = self._notes_state.file_notes_workspace
             shell = workspace._reader_shell if workspace is not None else None
             rail = shell.library if shell is not None else None
             if isinstance(rail, LibraryRail) and rail.is_attached:
@@ -4504,103 +4338,17 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return None
 
-    def _library_notes_authority_root(
-        self, authority: Literal["database", "files"]
-    ) -> Widget | None:
-        """Resolve one retained Notes authority's mounted subtree."""
-        if authority == "files":
-            workspace = self._library_file_notes_workspace
-            return (
-                workspace if workspace is not None and workspace.is_attached else None
-            )
-        try:
-            return self.query_one(
-                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
-            )
-        except (NoMatches, QueryError):
-            return None
-
     def _remember_library_notes_authority_focus(self, focused: Widget | None) -> None:
-        """Remember a reachable descendant without treating source chrome as work."""
-        if focused is None or focused.id in {
-            "library-notes-source-database",
-            "library-notes-source-files",
-            "library-notes-task-return",
-        }:
-            return
-        for authority in ("database", "files"):
-            root = self._library_notes_authority_root(authority)
-            if root is not None and self._library_notes_widget_is_within(focused, root):
-                self._library_notes_authority_focus[authority] = focused
-                return
+        return self._notes_controller._remember_library_notes_authority_focus(focused)
 
-    def _evacuate_library_notes_authority_focus(
-        self, authority: Literal["database", "files"]
-    ) -> None:
-        """Capture the outgoing authority and clear focus before hiding it."""
-        focused = self.focused
-        root = self._library_notes_authority_root(authority)
-        if (
-            focused is not None
-            and root is not None
-            and self._library_notes_widget_is_within(focused, root)
-        ):
-            self._library_notes_authority_focus[authority] = focused
-        self.set_focus(None)
+    def _evacuate_library_notes_authority_focus(self, authority: Literal['database', 'files']) -> None:
+        return self._notes_controller._evacuate_library_notes_authority_focus(authority)
 
-    def _restore_library_notes_authority_focus(
-        self, authority: Literal["database", "files"]
-    ) -> bool:
-        """Restore the destination's reachable focus or its honest first target."""
-        target = self._library_notes_authority_focus[authority]
-        if target is not None and (
-            not target.is_attached
-            or not target.visible
-            or target not in self.focus_chain
-        ):
-            target = None
-        if target is None:
-            selector = (
-                "#file-notes-search"
-                if authority == "files"
-                else (
-                    "#library-note-body" if self._library_notes_view == "editor" else ""
-                )
-            )
-            if selector:
-                try:
-                    candidate = self.query_one(selector, Widget)
-                except (NoMatches, QueryError):
-                    candidate = None
-                if (
-                    candidate is not None
-                    and candidate.visible
-                    and candidate in self.focus_chain
-                ):
-                    target = candidate
-        if target is None:
-            return False
-        self.set_focus(target, scroll_visible=False)
-        return True
+    def _restore_library_notes_authority_focus(self, authority: Literal['database', 'files']) -> bool:
+        return self._notes_controller._restore_library_notes_authority_focus(authority)
 
-    def _library_notes_focus_stage(
-        self, focused: Widget | None
-    ) -> Literal["rail", "notes"]:
-        """Map a live focused widget to the portable Library stage."""
-        if focused is None:
-            return self._library_notes_stage
-        rail = self._active_library_rail()
-        if rail is not None and self._library_notes_widget_is_within(focused, rail):
-            return "rail"
-        canvas = self._library_layout_ref("#library-canvas")
-        if canvas is not None and self._library_notes_widget_is_within(focused, canvas):
-            return "notes"
-        work_pane = self._library_compose_scoped_ref("#library-note-work-pane")
-        if work_pane is not None and self._library_notes_widget_is_within(
-            focused, work_pane
-        ):
-            return "notes"
-        return self._library_notes_stage
+    def _library_notes_focus_stage(self, focused: Widget | None) -> Literal['rail', 'notes']:
+        return self._notes_controller._library_notes_focus_stage(focused)
 
     def _library_notes_semantic_role(self, focused: Widget | None) -> str:
         """Map one mounted control to its stable Notes semantic identity."""
@@ -4644,7 +4392,7 @@ class LibraryScreen(BaseAppScreen):
 
         widget_id = focused.id or ""
         if widget_id and self._file_notes_active():
-            workspace = self._library_file_notes_workspace
+            workspace = self._notes_state.file_notes_workspace
             if workspace is not None and self._library_notes_widget_is_within(
                 focused,
                 workspace,
@@ -4741,24 +4489,7 @@ class LibraryScreen(BaseAppScreen):
         }.get(source_type, "")
 
     def _library_notes_scroll_owner(self, region: str) -> Widget | None:
-        """Resolve the one named scroll/content owner for a Notes region."""
-        selector = {
-            "rail": "#library-rail",
-            "navigator": "#library-notes-list",
-            "editor": "#library-note-body",
-            "preview": "#library-note-preview-region",
-            "context": "#library-note-context-region",
-            "create": "#library-notes-create-viewport",
-            "lasting_add": "#notes-sync-body",
-            "lasting_roots": "#notes-sync-roots-body",
-            "import": "#library-note-import-canvas",
-        }.get(region)
-        if selector is None:
-            return None
-        # TASK-23025: positive ref cache -- a mounted owner is one attribute
-        # read; absence still costs one walk, so callers should not probe
-        # regions their route cannot mount (see the observer installer).
-        return self._library_layout_ref(selector)
+        return self._notes_controller._library_notes_scroll_owner(region)
 
     def _capture_library_notes_focus_identity(
         self, *, stage_from_focus: bool = True
@@ -4769,7 +4500,7 @@ class LibraryScreen(BaseAppScreen):
         stage = (
             self._library_notes_focus_stage(focused)
             if stage_from_focus
-            else self._library_notes_stage
+            else self._notes_state.stage
         )
         role = self._library_notes_semantic_role(focused)
         snapshot = self._library_note_session.snapshot
@@ -4809,26 +4540,8 @@ class LibraryScreen(BaseAppScreen):
             scroll_offset=scroll_offset,
         )
 
-    def _capture_library_notes_recompose_state(
-        self,
-    ) -> _LibraryNotesRecomposeCapture | None:
-        """Capture coordinator identity and transient presentation, never draft text."""
-        if not self.is_mounted or not self._library_notes_workflow_active():
-            return None
-        snapshot = self._library_note_session.snapshot
-        return _LibraryNotesRecomposeCapture(
-            focus=self._capture_library_notes_focus_identity(stage_from_focus=True),
-            recompose_generation=self._library_notes_recompose_generation,
-            scroll_generation=self._library_notes_scroll_intent_generation,
-            focus_generation=self._library_notes_focus_intent_generation,
-            session_generation=(
-                snapshot.session_generation if snapshot is not None else None
-            ),
-            draft_revision=(snapshot.draft_revision if snapshot is not None else None),
-            preview=self._library_note_preview,
-            context=self._library_note_context,
-            confirming_delete=self._library_note_confirming_delete,
-        )
+    def _capture_library_notes_recompose_state(self) -> _LibraryNotesRecomposeCapture | None:
+        return self._notes_controller._capture_library_notes_recompose_state()
 
     def _capture_library_notes_browse_return_receipt(
         self,
@@ -4840,9 +4553,9 @@ class LibraryScreen(BaseAppScreen):
         focus = self._capture_library_notes_focus_identity(stage_from_focus=False)
         if focus.region != "navigator" or not focus.semantic_role:
             for cached in (
-                self._library_notes_last_user_focus,
-                self._library_notes_interaction_focus,
-                self._library_notes_last_presented_focus,
+                self._notes_state.last_user_focus,
+                self._notes_state.interaction_focus,
+                self._notes_state.last_presented_focus,
             ):
                 if cached is not None and cached.region == "navigator":
                     focus = cached
@@ -4877,7 +4590,7 @@ class LibraryScreen(BaseAppScreen):
                 state.start_offset + len(state.items),
             )
             for key, state in sorted(
-                self._library_notes_tree_branches.items(),
+                self._notes_state.tree_branches.items(),
                 key=lambda item: (
                     item[0].parent_id is not None,
                     item[0].parent_id or "",
@@ -4886,9 +4599,9 @@ class LibraryScreen(BaseAppScreen):
             )
             if state.freshness == "fresh" and not state.loading and not state.error
         )
-        filter_state = self._library_notes_tree_filter_state
+        filter_state = self._notes_state.tree_filter_state
         selected_placement_id = (
-            placement_id or self._library_notes_tree_selected_placement_id
+            placement_id or self._notes_state.tree_selected_placement_id
         )
         projection = self._build_library_notes_tree_projection()
         selected_row = (
@@ -4899,13 +4612,13 @@ class LibraryScreen(BaseAppScreen):
         return LibraryNotesTreeReceipt(
             selected_placement_id=selected_placement_id,
             selected_note_id=resolved_note_id,
-            expanded_folder_ids=tuple(sorted(self._library_notes_tree_expanded_ids)),
+            expanded_folder_ids=tuple(sorted(self._notes_state.tree_expanded_ids)),
             branch_ranges=branch_ranges,
-            filter_query=self._library_notes_filter,
+            filter_query=self._notes_state.filter,
             filter_range=(
                 filter_state.range_descriptor
                 if filter_state is not None
-                and filter_state.query == self._library_notes_filter
+                and filter_state.query == self._notes_state.filter
                 and not filter_state.loading
                 and not filter_state.error
                 else None
@@ -4914,8 +4627,8 @@ class LibraryScreen(BaseAppScreen):
             focus_role=focus_role,
             scroll_offset=scroll_offset,
             rail_scroll_offset=rail_scroll_offset,
-            lifecycle_generation=self._library_notes_tree_lifecycle_generation,
-            topology_epoch=self._library_notes_tree_topology_epoch,
+            lifecycle_generation=self._notes_state.tree_lifecycle_generation,
+            topology_epoch=self._notes_state.tree_topology_epoch,
             preferred_folder_id=(
                 selected_row.folder_id
                 if selected_row is not None and selected_row.membership_id
@@ -4934,8 +4647,8 @@ class LibraryScreen(BaseAppScreen):
         """Restore live semantic state or reload the receipt's exact ranges."""
         if (
             receipt.lifecycle_generation
-            != self._library_notes_tree_lifecycle_generation
-            or receipt.topology_epoch != self._library_notes_tree_topology_epoch
+            != self._notes_state.tree_lifecycle_generation
+            or receipt.topology_epoch != self._notes_state.tree_topology_epoch
         ):
             self.run_worker(
                 self._reload_library_notes_browse_return_receipt(receipt, guard),
@@ -4943,8 +4656,8 @@ class LibraryScreen(BaseAppScreen):
                 group="library_notes_tree:return",
             )
             return
-        self._library_notes_tree_expanded_ids = set(receipt.expanded_folder_ids)
-        self._library_notes_tree_selected_placement_id = receipt.selected_placement_id
+        self._notes_state.tree_expanded_ids = set(receipt.expanded_folder_ids)
+        self._notes_state.tree_selected_placement_id = receipt.selected_placement_id
         semantic_role = receipt.focus_role
         if receipt.focus_semantic_id:
             semantic_role = f"{semantic_role}:{receipt.focus_semantic_id}"
@@ -4983,7 +4696,7 @@ class LibraryScreen(BaseAppScreen):
 
         def current() -> bool:
             return bool(
-                generation == self._library_notes_navigation_generation
+                generation == self._notes_state.navigation_generation
                 and LibraryScreen._library_notes_restore_guard_is_current(self, guard)
             )
 
@@ -4999,13 +4712,13 @@ class LibraryScreen(BaseAppScreen):
                 navigation_generation=generation,
             )
             while current():
-                state = self._library_notes_tree_branches.get(key)
+                state = self._notes_state.tree_branches.get(key)
                 if (
                     state is None
                     or state.loading
                     or state.error
                     or state.freshness != "fresh"
-                    or state.topology_epoch != self._library_notes_tree_topology_epoch
+                    or state.topology_epoch != self._notes_state.tree_topology_epoch
                 ):
                     break
                 authoritative_end = (
@@ -5032,14 +4745,14 @@ class LibraryScreen(BaseAppScreen):
                 navigation_generation=generation,
             )
             while current():
-                state = self._library_notes_tree_filter_state
+                state = self._notes_state.tree_filter_state
                 if (
                     state is None
                     or state.query != receipt.filter_query
                     or state.loading
                     or state.error
                     or state.stale
-                    or state.topology_epoch != self._library_notes_tree_topology_epoch
+                    or state.topology_epoch != self._notes_state.tree_topology_epoch
                 ):
                     break
                 authoritative_end = (
@@ -5059,9 +4772,9 @@ class LibraryScreen(BaseAppScreen):
                 )
         if not current():
             return
-        self._library_notes_tree_expanded_ids = set(receipt.expanded_folder_ids)
+        self._notes_state.tree_expanded_ids = set(receipt.expanded_folder_ids)
         if receipt.filter_query and receipt.filter_range is not None:
-            self._library_notes_filter = receipt.filter_query
+            self._notes_state.filter = receipt.filter_query
         if receipt.selected_note_id:
             await LibraryScreen._locate_library_notes_tree_target(
                 self,
@@ -5099,325 +4812,16 @@ class LibraryScreen(BaseAppScreen):
             )
 
     def _commit_library_note_widgets_before_recompose(self) -> None:
-        """Move queued editor values into the canonical coordinator before teardown."""
-        if (
-            not self.is_mounted
-            or not self._library_note_editor_armed
-            or self._library_note_presentation_syncing
-            or self._library_notes_focus_region()
-            not in {"editor", "preview", "context"}
-            or self._library_note_session.snapshot is None
-        ):
-            return
-        try:
-            title = self.query_one("#library-note-title", Input).value
-            body = self.query_one("#library-note-body", TextArea).text
-            keywords_selector = (
-                "#library-note-context-keywords"
-                if self._library_note_context
-                else "#library-note-keywords"
-            )
-            keywords_text = self.query_one(keywords_selector, Input).value
-        except (NoMatches, QueryError):
-            return
-        if self._library_note_session.mutate(
-            title=title,
-            body=body,
-            keywords_text=keywords_text,
-        ):
-            self._library_note_shortcut_status = ""
-            self._schedule_library_note_autosave()
+        return self._notes_controller._commit_library_note_widgets_before_recompose()
 
-    def _library_notes_role_target(
-        self, identity: LibraryNotesFocusIdentity
-    ) -> Widget | None:
-        """Resolve one portable semantic role against the current widget tree."""
-        role = identity.semantic_role
-        selector = {
-            "filter": "#library-notes-filter",
-            "select-toggle": "#library-notes-select-toggle",
-            "title": "#library-note-title",
-            "body": "#library-note-body",
-            "preview-body": "#library-note-preview-region",
-            "context": "#library-note-context-region",
-            "save": "#library-note-save",
-            "load-retry": "#library-note-load-retry",
-            "conflict-callout": "#library-note-conflict-copy",
-            "delete-cancel": "#library-note-delete-cancel",
-            "lasting-display-name": "#notes-sync-display-name",
-            "lasting-folder-choose": "#notes-sync-folder-choose",
-            "lasting-check": "#notes-sync-check",
-            "lasting-roots-back": "#notes-sync-roots-back",
-            "import-add-source": "#note-import-add-source",
-            "import-destination": "#note-import-destination",
-            "import-check": "#note-import-check",
-            "import-execute": "#note-import-import",
-            "import-cancel": "#note-import-cancel",
-            "import-retry": "#note-import-retry",
-            "import-back": "#library-notes-import-back",
-            "create-template:blank": "#library-notes-create-blank",
-        }.get(role)
-        if role.startswith("context-action:"):
-            selector = f"#{role.removeprefix('context-action:')}"
-        elif role.startswith("sync-direction:"):
-            selector = f"#notes-sync-direction-{role.removeprefix('sync-direction:').replace('_', '-')}"
-        elif role.startswith("region-back:"):
-            selector = {
-                "context": "#library-note-context-back",
-                "create": "#library-notes-create-back",
-                "lasting_add": "#notes-sync-back",
-                "lasting_roots": "#notes-sync-roots-back",
-            }.get(role.removeprefix("region-back:"), "#library-note-back")
-        elif role.startswith("landing-control:"):
-            control_id = role.removeprefix("landing-control:")
-            if control_id:
-                selector = f"#{control_id}"
-        elif role.startswith("file-notes:"):
-            widget_id = role.removeprefix("file-notes:")
-            workspace = self._library_file_notes_workspace
-            if workspace is None or not widget_id:
-                return None
-            try:
-                return workspace.query_one(f"#{widget_id}", Widget)
-            except (NoMatches, QueryError):
-                return None
-        elif role.startswith(("media-row:", "media-preview-open:")):
-            media_id = role.split(":", 1)[1]
-            if (
-                role.startswith("media-preview-open:")
-                and not self._library_notes_compact
-            ):
-                try:
-                    return self.query_one("#library-media-open-viewer", Widget)
-                except (NoMatches, QueryError):
-                    return None
-            for row in self.query(".library-media-row"):
-                if str(getattr(row, "media_id", "") or "") == media_id:
-                    return row
-            return None
-        if selector is not None:
-            try:
-                return self.query_one(selector, Widget)
-            except (NoMatches, QueryError):
-                return None
+    def _library_notes_role_target(self, identity: LibraryNotesFocusIdentity) -> Widget | None:
+        return self._notes_controller._library_notes_role_target(identity)
 
-        if role.startswith("library-row:"):
-            row_id = role.removeprefix("library-row:")
-            for row in self.query(".library-rail-row"):
-                if str(getattr(row, "row_id", "") or "") == row_id:
-                    return row
-        elif role.startswith("note-placement:"):
-            placement_id = role.removeprefix("note-placement:")
-            for row in self.query(".library-notes-row"):
-                if str(getattr(row, "placement_id", "") or "") == placement_id:
-                    return row
-        elif role.startswith("folder-placement:"):
-            placement_id = role.removeprefix("folder-placement:")
-            for row in self.query(".library-notes-folder-row"):
-                if str(getattr(row, "placement_id", "") or "") == placement_id:
-                    return row
-        elif role.startswith("tree-pager:"):
-            pager_id = role.removeprefix("tree-pager:")
-            for pager in self.query(".library-notes-tree-pager"):
-                if pager.id == pager_id:
-                    return pager
-        elif role.startswith("note-row:"):
-            note_id = role.removeprefix("note-row:")
-            for row in self.query(".library-notes-row"):
-                if str(getattr(row, "note_id", "") or "") == note_id:
-                    return row
-        elif role.startswith("create-template:"):
-            template_key = role.removeprefix("create-template:")
-            for row in self.query(".library-notes-template-row"):
-                if str(getattr(row, "template_key", "") or "") == template_key:
-                    return row
-        return None
+    def _restore_library_notes_focus_identity(self, identity: LibraryNotesFocusIdentity, guard: _LibraryNotesRestoreGuard | None=None) -> bool:
+        return self._notes_controller._restore_library_notes_focus_identity(identity, guard)
 
-    def _library_notes_fallback_focus_target(
-        self, identity: LibraryNotesFocusIdentity
-    ) -> Widget | None:
-        """Choose the safest visible focus target when an exact role vanished."""
-        if self._library_notes_compact and identity.stage != self._library_notes_stage:
-            identity = dataclasses.replace(
-                identity,
-                stage=self._library_notes_stage,
-                semantic_role="",
-            )
-        if identity.stage == "rail":
-            role = f"library-row:{self._library_selected_row_id}"
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role=role)
-            )
-        region = self._library_notes_focus_region()
-        if region == "navigator":
-            role = f"note-row:{identity.note_id}" if identity.note_id else "filter"
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role=role)
-            ) or self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role="filter")
-            )
-        if region == "context":
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role="context")
-            )
-        if region == "preview":
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role="preview-body")
-            )
-        if region == "editor":
-            snapshot = self._library_note_session.snapshot
-            role = "body"
-            if self._library_note_load_state == "failed":
-                role = "load-retry"
-            elif snapshot is not None and snapshot.in_conflict:
-                role = "conflict-callout"
-            elif self._library_note_confirming_delete:
-                role = "delete-cancel"
-            elif self._library_note_session.untouched_create_token is not None:
-                role = "title"
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role=role)
-            )
-        if region == "create":
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role="create-template:blank")
-            )
-        if region == "lasting_add":
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role="lasting-display-name")
-            )
-        if region == "lasting_roots":
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role="lasting-roots-back")
-            )
-        if region == "import":
-            phase = self._library_note_import_controller.snapshot.phase
-            role = {
-                NoteImportPhase.SELECT: "import-add-source",
-                NoteImportPhase.DESTINATION: "import-destination",
-                NoteImportPhase.CHECKING: "import-cancel",
-                NoteImportPhase.REVIEW: "import-execute",
-                NoteImportPhase.IMPORTING: "import-cancel",
-                NoteImportPhase.RECEIPT: "import-retry",
-            }[phase]
-            return self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role=role)
-            ) or self._library_notes_role_target(
-                dataclasses.replace(identity, semantic_role="import-back")
-            )
-        return None
-
-    def _restore_library_notes_focus_identity(
-        self,
-        identity: LibraryNotesFocusIdentity,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> bool:
-        """Restore semantic focus, retaining pending intent until its exact target exists."""
-        if not self.is_mounted or not self._library_notes_restore_guard_is_current(
-            guard
-        ):
-            return False
-        target = None
-        if not (
-            self._library_notes_compact and identity.stage != self._library_notes_stage
-        ):
-            target = self._library_notes_role_target(identity)
-        restored_exact_target = target is not None
-        if target is None:
-            target = self._library_notes_fallback_focus_target(identity)
-        if target is None:
-            return False
-        if identity.semantic_role == "conflict-callout" and isinstance(target, Static):
-            target.can_focus = True
-        start = identity.body_selection_start
-        end = identity.body_selection_end
-        if start is not None and end is not None:
-            try:
-                body = self.query_one("#library-note-body", TextArea)
-            except (NoMatches, QueryError):
-                pass
-            else:
-                body.move_cursor(start)
-                body.move_cursor(end, select=start != end)
-        self._library_notes_restoring_focus = True
-        try:
-            if self.focused is not target:
-                exact_scroll = identity.scroll_offset is not None
-                self._library_notes_programmatic_focus_target = target
-                self.set_focus(target, scroll_visible=not exact_scroll)
-                if not exact_scroll:
-                    target.scroll_visible(animate=False, force=True, immediate=True)
-            self._restore_library_notes_scroll_offset(identity, guard)
-        finally:
-            self._library_notes_restoring_focus = False
-        if (
-            restored_exact_target
-            and not self._library_notes_pending_focus_waits_for_snapshot
-            and self._library_notes_pending_focus_identity == identity
-        ):
-            self._library_notes_pending_focus_identity = None
-            self._library_notes_pending_focus_generation = None
-        return restored_exact_target
-
-    def _restore_library_notes_after_targeted_sync(
-        self, identity: LibraryNotesFocusIdentity
-    ) -> None:
-        """Restore portable Notes focus + scroll after a canvas-scoped sync.
-
-        task-15457 review round 1. The whole-screen seam does this through
-        ``_rehydrate_library_notes_after_recompose``; a canvas-scoped sync
-        never reaches ``LibraryScreen.refresh``, so it needs its own entry
-        into the same restore. No ``_LibraryNotesRestoreGuard`` is passed:
-        the guard exists to invalidate a DEFERRED restore that a newer
-        navigation intent has superseded, and this one runs synchronously
-        from the canvas's own ``recompose``, against the state that was
-        captured moments earlier in the same handler.
-
-        Args:
-            identity: The portable identity captured before the sync.
-
-        Returns:
-            None.
-        """
-        # Focus FIRST and synchronously: the callback runs from the canvas's
-        # own ``recompose``, so focus is restored before any frame in which
-        # it could be seen sitting outside the canvas.
-        self._restore_library_notes_focus_identity(identity)
-        # Scroll SECOND and deferred. The restore above already attempts it,
-        # but at this point the freshly mounted children have not been laid
-        # out yet -- the container's max scroll is still 0, so ``scroll_to``
-        # clamps the offset away (measured: a 12-row offset restored as 0).
-        # The whole-screen seam never hits this because it restores from
-        # ``call_after_refresh``, i.e. after a display refresh; re-applying
-        # from the same primitive here gives the offset a laid-out container
-        # to land in. Idempotent, so the earlier attempt costs nothing.
-        self.call_after_refresh(self._restore_library_notes_scroll_offset, identity)
-
-    def _restore_library_notes_scroll_offset(
-        self,
-        identity: LibraryNotesFocusIdentity,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Apply only the named owner's portable offset, without changing focus."""
-        if not self._library_notes_restore_guard_is_current(guard):
-            return
-        owner_region = (
-            "rail" if identity.stage == "rail" else self._library_notes_focus_region()
-        )
-        owner = self._library_notes_scroll_owner(owner_region)
-        if identity.semantic_role.startswith(("media-row:", "media-preview-open:")):
-            try:
-                owner = self.query_one("#library-media-row-scroll", Widget)
-            except (NoMatches, QueryError):
-                owner = None
-        if owner is not None and identity.scroll_offset is not None:
-            owner.scroll_to(
-                x=identity.scroll_offset[0],
-                y=identity.scroll_offset[1],
-                animate=False,
-                force=True,
-                immediate=True,
-            )
+    def _restore_library_notes_after_targeted_sync(self, identity: LibraryNotesFocusIdentity) -> None:
+        return self._notes_controller._restore_library_notes_after_targeted_sync(identity)
 
     def _library_notes_restore_guard_is_current(
         self, guard: _LibraryNotesRestoreGuard | None
@@ -5429,32 +4833,32 @@ class LibraryScreen(BaseAppScreen):
             (
                 guard.recompose_generation is None
                 or guard.recompose_generation
-                == self._library_notes_recompose_generation
+                == self._notes_state.recompose_generation
             )
             and (
                 guard.scroll_generation is None
                 or guard.scroll_generation
-                == self._library_notes_scroll_intent_generation
+                == self._notes_state.scroll_intent_generation
             )
             and (
                 guard.focus_generation is None
-                or guard.focus_generation == self._library_notes_focus_intent_generation
+                or guard.focus_generation == self._notes_state.focus_intent_generation
             )
         )
 
     def _supersede_library_notes_navigation(self, *, render: bool = True) -> int:
         """Synchronously revoke every task owned by an older Notes route intent."""
-        self._library_notes_navigation_generation = (
-            getattr(self, "_library_notes_navigation_generation", 0) + 1
+        self._notes_state.navigation_generation = (
+            getattr(self._notes_state, "navigation_generation", 0) + 1
         )
-        self._library_notes_pending_focus_identity = None
-        self._library_notes_pending_focus_waits_for_snapshot = False
-        self._library_notes_pending_focus_generation = None
-        self._library_notes_navigation_status = ""
-        branches = getattr(self, "_library_notes_tree_branches", {})
-        generations = getattr(self, "_library_notes_tree_request_generations", {})
+        self._notes_state.pending_focus_identity = None
+        self._notes_state.pending_focus_waits_for_snapshot = False
+        self._notes_state.pending_focus_generation = None
+        self._notes_state.navigation_status = ""
+        branches = getattr(self._notes_state, "tree_branches", {})
+        generations = getattr(self._notes_state, "tree_request_generations", {})
         navigation_requests = getattr(
-            self, "_library_notes_tree_navigation_requests", {}
+            self._notes_state, "tree_navigation_requests", {}
         )
         for key in tuple(navigation_requests):
             state = branches.get(key)
@@ -5477,21 +4881,21 @@ class LibraryScreen(BaseAppScreen):
             )
         navigation_requests.clear()
         if (
-            getattr(self, "_library_notes_filter_navigation_generation", None)
+            getattr(self._notes_state, "filter_navigation_generation", None)
             is not None
         ):
-            state = getattr(self, "_library_notes_tree_filter_state", None)
+            state = getattr(self._notes_state, "tree_filter_state", None)
             if state is not None and state.loading:
-                self._library_notes_filter_generation = (
+                self._notes_state.filter_generation = (
                     max(
-                        getattr(self, "_library_notes_filter_generation", 0),
+                        getattr(self._notes_state, "filter_generation", 0),
                         state.generation,
                     )
                     + 1
                 )
-                self._library_notes_tree_filter_state = dataclasses.replace(
+                self._notes_state.tree_filter_state = dataclasses.replace(
                     state,
-                    generation=self._library_notes_filter_generation,
+                    generation=self._notes_state.filter_generation,
                     loading=False,
                     requested_direction=None,
                     requested_offset=None,
@@ -5501,75 +4905,17 @@ class LibraryScreen(BaseAppScreen):
                     failed_offset=None,
                     error="",
                 )
-            self._library_notes_filter_navigation_generation = None
+            self._notes_state.filter_navigation_generation = None
         sync_canvas = getattr(self, "_sync_library_notes_tree_canvas_if_present", None)
         if render and callable(sync_canvas):
             sync_canvas()
-        return self._library_notes_navigation_generation
+        return self._notes_state.navigation_generation
 
     def _release_library_notes_focus_after_snapshot(self) -> None:
-        """Complete a Back focus handoff after its source refresh settles."""
-        if (
-            self._library_notes_pending_focus_generation
-            != self._library_notes_navigation_generation
-        ):
-            self._library_notes_pending_focus_identity = None
-            self._library_notes_pending_focus_waits_for_snapshot = False
-            self._library_notes_pending_focus_generation = None
-            return
-        identity = self._library_notes_pending_focus_identity
-        self._library_notes_pending_focus_waits_for_snapshot = False
-        if identity is not None:
-            self._restore_library_notes_focus_identity(identity)
+        return self._notes_controller._release_library_notes_focus_after_snapshot()
 
-    def _library_note_session_is_unsafe(self) -> bool:
-        """Return whether rail focus must not hide the active note session."""
-        snapshot = self._library_note_session.snapshot
-        return bool(
-            self._library_note_load_state == "failed"
-            or self._library_note_confirming_delete
-            or self._library_note_session.destructive_running
-            or self._library_note_session.destructive_admission is not None
-            or (
-                snapshot is not None
-                and (
-                    snapshot.dirty
-                    or snapshot.saving
-                    or snapshot.in_conflict
-                    or self._library_note_autosave_state
-                    in {"saving", "error", "validation", "conflict"}
-                    or self._library_note_session.conflict_resolution_running
-                )
-            )
-        )
-
-    def _compact_library_notes_stage(
-        self, identity: LibraryNotesFocusIdentity
-    ) -> Literal["rail", "notes"]:
-        """Resolve compact stage precedence without consulting layout children."""
-        if self._library_note_session_is_unsafe():
-            return "notes"
-        if self._library_notes_explicit_stage_intent:
-            return "notes"
-        if identity.stage == "rail":
-            return "rail"
-        if (
-            identity.stage == "notes"
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-        ):
-            return "notes"
-        if identity.stage == "notes" and self._library_notes_compact_workflow_active():
-            return "notes"
-        if self._library_notes_focus_region() in {
-            "editor",
-            "preview",
-            "context",
-            "create",
-            "lasting_add",
-            "lasting_roots",
-        }:
-            return "notes"
-        return "rail"
+    def _compact_library_notes_stage(self, identity: LibraryNotesFocusIdentity) -> Literal['rail', 'notes']:
+        return self._notes_controller._compact_library_notes_stage(identity)
 
     def _library_notes_compact_stage_applies(self) -> bool:
         """Scope compact single-stage behavior to active Notes routes."""
@@ -5890,10 +5236,10 @@ class LibraryScreen(BaseAppScreen):
             reader_active,
             reader_shell_id,
             self._library_selected_row_id,
-            self._library_notes_source,
-            self._library_notes_view,
-            self._library_notes_stage,
-            self._library_notes_compact,
+            self._notes_state.source,
+            self._notes_state.view,
+            self._notes_state.stage,
+            self._notes_state.compact,
             self._library_rail_collapsed,
             self._library_notes_compact_stage_applies(),
             self._library_notes_focused_task_active(),
@@ -5933,7 +5279,7 @@ class LibraryScreen(BaseAppScreen):
         signature = self._library_notes_stage_signature()
         if (
             signature is not None
-            and signature == self._library_notes_stage_applied_signature
+            and signature == self._notes_state.stage_applied_signature
         ):
             return
         self._apply_library_notes_stage_visibility()
@@ -5949,9 +5295,9 @@ class LibraryScreen(BaseAppScreen):
         and canvas display, the emergency stage), and it is cleared first so
         a leg that raises leaves the gate re-armed rather than stale.
         """
-        self._library_notes_stage_applied_signature = None
+        self._notes_state.stage_applied_signature = None
         self._apply_library_notes_stage_legs()
-        self._library_notes_stage_applied_signature = (
+        self._notes_state.stage_applied_signature = (
             self._library_notes_stage_signature()
         )
 
@@ -6148,7 +5494,7 @@ class LibraryScreen(BaseAppScreen):
             receipt=receipt,
             final_focus_policy=receipt.final_focus_policy,
             final_focus_identity=receipt.final_focus_identity,
-            focus_intent_generation=self._library_notes_focus_intent_generation,
+            focus_intent_generation=self._notes_state.focus_intent_generation,
             compose_generation=self._library_compose_generation,
             media_lifecycle_generation=self._media_state.lifecycle_generation,
             presentation_epoch=self._media_state.presentation_epoch,
@@ -6468,144 +5814,7 @@ class LibraryScreen(BaseAppScreen):
         return changed
 
     def _apply_library_notes_stage_legs(self) -> None:
-        """Apply compact classes and mutually exclusive mounted stage visibility."""
-        if not self.is_mounted:
-            return
-        try:
-            shell = self.query_one("#library-shell-grid", Widget)
-            rail = self.query_one("#library-rail", LibraryRail)
-            canvas = self.query_one("#library-canvas", Widget)
-        except (NoMatches, QueryError):
-            return
-        rail_handles = self.query("#library-rail-handle")
-        rail_handle = rail_handles.first(Widget) if rail_handles else None
-        adaptive_reader = bool(
-            self.query(
-                "#library-media-reader-shell, "
-                "#library-collections-reader-shell, "
-                "#library-conversations-reader-shell, "
-                "#library-notes-reader-shell, "
-                "#library-prompts-reader-shell, "
-                "#library-skills-reader-shell"
-            )
-        )
-        adaptive_notes = bool(self.query("#library-notes-reader-shell"))
-        adaptive_media = bool(self.query("#library-media-reader-shell"))
-        # Only the grid and canvas host participate in compact CSS selectors;
-        # tagging the rail and inner Notes canvas forced two needless global
-        # stylesheet matches on every breakpoint crossing. Apply these before
-        # the emergency stage can return so a just-recomposed ordinary route
-        # cannot retain wide padding/borders at the narrow stage. Adaptive
-        # readers share only the shell box-model contract; their internal pane
-        # geometry must not inherit the legacy Notes/Media compact selectors.
-        legacy_compact = self._library_notes_compact and (
-            not adaptive_reader or adaptive_notes
-        )
-        compact_widgets = (canvas,) if adaptive_media else (shell, canvas)
-        for widget in compact_widgets:
-            if widget.has_class("library-notes-compact") != legacy_compact:
-                widget.set_class(legacy_compact, "library-notes-compact")
-        adaptive_compact = self._library_notes_compact and adaptive_reader
-        if adaptive_media:
-            # Media's Task 1 projection is the single class writer and the
-            # presentation-epoch/floor producer for its adaptive shell.
-            self._project_library_media_stage_classes(shell)
-        elif shell.has_class("library-adaptive-compact") != adaptive_compact:
-            shell.set_class(adaptive_compact, "library-adaptive-compact")
-        if self._apply_library_emergency_geometry(
-            shell=shell,
-            rail=rail,
-            canvas=canvas,
-            rail_handle=rail_handle,
-        ):
-            return
-        try:
-            notes_canvas = canvas.query_one("#library-notes-canvas", LibraryNotesCanvas)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            if notes_canvas.compact != self._library_notes_compact:
-                notes_canvas.apply_compact_presentation(self._library_notes_compact)
-        try:
-            notes_work = self.query_one("#library-note-work-pane", LibraryNoteWorkPane)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            if notes_work.compact != self._library_notes_compact:
-                notes_work.apply_compact_presentation(self._library_notes_compact)
-        try:
-            media_canvas = canvas.query_one("#library-media-canvas", LibraryMediaCanvas)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            if (
-                not self.query("#library-media-reader-shell")
-                and media_canvas.compact != self._library_notes_compact
-            ):
-                media_canvas.apply_compact_presentation(self._library_notes_compact)
-        if adaptive_reader:
-            # The adaptive shell owns pane visibility. The legacy compact
-            # stage toggles below predate the permanent reader work panes and
-            # would hide retained siblings or move focus to an unrelated
-            # legacy handle.
-            self._sync_library_ordinary_rail_width_contract()
-            return
-        compact_single_stage = (
-            self._library_notes_compact and self._library_notes_compact_stage_applies()
-        )
-        wide_focused_task = (
-            not self._library_notes_compact
-            and self._library_notes_focused_task_active()
-        )
-        single_stage = compact_single_stage or wide_focused_task
-        manually_collapsed = self._library_rail_collapsed and not single_stage
-        rail_display = (
-            False
-            if wide_focused_task
-            else (not compact_single_stage or self._library_notes_stage == "rail")
-            and not manually_collapsed
-        )
-        canvas_display = (
-            True
-            if wide_focused_task
-            else (not compact_single_stage or self._library_notes_stage == "notes")
-        )
-        handle_display = manually_collapsed
-        if rail_handle is not None and rail_handle.display != handle_display:
-            rail_handle.display = handle_display
-        if rail.display != rail_display:
-            rail.display = rail_display
-        if canvas.display != canvas_display:
-            canvas.display = canvas_display
-        try:
-            collapse = rail.query_one("#library-rail-collapse", Button)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            collapse.display = not single_stage
-        for selector in (
-            "#library-notes-source-database",
-            "#library-notes-source-separator",
-            "#library-notes-source-files",
-        ):
-            try:
-                source_control = self.query_one(selector, Widget)
-            except (NoMatches, QueryError):
-                continue
-            source_control.display = not wide_focused_task
-        try:
-            task_return = self.query_one("#library-notes-task-return", Button)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            task_return.display = wide_focused_task
-        try:
-            note_back = self.query_one("#library-note-back", Button)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            note_back.display = not wide_focused_task
-        self._sync_library_ordinary_rail_width_contract()
+        return self._notes_controller._apply_library_notes_stage_legs()
 
     def _hide_library_adaptive_reader_rail_collapse(self) -> None:
         """Hide the rail's legacy collapse control beside adaptive grips."""
@@ -6733,216 +5942,22 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _library_notes_work_session_reader_width(self) -> int | None:
-        """Return the settled reader width for the active Notes authority."""
-        try:
-            if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
-                workspace = self._library_file_notes_workspace
-                if workspace is None or not workspace.is_mounted:
-                    return None
-                shell = workspace.query_one(
-                    "#library-file-notes-reader-shell",
-                    LibraryAdaptiveReaderShell,
-                )
-            else:
-                shell = self.query_one(
-                    "#library-notes-reader-shell",
-                    LibraryAdaptiveReaderShell,
-                )
-        except (NoMatches, QueryError):
-            return None
-        return shell.region.width if shell.region.width > 0 else None
+        return self._notes_controller._library_notes_work_session_reader_width()
 
-    def _dispatch_library_notes_work_session(
-        self,
-        event: NotesWorkSessionEvent,
-        *,
-        reader_width: int | None = None,
-        sync_layout: bool = True,
-    ) -> bool:
-        """Apply one named transient Notes lifecycle event."""
-        if event in {
-            NotesWorkSessionEvent.DATABASE_IDENTITY_CLEARED,
-            NotesWorkSessionEvent.FOLDER_IDENTITY_CLEARED,
-            NotesWorkSessionEvent.AUTHORITY_CHANGED,
-            NotesWorkSessionEvent.FOLDER_ROOT_CHANGED,
-            NotesWorkSessionEvent.LEFT_NOTES,
-        }:
-            self._library_notes_work_session_activation_pending = False
-        phase = reduce_notes_work_session(
-            self._library_notes_work_session_phase,
-            event,
-            reader_width=(
-                self._library_notes_work_session_reader_width()
-                if reader_width is None
-                and event is NotesWorkSessionEvent.EDITABLE_ITEM_OPENED
-                else reader_width
-            ),
-        )
-        if phase is self._library_notes_work_session_phase:
-            return False
-        self._library_notes_work_session_phase = phase
-        if sync_layout:
-            if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
-                self._sync_library_file_notes_reader_layout_from_shell()
-            else:
-                self._sync_library_notes_reader_layout_from_shell()
-        return True
+    def _dispatch_library_notes_work_session(self, event: NotesWorkSessionEvent, *, reader_width: int | None=None, sync_layout: bool=True) -> bool:
+        return self._notes_controller._dispatch_library_notes_work_session(event, reader_width=reader_width, sync_layout=sync_layout)
 
-    def _library_notes_work_first_preferences(
-        self,
-        preferences: AdaptiveReaderLayoutPreferences,
-    ) -> AdaptiveReaderLayoutPreferences:
-        """Derive the Library-only work-first override."""
-        if self._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE:
-            return dataclasses.replace(preferences, library_open=False)
-        return preferences
+    def _library_notes_work_first_preferences(self, preferences: AdaptiveReaderLayoutPreferences) -> AdaptiveReaderLayoutPreferences:
+        return self._notes_controller._library_notes_work_first_preferences(preferences)
 
-    def _set_library_notes_source(
-        self,
-        source: Literal["database", "files"],
-    ) -> bool:
-        """Set one admitted Notes authority and reset only on a real change."""
-        if source == self._library_notes_source:
-            return False
-        self._library_notes_source = source
-        self._dispatch_library_notes_work_session(
-            NotesWorkSessionEvent.AUTHORITY_CHANGED,
-            sync_layout=False,
-        )
-        return True
+    def _set_library_notes_source(self, source: Literal['database', 'files']) -> bool:
+        return self._notes_controller._set_library_notes_source(source)
 
     def _dispatch_database_note_identity_cleared(self) -> bool:
-        """Reset only when a Database selected/loaded identity is cleared."""
-        if not self._selected_note_id and self._library_note_session.snapshot is None:
-            return False
-        return self._dispatch_library_notes_work_session(
-            NotesWorkSessionEvent.DATABASE_IDENTITY_CLEARED
-        )
+        return self._notes_controller._dispatch_database_note_identity_cleared()
 
     def _activate_database_note_work_session(self, note_id: str) -> None:
-        """Activate after the admitted editor has settled its real shell width."""
-        if (
-            not self._library_notes_work_session_activation_pending
-            or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
-            or self._library_notes_view != "editor"
-            or self._selected_note_id != note_id
-            or self._library_note_session.snapshot is None
-        ):
-            return
-        reader_width = self._library_notes_work_session_reader_width()
-        if reader_width is None:
-            return
-        self._library_notes_work_session_activation_pending = False
-        self._dispatch_library_notes_work_session(
-            NotesWorkSessionEvent.EDITABLE_ITEM_OPENED,
-            reader_width=reader_width,
-        )
-
-    def _library_notes_work_session_reader_width(self) -> int | None:
-        """Return the settled reader width for the active Notes authority."""
-        try:
-            if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
-                workspace = self._library_file_notes_workspace
-                if workspace is None or not workspace.is_mounted:
-                    return None
-                shell = workspace.query_one(
-                    "#library-file-notes-reader-shell",
-                    LibraryAdaptiveReaderShell,
-                )
-            else:
-                shell = self.query_one(
-                    "#library-notes-reader-shell",
-                    LibraryAdaptiveReaderShell,
-                )
-        except (NoMatches, QueryError):
-            return None
-        return shell.region.width if shell.region.width > 0 else None
-
-    def _dispatch_library_notes_work_session(
-        self,
-        event: NotesWorkSessionEvent,
-        *,
-        reader_width: int | None = None,
-        sync_layout: bool = True,
-    ) -> bool:
-        """Apply one named transient Notes lifecycle event."""
-        if event in {
-            NotesWorkSessionEvent.DATABASE_IDENTITY_CLEARED,
-            NotesWorkSessionEvent.FOLDER_IDENTITY_CLEARED,
-            NotesWorkSessionEvent.AUTHORITY_CHANGED,
-            NotesWorkSessionEvent.FOLDER_ROOT_CHANGED,
-            NotesWorkSessionEvent.LEFT_NOTES,
-        }:
-            self._library_notes_work_session_activation_pending = False
-        phase = reduce_notes_work_session(
-            self._library_notes_work_session_phase,
-            event,
-            reader_width=(
-                self._library_notes_work_session_reader_width()
-                if reader_width is None
-                and event is NotesWorkSessionEvent.EDITABLE_ITEM_OPENED
-                else reader_width
-            ),
-        )
-        if phase is self._library_notes_work_session_phase:
-            return False
-        self._library_notes_work_session_phase = phase
-        if sync_layout:
-            if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
-                self._sync_library_file_notes_reader_layout_from_shell()
-            else:
-                self._sync_library_notes_reader_layout_from_shell()
-        return True
-
-    def _library_notes_work_first_preferences(
-        self,
-        preferences: AdaptiveReaderLayoutPreferences,
-    ) -> AdaptiveReaderLayoutPreferences:
-        """Derive the Library-only work-first override."""
-        if self._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE:
-            return dataclasses.replace(preferences, library_open=False)
-        return preferences
-
-    def _set_library_notes_source(
-        self,
-        source: Literal["database", "files"],
-    ) -> bool:
-        """Set one admitted Notes authority and reset only on a real change."""
-        if source == self._library_notes_source:
-            return False
-        self._library_notes_source = source
-        self._dispatch_library_notes_work_session(
-            NotesWorkSessionEvent.AUTHORITY_CHANGED,
-            sync_layout=False,
-        )
-        return True
-
-    def _dispatch_database_note_identity_cleared(self) -> bool:
-        """Reset only when a Database selected/loaded identity is cleared."""
-        if not self._selected_note_id and self._library_note_session.snapshot is None:
-            return False
-        return self._dispatch_library_notes_work_session(
-            NotesWorkSessionEvent.DATABASE_IDENTITY_CLEARED
-        )
-
-    def _activate_database_note_work_session(self, note_id: str) -> None:
-        """Activate after the admitted editor has settled its real shell width."""
-        if (
-            not self._library_notes_work_session_activation_pending
-            or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
-            or self._library_notes_view != "editor"
-            or self._selected_note_id != note_id
-            or self._library_note_session.snapshot is None
-        ):
-            return
-        reader_width = self._library_notes_work_session_reader_width()
-        if reader_width is None:
-            return
-        self._library_notes_work_session_activation_pending = False
-        self._dispatch_library_notes_work_session(
-            NotesWorkSessionEvent.EDITABLE_ITEM_OPENED,
-            reader_width=reader_width,
-        )
+        return self._notes_controller._activate_database_note_work_session(note_id)
 
     def _sync_library_notes_reader_layout_from_shell(
         self,
@@ -6961,7 +5976,7 @@ class LibraryScreen(BaseAppScreen):
         width = shell.region.width
         if not self._library_adaptive_reader_allocation_is_current(shell):
             return
-        previous = self._library_notes_reader_layout
+        previous = self._notes_state.reader_layout
         if (
             previous.reader_width == 0
             and previous.library_width == 0
@@ -6974,13 +5989,13 @@ class LibraryScreen(BaseAppScreen):
             # through hysteresis on the very same interaction.
             previous = None
         if priority is None:
-            if self._library_notes_stage == "rail":
+            if self._notes_state.stage == "rail":
                 priority = "library"
             list_owns_workflow = (
                 priority is None
-                and self._library_notes_reader_preferences.items_open
+                and self._notes_state.reader_preferences.items_open
                 and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-                and self._library_notes_view == "list"
+                and self._notes_state.view == "list"
             )
             if list_owns_workflow:
                 priority = "items"
@@ -6990,7 +6005,7 @@ class LibraryScreen(BaseAppScreen):
                 # an explicit grip activation still supplies priority above.
                 previous = dataclasses.replace(previous, priority_pane=None)
         preferences = self._library_notes_work_first_preferences(
-            self._library_notes_reader_preferences
+            self._notes_state.reader_preferences
         )
         layout = resolve_adaptive_reader_layout(
             width,
@@ -7000,54 +6015,10 @@ class LibraryScreen(BaseAppScreen):
             priority=priority,
         )
         shell.sync_layout(layout, manual_reopen=manual_reopen)
-        self._library_notes_reader_layout = layout
+        self._notes_state.reader_layout = layout
 
-    def _sync_library_file_notes_reader_layout_from_shell(
-        self,
-        priority: Literal["library", "items"] | None = None,
-        *,
-        manual_reopen: PaneName | None = None,
-        automatic_priority: bool = True,
-    ) -> None:
-        """Resolve the settled Folder Files shell and patch it in place."""
-        workspace = self._library_file_notes_workspace
-        if workspace is None or not workspace.is_mounted:
-            return
-        try:
-            shell = workspace.query_one(
-                "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
-            )
-        except (NoMatches, QueryError):
-            return
-        width = shell.region.width
-        if width <= 0:
-            return
-        previous = self._library_file_notes_reader_layout
-        if (
-            previous.reader_width == 0
-            and previous.library_width == 0
-            and previous.items_width == 0
-        ):
-            previous = None
-        if priority is None and automatic_priority:
-            if workspace.narrow and workspace._narrow_view == "navigator":
-                priority = "items"
-            elif previous is not None and previous.priority_pane == "items":
-                previous = dataclasses.replace(previous, priority_pane=None)
-        preferences = self._library_notes_work_first_preferences(
-            self._library_file_notes_reader_preferences
-        )
-        if workspace.narrow and workspace._narrow_view == "editor":
-            preferences = dataclasses.replace(preferences, items_open=False)
-        layout = resolve_adaptive_reader_layout(
-            width,
-            preferences,
-            LIBRARY_FILE_NOTES_READER_PROFILE,
-            previous=previous,
-            priority=priority,
-        )
-        workspace.sync_reader_layout(layout, manual_reopen=manual_reopen)
-        self._library_file_notes_reader_layout = layout
+    def _sync_library_file_notes_reader_layout_from_shell(self, priority: Literal['library', 'items'] | None=None, *, manual_reopen: PaneName | None=None, automatic_priority: bool=True) -> None:
+        return self._notes_controller._sync_library_file_notes_reader_layout_from_shell(priority, manual_reopen=manual_reopen, automatic_priority=automatic_priority)
 
     def _sync_library_prompts_reader_layout_from_shell(self, priority: Literal['library', 'items'] | None=None) -> None:
         return self._prompts_controller._sync_library_prompts_reader_layout_from_shell(priority)
@@ -7085,46 +6056,11 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return self._collections_controller._mirror_library_collections_reader_preference(key, value)
 
-    def _mirror_library_notes_reader_preference(
-        self,
-        key: Literal["library_open", "items_open"],
-        value: bool,
-    ) -> None:
-        """Mirror one optimistic Notes pane choice into app config."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return
-        library_config = app_config.setdefault("library", {})
-        if not isinstance(library_config, dict):
-            library_config = {}
-            app_config["library"] = library_config
-        section_name = "reader" if key == "library_open" else "notes_reader"
-        section = library_config.setdefault(section_name, {})
-        if not isinstance(section, dict):
-            section = {}
-            library_config[section_name] = section
-        section[key] = value
+    def _mirror_library_notes_reader_preference(self, key: Literal['library_open', 'items_open'], value: bool) -> None:
+        return self._notes_controller._mirror_library_notes_reader_preference(key, value)
 
-    def _mirror_library_file_notes_reader_preference(
-        self,
-        key: Literal["library_open", "items_open"],
-        value: bool,
-    ) -> None:
-        """Mirror one optimistic Folder Files pane choice into app config."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return
-        library_config = app_config.setdefault("library", {})
-        if not isinstance(library_config, dict):
-            library_config = {}
-            app_config["library"] = library_config
-        section_name = "reader" if key == "library_open" else "notes_reader"
-        config_key = "library_open" if key == "library_open" else "files_tree_open"
-        section = library_config.setdefault(section_name, {})
-        if not isinstance(section, dict):
-            section = {}
-            library_config[section_name] = section
-        section[config_key] = value
+    def _mirror_library_file_notes_reader_preference(self, key: Literal['library_open', 'items_open'], value: bool) -> None:
+        return self._notes_controller._mirror_library_file_notes_reader_preference(key, value)
 
     def _mirror_library_prompts_reader_preference(self, key: Literal['library_open', 'items_open'], value: bool) -> None:
         return self._prompts_controller._mirror_library_prompts_reader_preference(key, value)
@@ -7143,8 +6079,8 @@ class LibraryScreen(BaseAppScreen):
             "media": "_media_state.reader_preferences",
             "collections": "_collections_state.reader_preferences",
             "conversations": "_conversations_state.reader_preferences",
-            "notes": "_library_notes_reader_preferences",
-            "notes_files": "_library_file_notes_reader_preferences",
+            "notes": "_notes_state.reader_preferences",
+            "notes_files": "_notes_state.file_notes_reader_preferences",
             "prompts": "_prompts_state.reader_preferences",
             "skills": "_skills_state.reader_preferences",
         }
@@ -7287,8 +6223,8 @@ class LibraryScreen(BaseAppScreen):
             "media": "_media_state.reader_preferences",
             "collections": "_collections_state.reader_preferences",
             "conversations": "_conversations_state.reader_preferences",
-            "notes": "_library_notes_reader_preferences",
-            "notes_files": "_library_file_notes_reader_preferences",
+            "notes": "_notes_state.reader_preferences",
+            "notes_files": "_notes_state.file_notes_reader_preferences",
             "prompts": "_prompts_state.reader_preferences",
             "skills": "_skills_state.reader_preferences",
         }[destination]
@@ -7296,8 +6232,8 @@ class LibraryScreen(BaseAppScreen):
             "media": self._media_state.reader_persistence_locks,
             "collections": self._collections_state.reader_persistence_locks,
             "conversations": self._conversations_state.reader_persistence_locks,
-            "notes": self._library_notes_reader_persistence_locks,
-            "notes_files": self._library_file_notes_reader_persistence_locks,
+            "notes": self._notes_state.reader_persistence_locks,
+            "notes_files": self._notes_state.file_notes_reader_persistence_locks,
             "prompts": self._prompts_state.reader_persistence_locks,
             "skills": self._skills_state.reader_persistence_locks,
         }[destination]
@@ -7628,8 +6564,8 @@ class LibraryScreen(BaseAppScreen):
         layout_changed = layout != self._media_state.reader_layout
         focused = self.focused
         if focus_intent is not None and (
-            focus_intent[1] == self._library_notes_focus_intent_generation
-            or self._library_notes_resize_settling
+            focus_intent[1] == self._notes_state.focus_intent_generation
+            or self._notes_state.resize_settling
         ):
             focused = focus_intent[0]
         hidden_focus_target: tuple[Widget, Widget] | None = None
@@ -7652,7 +6588,7 @@ class LibraryScreen(BaseAppScreen):
             ):
                 hidden_focus_target = (focused, grip)
                 break
-        generation = self._library_notes_focus_intent_generation
+        generation = self._notes_state.focus_intent_generation
         if layout_changed:
             tree = self._library_media_settlement_tree()
             self._advance_library_media_presentation_epoch(
@@ -7728,8 +6664,8 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.reader_preferences,
             self._collections_state.reader_preferences,
             self._conversations_state.reader_preferences,
-            self._library_notes_reader_preferences,
-            self._library_file_notes_reader_preferences,
+            self._notes_state.reader_preferences,
+            self._notes_state.file_notes_reader_preferences,
             self._prompts_state.reader_preferences,
             self._skills_state.reader_preferences,
         ) = self._load_library_reader_preference_snapshot()
@@ -7738,8 +6674,8 @@ class LibraryScreen(BaseAppScreen):
             "collections_items": self._collections_state.reader_preferences.items_open,
             "conversations_items": self._conversations_state.reader_preferences.items_open,
             "media_items": self._media_state.reader_preferences.items_open,
-            "notes_items": self._library_notes_reader_preferences.items_open,
-            "notes_file_items": self._library_file_notes_reader_preferences.items_open,
+            "notes_items": self._notes_state.reader_preferences.items_open,
+            "notes_file_items": self._notes_state.file_notes_reader_preferences.items_open,
             "prompts_items": self._prompts_state.reader_preferences.items_open,
             "skills_items": self._skills_state.reader_preferences.items_open,
         }
@@ -7814,8 +6750,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Move focus only when no newer user focus intent superseded resize."""
         if (
-            generation != self._library_notes_focus_intent_generation
-            and not self._library_notes_resize_settling
+            generation != self._notes_state.focus_intent_generation
+            and not self._notes_state.resize_settling
         ):
             return
         focused = self.focused
@@ -7875,9 +6811,9 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_FILES
         ):
-            layout = self._library_file_notes_reader_layout
+            layout = self._notes_state.file_notes_reader_layout
             opening = not (
                 layout.library_open if event.pane == "library" else layout.items_open
             )
@@ -7885,14 +6821,14 @@ class LibraryScreen(BaseAppScreen):
             if (
                 event.pane == "library"
                 and opening
-                and self._library_notes_work_session_phase
+                and self._notes_state.work_session_phase
                 is NotesWorkSessionPhase.ACTIVE
             ):
                 self._dispatch_library_notes_work_session(
                     NotesWorkSessionEvent.MANUAL_LIBRARY_EXPAND,
                     sync_layout=False,
                 )
-                if self._library_file_notes_reader_preferences.library_open:
+                if self._notes_state.file_notes_reader_preferences.library_open:
                     self._sync_library_reader_preference_layout(
                         "notes_files",
                         key,
@@ -7923,9 +6859,9 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
-            layout = self._library_notes_reader_layout
+            layout = self._notes_state.reader_layout
             opening = not (
                 layout.library_open if event.pane == "library" else layout.items_open
             )
@@ -7933,14 +6869,14 @@ class LibraryScreen(BaseAppScreen):
             if (
                 event.pane == "library"
                 and opening
-                and self._library_notes_work_session_phase
+                and self._notes_state.work_session_phase
                 is NotesWorkSessionPhase.ACTIVE
             ):
                 self._dispatch_library_notes_work_session(
                     NotesWorkSessionEvent.MANUAL_LIBRARY_EXPAND,
                     sync_layout=False,
                 )
-                if self._library_notes_reader_preferences.library_open:
+                if self._notes_state.reader_preferences.library_open:
                     self._sync_library_reader_preference_layout(
                         "notes",
                         key,
@@ -7955,7 +6891,7 @@ class LibraryScreen(BaseAppScreen):
                 event.pane == "library"
                 and not opening
                 and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-                and self._library_notes_view == "list"
+                and self._notes_state.view == "list"
             ):
                 # At the narrow widths where opening Library necessarily
                 # evicts Items, closing it must return the reclaimed cells to
@@ -7963,7 +6899,7 @@ class LibraryScreen(BaseAppScreen):
                 self._sync_library_notes_reader_layout_from_shell(
                     (
                         "items"
-                        if self._library_notes_reader_preferences.items_open
+                        if self._notes_state.reader_preferences.items_open
                         else None
                     ),
                     ignore_previous=True,
@@ -8063,7 +6999,7 @@ class LibraryScreen(BaseAppScreen):
         elif (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_FILES
         ):
             self._sync_library_file_notes_reader_layout_from_shell()
         elif self._library_selected_row_id in (
@@ -8071,8 +7007,8 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_ROW_CREATE_NOTE,
         ):
             self._sync_library_notes_reader_layout_from_shell()
-            if self._library_notes_work_session_activation_pending:
-                self._activate_database_note_work_session(self._selected_note_id)
+            if self._notes_state.work_session_activation_pending:
+                self._activate_database_note_work_session(self._notes_state.selected_note_id)
 
     @on(MediaShellResized)
     def _resize_library_media_reader_shell(self, event: MediaShellResized) -> None:
@@ -8116,20 +7052,20 @@ class LibraryScreen(BaseAppScreen):
                 )
             else:
                 self._library_landing_responsive_focus_id = ""
-        self._library_notes_compact = compact
+        self._notes_state.compact = compact
         self._sync_library_notes_source_controls()
         if compact:
-            self._library_notes_stage = self._compact_library_notes_stage(identity)
-            self._library_notes_explicit_stage_intent = False
-        self._library_notes_transition_scroll_generation = (
-            self._library_notes_scroll_intent_generation
+            self._notes_state.stage = self._compact_library_notes_stage(identity)
+            self._notes_state.explicit_stage_intent = False
+        self._notes_state.transition_scroll_generation = (
+            self._notes_state.scroll_intent_generation
         )
-        self._library_notes_transition_focus_generation = (
-            self._library_notes_focus_intent_generation
+        self._notes_state.transition_focus_generation = (
+            self._notes_state.focus_intent_generation
         )
         guard = _LibraryNotesRestoreGuard(
-            scroll_generation=self._library_notes_transition_scroll_generation,
-            focus_generation=self._library_notes_transition_focus_generation,
+            scroll_generation=self._notes_state.transition_scroll_generation,
+            focus_generation=self._notes_state.transition_focus_generation,
         )
         self._apply_library_notes_stage_visibility()
         self._apply_library_note_presentation_state()
@@ -8152,290 +7088,17 @@ class LibraryScreen(BaseAppScreen):
             guard,
         )
 
-    def _queue_library_notes_settled_focus_restore(
-        self,
-        expected: LibraryNotesFocusIdentity,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Repeat restoration after resize layout settles, then sample it."""
-        self.call_later(
-            self._defer_library_notes_settled_focus_restore,
-            expected,
-            guard,
-        )
+    def _queue_library_notes_settled_focus_restore(self, expected: LibraryNotesFocusIdentity, guard: _LibraryNotesRestoreGuard | None=None) -> None:
+        return self._notes_controller._queue_library_notes_settled_focus_restore(expected, guard)
 
-    def _defer_library_notes_settled_focus_restore(
-        self,
-        expected: LibraryNotesFocusIdentity,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Cross the extra turn Textual may need to finish scrollbar layout."""
-        self.call_later(
-            self._restore_library_notes_settled_focus,
-            expected,
-            guard,
-        )
+    def _restore_library_notes_settled_focus(self, expected: LibraryNotesFocusIdentity, guard: _LibraryNotesRestoreGuard | None=None) -> None:
+        return self._notes_controller._restore_library_notes_settled_focus(expected, guard)
 
-    def _restore_library_notes_settled_focus(
-        self,
-        expected: LibraryNotesFocusIdentity,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Apply the tuple after geometry clamps and queue its actual position."""
-        if not self._library_notes_restore_guard_is_current(guard):
-            return
-        self._restore_library_notes_focus_identity(expected, guard)
-        self.call_later(
-            self._restore_library_notes_final_scroll,
-            expected,
-            guard,
-        )
-
-    def _restore_library_notes_final_scroll(
-        self,
-        expected: LibraryNotesFocusIdentity,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Reapply the exact offset after deferred focus visibility has settled."""
-        if not self._library_notes_restore_guard_is_current(guard):
-            return
-        self._library_notes_restoring_focus = True
-        try:
-            self._restore_library_notes_scroll_offset(expected, guard)
-        finally:
-            self._library_notes_restoring_focus = False
-        self.call_later(
-            self._settle_library_notes_final_scroll,
-            expected,
-            guard,
-        )
-
-    def _settle_library_notes_final_scroll(
-        self,
-        expected: LibraryNotesFocusIdentity,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Win the last focus-visibility clamp before recording the tuple."""
-        if not self._library_notes_restore_guard_is_current(guard):
-            return
-        self._library_notes_restoring_focus = True
-        try:
-            self._restore_library_notes_scroll_offset(expected, guard)
-        finally:
-            self._library_notes_restoring_focus = False
-        # A Markdown preview recalculates its virtual height on the refresh
-        # after compact CSS is applied. The earlier immediate restores can
-        # therefore see max_scroll_y == 0 and clamp a retained offset away.
-        # Cross that refresh once, then restore and sample the laid-out owner.
-        self.call_after_refresh(
-            self._restore_library_notes_scroll_after_layout,
-            expected,
-            guard,
-        )
-
-    def _restore_library_notes_scroll_after_layout(
-        self,
-        expected: LibraryNotesFocusIdentity,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Restore and record a portable offset after descendant layout settles."""
-        if not self._library_notes_restore_guard_is_current(guard):
-            return
-        self._library_notes_restoring_focus = True
-        try:
-            self._restore_library_notes_scroll_offset(expected, guard)
-        finally:
-            self._library_notes_restoring_focus = False
-        self._record_library_notes_presented_focus(expected, guard)
-
-    def _record_library_notes_presented_focus(
-        self,
-        expected: LibraryNotesFocusIdentity,
-        guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Remember the actual clamped position for user-change detection."""
-        if not self._library_notes_restore_guard_is_current(guard):
-            return
-        self._install_library_notes_scroll_observers()
-        current = self._capture_library_notes_focus_identity()
-        if (
-            current.region == expected.region
-            and current.note_id == expected.note_id
-            and current.semantic_role == expected.semantic_role
-        ):
-            self._library_notes_last_presented_focus = current
-            self._library_notes_interaction_focus = current
-
-    def _install_library_notes_scroll_observers(self) -> None:
-        """Watch current named scroll owners only while their mounted tree lives.
-
-        TASK-23025: probe only regions the current route can mount. Every
-        non-rail region here is a Notes-workflow surface (Database Notes or
-        File Notes canvases); outside those routes each probe was a
-        guaranteed-failing whole-tree ``query_one`` walk, seven of them per
-        focus change on the landing/list routes.
-        """
-        regions: tuple[str, ...] = ("rail",)
-        if self._library_notes_compact_workflow_active():
-            regions = (
-                "rail",
-                "navigator",
-                "editor",
-                "preview",
-                "context",
-                "create",
-                "lasting_add",
-                "lasting_roots",
-            )
-        owners: dict[int, Widget] = {}
-        for region in regions:
-            owner = self._library_notes_scroll_owner(region)
-            if owner is not None:
-                owners[id(owner)] = owner
-        for owner in owners.values():
-            if getattr(owner, "_library_notes_scroll_observed", False):
-                continue
-            owner._library_notes_scroll_observed = True
-            self.watch(
-                owner,
-                "scroll_x",
-                partial(self._queue_library_notes_scroll_interaction, owner),
-                init=False,
-            )
-            self.watch(
-                owner,
-                "scroll_y",
-                partial(self._queue_library_notes_scroll_interaction, owner),
-                init=False,
-            )
-
-    def _queue_library_notes_scroll_interaction(
-        self, owner: Widget, old_value: float, new_value: float
-    ) -> None:
-        """Defer scroll intent so a resize epoch can reject layout clamping."""
-        del old_value, new_value
-        epoch = self._library_notes_resize_epoch
-        programmatic = bool(
-            self._library_notes_restoring_focus or self._library_notes_resize_settling
-        )
-        stage = self._library_notes_focus_stage(self.focused)
-        region = "rail" if stage == "rail" else self._library_notes_focus_region()
-        relevant = self._library_notes_workflow_active() or stage == "rail"
-        user_intent = bool(
-            not programmatic
-            and relevant
-            and self._library_notes_scroll_owner(region) is owner
-        )
-        if user_intent:
-            # Invalidate any older deferred resize/recompose restore before
-            # its callback can overwrite this explicit scroll interaction.
-            self._library_notes_scroll_intent_generation += 1
-        self.call_later(
-            self._record_library_notes_scroll_interaction,
-            owner,
-            epoch,
-            user_intent,
-        )
-
-    def _record_library_notes_scroll_interaction(
-        self, owner: Widget, epoch: int, user_intent: bool
-    ) -> None:
-        """Cache one settled user scroll without a global Idle hot path."""
-        if epoch != self._library_notes_resize_epoch or not self.is_mounted:
-            return
-        stage = self._library_notes_focus_stage(self.focused)
-        if not self._library_notes_workflow_active() and stage != "rail":
-            return
-        region = "rail" if stage == "rail" else self._library_notes_focus_region()
-        if self._library_notes_scroll_owner(region) is not owner:
-            return
-        identity = self._capture_library_notes_focus_identity(stage_from_focus=True)
-        self._library_notes_interaction_focus = identity
-        if user_intent:
-            self._advance_library_stage_interaction()
-            self._library_notes_last_user_scroll_focus = identity
-
-    def _record_library_notes_focus_interaction(
-        self, expected: Widget, user_intent: bool
-    ) -> None:
-        """Capture a settled focus change and attach its current scroll owner."""
-        if not self.is_mounted or self.focused is not expected:
-            return
-        if (
-            not self._library_notes_workflow_active()
-            and self._library_notes_focus_stage(self.focused) != "rail"
-            and not (
-                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-                and self._media_state.view == "list"
-            )
-        ):
-            return
-        self._install_library_notes_scroll_observers()
-        identity = self._capture_library_notes_focus_identity(stage_from_focus=True)
-        self._library_notes_interaction_focus = identity
-        if user_intent:
-            self._advance_library_stage_interaction()
-            self._library_notes_last_user_focus = identity
-
-    def _remember_library_notes_responsive_focus(
-        self, identity: LibraryNotesFocusIdentity
-    ) -> LibraryNotesFocusIdentity:
-        """Keep offsets that an expanded viewport temporarily clamps away."""
-        previous = self._library_notes_responsive_focus_memory
-        same_target = bool(
-            previous is not None
-            and previous.region == identity.region
-            and previous.note_id == identity.note_id
-            and previous.semantic_role == identity.semantic_role
-        )
-        if (
-            same_target
-            and previous is not None
-            and previous.scroll_offset is not None
-            and identity.scroll_offset is not None
-        ):
-            user_scroll = self._library_notes_last_user_scroll_focus
-            user_changed_since_transition = bool(
-                self._library_notes_scroll_intent_generation
-                != self._library_notes_transition_scroll_generation
-                and user_scroll is not None
-                and user_scroll.region == identity.region
-                and user_scroll.note_id == identity.note_id
-                and user_scroll.semantic_role == identity.semantic_role
-            )
-            current_x, current_y = identity.scroll_offset
-            previous_x, previous_y = previous.scroll_offset
-            if not user_changed_since_transition:
-                current_x, current_y = previous_x, previous_y
-            identity = dataclasses.replace(
-                identity, scroll_offset=(current_x, current_y)
-            )
-        self._library_notes_responsive_focus_memory = identity
-        return identity
+    def _record_library_notes_focus_interaction(self, expected: Widget, user_intent: bool) -> None:
+        return self._notes_controller._record_library_notes_focus_interaction(expected, user_intent)
 
     def _update_library_notes_responsive_state(self) -> None:
-        """Measure the invariant shell allocation and transition only on crossing."""
-        if not self.is_mounted:
-            return
-        try:
-            width = self.query_one("#library-shell-grid").region.width
-        except (NoMatches, QueryError):
-            return
-        if width <= 0:
-            return
-        self._sync_library_ingest_rail_for_width(width)
-        self._sync_library_ordinary_rail_width_contract()
-        self._apply_library_notes_stage_visibility_for_resize()
-        compact = width < LIBRARY_NOTES_COMPACT_BREAKPOINT
-        if compact == self._library_notes_compact:
-            self._library_notes_pre_resize_focus = None
-            return
-        identity = self._library_notes_pre_resize_focus or (
-            self._capture_library_notes_focus_identity(stage_from_focus=True)
-        )
-        self._library_notes_pre_resize_focus = None
-        identity = self._remember_library_notes_responsive_focus(identity)
-        self._transition_library_notes_presentation(compact, identity)
+        return self._notes_controller._update_library_notes_responsive_state()
 
     def _library_ref_is_live(self, widget: Widget) -> bool:
         """Return whether a cached reference is still this screen's live node.
@@ -8572,10 +7235,10 @@ class LibraryScreen(BaseAppScreen):
             rail,
             canvas,
             self._library_selected_row_id,
-            self._library_notes_source,
-            self._library_notes_view,
-            self._library_notes_stage,
-            self._library_notes_compact,
+            self._notes_state.source,
+            self._notes_state.view,
+            self._notes_state.stage,
+            self._notes_state.compact,
             self._library_rail_collapsed,
             self._ingest_state.auto_collapsed_rail,
             self._library_emergency_stage,
@@ -8598,8 +7261,8 @@ class LibraryScreen(BaseAppScreen):
     def on_resize(self, event: events.Resize) -> None:
         """Capture only a crossing, decided by the measured invariant grid."""
         del event
-        self._library_notes_resize_epoch += 1
-        self._library_notes_resize_settling = True
+        self._notes_state.resize_epoch += 1
+        self._notes_state.resize_settling = True
         # TASK-22228 (item 7): the Media reader layout leg is scheduled only
         # while Browse Media owns the canvas -- the one route that mounts
         # ``#library-media-reader-shell`` (``compose``'s
@@ -8615,7 +7278,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             focused = self.focused
             focus_intent = (
-                (focused, self._library_notes_focus_intent_generation)
+                (focused, self._notes_state.focus_intent_generation)
                 if focused is not None
                 else None
             )
@@ -8633,7 +7296,7 @@ class LibraryScreen(BaseAppScreen):
         signature = self._library_resize_layout_signature()
         if signature is not None:
             if signature == self._library_resize_applied_signature:
-                self._library_notes_pre_resize_focus = None
+                self._notes_state.pre_resize_focus = None
                 return
             self._library_resize_applied_signature = signature
         try:
@@ -8646,16 +7309,16 @@ class LibraryScreen(BaseAppScreen):
         self._sync_library_ordinary_rail_width_contract()
         self._apply_library_notes_stage_visibility_for_resize()
         compact = width < LIBRARY_NOTES_COMPACT_BREAKPOINT
-        if compact == self._library_notes_compact:
-            self._library_notes_pre_resize_focus = None
+        if compact == self._notes_state.compact:
+            self._notes_state.pre_resize_focus = None
             return
         current = self._capture_library_notes_focus_identity(stage_from_focus=True)
         identity = current
         for cached in (
-            self._library_notes_last_user_focus,
-            self._library_notes_interaction_focus,
-            self._library_notes_last_presented_focus,
-            self._library_notes_responsive_focus_memory,
+            self._notes_state.last_user_focus,
+            self._notes_state.interaction_focus,
+            self._notes_state.last_presented_focus,
+            self._notes_state.responsive_focus_memory,
         ):
             if (
                 cached is not None
@@ -8680,7 +7343,7 @@ class LibraryScreen(BaseAppScreen):
                     body_selection_end=current.body_selection_end,
                 )
                 break
-        user_scroll = self._library_notes_last_user_scroll_focus
+        user_scroll = self._notes_state.last_user_scroll_focus
         if (
             user_scroll is not None
             and user_scroll.region == current.region
@@ -8701,12 +7364,11 @@ class LibraryScreen(BaseAppScreen):
                 identity,
                 scroll_offset=user_scroll.scroll_offset,
             )
-        self._library_notes_pre_resize_focus = identity
+        self._notes_state.pre_resize_focus = identity
         self.call_after_refresh(self._update_library_notes_responsive_state)
 
     def _mark_library_notes_user_interaction(self) -> None:
-        """End resize suppression only when a real input event can own changes."""
-        self._library_notes_resize_settling = False
+        return self._notes_controller._mark_library_notes_user_interaction()
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Let click-driven focus changes supersede resize memory."""
@@ -8749,12 +7411,12 @@ class LibraryScreen(BaseAppScreen):
         footer -- mirroring ``AppFooterStatus``'s own FULL/COMPACT global
         tiers rather than inventing a second dialect.
         """
-        return compact if self._library_notes_compact else wide
+        return compact if self._notes_state.compact else wide
 
     def _library_notes_footer_shortcuts(self) -> tuple[tuple[str, str], ...]:
         """Return exact one-row local help for the visible Notes state."""
         if not self._library_notes_workflow_active() or (
-            self._library_notes_compact and self._library_notes_stage != "notes"
+            self._notes_state.compact and self._notes_state.stage != "notes"
         ):
             return self._library_footer_shortcuts_for_current_state()
         snapshot = self._library_note_session.snapshot
@@ -8770,19 +7432,19 @@ class LibraryScreen(BaseAppScreen):
                 self.LIBRARY_NOTES_CONFLICT_SHORTCUTS,
                 self.LIBRARY_NOTES_CONFLICT_SHORTCUTS_COMPACT,
             )
-        if self._library_note_confirming_delete:
+        if self._notes_state.confirming_delete:
             return self._notes_footer_tier(
                 (("enter", "confirm delete"), ("esc", "cancel delete")),
                 (("enter", "confirm"), ("esc", "cancel")),
             )
         region = self._library_notes_focus_region()
         if region == "navigator":
-            if self._library_notes_select_mode:
+            if self._notes_state.select_mode:
                 return self._notes_footer_tier(
                     (("enter", "select note"), ("esc", "done")),
                     (("enter", "select"), ("esc", "done")),
                 )
-            if self._library_notes_sort_choices_visible:
+            if self._notes_state.sort_choices_visible:
                 return self._notes_footer_tier(
                     (("enter", "choose sort"), ("esc", "cancel")),
                     (("enter", "choose sort"), ("esc", "cancel")),
@@ -8807,7 +7469,7 @@ class LibraryScreen(BaseAppScreen):
                 self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
             )
         if region == "create":
-            if self._library_note_create_running:
+            if self._notes_state.create_running:
                 return ()
             return self._notes_footer_tier(
                 (("enter", "create note"), ("esc", "back to notes")),
@@ -8829,92 +7491,10 @@ class LibraryScreen(BaseAppScreen):
         return self._library_footer_shortcuts_for_current_state()
 
     def _apply_library_notes_footer_context(self) -> None:
-        """Persist region help and hide only compact Notes ancillary indicators."""
-        shortcuts = self._library_notes_footer_shortcuts()
-        registration = ("library", tuple(shortcuts))
-        if self._footer_shortcut_registration != registration:
-            self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
-        hide_ancillary = bool(
-            self._library_notes_compact
-            and self._library_notes_stage == "notes"
-            and self._library_notes_workflow_active()
-        )
-        # TASK-23025: this method runs on EVERY screen refresh (see the
-        # ``refresh`` override), several times per resize frame and focus
-        # change -- resolve the stable footer chrome through the ref cache
-        # and skip the no-op display writes.
-        for selector in (
-            "#footer-word-count",
-            "#footer-token-count",
-            "#internal-db-size-indicator",
-        ):
-            indicator = self._library_layout_ref(selector)
-            if indicator is not None and indicator.display == hide_ancillary:
-                indicator.display = not hide_ancillary
+        return self._notes_controller._apply_library_notes_footer_context()
 
-    def _rehydrate_library_notes_after_recompose(
-        self, restore: _LibraryNotesRecomposeCapture
-    ) -> None:
-        """Reapply the live coordinator snapshot and portable presentation tuple."""
-        if (
-            not self.is_mounted
-            or restore.recompose_generation != self._library_notes_recompose_generation
-        ):
-            return
-        snapshot = self._library_note_session.snapshot
-        session_matches = restore.session_generation is None or bool(
-            snapshot is not None
-            and snapshot.note_id == restore.focus.note_id
-            and snapshot.session_generation == restore.session_generation
-        )
-        revision_matches = restore.draft_revision is None or bool(
-            snapshot is not None and snapshot.draft_revision == restore.draft_revision
-        )
-        presentation_matches = session_matches and revision_matches
-        pending_focus = (
-            self._library_notes_pending_focus_identity
-            if self._library_notes_pending_focus_generation
-            == self._library_notes_navigation_generation
-            else None
-        )
-        focus_identity = pending_focus or restore.focus
-        may_restore_focus = pending_focus is not None or presentation_matches
-        explicit_stage_intent = self._library_notes_explicit_stage_intent
-        if (
-            self._library_notes_compact
-            and may_restore_focus
-            and not explicit_stage_intent
-        ):
-            self._library_notes_stage = focus_identity.stage
-        self._apply_library_notes_stage_visibility()
-        if snapshot is not None and session_matches:
-            if snapshot.in_conflict:
-                self._library_note_preview = False
-                self._library_note_context = False
-            elif presentation_matches:
-                self._library_note_preview = restore.preview
-                self._library_note_context = restore.context
-            if presentation_matches:
-                self._library_note_confirming_delete = restore.confirming_delete
-            self._apply_library_note_presentation_state()
-            self.call_after_refresh(
-                self._arm_library_note_editor, restore.recompose_generation
-            )
-        self._apply_library_notes_footer_context()
-        if may_restore_focus:
-            guard = _LibraryNotesRestoreGuard(
-                recompose_generation=restore.recompose_generation,
-                scroll_generation=restore.scroll_generation,
-                focus_generation=restore.focus_generation,
-            )
-            self._restore_library_notes_focus_identity(focus_identity, guard)
-            self.call_after_refresh(
-                self._queue_library_notes_settled_focus_restore,
-                focus_identity,
-                guard,
-            )
-        if explicit_stage_intent:
-            self._library_notes_explicit_stage_intent = False
+    def _rehydrate_library_notes_after_recompose(self, restore: _LibraryNotesRecomposeCapture) -> None:
+        return self._notes_controller._rehydrate_library_notes_after_recompose(restore)
 
     def refresh(
         self,
@@ -8950,10 +7530,10 @@ class LibraryScreen(BaseAppScreen):
             self._commit_library_note_widgets_before_recompose()
         restore = self._capture_library_notes_recompose_state() if recompose else None
         if restore is not None:
-            self._library_notes_recompose_generation += 1
+            self._notes_state.recompose_generation += 1
             restore = dataclasses.replace(
                 restore,
-                recompose_generation=self._library_notes_recompose_generation,
+                recompose_generation=self._notes_state.recompose_generation,
             )
         self._apply_library_notes_footer_context()
         result = super().refresh(
@@ -9059,30 +7639,17 @@ class LibraryScreen(BaseAppScreen):
         return True
 
     async def action_library_notes_new(self) -> None:
-        """Open Create only after the active canonical draft flushes."""
-        await self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
+        return await self._notes_controller.action_library_notes_new()
 
     def action_library_notes_focus_filter(self) -> None:
-        """Focus Navigator Filter without claiming literal input keystrokes."""
-        self._focus_library_notes_filter_input()
-        try:
-            self.query_one("#library-notes-filter", Input).scroll_visible(
-                animate=False, force=True, immediate=True
-            )
-        except (NoMatches, QueryError):
-            return
+        return self._notes_controller.action_library_notes_focus_filter()
 
     def _show_library_note_shortcut_refusal(self, message: str) -> None:
-        """Keep a blocked local action visible in status and notification."""
-        self._library_note_shortcut_status = message
-        self._apply_library_note_presentation_state()
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(message, severity="warning")
+        return self._notes_controller._show_library_note_shortcut_refusal(message)
 
     async def action_library_notes_save(self) -> None:
         """Request an immediate save or explain the owning safety gate."""
-        if self._library_notes_select_mode:
+        if self._notes_state.select_mode:
             self._show_library_note_shortcut_refusal(
                 "Save unavailable — finish bulk selection first."
             )
@@ -9091,14 +7658,14 @@ class LibraryScreen(BaseAppScreen):
         if snapshot is None:
             return
         if (
-            self._library_note_confirming_delete
+            self._notes_state.confirming_delete
             or self._library_note_session.destructive_running
             or self._library_note_session.destructive_admission is not None
         ):
             self._show_library_note_shortcut_refusal(
                 "Save locked — finish or cancel the destructive action."
             )
-            if self._library_note_confirming_delete:
+            if self._notes_state.confirming_delete:
                 self._focus_library_note_control("#library-note-delete-cancel")
             return
         if (
@@ -9114,118 +7681,7 @@ class LibraryScreen(BaseAppScreen):
         await self._save_library_note(explicit=True)
 
     async def action_library_notes_escape(self) -> None:
-        """Follow the visible Notes Back hierarchy without bypassing vetoes."""
-        snapshot = self._library_note_session.snapshot
-        if self._library_note_confirming_delete:
-            if self._library_note_session.destructive_running:
-                self._show_library_note_shortcut_refusal(
-                    "Delete is running — wait for it to finish."
-                )
-                return
-            admission = self._library_note_session.destructive_admission
-            if (
-                admission is not None
-                and not self._library_note_session.cancel_destructive(admission)
-            ):
-                self._show_library_note_shortcut_refusal(
-                    "Delete is running — wait for it to finish."
-                )
-                return
-            self._restore_library_note_delete_origin()
-            return
-        if snapshot is not None and (
-            snapshot.in_conflict
-            or self._library_note_session.conflict_resolution_running
-        ):
-            self._show_library_note_shortcut_refusal(
-                "Conflict locked — choose Overwrite or Reload before leaving."
-            )
-            self._focus_library_note_conflict_callout()
-            return
-        if self._library_note_context:
-            self._library_note_context = False
-            self._apply_library_note_presentation_state()
-            self._focus_library_note_control("#library-note-context")
-            return
-        if self._library_notes_select_mode:
-            self._library_notes_select_mode = False
-            self._library_notes_row_selection.clear()
-            _sync_library_canvas(
-                self,
-                "notes",
-                then=lambda: self._focus_library_note_control(
-                    "#library-notes-select-toggle"
-                ),
-            )
-            return
-        if self._library_notes_view == "editor":
-            # P0 (found independently by task-3315 and at dev 4d0232358):
-            # this called `_back_from_library_note_editor()`, a method that
-            # never existed in ANY commit (introduced dangling on the
-            # notes-adaptive branch at e453e9099, "feat(notes): preserve
-            # focus across compact stages") -- a real Escape keypress from
-            # the note editor raised an uncaught AttributeError that
-            # terminated the whole app. Route through the one shared Back
-            # seam the "‹ Back to list" button and
-            # `action_library_note_editor_back` already use (dirty-flush +
-            # veto + session-blank GC + list restore) instead of inventing
-            # a second exit path.
-            await self._exit_library_note_editor_guarded()
-            return
-        if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
-            if self._library_note_create_running:
-                notify = getattr(self.app_instance, "notify", None)
-                if callable(notify):
-                    notify(
-                        "Create is running — wait for it to finish.", severity="warning"
-                    )
-                return
-            self._library_note_create_status = ""
-            await self._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-            return
-        if self._library_notes_view in {"lasting_add", "lasting_roots"}:
-            await self._exit_library_notes_lasting_sync()
-            return
-        if self._library_notes_view == "import":
-            phase = self._library_note_import_controller.snapshot.phase
-            if phase in {NoteImportPhase.CHECKING, NoteImportPhase.IMPORTING}:
-                self._library_note_import_controller.cancel()
-                return
-            self._library_notes_view = "list"
-            _sync_library_canvas(
-                self, "notes", then=self._focus_library_notes_filter_input
-            )
-            return
-        if self._library_notes_sort_choices_visible:
-            self._library_notes_sort_choices_visible = False
-            _sync_library_canvas(
-                self,
-                "notes",
-                then=lambda: self._focus_library_note_control("#library-notes-sort"),
-            )
-            return
-        self._advance_library_stage_interaction()
-        self._library_notes_stage = "rail"
-        self._library_notes_explicit_stage_intent = False
-        self._supersede_library_notes_navigation()
-        if self.query("#library-notes-reader-shell"):
-            # The adaptive shell keeps all three owners mounted, so Escape
-            # from Navigator moves toward Library by granting that pane one
-            # effective-layout priority. This is deliberately not persisted:
-            # the user's requested pane preferences remain authoritative and
-            # return on the next unconstrained layout. Resolve visibility
-            # before restoring focus so a narrow shell never strands focus in
-            # the auto-collapsed Library pane.
-            self._sync_library_notes_reader_layout_from_shell(priority="library")
-        self._apply_library_notes_stage_visibility()
-        self._apply_library_notes_footer_context()
-        identity = LibraryNotesFocusIdentity(
-            stage="rail",
-            region="navigator",
-            note_id=None,
-            semantic_role=f"library-row:{self._library_selected_row_id}",
-        )
-        self.call_after_refresh(self._restore_library_notes_focus_identity, identity)
+        return await self._notes_controller.action_library_notes_escape()
 
     def _register_footer_shortcuts(self) -> None:
         """Register Library shortcuts via BaseAppScreen's persisting API.
@@ -9482,8 +7938,8 @@ class LibraryScreen(BaseAppScreen):
         if (
             self.is_mounted
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
-            and self._library_notes_view == "list"
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._notes_state.view == "list"
         ):
             # This callback is scheduled from ``on_mount``/``on_screen_resume``
             # and may run while the retained Notes canvas is still mounting.
@@ -9519,10 +7975,7 @@ class LibraryScreen(BaseAppScreen):
         self._disarm_library_list_entry_focus()
         self._stop_library_media_selection_debounce()
         self._stop_library_media_filter_timer()
-        for attr in (
-            "_library_notes_autosave_timer",
-            "_library_source_snapshot_timeout_timer",
-        ):
+        for attr in ("_library_source_snapshot_timeout_timer",):
             timer = getattr(self, attr, None)
             if timer is not None:
                 timer.stop()
@@ -9541,6 +7994,13 @@ class LibraryScreen(BaseAppScreen):
         if prompts_timer is not None:
             prompts_timer.stop()
             self._prompts_state.debounce_timer = None
+        # (wave-8 task 3) The notes autosave timer moved to ``_notes_state``
+        # for the same reason, and left the string loop above for the same
+        # explicit block the ingest and prompts timers already use.
+        notes_timer = self._notes_state.autosave_timer
+        if notes_timer is not None:
+            notes_timer.stop()
+            self._notes_state.autosave_timer = None
 
     def on_screen_resume(self) -> None:
         """Refresh every visible surface for this visit (initial and repeat).
@@ -9673,7 +8133,7 @@ class LibraryScreen(BaseAppScreen):
             self._refresh_local_source_snapshot()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
             self._request_library_notes_tree_initial_load()
         if (
@@ -9777,8 +8237,8 @@ class LibraryScreen(BaseAppScreen):
             if callable(add_progress_listener):
                 add_progress_listener(self._handle_library_ingest_progress_changed)
         if (
-            self._library_notes_view == "editor"
-            and self._selected_note_id
+            self._notes_state.view == "editor"
+            and self._notes_state.selected_note_id
             and self._library_note_detail is None
         ):
             # Mirrors the collections case above: a note_id deep-link applied
@@ -9786,7 +8246,7 @@ class LibraryScreen(BaseAppScreen):
             # deferred to here once the canvas has actually been composed.
             self.run_worker(
                 self._refresh_library_note_detail(
-                    self._selected_note_id,
+                    self._notes_state.selected_note_id,
                     entry_origin=True,
                 ),
                 exclusive=True,
@@ -9983,7 +8443,7 @@ class LibraryScreen(BaseAppScreen):
         if self._media_state.progress_pending_writes:
             await self._drain_library_media_progress_writes()
         self._library_note_import_controller.cancel()
-        workspace = self._library_file_notes_workspace
+        workspace = self._notes_state.file_notes_workspace
         if workspace is not None:
             await workspace.shutdown()
         self._invalidate_library_note_autosave()
@@ -10061,8 +8521,8 @@ class LibraryScreen(BaseAppScreen):
         )
         state["library_selected_row_id"] = self._library_selected_row_id
         state["selected_conversation_id"] = self._selected_conversation_id
-        state["selected_note_id"] = self._selected_note_id
-        state["library_notes_view"] = self._library_notes_view
+        state["selected_note_id"] = self._notes_state.selected_note_id
+        state["library_notes_view"] = self._notes_state.view
         state["selected_media_id"] = self._media_state.selected_media_id
         state["library_media_view"] = self._media_state.view
         state["library_rag_query"] = self._rag_search_state.query
@@ -10090,8 +8550,8 @@ class LibraryScreen(BaseAppScreen):
         state["library_media_scope"] = dataclasses.asdict(
             applied_media.scope if applied_media is not None else MediaBrowseScope()
         )
-        state["library_notes_sort"] = self._library_notes_sort
-        state["library_notes_filter"] = self._library_notes_filter
+        state["library_notes_sort"] = self._notes_state.sort
+        state["library_notes_filter"] = self._notes_state.filter
         applied_prompts = self._library_prompt_browse_controller.applied_result
         state["library_prompts_scope"] = dataclasses.asdict(
             applied_prompts.scope
@@ -10191,16 +8651,16 @@ class LibraryScreen(BaseAppScreen):
             }
         elif row_id == LIBRARY_ROW_BROWSE_NOTES:
             if (
-                self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
+                self._notes_state.source != LIBRARY_NOTES_SOURCE_DATABASE
                 or not self._library_loaded
                 or self._library_lookup_error
             ):
                 return None
             scope = {
-                "sort": self._library_notes_sort,
-                "filter": self._library_notes_filter,
+                "sort": self._notes_state.sort,
+                "filter": self._notes_state.filter,
             }
-            source_list_adjusted = self._library_notes_view != "list"
+            source_list_adjusted = self._notes_state.view != "list"
         elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
             applied = self._library_skills_browse_controller.applied_result
             if applied is None:
@@ -10428,8 +8888,8 @@ class LibraryScreen(BaseAppScreen):
         notes_view = str(state.get("library_notes_view") or "list")
         if notes_view == "editor" and not selected_note_id:
             notes_view = "list"
-        self._selected_note_id = selected_note_id
-        self._library_notes_view = notes_view
+        self._notes_state.selected_note_id = selected_note_id
+        self._notes_state.view = notes_view
 
         selected_media_id = str(state.get("selected_media_id") or "")
         media_view = str(state.get("library_media_view") or "list")
@@ -10502,11 +8962,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_browse_controller.invalidate(restored_media_scope)
         self._media_state.type_filter = restored_media_scope.media_type
         notes_sort = state.get("library_notes_sort")
-        self._library_notes_sort = (
+        self._notes_state.sort = (
             notes_sort if isinstance(notes_sort, str) and notes_sort else "newest"
         )
         notes_filter = state.get("library_notes_filter")
-        self._library_notes_filter = (
+        self._notes_state.filter = (
             notes_filter if isinstance(notes_filter, str) else ""
         )
         restored_prompts_scope = self._restore_library_prompts_scope(state)
@@ -10568,10 +9028,10 @@ class LibraryScreen(BaseAppScreen):
                 self._selected_conversation_id = ""
             elif row_id == LIBRARY_ROW_BROWSE_NOTES:
                 self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
-                self._library_notes_sort = scope["sort"]
-                self._library_notes_filter = scope["filter"]
-                self._library_notes_view = "list"
-                self._selected_note_id = ""
+                self._notes_state.sort = scope["sort"]
+                self._notes_state.filter = scope["filter"]
+                self._notes_state.view = "list"
+                self._notes_state.selected_note_id = ""
             elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
                 receipt_skills_scope = SkillBrowseScope(
                     query=scope["filter"],
@@ -10657,36 +9117,21 @@ class LibraryScreen(BaseAppScreen):
         """Return whether the retained File Notes workspace owns the canvas."""
         return (
             getattr(
-                self,
-                "_library_notes_source",
+                self._notes_state,
+                "source",
                 LIBRARY_NOTES_SOURCE_DATABASE,
             )
             == LIBRARY_NOTES_SOURCE_FILES
             and getattr(self, "_library_selected_row_id", "")
             == LIBRARY_ROW_BROWSE_NOTES
-            and getattr(self, "_library_file_notes_workspace", None) is not None
+            and getattr(self._notes_state, "file_notes_workspace", None) is not None
         )
 
     def _library_media_viewer_substate_active(self) -> bool:
         return self._media_controller._library_media_viewer_substate_active()
 
     def _library_note_editor_active(self) -> bool:
-        """True while the in-canvas DATABASE note editor is the live view (task-2856).
-
-        Scoped to Database Notes so this never
-        overlaps ``_file_notes_active()`` -- Files mode has its own
-        dedicated Escape gate and never sets ``_library_notes_view``.
-        """
-        return (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and getattr(
-                self,
-                "_library_notes_source",
-                LIBRARY_NOTES_SOURCE_DATABASE,
-            )
-            == LIBRARY_NOTES_SOURCE_DATABASE
-            and getattr(self, "_library_notes_view", "list") == "editor"
-        )
+        return self._notes_controller._library_note_editor_active()
 
     def _library_prompt_editor_active(self) -> bool:
         return self._prompts_controller._library_prompt_editor_active()
@@ -10711,12 +9156,12 @@ class LibraryScreen(BaseAppScreen):
         if row_id == LIBRARY_ROW_BROWSE_NOTES:
             return (
                 getattr(
-                    self,
-                    "_library_notes_source",
+                    self._notes_state,
+                    "source",
                     LIBRARY_NOTES_SOURCE_DATABASE,
                 )
                 == LIBRARY_NOTES_SOURCE_DATABASE
-                and getattr(self, "_library_notes_view", "list") == "list"
+                and getattr(self._notes_state, "view", "list") == "list"
             )
         if row_id in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT):
             return getattr(self._prompts_state, "view", "list") == "list"
@@ -10881,7 +9326,7 @@ class LibraryScreen(BaseAppScreen):
             target_restore
             or successful_return_focus
             or self._library_notes_restoring_focus
-            or self._library_notes_resize_settling
+            or self._notes_state.resize_settling
         )
         if (
             self._library_pending_list_entry_focus
@@ -10928,8 +9373,8 @@ class LibraryScreen(BaseAppScreen):
             if user_intent:
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
-                self._library_notes_focus_intent_generation += 1
-                if self._library_notes_navigation_status:
+                self._notes_state.focus_intent_generation += 1
+                if self._notes_state.navigation_status:
                     LibraryScreen._supersede_library_notes_navigation(self)
             self.call_after_refresh(
                 self._record_library_notes_focus_interaction,
@@ -11126,8 +9571,8 @@ class LibraryScreen(BaseAppScreen):
         """Delegate the common leave guard only while Files owns Notes."""
         if not self._file_notes_active():
             return True
-        assert self._library_file_notes_workspace is not None
-        return await self._library_file_notes_workspace.flush_pending_work()
+        assert self._notes_state.file_notes_workspace is not None
+        return await self._notes_state.file_notes_workspace.flush_pending_work()
 
     def _acquire_file_notes_transition(
         self,
@@ -11136,8 +9581,8 @@ class LibraryScreen(BaseAppScreen):
         """Synchronously admit a transition for the active exact root binding."""
         if not self._file_notes_active():
             return None
-        assert self._library_file_notes_workspace is not None
-        return self._library_file_notes_workspace.acquire_transition(kind)
+        assert self._notes_state.file_notes_workspace is not None
+        return self._notes_state.file_notes_workspace.acquire_transition(kind)
 
     def acquire_navigation_transition(
         self,
@@ -11491,7 +9936,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if (
             not presentation_changed
-            and self._library_notes_pending_focus_waits_for_snapshot
+            and self._notes_state.pending_focus_waits_for_snapshot
         ):
             # A no-op snapshot has no reconciliation callback to finish the
             # pending Notes Back receipt. Release it after the current frame
@@ -11582,12 +10027,12 @@ class LibraryScreen(BaseAppScreen):
         """Return the state fields that select the mounted Library owner."""
         return (
             self._library_selected_row_id,
-            self._library_notes_source,
-            self._library_notes_view,
+            self._notes_state.source,
+            self._notes_state.view,
             self._media_state.view,
             self._prompts_state.view,
             self._skills_state.view,
-            self._selected_note_id,
+            self._notes_state.selected_note_id,
             self._media_state.selected_media_id,
             self._prompts_state.selected_prompt_id,
             self._skills_state.selected_skill_name,
@@ -11797,7 +10242,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_entry_reconcile_dirty = False
         self._library_entry_reconcile_pending = None
         self._library_entry_reconcile_retry_generation = None
-        if self._library_notes_pending_focus_waits_for_snapshot:
+        if self._notes_state.pending_focus_waits_for_snapshot:
             # Notes Back waits for the fresh list projection so its row and
             # scroll receipt cannot be overwritten by the snapshot-driven
             # list sync. The pending identity is Notes-owned and generation
@@ -11866,8 +10311,8 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_CANVAS_KIND_NOTES,
             LIBRARY_CANVAS_KIND_NOTES_CREATE,
         ):
-            if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
-                return self._library_file_notes_workspace or Static(
+            if self._notes_state.source == LIBRARY_NOTES_SOURCE_FILES:
+                return self._notes_state.file_notes_workspace or Static(
                     "Opening File Notesâ€¦",
                     id="library-file-notes-loading",
                     classes="destination-purpose",
@@ -12519,7 +10964,7 @@ class LibraryScreen(BaseAppScreen):
                 )
         elif (
             shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
             local_list_surface = True
             expected_selector = "#library-notes-canvas"
@@ -13002,23 +11447,6 @@ class LibraryScreen(BaseAppScreen):
             text = text[:max_length]
         return text
 
-    @staticmethod
-    def _note_word_count(content: str) -> int:
-        """Count words in a Library note body for the meta line's status text.
-
-        Counts whitespace-delimited runs via a regex scan instead of
-        ``len(content.split())``, which would materialize a full list of
-        every word just to throw it away -- wasteful for the very large
-        note bodies this editor allows (see ``LIBRARY_NOTE_CONTENT_MAX_CHARS``).
-
-        Args:
-            content: The note body text to count words in.
-
-        Returns:
-            The number of whitespace-delimited words.
-        """
-        return sum(1 for _ in re.finditer(r"\S+", content))
-
     def _library_note_keywords_from_input(self, raw_value: str) -> list[str] | None:
         """Parse and sanitize the Library note editor's keywords Input.
 
@@ -13040,8 +11468,7 @@ class LibraryScreen(BaseAppScreen):
         return sanitized or None
 
     def _library_notes_user_id(self) -> str:
-        """Return the notes-service user id, falling back to the shared default."""
-        return getattr(self.app_instance, "notes_user_id", None) or "default_user"
+        return self._notes_controller._library_notes_user_id()
 
     @staticmethod
     def _safe_sync_scope_text(value: Any, *, max_length: int = 200) -> str | None:
@@ -13105,40 +11532,8 @@ class LibraryScreen(BaseAppScreen):
             total_known = False
         return records, max(count, 0), total_known
 
-    async def _notes_true_count_or_none(
-        self, count_notes: Any, **kwargs: Any
-    ) -> int | None:
-        """Fetch the authoritative local notes total, degrading quietly on failure.
-
-        Runs inside the same ``asyncio.gather`` as the paginated ``list_notes``
-        fetch (see ``_list_local_source_snapshot``). ``list_notes`` on the
-        real local backend returns a plain list with no total, so the rail
-        badge would otherwise always show the "showing up to N" sample-cap
-        suffix. When the seam is missing entirely, the caller never invokes
-        this method (guarded by ``callable(count_notes)``); when it *is*
-        present but raises here, the failure is swallowed and ``None`` is
-        returned so the caller falls back to the paginated response's own
-        record count instead of surfacing an error or failing the whole
-        snapshot fetch.
-
-        Args:
-            count_notes: The bound ``count_notes`` callable to invoke.
-            **kwargs: Forwarded to ``count_notes`` (``scope``, ``user_id``).
-
-        Returns:
-            The exact notes count, or ``None`` if the call failed or
-            returned something other than an ``int``.
-        """
-        try:
-            result = await self._run_library_service_call(
-                count_notes, isolate_in_worker=True, **kwargs
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to fetch exact local notes count; using sample count."
-            )
-            return None
-        return result if isinstance(result, int) else None
+    async def _notes_true_count_or_none(self, count_notes: Any, **kwargs: Any) -> int | None:
+        return await self._notes_controller._notes_true_count_or_none(count_notes, **kwargs)
 
     async def _prompts_count_or_none(self, count_prompts: Any, **kwargs: Any) -> int | None:
         return await self._prompts_controller._prompts_count_or_none(count_prompts, **kwargs)
@@ -13700,7 +12095,7 @@ class LibraryScreen(BaseAppScreen):
         load_failure = self._library_source_load_failure()
         attention_action = (
             self._library_landing_attention_action()
-            if not get_started and not self._library_notes_compact
+            if not get_started and not self._notes_state.compact
             else None
         )
         self._library_landing_attention_signature = attention_action
@@ -14412,7 +12807,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_compose_ref_cache.clear()
         self._library_reader_shell_ref = None
         self._library_resize_applied_signature = None
-        self._library_notes_stage_applied_signature = None
+        self._notes_state.stage_applied_signature = None
         shell_input = self._build_library_shell_input()
         shell = build_library_shell_state(
             shell_input, selected_row_id=self._library_selected_row_id
@@ -14508,11 +12903,11 @@ class LibraryScreen(BaseAppScreen):
             adaptive_database_notes = (
                 shell.canvas_kind
                 in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
-                and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+                and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
             )
             wide_focused_task = (
                 not adaptive_database_notes
-                and not self._library_notes_compact
+                and not self._notes_state.compact
                 and self._library_notes_focused_task_active()
             )
             with Horizontal(id="library-notes-source-strip"):
@@ -14524,7 +12919,7 @@ class LibraryScreen(BaseAppScreen):
                 task_return.display = wide_focused_task
                 yield task_return
                 database_selected = (
-                    self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+                    self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
                 )
                 database_source = Button(
                     "Library notes",
@@ -14542,7 +12937,7 @@ class LibraryScreen(BaseAppScreen):
                 source_separator.display = not wide_focused_task
                 yield source_separator
                 files_selected = (
-                    self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
+                    self._notes_state.source == LIBRARY_NOTES_SOURCE_FILES
                 )
                 files_source = Button(
                     "Folder files",
@@ -14557,18 +12952,18 @@ class LibraryScreen(BaseAppScreen):
         )
         shell_grid.styles.height = "1fr"
         shell_grid.styles.min_height = 12
-        shell_grid.set_class(self._library_notes_compact, "library-notes-compact")
+        shell_grid.set_class(self._notes_state.compact, "library-notes-compact")
         self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
         single_notes_stage = (
-            self._library_notes_compact and self._library_notes_compact_stage_applies()
+            self._notes_state.compact and self._library_notes_compact_stage_applies()
         ) or (
-            not self._library_notes_compact
+            not self._notes_state.compact
             and self._library_notes_focused_task_active()
         )
         if (
             shell.canvas_kind
             in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
             rail = LibraryRail(
                 shell,
@@ -14610,7 +13005,7 @@ class LibraryScreen(BaseAppScreen):
                     library=rail,
                     items=items_host,
                     work=work,
-                    layout=self._library_notes_reader_layout,
+                    layout=self._notes_state.reader_layout,
                     id_prefix="library-notes",
                     library_label="Library",
                     items_label="Notes",
@@ -14622,7 +13017,7 @@ class LibraryScreen(BaseAppScreen):
         if (
             shell.canvas_kind
             in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_FILES
         ):
             rail = LibraryRail(
                 shell,
@@ -14636,7 +13031,7 @@ class LibraryScreen(BaseAppScreen):
                 id="library-file-notes-rail",
                 classes="destination-workbench-pane",
             )
-            workspace = self._library_file_notes_workspace
+            workspace = self._notes_state.file_notes_workspace
             with shell_grid:
                 if workspace is None:
                     yield Static(
@@ -14649,11 +13044,11 @@ class LibraryScreen(BaseAppScreen):
                     if workspace._reader_shell is None:
                         workspace.configure_reader_shell(
                             library_pane=rail,
-                            layout=self._library_file_notes_reader_layout,
+                            layout=self._notes_state.file_notes_reader_layout,
                         )
                     else:
                         workspace.sync_reader_layout(
-                            self._library_file_notes_reader_layout
+                            self._notes_state.file_notes_reader_layout
                         )
                     yield workspace
             self.call_after_refresh(
@@ -14943,7 +13338,7 @@ class LibraryScreen(BaseAppScreen):
             )
             rail.styles.height = "100%"
             rail.display = (
-                not single_notes_stage or self._library_notes_stage == "rail"
+                not single_notes_stage or self._notes_state.stage == "rail"
             ) and not (self._library_rail_collapsed and not single_notes_stage)
             yield rail
             canvas_host = Vertical(
@@ -14952,9 +13347,9 @@ class LibraryScreen(BaseAppScreen):
             canvas_host.styles.width = "13fr"
             canvas_host.styles.min_width = 40
             canvas_host.styles.height = "100%"
-            canvas_host.set_class(self._library_notes_compact, "library-notes-compact")
+            canvas_host.set_class(self._notes_state.compact, "library-notes-compact")
             canvas_host.display = (
-                not single_notes_stage or self._library_notes_stage == "notes"
+                not single_notes_stage or self._notes_state.stage == "notes"
             )
             emergency_return = LibraryEmergencyReturn(id="library-emergency-return")
             emergency_return.display = False
@@ -14977,7 +13372,7 @@ class LibraryScreen(BaseAppScreen):
                     # DB snapshot would flash the DB "Loading…" copy over it.
                     is_local_snapshot_canvas = shell.canvas_kind == "conversations" or (
                         shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
-                        and self._library_notes_source != LIBRARY_NOTES_SOURCE_FILES
+                        and self._notes_state.source != LIBRARY_NOTES_SOURCE_FILES
                     )
                     if (
                         is_local_snapshot_canvas
@@ -15037,14 +13432,14 @@ class LibraryScreen(BaseAppScreen):
                         )
                     elif (
                         shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
-                        and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
+                        and self._notes_state.source == LIBRARY_NOTES_SOURCE_FILES
                     ):
                         # task-2850: File Notes owns the canvas PANE now, not
                         # the whole screen -- the rail and shell_grid frame
                         # above/around this branch stay mounted exactly like
                         # every other notes view (list/editor/sync), so leaving
                         # Files mode never looks like the app broke.
-                        workspace = self._library_file_notes_workspace
+                        workspace = self._notes_state.file_notes_workspace
                         if workspace is not None:
                             yield workspace
                         else:
@@ -15618,7 +14013,7 @@ class LibraryScreen(BaseAppScreen):
         return (
             int(self.size.width),
             int(self.size.height),
-            self._library_notes_compact,
+            self._notes_state.compact,
             self._media_state.reader_preferences,
             pure_layout,
         )
@@ -15957,6 +14352,27 @@ class LibraryScreen(BaseAppScreen):
                 )
             ):
                 self._reset_library_media_reader_to_no_selection()
+                # task-32086 (critique #8 gap in 32043): the reset above cleared
+                # the Reader SESSION, but this seam's tail rebuilds ONLY the
+                # Items pane (``_sync_library_canvas``) and leaves the sibling
+                # ``LibraryMediaViewer`` painting the filtered-out document --
+                # "Media (0)" beside a full stale item with "‹ Back" into an
+                # empty list. The delete path clears the identical split-brain
+                # with a whole-screen recompose (``_delete_library_media_
+                # selection``'s tail); mirror it here so the Reader actually
+                # repaints its "Select a media item…" placeholder. This fires
+                # only on a settled 0-result filter that was holding a loaded
+                # Reader -- as rare as a delete, and never on a page turn
+                # (non-empty ``retained_items``) or mid-load (``loading``
+                # short-circuits the whole block), so the recompose cost is
+                # the delete path's own one-shot completion, not a hot path.
+                if self.is_mounted:
+                    self.refresh(recompose=True)
+                    if focus_identity:
+                        self.call_after_refresh(
+                            self._focus_library_control, focus_identity
+                        )
+                return
         if (
             applied_selection_id
             and self._media_state.reader_session.selected_id != applied_selection_id
@@ -16268,7 +14684,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         state = self._library_media_trash_browse_controller.state
-        focus_generation = getattr(self, "_library_notes_focus_intent_generation", 0)
+        focus_generation = getattr(self._notes_state, "focus_intent_generation", 0)
         authority_generation = getattr(
             self._media_state,
             "trash_focus_authority_generation",
@@ -16379,30 +14795,30 @@ class LibraryScreen(BaseAppScreen):
     def _build_library_notes_state(self) -> LibraryNotesListState:
         """Build the notes canvas's list-view display state from local records."""
         source_records = (
-            self._library_notes_filter_records
-            if self._library_notes_filter_records is not None
+            self._notes_state.filter_records
+            if self._notes_state.filter_records is not None
             else self._local_source_records.get("notes", ())
         )
         operation = self._library_notes_operation_for_active_region()
         state = build_library_notes_list_state(
-            sort_notes_records(source_records, self._library_notes_sort),
-            filter_note=self._library_notes_filter,
+            sort_notes_records(source_records, self._notes_state.sort),
+            filter_note=self._notes_state.filter,
             total_count=self._local_source_counts.get("notes"),
-            select_mode=self._library_notes_select_mode,
-            selected_ids=self._library_notes_row_selection.ids,
-            sort_choices_visible=self._library_notes_sort_choices_visible,
+            select_mode=self._notes_state.select_mode,
+            selected_ids=self._notes_state.row_selection.ids,
+            sort_choices_visible=self._notes_state.sort_choices_visible,
             operation_status=(
                 operation.status_line
                 if operation is not None
-                else self._library_notes_notice
+                else self._notes_state.notice
             ),
             operation_running=(
                 bool(operation and operation.running)
                 or self._library_notes_mutation_fenced()
             ),
-            delete_receipt=self._library_note_delete_receipt,
+            delete_receipt=self._notes_state.delete_receipt,
         )
-        if self._library_notes_select_mode:
+        if self._notes_state.select_mode:
             projection = self._build_library_notes_tree_projection()
             if projection is None:
                 visible_note_ids = (row.note_id for row in state.rows)
@@ -16412,37 +14828,37 @@ class LibraryScreen(BaseAppScreen):
                     for row in projection.rows
                     if row.kind == "note" and row.note_id
                 )
-            self._library_notes_row_selection.reconcile(visible_note_ids)
+            self._notes_state.row_selection.reconcile(visible_note_ids)
         return state
 
     def _build_library_notes_tree_projection(
         self,
     ) -> LibraryNotesTreeProjection | None:
         """Build either the independent filter window or browse branches."""
-        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
-        if getattr(self, "_library_notes_filter", "").strip() and filter_state:
+        filter_state = getattr(self._notes_state, "tree_filter_state", None)
+        if getattr(self._notes_state, "filter", "").strip() and filter_state:
             projection = build_filtered_library_notes_tree(filter_state)
         else:
-            branches = getattr(self, "_library_notes_tree_branches", {})
+            branches = getattr(self._notes_state, "tree_branches", {})
             projection = (
                 build_paged_library_notes_tree(
                     branch_states=branches,
                     expanded_folder_ids=getattr(
-                        self, "_library_notes_tree_expanded_ids", set()
+                        self._notes_state, "tree_expanded_ids", set()
                     ),
                     protected_folder_ids=getattr(
-                        self, "_library_notes_tree_protected_folder_ids", frozenset()
+                        self._notes_state, "tree_protected_folder_ids", frozenset()
                     ),
                     inactive_managed_folder_ids=getattr(
-                        self,
-                        "_library_notes_tree_inactive_managed_folder_ids",
+                        self._notes_state,
+                        "tree_inactive_managed_folder_ids",
                         frozenset(),
                     ),
                 )
                 if branches
                 else None
             )
-        status = getattr(self, "_library_notes_navigation_status", "")
+        status = getattr(self._notes_state, "navigation_status", "")
         if not status:
             return projection
         status_row = LibraryNotesTreeRow(
@@ -16461,18 +14877,18 @@ class LibraryScreen(BaseAppScreen):
     def _begin_library_notes_tree_visit(self) -> None:
         """Seed a fresh mounted visit without carrying page runtime state."""
         LibraryScreen._supersede_library_notes_navigation(self)
-        self._library_notes_tree_topology_epoch = (
-            getattr(self, "_library_notes_tree_topology_epoch", 0) + 1
+        self._notes_state.tree_topology_epoch = (
+            getattr(self._notes_state, "tree_topology_epoch", 0) + 1
         )
-        self._library_notes_tree_branches = {}
-        self._library_notes_tree_request_generations = {}
-        self._library_notes_tree_navigation_requests = {}
-        self._library_notes_tree_target_offsets = {}
-        self._library_notes_tree_status_by_slice = {}
-        self._library_notes_tree_status_revision = 0
-        self._library_notes_tree_protected_folder_ids = frozenset()
-        self._library_notes_tree_inactive_managed_folder_ids = frozenset()
-        self._library_notes_filter_browse_receipt = None
+        self._notes_state.tree_branches = {}
+        self._notes_state.tree_request_generations = {}
+        self._notes_state.tree_navigation_requests = {}
+        self._notes_state.tree_target_offsets = {}
+        self._notes_state.tree_status_by_slice = {}
+        self._notes_state.tree_status_revision = 0
+        self._notes_state.tree_protected_folder_ids = frozenset()
+        self._notes_state.tree_inactive_managed_folder_ids = frozenset()
+        self._notes_state.filter_browse_receipt = None
 
     def _request_library_notes_tree_initial_load(self) -> None:
         """Start one fresh visit by requesting only the two root slices."""
@@ -16514,17 +14930,17 @@ class LibraryScreen(BaseAppScreen):
         focus_generation: int | None = None,
     ) -> bool:
         """Validate one deferred pager handoff against every captured owner."""
-        state = self._library_notes_tree_branches.get(key)
+        state = self._notes_state.tree_branches.get(key)
         return bool(
-            lifecycle_generation == self._library_notes_tree_lifecycle_generation
-            and topology_epoch == self._library_notes_tree_topology_epoch
+            lifecycle_generation == self._notes_state.tree_lifecycle_generation
+            and topology_epoch == self._notes_state.tree_topology_epoch
             and state is not None
             and state.generation == request_generation
-            and self._library_notes_tree_request_generations.get(key)
+            and self._notes_state.tree_request_generations.get(key)
             == request_generation
             and (
                 focus_generation is None
-                or focus_generation == self._library_notes_focus_intent_generation
+                or focus_generation == self._notes_state.focus_intent_generation
             )
         )
 
@@ -16537,12 +14953,12 @@ class LibraryScreen(BaseAppScreen):
     ) -> bool:
         """Validate an optional route authority without coupling ordinary paging."""
         return bool(
-            topology_epoch == self._library_notes_tree_topology_epoch
-            and lifecycle_generation == self._library_notes_tree_lifecycle_generation
+            topology_epoch == self._notes_state.tree_topology_epoch
+            and lifecycle_generation == self._notes_state.tree_lifecycle_generation
             and (
                 navigation_generation is None
                 or navigation_generation
-                == getattr(self, "_library_notes_navigation_generation", 0)
+                == getattr(self._notes_state, "navigation_generation", 0)
             )
         )
 
@@ -16556,12 +14972,12 @@ class LibraryScreen(BaseAppScreen):
         navigation_generation: int | None = None,
     ) -> tuple[int, int, int, tuple[str, ...]]:
         """Begin one reducer-owned request and capture all async authorities."""
-        branches = self._library_notes_tree_branches
-        topology_epoch = self._library_notes_tree_topology_epoch
+        branches = self._notes_state.tree_branches
+        topology_epoch = self._notes_state.tree_topology_epoch
         current = branches.get(key) or empty_notes_slice(
             key, topology_epoch=topology_epoch
         )
-        generations = self._library_notes_tree_request_generations
+        generations = self._notes_state.tree_request_generations
         generation = generations.get(key, current.generation) + 1
         generations[key] = generation
         prior_ids = current.item_ids
@@ -16574,11 +14990,11 @@ class LibraryScreen(BaseAppScreen):
             recovering=recovering,
         )
         navigation_requests = getattr(
-            self, "_library_notes_tree_navigation_requests", None
+            self._notes_state, "tree_navigation_requests", None
         )
         if navigation_requests is None:
             navigation_requests = {}
-            self._library_notes_tree_navigation_requests = navigation_requests
+            self._notes_state.tree_navigation_requests = navigation_requests
         if navigation_generation is not None:
             navigation_requests[key] = navigation_generation
         else:
@@ -16586,7 +15002,7 @@ class LibraryScreen(BaseAppScreen):
         return (
             generation,
             topology_epoch,
-            self._library_notes_tree_lifecycle_generation,
+            self._notes_state.tree_lifecycle_generation,
             prior_ids,
         )
 
@@ -16602,9 +15018,9 @@ class LibraryScreen(BaseAppScreen):
     ) -> Any:
         """Schedule one semantic slice without cancelling any sibling slice."""
         if direction == "target":
-            self._library_notes_tree_target_offsets[key] = offset
+            self._notes_state.tree_target_offsets[key] = offset
         elif not recovering:
-            self._library_notes_tree_target_offsets.pop(key, None)
+            self._notes_state.tree_target_offsets.pop(key, None)
         authority = LibraryScreen._begin_library_notes_tree_slice_request(
             self,
             key,
@@ -16621,7 +15037,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if pager_owned:
             focus_identity = self._capture_library_notes_focus_identity()
-            focus_generation = self._library_notes_focus_intent_generation
+            focus_generation = self._notes_state.focus_intent_generation
             guard = partial(
                 LibraryScreen._library_notes_tree_deferred_authority_is_current,
                 self,
@@ -16668,9 +15084,9 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Directly load one slice; used by orchestration tests and recovery."""
         if direction == "target":
-            self._library_notes_tree_target_offsets[key] = offset
+            self._notes_state.tree_target_offsets[key] = offset
         elif not recovering:
-            self._library_notes_tree_target_offsets.pop(key, None)
+            self._notes_state.tree_target_offsets.pop(key, None)
         authority = LibraryScreen._begin_library_notes_tree_slice_request(
             self,
             key,
@@ -16792,7 +15208,7 @@ class LibraryScreen(BaseAppScreen):
             lifecycle_generation=lifecycle_generation,
         ):
             return
-        current = self._library_notes_tree_branches.get(key)
+        current = self._notes_state.tree_branches.get(key)
         if current is None:
             return
         result = fail_notes_slice_load(
@@ -16813,11 +15229,11 @@ class LibraryScreen(BaseAppScreen):
             self._capture_library_notes_focus_identity() if pager_owned else None
         )
         focus_generation = (
-            self._library_notes_focus_intent_generation if pager_owned else None
+            self._notes_state.focus_intent_generation if pager_owned else None
         )
-        self._library_notes_tree_branches[key] = result.state
+        self._notes_state.tree_branches[key] = result.state
         if navigation_generation is not None:
-            self._library_notes_tree_navigation_requests.pop(key, None)
+            self._notes_state.tree_navigation_requests.pop(key, None)
         if focus_identity is None:
             self._sync_library_notes_tree_canvas_if_present()
             return
@@ -16857,7 +15273,7 @@ class LibraryScreen(BaseAppScreen):
             lifecycle_generation=lifecycle_generation,
         ):
             return
-        current = self._library_notes_tree_branches.get(key)
+        current = self._notes_state.tree_branches.get(key)
         if current is None:
             return
         requested_offset = current.requested_offset
@@ -16871,7 +15287,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if result.kind == "ignored":
             return
-        self._library_notes_tree_branches[key] = result.state
+        self._notes_state.tree_branches[key] = result.state
         if result.kind == "drift" and result.recovery is not None:
             recovery_direction: NotesLoadDirection = (
                 "target" if result.recovery == "reset_target" else "replace"
@@ -16880,7 +15296,7 @@ class LibraryScreen(BaseAppScreen):
                 requested_offset if result.recovery == "reset_target" else 0
             )
             if recovery_offset is None:
-                recovery_offset = self._library_notes_tree_target_offsets.get(key, 0)
+                recovery_offset = self._notes_state.tree_target_offsets.get(key, 0)
             if result.recovery == "reset_target":
                 total = getattr(incoming, "total_folders", None)
                 if total is None:
@@ -16907,9 +15323,9 @@ class LibraryScreen(BaseAppScreen):
                 direction=direction,
             )
             if direction == "target":
-                self._library_notes_tree_target_offsets.pop(key, None)
+                self._notes_state.tree_target_offsets.pop(key, None)
         if navigation_generation is not None:
-            self._library_notes_tree_navigation_requests.pop(key, None)
+            self._notes_state.tree_navigation_requests.pop(key, None)
         pager_owned_focus = bool(
             pager_focus_id
             and LibraryScreen._library_notes_tree_pager_still_focused(
@@ -16920,7 +15336,7 @@ class LibraryScreen(BaseAppScreen):
             self._sync_library_notes_tree_canvas_if_present()
             return
         focus_identity = self._capture_library_notes_focus_identity()
-        focus_generation = self._library_notes_focus_intent_generation
+        focus_generation = self._notes_state.focus_intent_generation
         guard = partial(
             LibraryScreen._library_notes_tree_deferred_authority_is_current,
             self,
@@ -16959,13 +15375,13 @@ class LibraryScreen(BaseAppScreen):
         direction: NotesLoadDirection,
     ) -> None:
         """Replace one slice's authoritative managed-folder status snapshot."""
-        self._library_notes_tree_status_revision += 1
-        revision = self._library_notes_tree_status_revision
+        self._notes_state.tree_status_revision += 1
+        revision = self._notes_state.tree_status_revision
         incoming_statuses = {
             status.folder_id: (revision, status.state)
             for status in getattr(incoming, "folder_statuses", ())
         }
-        snapshots = self._library_notes_tree_status_by_slice
+        snapshots = self._notes_state.tree_status_by_slice
         if key.slice_kind == "placements" or direction in ("replace", "target"):
             snapshots[key] = incoming_statuses
         else:
@@ -16984,10 +15400,10 @@ class LibraryScreen(BaseAppScreen):
             for folder_id, value in snapshot.items():
                 if folder_id not in current or value[0] > current[folder_id][0]:
                     current[folder_id] = value
-        self._library_notes_tree_protected_folder_ids = frozenset(
+        self._notes_state.tree_protected_folder_ids = frozenset(
             folder_id for folder_id, (_, value) in current.items() if value != "normal"
         )
-        self._library_notes_tree_inactive_managed_folder_ids = frozenset(
+        self._notes_state.tree_inactive_managed_folder_ids = frozenset(
             folder_id
             for folder_id, (_, value) in current.items()
             if value == "inactive_managed"
@@ -17019,7 +15435,7 @@ class LibraryScreen(BaseAppScreen):
             focus_generation=focus_generation,
         ):
             return False
-        state = self._library_notes_tree_branches.get(key)
+        state = self._notes_state.tree_branches.get(key)
         if state is None:
             return False
         added = next(
@@ -17048,7 +15464,7 @@ class LibraryScreen(BaseAppScreen):
         """Load the two missing slices for one expansion, retaining fresh slices."""
         for kind in ("folders", "placements"):
             key = NotesBranchKey(folder_id, kind)
-            state = self._library_notes_tree_branches.get(key)
+            state = self._notes_state.tree_branches.get(key)
             if state is None or state.freshness == "uninitialized":
                 await LibraryScreen._load_library_notes_tree_slice(
                     self, key, direction="replace", offset=0
@@ -17069,13 +15485,13 @@ class LibraryScreen(BaseAppScreen):
         """Resolve and load one exact folder or duplicate-safe note placement."""
         if navigation_generation is None:
             navigation_generation = (
-                getattr(self, "_library_notes_navigation_generation", 0) + 1
+                getattr(self._notes_state, "navigation_generation", 0) + 1
             )
-            self._library_notes_navigation_generation = navigation_generation
-        topology_epoch = self._library_notes_tree_topology_epoch
-        lifecycle_generation = self._library_notes_tree_lifecycle_generation
-        focus_generation = getattr(self, "_library_notes_focus_intent_generation", 0)
-        self._library_notes_navigation_status = (
+            self._notes_state.navigation_generation = navigation_generation
+        topology_epoch = self._notes_state.tree_topology_epoch
+        lifecycle_generation = self._notes_state.tree_lifecycle_generation
+        focus_generation = getattr(self._notes_state, "focus_intent_generation", 0)
+        self._notes_state.navigation_status = (
             "Locating note…" if note_id else "Locating folder…"
         )
         LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
@@ -17083,12 +15499,12 @@ class LibraryScreen(BaseAppScreen):
         def current() -> bool:
             return bool(
                 navigation_generation
-                == getattr(self, "_library_notes_navigation_generation", 0)
-                and topology_epoch == self._library_notes_tree_topology_epoch
+                == getattr(self._notes_state, "navigation_generation", 0)
+                and topology_epoch == self._notes_state.tree_topology_epoch
                 and lifecycle_generation
-                == self._library_notes_tree_lifecycle_generation
+                == self._notes_state.tree_lifecycle_generation
                 and focus_generation
-                == getattr(self, "_library_notes_focus_intent_generation", 0)
+                == getattr(self._notes_state, "focus_intent_generation", 0)
                 and LibraryScreen._library_notes_restore_guard_is_current(
                     self, restore_guard
                 )
@@ -17130,13 +15546,13 @@ class LibraryScreen(BaseAppScreen):
                 exception_class=type(exc).__name__,
             ).warning(event)
             if current():
-                self._library_notes_navigation_status = ""
+                self._notes_state.navigation_status = ""
                 LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
             return False
         if not current():
             return False
         if location is None:
-            self._library_notes_navigation_status = ""
+            self._notes_state.navigation_status = ""
             projection = LibraryScreen._build_library_notes_tree_projection(self)
             fallback = (
                 next(
@@ -17146,7 +15562,7 @@ class LibraryScreen(BaseAppScreen):
                 if projection is not None
                 else None
             )
-            self._library_notes_tree_selected_placement_id = (
+            self._notes_state.tree_selected_placement_id = (
                 fallback.placement_id if fallback is not None else ""
             )
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
@@ -17155,7 +15571,7 @@ class LibraryScreen(BaseAppScreen):
         located_folder_ids: list[str] = []
         for step in location.path:
             key = NotesBranchKey(step.parent_id, "folders")
-            folder_state = self._library_notes_tree_branches.get(key)
+            folder_state = self._notes_state.tree_branches.get(key)
             placement_id = FolderPlacementId.folder(step.folder_id)
             if not (
                 folder_state is not None
@@ -17174,20 +15590,20 @@ class LibraryScreen(BaseAppScreen):
                 )
             if not current():
                 return False
-            folder_state = self._library_notes_tree_branches.get(key)
+            folder_state = self._notes_state.tree_branches.get(key)
             if (
                 folder_state is None
                 or folder_state.error
                 or placement_id not in folder_state.item_ids
             ):
-                self._library_notes_navigation_status = ""
+                self._notes_state.navigation_status = ""
                 LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
                 return False
             located_folder_ids.append(step.folder_id)
         if location.note_id is not None:
             parent_id = location.path[-1].folder_id if location.path else None
             key = NotesBranchKey(parent_id, "placements")
-            placement_state = self._library_notes_tree_branches.get(key)
+            placement_state = self._notes_state.tree_branches.get(key)
             if not (
                 placement_state is not None
                 and placement_state.freshness == "fresh"
@@ -17205,19 +15621,19 @@ class LibraryScreen(BaseAppScreen):
                 )
             if not current():
                 return False
-            placement_state = self._library_notes_tree_branches.get(key)
+            placement_state = self._notes_state.tree_branches.get(key)
             if (
                 placement_state is None
                 or placement_state.error
                 or location.placement_id not in placement_state.item_ids
             ):
-                self._library_notes_navigation_status = ""
+                self._notes_state.navigation_status = ""
                 LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
                 return False
 
-        self._library_notes_tree_expanded_ids.update(located_folder_ids)
-        self._library_notes_navigation_status = ""
-        self._library_notes_tree_selected_placement_id = location.placement_id
+        self._notes_state.tree_expanded_ids.update(located_folder_ids)
+        self._notes_state.navigation_status = ""
+        self._notes_state.tree_selected_placement_id = location.placement_id
         if not focus:
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
             return True
@@ -17254,10 +15670,10 @@ class LibraryScreen(BaseAppScreen):
 
     def _fence_library_notes_tree_mutation(self) -> int:
         """Fence paging immediately while retaining every last-good visible row."""
-        epoch = self._library_notes_tree_topology_epoch + 1
-        self._library_notes_tree_topology_epoch = epoch
+        epoch = self._notes_state.tree_topology_epoch + 1
+        self._notes_state.tree_topology_epoch = epoch
         updated: dict[NotesBranchKey, NotesBranchSliceState] = {}
-        for key, state in self._library_notes_tree_branches.items():
+        for key, state in self._notes_state.tree_branches.items():
             updated[key] = dataclasses.replace(
                 state,
                 generation=state.generation + 1,
@@ -17271,19 +15687,19 @@ class LibraryScreen(BaseAppScreen):
                 failed_direction=None,
                 error="",
             )
-        self._library_notes_tree_branches = updated
-        self._library_notes_tree_request_generations = {
+        self._notes_state.tree_branches = updated
+        self._notes_state.tree_request_generations = {
             key: state.generation for key, state in updated.items()
         }
-        self._library_notes_tree_navigation_requests = {}
-        self._library_notes_filter_generation = (
-            getattr(self, "_library_notes_filter_generation", 0) + 1
+        self._notes_state.tree_navigation_requests = {}
+        self._notes_state.filter_generation = (
+            getattr(self._notes_state, "filter_generation", 0) + 1
         )
-        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
+        filter_state = getattr(self._notes_state, "tree_filter_state", None)
         if filter_state is not None:
-            self._library_notes_tree_filter_state = dataclasses.replace(
+            self._notes_state.tree_filter_state = dataclasses.replace(
                 filter_state,
-                generation=self._library_notes_filter_generation,
+                generation=self._notes_state.filter_generation,
                 topology_epoch=epoch,
                 loading=False,
                 requested_direction=None,
@@ -17291,11 +15707,11 @@ class LibraryScreen(BaseAppScreen):
                 requested_limit=None,
                 request_is_recovery=False,
             )
-        self._library_notes_filter_navigation_generation = None
-        self._library_notes_navigation_generation = (
-            getattr(self, "_library_notes_navigation_generation", 0) + 1
+        self._notes_state.filter_navigation_generation = None
+        self._notes_state.navigation_generation = (
+            getattr(self._notes_state, "navigation_generation", 0) + 1
         )
-        self._library_notes_navigation_status = ""
+        self._notes_state.navigation_status = ""
         return epoch
 
     async def _load_library_notes_tree_mutation_context(
@@ -17335,10 +15751,10 @@ class LibraryScreen(BaseAppScreen):
                 is_root=None,
                 slice_generation=None,
                 navigation_generation=getattr(
-                    self, "_library_notes_navigation_generation", None
+                    self._notes_state, "navigation_generation", None
                 ),
-                topology_epoch=self._library_notes_tree_topology_epoch,
-                lifecycle_generation=self._library_notes_tree_lifecycle_generation,
+                topology_epoch=self._notes_state.tree_topology_epoch,
+                lifecycle_generation=self._notes_state.tree_lifecycle_generation,
                 exception_class=type(exc).__name__,
             ).warning(event)
             raise
@@ -17394,9 +15810,9 @@ class LibraryScreen(BaseAppScreen):
             "move_placement",
             "detach_placement",
         }:
-            selected = self._library_notes_tree_selected_placement_id
+            selected = self._notes_state.tree_selected_placement_id
             if selected:
-                source_state = self._library_notes_tree_branches.get(
+                source_state = self._notes_state.tree_branches.get(
                     NotesBranchKey(source_folder_id, "placements")
                 )
                 if source_state is not None and selected in source_state.item_ids:
@@ -17405,7 +15821,7 @@ class LibraryScreen(BaseAppScreen):
         source_folder_snapshot = next(
             (
                 item
-                for state in self._library_notes_tree_branches.values()
+                for state in self._notes_state.tree_branches.values()
                 if state.key.slice_kind == "folders"
                 for item in state.items
                 if isinstance(item, NoteFolder)
@@ -17482,7 +15898,7 @@ class LibraryScreen(BaseAppScreen):
         if moved_folder_id:
             affected.update(
                 key
-                for key, state in self._library_notes_tree_branches.items()
+                for key, state in self._notes_state.tree_branches.items()
                 if key.slice_kind == "folders"
                 and any(
                     isinstance(item, NoteFolder) and item.folder_id == moved_folder_id
@@ -17496,21 +15912,21 @@ class LibraryScreen(BaseAppScreen):
             if operation == "delete_folder"
             else set()
         )
-        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
-        active_filter_query = getattr(self, "_library_notes_filter", "")
+        filter_state = getattr(self._notes_state, "tree_filter_state", None)
+        active_filter_query = getattr(self._notes_state, "filter", "")
         filter_active = bool(
             active_filter_query
             and filter_state is not None
             and filter_state.query == active_filter_query
-            and filter_state.topology_epoch == self._library_notes_tree_topology_epoch
+            and filter_state.topology_epoch == self._notes_state.tree_topology_epoch
         )
         filter_selected_before_commit = (
-            self._library_notes_tree_selected_placement_id if filter_active else ""
+            self._notes_state.tree_selected_placement_id if filter_active else ""
         )
         delete_fallback = ""
-        selected_placement = self._library_notes_tree_selected_placement_id
+        selected_placement = self._notes_state.tree_selected_placement_id
         if operation == "note_delete" and selected_placement:
-            for key, state in self._library_notes_tree_branches.items():
+            for key, state in self._notes_state.tree_branches.items():
                 if (
                     key.slice_kind != "placements"
                     or selected_placement not in state.item_ids
@@ -17558,7 +15974,7 @@ class LibraryScreen(BaseAppScreen):
         elif note_id and operation == "note_create":
             desired_target = FolderPlacementId.unfiled(note_id)
         if desired_target:
-            self._library_notes_tree_pending_target_placement_id = desired_target
+            self._notes_state.tree_pending_target_placement_id = desired_target
 
         old_path = source_folder_snapshot.path if source_folder_snapshot else ""
         old_normalized_path = (
@@ -17577,8 +15993,8 @@ class LibraryScreen(BaseAppScreen):
                 source_placement_id=source_placement_id,
                 partial=partial,
             )
-            self._library_notes_tree_filter_state = filter_state
-            self._library_notes_filter_records = [
+            self._notes_state.tree_filter_state = filter_state
+            self._notes_state.filter_records = [
                 dict(placement.note) for placement in filter_state.placements
             ]
 
@@ -17594,7 +16010,7 @@ class LibraryScreen(BaseAppScreen):
             )
 
         for key in tuple(affected):
-            state = self._library_notes_tree_branches.get(key)
+            state = self._notes_state.tree_branches.get(key)
             if state is None:
                 continue
             items: tuple[NoteFolder | NotePlacementRecord, ...] = state.items
@@ -17647,7 +16063,7 @@ class LibraryScreen(BaseAppScreen):
                 patched.append(item)
             items = tuple(patched)
             item_ids = tuple(item_id(item) for item in items)
-            self._library_notes_tree_branches[key] = dataclasses.replace(
+            self._notes_state.tree_branches[key] = dataclasses.replace(
                 state,
                 items=items,
                 item_ids=item_ids,
@@ -17662,7 +16078,7 @@ class LibraryScreen(BaseAppScreen):
         if operation == "note_delete" and selected_placement:
             surviving_ids = {
                 item_id
-                for state in self._library_notes_tree_branches.values()
+                for state in self._notes_state.tree_branches.values()
                 for item_id in state.item_ids
             }
             if selected_placement not in surviving_ids:
@@ -17682,22 +16098,22 @@ class LibraryScreen(BaseAppScreen):
                         if projection is not None
                         else ""
                     )
-                self._library_notes_tree_selected_placement_id = delete_fallback
+                self._notes_state.tree_selected_placement_id = delete_fallback
 
         if desired_target and operation != "note_delete":
             projection = LibraryScreen._build_library_notes_tree_projection(self)
             if projection is not None and projection.row(desired_target) is not None:
-                self._library_notes_tree_selected_placement_id = desired_target
+                self._notes_state.tree_selected_placement_id = desired_target
             elif destination_folder_id:
-                self._library_notes_tree_selected_placement_id = (
+                self._notes_state.tree_selected_placement_id = (
                     FolderPlacementId.folder(destination_folder_id)
                 )
             elif folder is not None and folder.parent_id is not None:
-                self._library_notes_tree_selected_placement_id = (
+                self._notes_state.tree_selected_placement_id = (
                     FolderPlacementId.folder(folder.parent_id)
                 )
             elif operation == "detach_placement":
-                self._library_notes_tree_selected_placement_id = UNFILED_PLACEMENT_ID
+                self._notes_state.tree_selected_placement_id = UNFILED_PLACEMENT_ID
 
         LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
         for key in sorted(
@@ -17708,7 +16124,7 @@ class LibraryScreen(BaseAppScreen):
                 value.slice_kind,
             ),
         ):
-            state = self._library_notes_tree_branches.get(key)
+            state = self._notes_state.tree_branches.get(key)
             if state is None:
                 continue
             await LibraryScreen._load_library_notes_tree_slice(
@@ -17727,9 +16143,9 @@ class LibraryScreen(BaseAppScreen):
                 filter_state.query,
                 offset=filter_state.start_offset,
                 direction="target",
-                navigation_generation=self._library_notes_navigation_generation,
+                navigation_generation=self._notes_state.navigation_generation,
             )
-            refreshed_filter = self._library_notes_tree_filter_state
+            refreshed_filter = self._notes_state.tree_filter_state
             if refreshed_filter is not None:
                 filter_projection = build_filtered_library_notes_tree(refreshed_filter)
                 selected = filter_selected_before_commit
@@ -17739,7 +16155,7 @@ class LibraryScreen(BaseAppScreen):
                     desired_target and filter_projection.row(desired_target) is not None
                 ):
                     filtered_selection = desired_target
-                    self._library_notes_tree_selected_placement_id = desired_target
+                    self._notes_state.tree_selected_placement_id = desired_target
 
         located = False
         if folder is not None and not folder.deleted:
@@ -17759,24 +16175,24 @@ class LibraryScreen(BaseAppScreen):
                 focus=False,
             )
         if located:
-            self._library_notes_tree_pending_target_placement_id = ""
+            self._notes_state.tree_pending_target_placement_id = ""
         if filtered_selection:
-            self._library_notes_tree_selected_placement_id = filtered_selection
+            self._notes_state.tree_selected_placement_id = filtered_selection
 
     def _invalidate_library_notes_tree_for_unmount(self) -> None:
         """Synchronously revoke every Notes page authority for this visit."""
         LibraryScreen._supersede_library_notes_navigation(self, render=False)
-        self._library_notes_tree_lifecycle_generation += 1
-        self._library_notes_tree_topology_epoch += 1
-        self._library_notes_tree_branches = {}
-        self._library_notes_tree_request_generations = {}
-        self._library_notes_tree_navigation_requests = {}
-        self._library_notes_tree_target_offsets = {}
-        self._library_notes_tree_status_by_slice = {}
-        self._library_notes_tree_status_revision = 0
-        self._library_notes_tree_filter_state = None
-        self._library_notes_filter_records = None
-        self._library_notes_filter_navigation_generation = None
+        self._notes_state.tree_lifecycle_generation += 1
+        self._notes_state.tree_topology_epoch += 1
+        self._notes_state.tree_branches = {}
+        self._notes_state.tree_request_generations = {}
+        self._notes_state.tree_navigation_requests = {}
+        self._notes_state.tree_target_offsets = {}
+        self._notes_state.tree_status_by_slice = {}
+        self._notes_state.tree_status_revision = 0
+        self._notes_state.tree_filter_state = None
+        self._notes_state.filter_records = None
+        self._notes_state.filter_navigation_generation = None
         workers = getattr(self, "workers", ())
         for worker in tuple(workers):
             if str(getattr(worker, "group", "")).startswith("library_notes_tree:"):
@@ -17792,16 +16208,16 @@ class LibraryScreen(BaseAppScreen):
         fenced_epoch = payload.pop("_fenced_epoch", None)
         if self._library_note_import_execution_active():
             if preclaimed:
-                self._library_notes_mutation_in_flight = False
+                self._notes_state.mutation_in_flight = False
             return False
         if payload.get("protected"):
-            self._library_notes_notice = (
+            self._notes_state.notice = (
                 "This item is managed by sync; change its sync root instead."
             )
             if preclaimed:
-                self._library_notes_mutation_in_flight = False
+                self._notes_state.mutation_in_flight = False
             return False
-        if self._library_notes_mutation_in_flight and not preclaimed:
+        if self._notes_state.mutation_in_flight and not preclaimed:
             return False
         service = getattr(self.app_instance, "notes_scope_service", None)
         methods = {
@@ -17822,9 +16238,9 @@ class LibraryScreen(BaseAppScreen):
             not callable(getattr(service, method_name, None))
             for method_name in required_methods
         ):
-            self._library_notes_notice = "That folder action is unavailable."
+            self._notes_state.notice = "That folder action is unavailable."
             if preclaimed:
-                self._library_notes_mutation_in_flight = False
+                self._notes_state.mutation_in_flight = False
             return False
 
         if fenced_epoch is None:
@@ -17862,11 +16278,11 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
         except Exception:
-            self._library_notes_notice = (
+            self._notes_state.notice = (
                 "Could not verify affected folders — no changes were made."
             )
             if preclaimed:
-                self._library_notes_mutation_in_flight = False
+                self._notes_state.mutation_in_flight = False
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
             return False
 
@@ -17874,7 +16290,7 @@ class LibraryScreen(BaseAppScreen):
             "scope": "local_note",
             "user_id": self._library_notes_user_id(),
         }
-        self._library_notes_mutation_in_flight = True
+        self._notes_state.mutation_in_flight = True
         try:
             result: Any = None
             destination_membership: NoteFolderMembership | None = None
@@ -17888,7 +16304,7 @@ class LibraryScreen(BaseAppScreen):
                     note_id=note_id,
                 )
                 if not destination_membership:
-                    self._library_notes_notice = (
+                    self._notes_state.notice = (
                         "The note was not added; no folder changes were made."
                     )
                     return False
@@ -17906,7 +16322,7 @@ class LibraryScreen(BaseAppScreen):
                             "the source detach failed; error_type={}",
                             type(exc).__name__,
                         )
-                        self._library_notes_notice = (
+                        self._notes_state.notice = (
                             "Note added to the new folder, but the original "
                             "changed; it remains safely in both folders."
                         )
@@ -17921,7 +16337,7 @@ class LibraryScreen(BaseAppScreen):
                         )
                         return True
                     if not result:
-                        self._library_notes_notice = (
+                        self._notes_state.notice = (
                             "Note added to the new folder, but the original "
                             "remains safely in both folders."
                         )
@@ -17945,32 +16361,32 @@ class LibraryScreen(BaseAppScreen):
                 result = await method(**common, **kwargs)
 
             if not result:
-                self._library_notes_notice = (
+                self._notes_state.notice = (
                     "No folder changes were made; the current view is unchanged."
                 )
                 return False
 
             if operation == "delete_folder":
                 folder = result.folder
-                self._library_notes_deleted_folder_receipt = (
+                self._notes_state.deleted_folder_receipt = (
                     _LibraryNotesDeletedFolderReceipt(
                         folder_id=folder.folder_id,
                         name=folder.name,
                         expected_version=folder.version,
                     )
                 )
-                self._library_notes_tree_selected_placement_id = ""
+                self._notes_state.tree_selected_placement_id = ""
             elif operation == "restore_folder":
-                self._library_notes_deleted_folder_receipt = None
+                self._notes_state.deleted_folder_receipt = None
                 folder = result.folder
-                self._library_notes_tree_selected_placement_id = (
+                self._notes_state.tree_selected_placement_id = (
                     FolderPlacementId.folder(folder.folder_id)
                 )
             elif operation == "create_folder":
-                self._library_notes_tree_selected_placement_id = (
+                self._notes_state.tree_selected_placement_id = (
                     FolderPlacementId.folder(result.folder_id)
                 )
-            self._library_notes_notice = "Folder organization updated."
+            self._notes_state.notice = "Folder organization updated."
             await LibraryScreen._reconcile_library_notes_tree_mutation(
                 self,
                 operation,
@@ -17981,23 +16397,23 @@ class LibraryScreen(BaseAppScreen):
             )
             return True
         except FolderCollisionError:
-            self._library_notes_notice = (
+            self._notes_state.notice = (
                 "A folder with that name already exists in this location."
             )
             return False
         except FolderConflictError:
-            self._library_notes_notice = (
+            self._notes_state.notice = (
                 "That folder changed elsewhere — refresh and try again."
             )
             return False
         except FolderValidationError:
-            self._library_notes_notice = "That folder name or destination is not valid."
+            self._notes_state.notice = "That folder name or destination is not valid."
             return False
         except FolderCapabilityError as exc:
-            self._library_notes_notice = exc.user_message
+            self._notes_state.notice = exc.user_message
             return False
         except PolicyDeniedError as exc:
-            self._library_notes_notice = exc.user_message
+            self._notes_state.notice = exc.user_message
             return False
         except Exception as exc:  # noqa: BLE001 - render a safe mutation failure
             logger.warning(
@@ -18005,12 +16421,12 @@ class LibraryScreen(BaseAppScreen):
                 operation,
                 type(exc).__name__,
             )
-            self._library_notes_notice = (
+            self._notes_state.notice = (
                 "Could not update folder organization — refresh and try again."
             )
             return False
         finally:
-            self._library_notes_mutation_in_flight = False
+            self._notes_state.mutation_in_flight = False
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
     def _schedule_library_notes_tree_mutation(
@@ -18019,7 +16435,7 @@ class LibraryScreen(BaseAppScreen):
         """Synchronously claim the mutation interlock before starting a worker."""
         if self._library_notes_mutation_fenced():
             return
-        self._library_notes_mutation_in_flight = True
+        self._notes_state.mutation_in_flight = True
         fenced_epoch = LibraryScreen._fence_library_notes_tree_mutation(self)
         self.run_worker(
             self._execute_library_notes_tree_mutation(
@@ -18035,130 +16451,25 @@ class LibraryScreen(BaseAppScreen):
             _sync_library_canvas(self, "notes")
 
     def _selected_library_notes_tree_row(self):
-        """Return the selected visible placement, if it still survives."""
-        projection = self._build_library_notes_tree_projection()
-        if projection is None:
-            return None
-        return projection.row(self._library_notes_tree_selected_placement_id)
+        return self._notes_controller._selected_library_notes_tree_row()
 
-    def _library_notes_folder_target_options(
-        self, *, exclude_folder_id: str | None = None
-    ) -> tuple[tuple[str, str], ...]:
-        """Return bounded loaded folder choices, excluding a moved subtree."""
-        folders = {
-            folder.folder_id: folder
-            for state in self._library_notes_tree_branches.values()
-            if state.key.slice_kind == "folders"
-            for folder in state.items
-            if isinstance(folder, NoteFolder)
-        }
-        excluded_path = (
-            folders[exclude_folder_id].normalized_path
-            if exclude_folder_id in folders
-            else ""
-        )
-        choices = [
-            (folder.path.strip("/").replace("/", " / "), folder.folder_id)
-            for folder in folders.values()
-            if folder.folder_id != exclude_folder_id
-            and not (
-                excluded_path and folder.normalized_path.startswith(f"{excluded_path}/")
-            )
-        ]
-        return tuple(sorted(choices, key=lambda item: (item[0].casefold(), item[1])))
+    def _library_notes_folder_target_options(self, *, exclude_folder_id: str | None=None) -> tuple[tuple[str, str], ...]:
+        return self._notes_controller._library_notes_folder_target_options(exclude_folder_id=exclude_folder_id)
 
     def _remove_library_note_source_record(self, note_id: str) -> None:
-        """Patch one successful delete into the cached Notes rows and count."""
-        target_id = str(note_id)
-        records = self._local_source_records.get("notes", ())
-        self._local_source_records["notes"] = tuple(
-            record for record in records if self._source_record_id(record) != target_id
-        )
-        self._local_source_counts["notes"] = max(
-            self._local_source_counts.get("notes", 0) - 1,
-            0,
-        )
+        return self._notes_controller._remove_library_note_source_record(note_id)
 
     def _append_library_note_source_record(self, record: Mapping[str, Any]) -> bool:
-        """Append one newly active note and increment the exact rail count."""
-        note_id = self._source_record_id(record)
-        if not note_id:
-            return False
-        records = self._local_source_records.get("notes", ())
-        if any(self._source_record_id(item) == note_id for item in records):
-            return False
-        self._local_source_records["notes"] = records + (dict(record),)
-        self._local_source_counts["notes"] = (
-            self._local_source_counts.get("notes", 0) + 1
-        )
-        return True
+        return self._notes_controller._append_library_note_source_record(record)
 
     def _library_notes_canvas_kwargs(self) -> dict[str, Any]:
-        """Return every compose input for the mounted Database Notes canvas."""
-        values: dict[str, Any] = {
-            "list_state": None,
-            "sort_mode": self._library_notes_sort,
-            "filter_value": self._library_notes_filter,
-            "mode": "list",
-            "presentation_state": None,
-            "import_snapshot": self._library_note_import_snapshot,
-            "import_receipt_available": (
-                self._library_note_import_controller.snapshot.can_revisit_receipt
-            ),
-            "lasting_sync_snapshot": self._library_notes_lasting_sync_snapshot,
-            "tree_projection": self._build_library_notes_tree_projection(),
-            "tree_selected_placement_id": getattr(
-                self, "_library_notes_tree_selected_placement_id", ""
-            ),
-            "tree_deleted_folder_available": (
-                getattr(self, "_library_notes_deleted_folder_receipt", None) is not None
-            ),
-            "title_placeholder_only": False,
-            "compact": self._library_notes_compact,
-            "create_running": self._library_note_create_running,
-            "create_status": self._library_note_create_status,
-            "load_state": self._library_note_load_state,
-            "load_message": self._library_note_load_message,
-        }
-        if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
-            values["mode"] = "create"
-        elif self._library_notes_view == "import":
-            values["mode"] = "import"
-        elif self._library_notes_view == "lasting_add":
-            values["mode"] = "lasting_add"
-        elif self._library_notes_view == "lasting_roots":
-            values["mode"] = "lasting_roots"
-        elif self._library_notes_view == "editor":
-            presentation_state = self._library_note_editor_state()
-            if presentation_state is None:
-                values["mode"] = "loading"
-            else:
-                values["mode"] = "editor"
-                values["presentation_state"] = self._library_note_presentation_state()
-                values["title_placeholder_only"] = (
-                    self._library_note_pending_blank_gc_id is not None
-                    and self._library_note_pending_blank_gc_id == self._selected_note_id
-                )
-        else:
-            values["list_state"] = self._build_library_notes_state()
-        return values
+        return self._notes_controller._library_notes_canvas_kwargs()
 
     def _library_notes_list_canvas_kwargs(self) -> dict[str, Any]:
-        """Return list-only inputs for the retained Notes Items pane."""
-        values = self._library_notes_canvas_kwargs()
-        values.update(
-            mode="list",
-            list_state=self._build_library_notes_state(),
-            presentation_state=None,
-            title_placeholder_only=False,
-        )
-        return values
+        return self._notes_controller._library_notes_list_canvas_kwargs()
 
     def _library_note_work_pane_kwargs(self) -> dict[str, Any]:
-        """Return active non-list content for the retained Notes work pane."""
-        values = self._library_notes_canvas_kwargs()
-        values["list_state"] = None
-        return values
+        return self._notes_controller._library_note_work_pane_kwargs()
 
     def _library_prompt_basic_unavailable_reason(self, state: PromptEditorState, *, conflict: bool=False) -> str:
         return self._prompts_controller._library_prompt_basic_unavailable_reason(state, conflict=conflict)
@@ -18567,7 +16878,7 @@ class LibraryScreen(BaseAppScreen):
         # detail's own is_markdown -- computed here (once, at load) rather
         # than on every recompose, so a later Rendered<->Raw toggle press
         # is never silently reset back to the default by an unrelated
-        # recompose (mirrors the note editor's ``_library_note_preview``
+        # recompose (mirrors the note editor's ``_notes_state.preview``
         # not being re-derived on every render).
         self._media_state.content_mode = (
             "rendered"
@@ -18671,42 +16982,8 @@ class LibraryScreen(BaseAppScreen):
     async def _fetch_library_media_highlights(self, media_id: str) -> list[dict[str, Any]]:
         return await self._media_controller._fetch_library_media_highlights(media_id)
 
-    async def _project_library_note_entry_result(
-        self,
-        *,
-        entry_origin: bool,
-        then: Callable[[], None] | None = None,
-    ) -> LibraryEntryReconcileResult | None:
-        """Project one note-load result without a Library-screen fallback."""
-        if not self.is_mounted:
-            return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
-        if entry_origin and not self.query("#library-notes-canvas"):
-            generation = self._library_snapshot_state_generation
-            route_key = self._library_entry_route_key()
-            result = await self._replace_library_canvas_child(
-                LibraryNotesCanvas(
-                    **self._library_notes_list_canvas_kwargs(),
-                    id="library-notes-canvas",
-                ),
-                generation=generation,
-                route_key=route_key,
-            )
-            if result is LibraryEntryReconcileResult.APPLIED and then is not None:
-                then()
-            return result
-        synced = _sync_library_canvas(
-            self,
-            "notes",
-            then=then,
-            allow_screen_fallback=not entry_origin,
-        )
-        if entry_origin:
-            return (
-                LibraryEntryReconcileResult.APPLIED
-                if synced
-                else LibraryEntryReconcileResult.FAILED
-            )
-        return None
+    async def _project_library_note_entry_result(self, *, entry_origin: bool, then: Callable[[], None] | None=None) -> LibraryEntryReconcileResult | None:
+        return await self._notes_controller._project_library_note_entry_result(entry_origin=entry_origin, then=then)
 
     async def _refresh_library_note_detail(
         self,
@@ -18729,24 +17006,24 @@ class LibraryScreen(BaseAppScreen):
                 (
                     navigation_generation is None
                     or navigation_generation
-                    == self._library_notes_navigation_generation
+                    == self._notes_state.navigation_generation
                 )
                 and (
                     topology_epoch is None
-                    or topology_epoch == self._library_notes_tree_topology_epoch
+                    or topology_epoch == self._notes_state.tree_topology_epoch
                 )
                 and (
                     lifecycle_generation is None
                     or lifecycle_generation
-                    == self._library_notes_tree_lifecycle_generation
+                    == self._notes_state.tree_lifecycle_generation
                 )
             )
 
         if (
             not navigation_is_current()
-            or note_id != self._selected_note_id
-            or self._library_notes_view != "editor"
-            or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
+            or note_id != self._notes_state.selected_note_id
+            or self._notes_state.view != "editor"
+            or self._notes_state.source != LIBRARY_NOTES_SOURCE_DATABASE
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         outcome = await self._library_note_session.open_session(note_id)
@@ -18754,9 +17031,9 @@ class LibraryScreen(BaseAppScreen):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         if (
             not navigation_is_current()
-            or note_id != self._selected_note_id
-            or self._library_notes_view != "editor"
-            or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
+            or note_id != self._notes_state.selected_note_id
+            or self._notes_state.view != "editor"
+            or self._notes_state.source != LIBRARY_NOTES_SOURCE_DATABASE
             or (
                 entry_route_key is not None
                 and entry_route_key != self._library_entry_route_key()
@@ -18773,21 +17050,21 @@ class LibraryScreen(BaseAppScreen):
                 entry_origin=entry_origin
             )
         if outcome.kind is NoteLoadOutcomeKind.FAILED:
-            self._library_note_load_state = "failed"
-            self._library_note_load_message = (
+            self._notes_state.load_state = "failed"
+            self._notes_state.load_message = (
                 outcome.message or "Unable to load note. Press Retry."
             )
             return await self._project_library_note_entry_result(
                 entry_origin=entry_origin
             )
 
-        self._library_note_load_state = "loaded"
-        self._library_note_load_message = ""
-        self._library_note_autosave_state = "idle"
-        self._library_note_preview = False
-        self._library_note_context = False
-        self._library_note_editor_armed = False
-        self._library_notes_work_session_activation_pending = True
+        self._notes_state.load_state = "loaded"
+        self._notes_state.load_message = ""
+        self._notes_state.autosave_state = "idle"
+        self._notes_state.preview = False
+        self._notes_state.context = False
+        self._notes_state.editor_armed = False
+        self._notes_state.work_session_activation_pending = True
         if self.is_mounted:
             self.call_later(
                 self._activate_database_note_work_session,
@@ -18818,47 +17095,8 @@ class LibraryScreen(BaseAppScreen):
             )
         return None
 
-    def _begin_library_note_load(
-        self, note_id: str, *, entry_origin: bool = False
-    ) -> None:
-        """Reset presentation, invalidate old work, and start one editor load."""
-        navigation_generation = self._supersede_library_notes_navigation()
-        topology_epoch = self._library_notes_tree_topology_epoch
-        lifecycle_generation = self._library_notes_tree_lifecycle_generation
-        self._library_note_session.close_session()
-        self._selected_note_id = note_id
-        self._library_notes_view = "editor"
-        self._library_note_load_state = "loading"
-        self._library_note_load_message = ""
-        self._library_note_autosave_state = "idle"
-        self._library_note_shortcut_status = ""
-        self._library_note_confirming_delete = False
-        self._library_note_preview = False
-        self._library_note_context = False
-        self._library_note_delete_origin_context = False
-        self._library_note_delete_origin_preview = False
-        self._library_note_editor_armed = False
-        self._apply_library_notes_stage_visibility()
-        self.run_worker(
-            self._refresh_library_note_detail(
-                note_id,
-                entry_origin=entry_origin,
-                navigation_generation=navigation_generation,
-                topology_epoch=topology_epoch,
-                lifecycle_generation=lifecycle_generation,
-            ),
-            exclusive=True,
-            group="library_note_detail",
-        )
-        self.run_worker(
-            self._locate_library_notes_tree_target(
-                note_id=note_id,
-                focus=False,
-                navigation_generation=navigation_generation,
-            ),
-            exclusive=True,
-            group="library_notes_locator",
-        )
+    def _begin_library_note_load(self, note_id: str, *, entry_origin: bool=False) -> None:
+        return self._notes_controller._begin_library_note_load(note_id, entry_origin=entry_origin)
 
     def _arm_library_note_editor(self, recompose_generation: int | None = None) -> None:
         """Enable dirty-tracking once the notes editor's mount-time
@@ -18867,63 +17105,17 @@ class LibraryScreen(BaseAppScreen):
         """
         if (
             recompose_generation is not None
-            and recompose_generation != self._library_notes_recompose_generation
+            and recompose_generation != self._notes_state.recompose_generation
         ):
             return
-        self._library_note_editor_armed = True
+        self._notes_state.editor_armed = True
 
     @on(LibraryNoteWorkPane.EditorReady)
-    def handle_library_note_work_pane_editor_ready(
-        self, event: LibraryNoteWorkPane.EditorReady
-    ) -> None:
-        """Arm dirty tracking only after the retained editor children mount."""
-        event.stop()
-        if (
-            self._library_selected_row_id != LIBRARY_ROW_BROWSE_NOTES
-            or self._library_notes_view != "editor"
-            or self._library_note_session.snapshot is None
-            or self._selected_note_id != self._library_note_session.snapshot.note_id
-        ):
-            return
-        self._arm_library_note_editor()
-        if self._library_note_session.untouched_create_token is not None:
-            self._focus_library_note_control("#library-note-title")
+    def handle_library_note_work_pane_editor_ready(self, event: LibraryNoteWorkPane.EditorReady) -> None:
+        return self._notes_controller.handle_library_note_work_pane_editor_ready(event)
 
     def _reset_library_note_editor_state(self) -> None:
-        """Clear all in-canvas Library note editor/save state.
-
-        Shared by the Back handler, note-row selection, and rail-row
-        selection so every exit from the editor leaves save/autosave/
-        conflict tracking in a clean ``idle`` state for the next note.
-        """
-        self._dispatch_database_note_identity_cleared()
-        self._library_note_session.close_session()
-        if self._library_notes_view != "import":
-            self._library_notes_view = "list"
-        self._selected_note_id = ""
-        self._library_note_load_state = "idle"
-        self._library_note_load_message = ""
-        self._library_note_autosave_state = "idle"
-        self._library_note_shortcut_status = ""
-        self._library_note_confirming_delete = False
-        self._library_note_preview = False
-        self._library_note_context = False
-        self._library_note_delete_origin_context = False
-        self._library_note_delete_origin_preview = False
-        self._library_note_editor_armed = False
-        # Defense in depth: the normal exit path is ``_flush_library_note_
-        # save`` (which GCs a still-pending blank note and clears both
-        # flags itself, before this reset ever runs); this catches the
-        # other "note is gone" fallback paths that reach this reset
-        # without going through that flush first, and every full editor
-        # exit generally, so neither flag can outlive the editor session
-        # it was armed for.
-        self._library_note_pending_blank_gc_id = None
-        self._library_note_session_blank_id = None
-        # (P0) A full editor reset ends the session the pristine-title
-        # marker belonged to; the next note starts untouched again.
-        self._library_note_title_user_edited = False
-        self._invalidate_library_note_autosave()
+        return self._notes_controller._reset_library_note_editor_state()
 
     def _reset_library_ingest_transient_state(self) -> None:
         return self._ingest_controller._reset_library_ingest_transient_state()
@@ -19950,161 +18142,46 @@ class LibraryScreen(BaseAppScreen):
     # ----- Notes editor: save, autosave, conflict policy -----------------
 
     def _invalidate_library_note_autosave(self) -> None:
-        """Cancel the debounce and fence off any autosave already queued."""
-        self._library_note_autosave_generation += 1
-        if self._library_notes_autosave_timer is not None:
-            self._library_notes_autosave_timer.stop()
-            self._library_notes_autosave_timer = None
+        return self._notes_controller._invalidate_library_note_autosave()
 
     def _schedule_library_note_autosave(self) -> None:
         """Rearm debounce after one genuine coordinator-owned draft mutation."""
         snapshot = self._library_note_session.snapshot
         if snapshot is None or snapshot.in_conflict or snapshot.saving:
             return
-        self._library_note_autosave_state = "idle"
+        self._notes_state.autosave_state = "idle"
         self._invalidate_library_note_autosave()
-        generation = self._library_note_autosave_generation
-        self._library_notes_autosave_timer = self.set_timer(
+        generation = self._notes_state.autosave_generation
+        self._notes_state.autosave_timer = self.set_timer(
             LIBRARY_NOTES_AUTOSAVE_SECONDS,
             lambda: self._fire_library_note_autosave(generation),
         )
 
-    @on(Input.Changed, "#library-note-title")
+    @on(Input.Changed, '#library-note-title')
     def handle_library_note_title_changed(self, event: Input.Changed) -> None:
-        """Mark the open note dirty and (re)arm the autosave debounce.
+        return self._notes_controller.handle_library_note_title_changed(event)
 
-        Args:
-            event: Input change event emitted by the editor's title field.
-        """
-        if (
-            self._library_note_presentation_syncing
-            or not self._library_note_editor_armed
-        ):
-            return
-        # (P0) Recorded BEFORE (and independently of) the mutate result:
-        # the two guards above already exclude every programmatic echo, so
-        # reaching this line means the human changed the title widget --
-        # even when the resulting string happens to equal the seed and the
-        # coordinator reports "no change". A blank-seeded note renders its
-        # title Input placeholder-only (empty value, draft still holding
-        # the seed), so pasting "Untitled" into it is exactly that case:
-        # a real touch that mutate() sees as a no-op. Gating the marker on
-        # mutate() therefore left the GC free to destroy the note.
-        self._library_note_title_user_edited = True
-        if self._library_note_session.mutate(title=event.value):
-            self._library_note_pending_blank_gc_id = None
-            self._library_note_shortcut_status = ""
-            self._schedule_library_note_autosave()
-            self._apply_library_note_presentation_state()
-
-    @on(TextArea.Changed, "#library-note-body")
+    @on(TextArea.Changed, '#library-note-body')
     def handle_library_note_body_changed(self, event: TextArea.Changed) -> None:
-        """Mark the open note dirty and (re)arm the autosave debounce.
+        return self._notes_controller.handle_library_note_body_changed(event)
 
-        Args:
-            event: Text change event emitted by the editor's body ``TextArea``.
-        """
-        if (
-            self._library_note_presentation_syncing
-            or not self._library_note_editor_armed
-        ):
-            return
-        if self._library_note_session.mutate(body=event.text_area.text):
-            self._library_note_pending_blank_gc_id = None
-            self._library_note_shortcut_status = ""
-            self._schedule_library_note_autosave()
-            self._apply_library_note_presentation_state()
-
-    @on(Input.Changed, "#library-note-keywords")
+    @on(Input.Changed, '#library-note-keywords')
     def handle_library_note_keywords_changed(self, event: Input.Changed) -> None:
-        """Mark the open note dirty and (re)arm the autosave debounce.
+        return self._notes_controller.handle_library_note_keywords_changed(event)
 
-        Args:
-            event: Input change event emitted by the editor's keywords field.
-        """
-        if (
-            self._library_note_presentation_syncing
-            or not self._library_note_editor_armed
-        ):
-            return
-        if self._library_note_session.mutate(keywords_text=event.value):
-            self._library_note_pending_blank_gc_id = None
-            self._library_note_shortcut_status = ""
-            self._schedule_library_note_autosave()
-            self._apply_library_note_presentation_state()
-
-    @on(Input.Changed, "#library-note-context-keywords")
-    def handle_library_note_context_keywords_changed(
-        self, event: Input.Changed
-    ) -> None:
-        """Mutate the canonical keyword draft from the Context properties field."""
-        if (
-            self._library_note_presentation_syncing
-            or not self._library_note_editor_armed
-        ):
-            return
-        if self._library_note_session.mutate(keywords_text=event.value):
-            self._library_note_shortcut_status = ""
-            self._schedule_library_note_autosave()
-            self._apply_library_note_presentation_state()
+    @on(Input.Changed, '#library-note-context-keywords')
+    def handle_library_note_context_keywords_changed(self, event: Input.Changed) -> None:
+        return self._notes_controller.handle_library_note_context_keywords_changed(event)
 
     def _fire_library_note_autosave(self, generation: int) -> None:
-        """Debounce-timer callback: kick the actual autosave worker."""
-        if generation != self._library_note_autosave_generation:
-            return
-        self._library_notes_autosave_timer = None
-        if not self._library_note_dirty:
-            return
-        self.run_worker(
-            self._save_library_note(
-                explicit=False,
-                autosave_generation=generation,
-            ),
-            exclusive=True,
-            group="library_note_save",
-        )
+        return self._notes_controller._fire_library_note_autosave(generation)
 
-    @on(Button.Pressed, "#library-note-save")
+    @on(Button.Pressed, '#library-note-save')
     def handle_library_note_save(self, event: Button.Pressed) -> None:
-        """Explicitly save the open note, bypassing the autosave debounce."""
-        event.stop()
-        # LIB-14: an explicit Save is the user's own deliberate "keep it"
-        # act, even if the note is still blank -- never GC a note the user
-        # just told the app to save (unlike autosave, which is not a
-        # deliberate signal -- see ``_library_note_session_blank_id``'s
-        # docstring for why autosave alone must NOT clear it).
-        self._library_note_pending_blank_gc_id = None
-        self._library_note_session_blank_id = None
-        self._invalidate_library_note_autosave()
-        self.run_worker(
-            self._save_library_note(explicit=True),
-            exclusive=True,
-            group="library_note_save",
-        )
-
-    def _library_note_meta_base_line(self) -> str:
-        """The static Created/Modified/version portion of the meta line."""
-        snapshot = self._library_note_session.snapshot
-        if snapshot is None:
-            return ""
-        return build_library_note_editor_state(
-            {
-                "id": snapshot.note_id,
-                "version": snapshot.version,
-                "created_at": snapshot.baseline.created_at,
-                "last_modified": snapshot.baseline.modified_at,
-            }
-        ).meta_line
+        return self._notes_controller.handle_library_note_save(event)
 
     def _update_library_note_meta_static(self, *, content: str) -> None:
-        """Synchronize persistent metadata and status without recomposition.
-
-        Args:
-            content: Compatibility input from save callers. Canonical content
-                is read from the coordinator snapshot.
-        """
-        del content
-        self._apply_library_note_presentation_state()
+        return self._notes_controller._update_library_note_meta_static(content=content)
 
     def _patch_library_note_list_from_session(self) -> None:
         """Patch list caches from the payload the coordinator actually saved.
@@ -20130,10 +18207,10 @@ class LibraryScreen(BaseAppScreen):
             title=persisted_title,
             modified_at=baseline.modified_at,
         )
-        if self._library_notes_filter_records is not None:
-            self._library_notes_filter_records = list(
+        if self._notes_state.filter_records is not None:
+            self._notes_state.filter_records = list(
                 patch_note_records_after_save(
-                    self._library_notes_filter_records,
+                    self._notes_state.filter_records,
                     baseline.note_id,
                     title=persisted_title,
                     modified_at=baseline.modified_at,
@@ -20146,9 +18223,9 @@ class LibraryScreen(BaseAppScreen):
         # pages are ordered by title so a rename changes collation position
         # (Qodo #3). Cross-page offset boundaries are reconciled on the next
         # slice reload/visit; see patch_notes_tree_branches_title's contract.
-        self._library_notes_tree_branches, _tree_retitled = (
+        self._notes_state.tree_branches, _tree_retitled = (
             patch_notes_tree_branches_title(
-                self._library_notes_tree_branches,
+                self._notes_state.tree_branches,
                 note_id=baseline.note_id,
                 title=persisted_title,
                 modified_at=baseline.modified_at,
@@ -20165,20 +18242,20 @@ class LibraryScreen(BaseAppScreen):
         # claimed). The unfiltered branch view above already carries the fresh,
         # re-sorted title.
         title_changed = cached_title is not None and cached_title != persisted_title
-        filter_state = self._library_notes_tree_filter_state
+        filter_state = self._notes_state.tree_filter_state
         filter_active = (
-            bool(getattr(self, "_library_notes_filter", "").strip())
+            bool(getattr(self._notes_state, "filter", "").strip())
             and filter_state is not None
         )
         if title_changed and filter_active and self._active_notes_filter_shows_note(
             filter_state, baseline.note_id
         ):
-            self._library_notes_filter = ""
-            self._library_notes_filter_records = None
-            self._library_notes_filter_generation = (
-                getattr(self, "_library_notes_filter_generation", 0) + 1
+            self._notes_state.filter = ""
+            self._notes_state.filter_records = None
+            self._notes_state.filter_generation = (
+                getattr(self._notes_state, "filter_generation", 0) + 1
             )
-            self._library_notes_tree_filter_state = None
+            self._notes_state.tree_filter_state = None
 
     @staticmethod
     def _placement_note_id(placement: Any) -> str:
@@ -20207,12 +18284,12 @@ class LibraryScreen(BaseAppScreen):
         title -- returning the first match's title.
         """
         target = str(note_id)
-        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
+        filter_state = getattr(self._notes_state, "tree_filter_state", None)
         if filter_state is not None:
             for placement in filter_state.placements:
                 if self._placement_note_id(placement) == target:
                     return str(placement.note.get("title", "") or "")
-        for state in getattr(self, "_library_notes_tree_branches", {}).values():
+        for state in getattr(self._notes_state, "tree_branches", {}).values():
             for item in state.items:
                 if (
                     isinstance(item, NotePlacementRecord)
@@ -20225,97 +18302,16 @@ class LibraryScreen(BaseAppScreen):
         return None
 
     def _focus_library_note_validation_field(self, field: str) -> None:
-        """Restore keyboard focus to the field named by a validation veto."""
-        selector = {
-            "title": "#library-note-title",
-            "body": "#library-note-body",
-            "keywords": "#library-note-context-keywords",
-        }.get(field)
-        if selector is None or not self.is_mounted:
-            return
-
-        def focus_field() -> None:
-            try:
-                self.query_one(selector).focus()
-            except (NoMatches, QueryError):
-                return
-
-        self.call_after_refresh(focus_field)
+        return self._notes_controller._focus_library_note_validation_field(field)
 
     def _route_library_note_validation_field(self, field: str) -> None:
-        """Expose the region that owns a vetoed field without recomposing."""
-        if field in {"title", "body"}:
-            self._library_note_preview = False
-            self._library_note_context = False
-        elif field == "keywords":
-            # Keywords now belong to Info -> Properties at every width.
-            # Route there before focusing so validation never targets the
-            # retained-but-hidden legacy inline field.
-            self._library_note_context = True
+        return self._notes_controller._route_library_note_validation_field(field)
 
     def _focus_library_note_conflict_callout(self) -> None:
-        """Move keyboard focus to the explanatory conflict callout."""
-        try:
-            callout = self.query_one("#library-note-conflict-copy", Static)
-        except (NoMatches, QueryError):
-            return
-        callout.can_focus = True
-        callout.focus()
-
-    def _apply_library_note_saved_presentation(
-        self,
-        outcome: NoteSaveOutcome,
-    ) -> None:
-        """Present saved only when the outcome still covers the latest draft."""
-        snapshot = self._library_note_session.snapshot
-        if snapshot is None or snapshot.note_id != self._selected_note_id:
-            return
-        if outcome.kind is NoteSaveOutcomeKind.SAVED:
-            self._patch_library_note_list_from_session()
-        is_current_clean_revision = (
-            not snapshot.dirty
-            and outcome.revision is not None
-            and outcome.revision == snapshot.saved_revision
-        )
-        self._library_note_autosave_state = (
-            "saved" if is_current_clean_revision else "idle"
-        )
-        self._update_library_note_meta_static(content=snapshot.body)
+        return self._notes_controller._focus_library_note_conflict_callout()
 
     def _apply_library_note_save_outcome(self, outcome: NoteSaveOutcome) -> None:
-        """Translate one typed coordinator save outcome into screen presentation."""
-        snapshot = self._library_note_session.snapshot
-        if outcome.kind is NoteSaveOutcomeKind.STALE or snapshot is None:
-            return
-        if snapshot.note_id != self._selected_note_id:
-            return
-        if outcome.kind in {
-            NoteSaveOutcomeKind.SAVED,
-            NoteSaveOutcomeKind.ACKNOWLEDGED,
-        }:
-            self._apply_library_note_saved_presentation(outcome)
-            return
-        if outcome.kind is NoteSaveOutcomeKind.CONFLICTED:
-            self._library_note_autosave_state = "conflict"
-            self._library_note_preview = False
-            self._library_note_context = False
-            self._invalidate_library_note_autosave()
-            if self.is_mounted:
-                self._apply_library_note_presentation_state()
-                self.call_after_refresh(self._focus_library_note_conflict_callout)
-            return
-        self._library_note_autosave_state = (
-            "validation"
-            if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO
-            else "error"
-        )
-        validation_field = outcome.veto.field if outcome.veto is not None else ""
-        if outcome.kind is NoteSaveOutcomeKind.VALIDATION_VETO:
-            self._route_library_note_validation_field(validation_field)
-        elif self._library_note_preview:
-            self._library_note_preview = False
-        self._update_library_note_meta_static(content=snapshot.body)
-        self._focus_library_note_validation_field(validation_field)
+        return self._notes_controller._apply_library_note_save_outcome(outcome)
 
     async def _save_library_note(
         self,
@@ -20335,22 +18331,22 @@ class LibraryScreen(BaseAppScreen):
         """
         if (
             autosave_generation is not None
-            and autosave_generation != self._library_note_autosave_generation
+            and autosave_generation != self._notes_state.autosave_generation
         ):
             return
         snapshot = self._library_note_session.snapshot
         if (
-            self._library_notes_view != "editor"
+            self._notes_state.view != "editor"
             or snapshot is None
-            or snapshot.note_id != self._selected_note_id
+            or snapshot.note_id != self._notes_state.selected_note_id
         ):
             return
-        self._library_note_shortcut_status = ""
-        self._library_note_autosave_state = "saving"
+        self._notes_state.shortcut_status = ""
+        self._notes_state.autosave_state = "saving"
         self._update_library_note_meta_static(content=snapshot.body)
         if (
             autosave_generation is not None
-            and autosave_generation != self._library_note_autosave_generation
+            and autosave_generation != self._notes_state.autosave_generation
         ):
             return
         outcome = await self._library_note_session.request_save(explicit=explicit)
@@ -20360,8 +18356,8 @@ class LibraryScreen(BaseAppScreen):
         """Cross the coordinator's pending-work barrier before navigation."""
         self._invalidate_library_note_autosave()
         if (
-            self._library_note_session_blank_id
-            and self._library_note_session_blank_id == self._selected_note_id
+            self._notes_state.session_blank_id
+            and self._notes_state.session_blank_id == self._notes_state.selected_note_id
             # task-3315: never start a SECOND destructive op from the
             # untouched-blank GC while a discard/delete is already running
             # or admitted -- fall through to the session flush, whose own
@@ -20392,12 +18388,12 @@ class LibraryScreen(BaseAppScreen):
                 # (rebase note: task-4021 independently re-derived this
                 # same root cause -- the literal seed must count as blank
                 # too, or this GC branch is unreachable -- but its version
-                # lacked the ``_library_note_title_user_edited`` provenance
+                # lacked the ``_notes_state.title_user_edited`` provenance
                 # guard below; dev's fuller check is kept as-is and covers
                 # task-4021's reachability claim too.)
                 title_blank = not raw_title.strip() or (
                     raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE
-                    and not self._library_note_title_user_edited
+                    and not self._notes_state.title_user_edited
                 )
                 if title_blank and not any(
                     value.strip() for value in (raw_content, raw_keywords_text)
@@ -20415,7 +18411,7 @@ class LibraryScreen(BaseAppScreen):
                 and snapshot.saved_revision > before_saved_revision
             ):
                 self._patch_library_note_list_from_session()
-                self._library_note_autosave_state = (
+                self._notes_state.autosave_state = (
                     "idle" if snapshot.dirty else "saved"
                 )
                 self._update_library_note_meta_static(content=snapshot.body)
@@ -20423,16 +18419,16 @@ class LibraryScreen(BaseAppScreen):
         if snapshot is None:
             return outcome
         if outcome.kind is NoteFlushOutcomeKind.CONFLICTED:
-            self._library_note_autosave_state = "conflict"
-            self._library_note_preview = False
-            self._library_note_context = False
+            self._notes_state.autosave_state = "conflict"
+            self._notes_state.preview = False
+            self._notes_state.context = False
             if self.is_mounted:
                 self._apply_library_note_presentation_state()
                 self.call_after_refresh(self._focus_library_note_conflict_callout)
             return outcome
         if outcome.kind is NoteFlushOutcomeKind.BLOCKED:
             return outcome
-        self._library_note_autosave_state = (
+        self._notes_state.autosave_state = (
             "validation"
             if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO
             else "error"
@@ -20448,348 +18444,39 @@ class LibraryScreen(BaseAppScreen):
         return outcome
 
     async def _gc_pending_blank_note(self) -> None:
-        """Delete this session's now-empty "Blank note" row before it is left behind (LIB-14).
+        return await self._notes_controller._gc_pending_blank_note()
 
-        "Blank note" still commits its DB row immediately on click (the
-        create-note seam has no create-on-first-edit branch -- see the
-        AC#5 decision recorded on task-2858); this is the smaller-diff
-        alternative the task allows instead: whenever the editor is left
-        with this session's blank note in an effectively-empty final state
-        (title/body/keywords all blank -- see the caller,
-        ``_flush_library_note_save``, which covers both "never touched"
-        and "typed then deleted everything"), the row is quietly removed
-        here rather than surviving as a permanent literal "Untitled" row
-        the user has to find and delete by hand.
-
-        Reads ``_library_note_session_blank_id`` (not the narrower,
-        edit-cleared ``_library_note_pending_blank_gc_id``) so this still
-        fires after the note was typed into and then emptied out again --
-        which, unlike the "never touched" case, may well have gone
-        through one or more real autosaves in between (deliberately: see
-        that flag's own docstring on why autosave alone must not exempt a
-        session blank from GC). Each of those autosaves bumps the row's
-        real DB version, so the delete below sends
-        ``self._library_note_version`` (the screen's own up-to-date
-        tracking of it, updated by every successful save) rather than a
-        hardcoded 1 -- an earlier version of this fix hardcoded 1 and the
-        delete silently failed on a version mismatch whenever a
-        mid-session autosave had already bumped the row past v1 (found by
-        the dedicated autosave-then-empty test). Falls back to 1 only for
-        the genuinely-never-saved case, where ``_library_note_version`` is
-        still ``None``. Best-effort: any failure (including a version
-        conflict from a still-possible concurrent EXTERNAL change) is
-        swallowed -- GC must never block the exit it runs inside, and the
-        worst case on failure is the pre-existing behavior (the row
-        survives), not a new regression. On success, patches the same cached
-        Notes rows/count used by visible Delete, Undo, and Create while their
-        one shared mutation interlock is held.
-
-        Also clears ``_library_note_dirty`` unconditionally (review round
-        1 fix): the caller, ``_flush_library_note_save``, is reached via
-        the "typed then deleted everything" path with ``_library_note_
-        dirty`` still ``True`` -- every exit seam (e.g.
-        ``_exit_library_note_editor_guarded``) vetoes on that flag, so
-        without clearing it here a successful GC would still leave the
-        editor stuck open. Cleared regardless of whether the delete call
-        itself succeeds, matching "GC must never block the exit it runs
-        inside": on the rare failure path the row survives with its
-        pre-exit content (the emptied edit is not separately persisted
-        either), but the user is never trapped in the editor over it.
-        """
-        note_id = self._library_note_session_blank_id
-        # The row's current version -- NOT hardcoded to 1 -- since a
-        # mid-session autosave (deliberately still possible before GC;
-        # see the docstring above) may already have bumped it past its
-        # initial create-time version.
-        current_version = self._library_note_version or 1
-        self._library_note_session_blank_id = None
-        self._library_note_pending_blank_gc_id = None
-        if not note_id or self._library_notes_mutation_in_flight:
-            return
-        self._library_notes_mutation_in_flight = True
-        service = getattr(self.app_instance, "notes_scope_service", None)
-        delete_note = getattr(service, "delete_note", None)
-        if not callable(delete_note):
-            self._library_notes_mutation_in_flight = False
-            return
-        try:
-            deleted = await self._run_library_service_call(
-                delete_note,
-                scope="local_note",
-                note_id=note_id,
-                version=current_version,
-                user_id=self._library_notes_user_id(),
-                isolate_in_worker=True,
-            )
-            if deleted:
-                self._remove_library_note_source_record(note_id)
-        except Exception:
-            logger.opt(exception=True).debug(
-                f"Could not GC untouched blank note {note_id!r}; leaving it in place."
-            )
-            return
-        finally:
-            self._library_notes_mutation_in_flight = False
-
-    async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
-        """Resolve a conflict through the coordinator's token-gated action.
-
-        Args:
-            overwrite: ``True`` for Overwrite, ``False`` for Reload.
-        """
-        self._library_note_shortcut_status = ""
-        action = ConflictAction.OVERWRITE if overwrite else ConflictAction.RELOAD
-        operation = asyncio.create_task(
-            self._library_note_session.resolve_conflict(action)
-        )
-        try:
-            # Let the coordinator atomically claim its conflict token before
-            # reflecting the running state. The operation's first service
-            # boundary yields here; a synchronous rejection/finish needs no
-            # intermediate presentation.
-            await asyncio.sleep(0)
-            if self._library_note_session.conflict_resolution_running:
-                self._apply_library_note_presentation_state()
-            outcome = await operation
-        except asyncio.CancelledError:
-            operation.cancel()
-            await asyncio.gather(operation, return_exceptions=True)
-            raise
-        if outcome.kind in {
-            ConflictOutcomeKind.STALE,
-            ConflictOutcomeKind.ALREADY_RUNNING,
-            ConflictOutcomeKind.NOT_IN_CONFLICT,
-        }:
-            return
-        if outcome.kind is ConflictOutcomeKind.MISSING and not overwrite:
-            self._dispatch_database_note_identity_cleared()
-            self._reset_library_note_editor_state()
-            self._notify_library_note_missing_warning()
-            self._refresh_local_source_snapshot()
-            if self.is_mounted:
-                _sync_library_canvas(self, "notes")
-            return
-        snapshot = self._library_note_session.snapshot
-        validation_field = ""
-        if outcome.kind is ConflictOutcomeKind.OVERWRITTEN:
-            if outcome.save_outcome is not None:
-                self._apply_library_note_saved_presentation(outcome.save_outcome)
-        elif outcome.kind is ConflictOutcomeKind.RELOADED:
-            self._library_note_autosave_state = "idle"
-        elif outcome.kind in {
-            ConflictOutcomeKind.RENEWED_CONFLICT,
-            ConflictOutcomeKind.DRAFT_CHANGED,
-            ConflictOutcomeKind.MISSING,
-        }:
-            self._library_note_autosave_state = "conflict"
-        elif outcome.kind is ConflictOutcomeKind.FAILED:
-            self._library_note_autosave_state = (
-                "conflict" if snapshot is not None and snapshot.in_conflict else "error"
-            )
-        elif outcome.kind is ConflictOutcomeKind.VALIDATION_VETO:
-            self._library_note_autosave_state = "validation"
-            if (
-                outcome.save_outcome is not None
-                and outcome.save_outcome.veto is not None
-            ):
-                validation_field = outcome.save_outcome.veto.field
-        self._library_note_preview = False
-        self._library_note_context = False
-        if outcome.kind is ConflictOutcomeKind.VALIDATION_VETO:
-            self._route_library_note_validation_field(validation_field)
-        if self.is_mounted:
-            self._apply_library_note_presentation_state()
-            if snapshot is not None and snapshot.in_conflict:
-                self.call_after_refresh(self._focus_library_note_conflict_callout)
-            elif validation_field:
-                self._focus_library_note_validation_field(validation_field)
-
-    @on(Button.Pressed, "#library-note-conflict-overwrite")
+    @on(Button.Pressed, '#library-note-conflict-overwrite')
     def handle_library_note_conflict_overwrite(self, event: Button.Pressed) -> None:
-        """Resolve a shown save conflict by re-saving the kept local edits.
+        return self._notes_controller.handle_library_note_conflict_overwrite(event)
 
-        Args:
-            event: Button press event emitted by the conflict UI's
-                "Overwrite" action.
-        """
-        event.stop()
-        self.run_worker(
-            self._resolve_library_note_conflict(overwrite=True),
-            group="library_note_conflict",
-        )
-
-    @on(Button.Pressed, "#library-note-conflict-reload")
+    @on(Button.Pressed, '#library-note-conflict-reload')
     def handle_library_note_conflict_reload(self, event: Button.Pressed) -> None:
-        """Resolve a shown save conflict by discarding local edits and reloading.
-
-        Args:
-            event: Button press event emitted by the conflict UI's
-                "Reload" action.
-        """
-        event.stop()
-        self.run_worker(
-            self._resolve_library_note_conflict(overwrite=False),
-            group="library_note_conflict",
-        )
+        return self._notes_controller.handle_library_note_conflict_reload(event)
 
     # ----- Notes editor: preview, export, copy, use-in-console -----------
 
     def _read_library_note_editor_fields(self) -> tuple[str, str, str] | None:
-        """Project canonical draft fields for non-persistence utilities.
+        return self._notes_controller._read_library_note_editor_fields()
 
-        Returns:
-            ``(title, content, keywords_text)`` from the coordinator snapshot,
-            or ``None`` when no Database Note session is active.
-        """
-        snapshot = self._library_note_session.snapshot
-        if snapshot is None:
-            return None
-        return snapshot.title, snapshot.body, snapshot.keywords_text
-
-    @on(Button.Pressed, "#library-note-edit")
+    @on(Button.Pressed, '#library-note-edit')
     def handle_library_note_edit_mode(self, event: Button.Pressed) -> None:
-        """Show the retained editable Database Note surface."""
-        event.stop()
-        if self._library_notes_view != "editor":
-            return
-        self._library_note_preview = False
-        self._library_note_context = False
-        self._apply_library_note_presentation_state()
+        return self._notes_controller.handle_library_note_edit_mode(event)
 
-    @on(Button.Pressed, "#library-note-preview")
+    @on(Button.Pressed, '#library-note-preview')
     def handle_library_note_preview_toggle(self, event: Button.Pressed) -> None:
-        """Show the retained read-only Markdown preview.
+        return self._notes_controller.handle_library_note_preview_toggle(event)
 
-        The coordinator already owns every raw field, so recomposition can
-        switch presentation without taking a second mutable draft snapshot.
-
-        Args:
-            event: Button press event emitted by the editor's Preview/Edit
-                action.
-        """
-        event.stop()
-        if (
-            self._library_notes_view != "editor"
-            or self._library_note_autosave_state == "conflict"
-        ):
-            return
-        if self._library_note_session.snapshot is None:
-            return
-        self._library_note_context = False
-        self._library_note_preview = True
-        self._apply_library_note_presentation_state()
-
-    @on(Button.Pressed, "#library-note-context")
+    @on(Button.Pressed, '#library-note-context')
     def handle_library_note_context_open(self, event: Button.Pressed) -> None:
-        """Show the stable Context region without replacing editor widgets.
+        return self._notes_controller.handle_library_note_context_open(event)
 
-        Args:
-            event: Button press emitted by the editor's Context action.
-
-        Returns:
-            None.
-        """
-        event.stop()
-        snapshot = self._library_note_session.snapshot
-        if (
-            self._library_notes_view != "editor"
-            or snapshot is None
-            or snapshot.in_conflict
-            or self._library_note_confirming_delete
-        ):
-            return
-        self._library_note_context = True
-        self._apply_library_note_presentation_state()
-        try:
-            context = self.query_one("#library-note-context-region")
-        except (NoMatches, QueryError):
-            return
-        context.focus()
-
-    @on(Button.Pressed, "#library-note-context-back")
+    @on(Button.Pressed, '#library-note-context-back')
     def handle_library_note_context_back(self, event: Button.Pressed) -> None:
-        """Return to the Edit or Preview presentation that opened Context.
-
-        Args:
-            event: Button press emitted by the Context region's Back action.
-
-        Returns:
-            None.
-        """
-        event.stop()
-        if not self._library_note_context:
-            return
-        self._library_note_context = False
-        self._apply_library_note_presentation_state()
-        try:
-            self.query_one("#library-note-context", Button).focus()
-        except (NoMatches, QueryError):
-            return
+        return self._notes_controller.handle_library_note_context_back(event)
 
     async def _export_library_note(self, export_format: str) -> None:
-        """Push the Export dialog for the open Library note.
-
-        Mirrors the retired standalone Notes screen's export dialog flow --
-        a ``FileSave`` prompt pre-filled with a sanitized default filename,
-        whose callback writes the built export content once a path is
-        chosen. The export reads the *live* editor widgets (via
-        ``_read_library_note_editor_fields``), never the DB, so unlike
-        Save there is nothing to flush first.
-
-        Note: the real ``Third_Party.textual_fspicker.FileSave`` dialog
-        only accepts ``location``/``title``/``default_file`` (not the
-        ``default_filename``/``context`` kwargs the retired screen passed
-        it, which would have raised ``TypeError`` if that path ever
-        actually ran) -- this uses the dialog's real constructor shape.
-
-        Args:
-            export_format: ``"markdown"`` for the frontmatter export
-                (Export .md), or ``"text"`` for the plain-text export
-                (Export .txt).
-        """
-        if self._library_notes_view != "editor" or not self._selected_note_id:
-            return
-        fields = self._read_library_note_editor_fields()
-        if fields is None:
-            return
-        operation = self._begin_library_notes_operation("export")
-        if operation is None:
-            return
-        title, content, keywords_text = fields
-        note_id = self._selected_note_id
-        safe_title = (
-            "".join(
-                char
-                for char in (title.strip() or "note")
-                if char.isalnum() or char in (" ", "-", "_")
-            ).rstrip()
-            or "note"
-        )
-        default_filename = (
-            f"{safe_title}.md" if export_format == "markdown" else f"{safe_title}.txt"
-        )
-        dialog_title = (
-            "Export Note as Markdown"
-            if export_format == "markdown"
-            else "Export Note as Text"
-        )
-        await self.app.push_screen(
-            FileSave(
-                location=str(Path.home()),
-                title=dialog_title,
-                default_file=default_filename,
-            ),
-            callback=lambda path: self.call_after_refresh(
-                self._write_library_note_export_file,
-                path,
-                export_format,
-                title,
-                content,
-                keywords_text,
-                note_id,
-                operation,
-            ),
-        )
+        return await self._notes_controller._export_library_note(export_format)
 
     def _write_library_note_export_file(
         self,
@@ -20882,184 +18569,28 @@ class LibraryScreen(BaseAppScreen):
             )
         self._finish_library_notes_operation(active_operation, success=True)
 
-    @on(Button.Pressed, "#library-note-context-export-md")
-    @on(Button.Pressed, "#library-note-export-md")
+    @on(Button.Pressed, '#library-note-context-export-md')
+    @on(Button.Pressed, '#library-note-export-md')
     async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:
-        """Export the open note as Markdown via a ``FileSave`` dialog.
+        return await self._notes_controller.handle_library_note_export_markdown(event)
 
-        Args:
-            event: Button press event emitted by the editor's "Export .md" action.
-        """
-        event.stop()
-        await self._export_library_note("markdown")
-
-    @on(Button.Pressed, "#library-note-context-export-txt")
-    @on(Button.Pressed, "#library-note-export-txt")
+    @on(Button.Pressed, '#library-note-context-export-txt')
+    @on(Button.Pressed, '#library-note-export-txt')
     async def handle_library_note_export_text(self, event: Button.Pressed) -> None:
-        """Export the open note as plain text via a ``FileSave`` dialog.
+        return await self._notes_controller.handle_library_note_export_text(event)
 
-        Args:
-            event: Button press event emitted by the editor's "Export .txt" action.
-        """
-        event.stop()
-        await self._export_library_note("text")
-
-    @on(Button.Pressed, "#library-note-context-copy")
-    @on(Button.Pressed, "#library-note-copy")
+    @on(Button.Pressed, '#library-note-context-copy')
+    @on(Button.Pressed, '#library-note-copy')
     def handle_library_note_copy(self, event: Button.Pressed) -> None:
-        """Copy the open Library note to the clipboard as markdown.
-
-        Uses the app's ``copy_to_clipboard`` seam (the same
-        ``getattr``-gated pattern every other Library handoff/action in
-        this screen already uses) rather than importing ``pyperclip``
-        directly the way the retired standalone Notes screen's copy action
-        did -- that makes this testable via a recorded fake the way the
-        rest of this screen's actions are, and doesn't add a hard runtime
-        dependency on a package that isn't always installed/working.
-
-        Args:
-            event: Button press event emitted by the editor's Copy action.
-        """
-        event.stop()
-        notify = getattr(self.app_instance, "notify", None)
-        if self._library_notes_view != "editor" or not self._selected_note_id:
-            return
-        fields = self._read_library_note_editor_fields()
-        if fields is None:
-            return
-        operation = self._begin_library_notes_operation("copy")
-        if operation is None:
-            return
-        title, content, keywords_text = fields
-        note_id = self._selected_note_id
-        export_content = build_note_export_content(
-            title, content, keywords_text, note_id, "markdown"
-        )
-        copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
-        if not callable(copy_to_clipboard):
-            if callable(notify):
-                notify(
-                    "Clipboard copy is unavailable in this runtime.", severity="warning"
-                )
-            self._finish_library_notes_operation(
-                operation,
-                success=False,
-                failure_next_action="enable clipboard access and try again",
-            )
-            return
-        try:
-            copy_to_clipboard(export_content)
-        except Exception as exc:
-            logger.opt(exception=True).warning(
-                f"Failed to copy Library note {note_id!r} to clipboard."
-            )
-            if callable(notify):
-                notify(f"Error copying note: {type(exc).__name__}", severity="error")
-            self._finish_library_notes_operation(
-                operation,
-                success=False,
-                failure_next_action="check clipboard access and try again",
-            )
-            return
-        if callable(notify):
-            notify("Note copied to clipboard as markdown!", severity="information")
-        self._finish_library_notes_operation(operation, success=True)
-
-    def _selected_library_note_handoff_payload(self) -> ChatHandoffPayload | None:
-        """Build the Console handoff payload for the open Library note.
-
-        Mirrors ``_selected_media_handoff_payload``: reads the currently
-        open note's live (possibly unsaved) editor fields rather than a
-        list-row selection, matching the local-note handoff shape the
-        retired standalone Notes screen staged.
-
-        Returns:
-            A ``ChatHandoffPayload`` staging the open note as Console
-            context, or ``None`` when no note is currently open.
-        """
-        if self._library_notes_view != "editor" or not self._selected_note_id:
-            return None
-        fields = self._read_library_note_editor_fields()
-        if fields is None:
-            return None
-        title, content, keywords_text = fields
-        note_id = self._selected_note_id
-        keywords = self._library_note_keywords_from_input(keywords_text) or []
-        return ChatHandoffPayload.from_source_content(
-            source="notes",
-            item_type="note",
-            title=title.strip() or "Untitled Note",
-            body=content,
-            source_id=str(note_id),
-            suggested_prompt="Use this note as context and help me work with it.",
-            runtime_backend="local",
-            source_owner="local",
-            source_selector_state="local",
-            discovery_owner="notes",
-            discovery_entity_id=str(note_id),
-            scope_type="global",
-            metadata={
-                "note_version": self._library_note_version,
-                "keywords": keywords,
-            },
-        )
+        return self._notes_controller.handle_library_note_copy(event)
 
     def _open_selected_library_note_handoff(self) -> bool:
-        """Stage the note open in the editor into Console via the shared handoff.
+        return self._notes_controller._open_selected_library_note_handoff()
 
-        Mirrors ``_open_selected_media_handoff``: builds the payload, then
-        guards on having an open note, the workspace context-handoff gate,
-        and the app exposing ``open_chat_with_handoff`` at all.
-        """
-        workspace_state = self._library_workspace_depth_state()
-        payload = self._selected_library_note_handoff_payload()
-        notify = getattr(self.app_instance, "notify", None)
-        if payload is None:
-            if callable(notify):
-                notify("Open a note before using it in Console.", severity="warning")
-            return False
-        if not workspace_state.context_handoff_enabled:
-            if callable(notify):
-                notify(workspace_state.context_handoff_tooltip, severity="warning")
-            return False
-        open_chat_with_handoff = getattr(
-            self.app_instance, "open_chat_with_handoff", None
-        )
-        if not callable(open_chat_with_handoff):
-            if callable(notify):
-                notify(
-                    "Console handoff is unavailable for Library Notes.",
-                    severity="warning",
-                )
-            return False
-        try:
-            open_chat_with_handoff(payload, action_label="Use in Console")
-        except Exception:
-            logger.opt(exception=True).warning("Library note Console handoff failed.")
-            if callable(notify):
-                notify("Could not use this note in Console.", severity="warning")
-            return False
-        return True
-
-    @on(Button.Pressed, "#library-note-context-use-in-console")
-    @on(Button.Pressed, "#library-note-use-in-console")
+    @on(Button.Pressed, '#library-note-context-use-in-console')
+    @on(Button.Pressed, '#library-note-use-in-console')
     def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
-        """Hand the open note off to Console as chat context.
-
-        Args:
-            event: Button press event emitted by the editor's
-                "Use in Console" action.
-        """
-        event.stop()
-        operation = self._begin_library_notes_operation("console")
-        if operation is None:
-            return
-        handed_off = self._open_selected_library_note_handoff()
-        self._finish_library_notes_operation(
-            operation,
-            success=handed_off,
-            failure_next_action="check Console readiness and try again",
-        )
+        return self._notes_controller.handle_library_note_use_in_console(event)
 
     def _load_library_lifecycle_value(self) -> tuple[Any, bool]:
         """Read lifecycle independently from the existing section preferences."""
@@ -21619,7 +19150,7 @@ class LibraryScreen(BaseAppScreen):
         self._ingest_state.auto_collapsed_rail = False
         self._apply_library_notes_stage_visibility()
         single_stage = (
-            self._library_notes_compact and self._library_notes_compact_stage_applies()
+            self._notes_state.compact and self._library_notes_compact_stage_applies()
         )
         if not self.is_mounted or single_stage:
             return
@@ -21724,11 +19255,11 @@ class LibraryScreen(BaseAppScreen):
             # Generic rail admission intentionally clears the Notes filter.
             # Continue is the sole route that carries an applied Notes scope,
             # so reapply it only after every ordinary leave guard has passed.
-            self._library_notes_sort = scope["sort"]
-            self._library_notes_filter = scope["filter"]
-            self._library_notes_filter_records = None
-            if self._library_notes_filter:
-                await self._run_library_notes_filter(self._library_notes_filter)
+            self._notes_state.sort = scope["sort"]
+            self._notes_state.filter = scope["filter"]
+            self._notes_state.filter_records = None
+            if self._notes_state.filter:
+                await self._run_library_notes_filter(self._notes_state.filter)
             else:
                 _sync_library_canvas(self, "notes")
 
@@ -21806,176 +19337,36 @@ class LibraryScreen(BaseAppScreen):
             group="library_hub_open_recent",
         )
 
-    @on(Button.Pressed, "#library-notes-source-files")
+    @on(Button.Pressed, '#library-notes-source-files')
     async def _show_library_file_notes(self, event: Button.Pressed) -> None:
-        """Leave Database Notes safely and lazily mount File Notes."""
-        event.stop()
-        if self._prompts_state.mutation_in_flight:
-            return
-        if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
-            return
-        await self._flush_library_note_save()
-        if self._library_note_dirty:
-            return
-        if self._library_notes_view == "list":
-            self._library_notes_browse_return_receipt = (
-                self._capture_library_notes_browse_return_receipt()
-            )
-        self._evacuate_library_notes_authority_focus("database")
-        self._supersede_library_notes_navigation()
-        # Database Notes and Folder Files are independent retained authorities.
-        # The database coordinator has already flushed above; keep its loaded
-        # selection/editor projection so returning from Folder Files resumes it.
-        if self._library_file_notes_workspace is None:
-            self._library_file_notes_workspace = (
-                self._library_file_notes_workspace_factory()
-            )
-        workspace = self._library_file_notes_workspace
-        self._acknowledge_library_destination_change()
-        self._set_library_notes_source(LIBRARY_NOTES_SOURCE_FILES)
-        # task-2850: the Files-mode Escape binding only fires while
-        # ``_file_notes_active()`` is true, so the footer's advertised keys
-        # must follow this same transition or Escape works unadvertised.
-        self._register_footer_shortcuts()
-        try:
-            database_shell = self.query_one(
-                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
-            )
-            shell_grid = self.query_one("#library-shell-grid", Horizontal)
-        except (NoMatches, QueryError):
-            self.refresh(recompose=True)
-            self.call_after_refresh(
-                self._restore_library_notes_authority_focus,
-                "files",
-            )
-        else:
-            if workspace._reader_shell is None:
-                shell_state = build_library_shell_state(
-                    self._build_library_shell_input(),
-                    selected_row_id=self._library_selected_row_id,
-                )
-                workspace.configure_reader_shell(
-                    library_pane=LibraryRail(
-                        shell_state,
-                        self._library_rail_preferences(),
-                        query=self._rag_search_state.query,
-                        search_placeholder=self._library_rail_search_placeholder(),
-                        workspaces_body_factory=self._compose_workspaces_rail_body,
-                        top_action_factory=self._compose_library_rail_top_action,
-                        lifecycle=self._library_lifecycle,
-                        onboarding_all_empty=self._library_onboarding_all_empty,
-                        id="library-file-notes-rail",
-                        classes="destination-workbench-pane",
-                    ),
-                    layout=self._library_file_notes_reader_layout,
-                )
-            if not workspace.is_attached:
-                await shell_grid.mount(workspace, before=database_shell)
-            database_shell.display = False
-            database_shell.library.display = False
-            workspace.display = True
-            self._restore_library_notes_authority_focus("files")
-            self._sync_library_notes_source_controls()
-            self.call_after_refresh(
-                self._sync_library_file_notes_reader_layout_from_shell
-            )
-            self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
-        # The production app can recompose Library after the initial mount-time
-        # responsive callback. Measure again once the Files canvas owns its
-        # final shell geometry so a compact terminal cannot retain stale wide
-        # presentation state from startup.
-        self.call_after_refresh(self._update_library_notes_responsive_state)
+        return await self._notes_controller._show_library_file_notes(event)
 
     def _sync_library_notes_source_controls(self) -> None:
-        """Patch the retained Notes source strip after an in-place switch."""
-        database_selected = self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
-        wide_focused_task = (
-            not database_selected
-            and not self._library_notes_compact
-            and self._library_notes_focused_task_active()
-        )
-        try:
-            database = self.query_one("#library-notes-source-database", Button)
-            files = self.query_one("#library-notes-source-files", Button)
-            separator = self.query_one("#library-notes-source-separator", Widget)
-            task_return = self.query_one("#library-notes-task-return", Button)
-        except (NoMatches, QueryError):
-            return
-        database.set_class(database_selected, "-selected")
-        files.set_class(not database_selected, "-selected")
-        for control in (database, files, separator):
-            control.display = not wide_focused_task
-        task_return.display = wide_focused_task
+        return self._notes_controller._sync_library_notes_source_controls()
 
-    @on(Button.Pressed, "#library-notes-task-return")
+    @on(Button.Pressed, '#library-notes-task-return')
     async def _return_from_library_notes_task(self, event: Button.Pressed) -> None:
-        """Return through the active Notes owner's existing guarded exit."""
-        event.stop()
-        if self._file_notes_active():
-            await self._return_to_library_database_notes()
-            return
-        if (
-            self._library_notes_workflow_active()
-            and self._library_notes_view == "editor"
-        ):
-            await self._exit_library_note_editor_guarded()
+        return await self._notes_controller._return_from_library_notes_task(event)
 
-    @on(Button.Pressed, "#library-notes-source-database")
+    @on(Button.Pressed, '#library-notes-source-database')
     async def _show_library_database_notes(self, event: Button.Pressed) -> None:
-        """Return to Database Notes only after the File Notes leave guard."""
-        event.stop()
-        if self._prompts_state.mutation_in_flight:
-            return
-        await self._return_to_library_database_notes()
+        return await self._notes_controller._show_library_database_notes(event)
 
     @on(FileNotesReloadConfirmationChanged)
-    def _handle_file_notes_reload_confirmation_changed(
-        self,
-        event: FileNotesReloadConfirmationChanged,
-    ) -> None:
-        """Keep footer and F1 help truthful for the inline decision state."""
-        event.stop()
-        if event.control is self._library_file_notes_workspace:
-            self._register_footer_shortcuts()
+    def _handle_file_notes_reload_confirmation_changed(self, event: FileNotesReloadConfirmationChanged) -> None:
+        return self._notes_controller._handle_file_notes_reload_confirmation_changed(event)
 
     @on(FileNotesEditableOpened)
-    def _handle_file_notes_editable_opened(
-        self,
-        event: FileNotesEditableOpened,
-    ) -> None:
-        """Activate work-first only for the current admitted Folder identity."""
-        event.stop()
-        if (
-            event.control is self._library_file_notes_workspace
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
-        ):
-            self._dispatch_library_notes_work_session(
-                NotesWorkSessionEvent.EDITABLE_ITEM_OPENED
-            )
+    def _handle_file_notes_editable_opened(self, event: FileNotesEditableOpened) -> None:
+        return self._notes_controller._handle_file_notes_editable_opened(event)
 
     @on(FileNotesIdentityCleared)
-    def _handle_file_notes_identity_cleared(
-        self,
-        event: FileNotesIdentityCleared,
-    ) -> None:
-        """Reset Folder work-first only at an explicit identity clear."""
-        event.stop()
-        if event.control is self._library_file_notes_workspace:
-            self._dispatch_library_notes_work_session(
-                NotesWorkSessionEvent.FOLDER_IDENTITY_CLEARED
-            )
+    def _handle_file_notes_identity_cleared(self, event: FileNotesIdentityCleared) -> None:
+        return self._notes_controller._handle_file_notes_identity_cleared(event)
 
     @on(FileNotesRootChanged)
-    def _handle_file_notes_root_changed(
-        self,
-        event: FileNotesRootChanged,
-    ) -> None:
-        """Reset Folder work-first after the current root binding changes."""
-        event.stop()
-        if event.control is self._library_file_notes_workspace:
-            self._dispatch_library_notes_work_session(
-                NotesWorkSessionEvent.FOLDER_ROOT_CHANGED
-            )
+    def _handle_file_notes_root_changed(self, event: FileNotesRootChanged) -> None:
+        return self._notes_controller._handle_file_notes_root_changed(event)
 
     async def _return_to_library_database_notes(self) -> None:
         """Leave File Notes and return to the Database Notes view.
@@ -21987,9 +19378,9 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._prompts_state.mutation_in_flight:
             return
-        if self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE:
+        if self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE:
             return
-        workspace = self._library_file_notes_workspace
+        workspace = self._notes_state.file_notes_workspace
         if workspace is not None and workspace.cancel_path_task():
             self._register_footer_shortcuts()
             return
@@ -22003,14 +19394,14 @@ class LibraryScreen(BaseAppScreen):
             return
         try:
             guard = _LibraryNotesRestoreGuard(
-                scroll_generation=self._library_notes_scroll_intent_generation,
-                focus_generation=self._library_notes_focus_intent_generation,
+                scroll_generation=self._notes_state.scroll_intent_generation,
+                focus_generation=self._notes_state.focus_intent_generation,
             )
             self._evacuate_library_notes_authority_focus("files")
             self._acknowledge_library_destination_change()
             self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
             self._register_footer_shortcuts()
-            workspace = self._library_file_notes_workspace
+            workspace = self._notes_state.file_notes_workspace
             retained_switch = False
             try:
                 database_shell = self.query_one(
@@ -22029,10 +19420,10 @@ class LibraryScreen(BaseAppScreen):
                 self._sync_library_notes_source_controls()
                 self._sync_library_notes_reader_layout_from_shell()
                 self._restore_library_notes_authority_focus("database")
-                self._library_notes_focus_intent_generation += 1
+                self._notes_state.focus_intent_generation += 1
                 retained_switch = True
-            receipt = self._library_notes_browse_return_receipt
-            if self._library_notes_view == "editor":
+            receipt = self._notes_state.browse_return_receipt
+            if self._notes_state.view == "editor":
                 pass
             elif receipt is None:
                 # task-2856 AC1: this lands on the Notes LIST (never Files'
@@ -22064,7 +19455,7 @@ class LibraryScreen(BaseAppScreen):
         ``check_action`` gates this to ``_file_notes_active()``, so it only
         ever runs while Files mode genuinely owns the Notes canvas.
         """
-        workspace = self._library_file_notes_workspace
+        workspace = self._notes_state.file_notes_workspace
         if workspace is not None and workspace.cancel_path_task():
             self._register_footer_shortcuts()
             return
@@ -22146,8 +19537,8 @@ class LibraryScreen(BaseAppScreen):
 
             if shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES:
                 if (
-                    self._library_notes_view != "list"
-                    or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
+                    self._notes_state.view != "list"
+                    or self._notes_state.source != LIBRARY_NOTES_SOURCE_DATABASE
                 ):
                     return False
                 canvas: Widget = LibraryNotesCanvas(
@@ -22269,16 +19660,16 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
                 and row_id == LIBRARY_ROW_BROWSE_NOTES
             )
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
-            and self._library_notes_view == "editor"
-            and self._library_note_load_state == "loaded"
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._notes_state.view == "editor"
+            and self._notes_state.load_state == "loaded"
             and note_snapshot is not None
-            and note_snapshot.note_id == self._selected_note_id
-            and self._library_note_session_blank_id is None
+            and note_snapshot.note_id == self._notes_state.selected_note_id
+            and self._notes_state.session_blank_id is None
             and not note_snapshot.saving
             and not note_snapshot.in_conflict
-            and self._library_note_autosave_state in {"idle", "saved"}
-            and not self._library_note_confirming_delete
+            and self._notes_state.autosave_state in {"idle", "saved"}
+            and not self._notes_state.confirming_delete
             and not self._library_note_session.destructive_running
             and self._library_note_session.destructive_admission is None
             and not self._library_note_session.conflict_resolution_running
@@ -22368,17 +19759,17 @@ class LibraryScreen(BaseAppScreen):
         # A rail selection is an explicit route boundary, even when the user
         # later returns to the same visual Notes region. Invalidate the token
         # now so leave→return cannot recreate authority by region equality.
-        self._library_notes_operation = None
+        self._notes_state.operation = None
         self._supersede_library_notes_navigation()
-        if row_id == LIBRARY_ROW_CREATE_NOTE and not self._library_note_create_running:
+        if row_id == LIBRARY_ROW_CREATE_NOTE and not self._notes_state.create_running:
             # Create status belongs to one visible Create attempt. Import
             # reuses the persistence seam from Navigator, so its internal
             # failure must not leak into a later fresh Create entry.
-            self._library_note_create_status = ""
+            self._notes_state.create_status = ""
         self._set_library_destination_with_conversation_fence(row_id)
         if (
             row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
             self._request_library_notes_tree_initial_load()
         try:
@@ -22393,12 +19784,12 @@ class LibraryScreen(BaseAppScreen):
         self._export_state.origin_row_id = ""
         # task-420: keep the footer's "u" hint in sync with the row gate.
         self._register_footer_shortcuts()
-        self._library_notes_explicit_stage_intent = row_id in {
+        self._notes_state.explicit_stage_intent = row_id in {
             LIBRARY_ROW_BROWSE_NOTES,
             LIBRARY_ROW_CREATE_NOTE,
         }
-        if self._library_notes_explicit_stage_intent:
-            self._library_notes_stage = "notes"
+        if self._notes_state.explicit_stage_intent:
+            self._notes_state.stage = "notes"
         # A rail-row press is always a fresh entry into a content type, so
         # the media canvas must never resume a previously opened viewer
         # (e.g. Browse Media -> open item -> Browse Conversations -> Browse
@@ -22412,11 +19803,11 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.editing_analysis = False
         self._close_library_media_find()
         self._media_state.content_mode = "raw"
-        self._library_notes_filter = ""
-        self._library_notes_filter_records = None
-        self._library_notes_filter_generation += 1
-        self._library_notes_tree_filter_state = None
-        self._library_notes_browse_return_receipt = None
+        self._notes_state.filter = ""
+        self._notes_state.filter_records = None
+        self._notes_state.filter_generation += 1
+        self._notes_state.tree_filter_state = None
+        self._notes_state.browse_return_receipt = None
         if not retain_note_session:
             self._dispatch_database_note_identity_cleared()
             self._reset_library_note_editor_state()
@@ -22619,91 +20010,7 @@ class LibraryScreen(BaseAppScreen):
                 self._focus_library_ordinary_canvas_entry()
 
     def _try_switch_retained_library_notes_route(self, row_id: str) -> bool:
-        """Switch between retained Notes list/Create routes in place.
-
-        Navigator New and Create Back are in-reader mode transitions, not
-        destination replacements. All leave guards have already admitted the
-        transition before this method runs. Return ``False`` when the retained
-        Notes owners are unavailable so the caller can use the legacy route
-        fallback.
-
-        Args:
-            row_id: Admitted Library destination row.
-
-        Returns:
-            ``True`` when the retained Notes shell accepted the transition.
-        """
-        entering_create = (
-            row_id == LIBRARY_ROW_CREATE_NOTE
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_notes_view == "list"
-        )
-        leaving_create = (
-            row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
-        )
-        reentering_browse = (
-            row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-        )
-        if not (
-            (entering_create or leaving_create or reentering_browse)
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
-            and self.is_mounted
-        ):
-            return False
-        try:
-            self.query_one("#library-notes-reader-shell", LibraryAdaptiveReaderShell)
-            rail = self.query_one("#library-rail", LibraryRail)
-            header = self.query_one("#library-header-line", Static)
-        except (NoMatches, QueryError):
-            return False
-
-        self._acknowledge_library_destination_change()
-        self._library_navigation_context_generation += 1
-        self._pending_library_source_open = None
-        self._library_notes_operation = None
-        self._supersede_library_notes_navigation()
-        if not self._library_note_create_running:
-            self._library_note_create_status = ""
-        self._dispatch_database_note_identity_cleared()
-        self._reset_library_note_editor_state()
-        self._set_library_destination_with_conversation_fence(row_id)
-        if reentering_browse:
-            self._library_notes_filter = ""
-            self._library_notes_filter_records = None
-            self._library_notes_filter_generation += 1
-            self._library_notes_tree_filter_state = None
-            self._library_notes_browse_return_receipt = None
-            self._request_library_notes_tree_initial_load()
-        self._library_notes_explicit_stage_intent = True
-        self._library_notes_stage = "notes"
-        self._invalidate_library_workspace_depth_state()
-        self._register_footer_shortcuts()
-
-        shell = build_library_shell_state(
-            self._build_library_shell_input(),
-            selected_row_id=self._library_selected_row_id,
-        )
-        self._library_selected_row_id = shell.selected_row_id
-        rail.apply_selection(
-            shell,
-            lifecycle=self._library_lifecycle,
-            onboarding_all_empty=self._library_onboarding_all_empty,
-        )
-        header.update(self._library_header_line(shell.header_line))
-        identity = LibraryNotesFocusIdentity(
-            stage="notes",
-            region="create" if entering_create else "navigator",
-            note_id=None,
-            semantic_role="create-template:blank" if entering_create else "filter",
-        )
-        _sync_library_canvas(
-            self,
-            "notes",
-            then=lambda: self._restore_library_notes_focus_identity(identity),
-        )
-        return True
+        return self._notes_controller._try_switch_retained_library_notes_route(row_id)
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
@@ -23709,7 +21016,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.trash_type_choices_visible = False
         self._media_state.trash_focus_identity = "#library-media-trash-row-0"
         self._media_state.trash_focus_authority_generation = (
-            self._library_notes_focus_intent_generation
+            self._notes_state.focus_intent_generation
         )
         self._media_state.trash_focus_request_key = None
         controller = self._library_media_trash_browse_controller
@@ -23772,7 +21079,7 @@ class LibraryScreen(BaseAppScreen):
         if button_id:
             self._media_state.trash_focus_identity = f"#{button_id}"
             self._media_state.trash_focus_authority_generation = (
-                self._library_notes_focus_intent_generation
+                self._notes_state.focus_intent_generation
             )
         self._library_media_trash_browse_controller.select(media_id)
 
@@ -23855,7 +21162,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._media_state.trash_focus_identity = "#library-media-trash-delete-cancel"
         self._media_state.trash_focus_authority_generation = getattr(
-            self, "_library_notes_focus_intent_generation", 0
+            self._notes_state, "focus_intent_generation", 0
         )
         target = self._library_media_trash_browse_controller.open_delete_confirmation()
         if target is None:
@@ -23942,7 +21249,7 @@ class LibraryScreen(BaseAppScreen):
                         "#library-media-trash-delete"
                     )
                     self._media_state.trash_focus_authority_generation = getattr(
-                        self, "_library_notes_focus_intent_generation", 0
+                        self._notes_state, "focus_intent_generation", 0
                     )
                     self._notify_library_media_delete_warning(failure_copy)
             elif committed:
@@ -24093,7 +21400,7 @@ class LibraryScreen(BaseAppScreen):
                         "#library-media-trash-restore"
                     )
                     self._media_state.trash_focus_authority_generation = getattr(
-                        self, "_library_notes_focus_intent_generation", 0
+                        self._notes_state, "focus_intent_generation", 0
                     )
                     self._notify_library_media_delete_warning(failure_copy)
             elif committed:
@@ -24139,60 +21446,32 @@ class LibraryScreen(BaseAppScreen):
             return int(resolved)
         raise ValueError("Media mutation requires a positive backing id.")
 
-    @on(Button.Pressed, "#library-notes-sort")
+    @on(Button.Pressed, '#library-notes-sort')
     def handle_library_notes_sort(self, event: Button.Pressed) -> None:
-        """Toggle the direct Library notes sort chooser.
+        return self._notes_controller.handle_library_notes_sort(event)
 
-        Args:
-            event: Button press event emitted by the notes sort control.
-        """
-        event.stop()
-        if self._library_notes_mutation_fenced():
-            return
-        self._library_notes_sort_choices_visible = (
-            not self._library_notes_sort_choices_visible
-        )
-        _sync_library_canvas(self, "notes")
-
-    @on(Button.Pressed, ".library-notes-sort-choice")
+    @on(Button.Pressed, '.library-notes-sort-choice')
     def handle_library_notes_sort_choice(self, event: Button.Pressed) -> None:
-        """Apply the exact sort value carried by one direct choice."""
-        event.stop()
-        if self._library_notes_mutation_fenced():
-            return
-        # task-14902: the shared strip composer stashes the payload as
-        # ``choice_value`` (the sync panel's convention).
-        requested = str(getattr(event.button, "choice_value", "") or "")
-        if requested not in {"newest", "oldest", "title"}:
-            return
-        self._library_notes_sort = requested
-        self._library_notes_sort_choices_visible = False
-        self._library_notes_select_mode = False
-        self._library_notes_row_selection.clear()
-        _sync_library_canvas(self, "notes")
+        return self._notes_controller.handle_library_notes_sort_choice(event)
 
-    @on(Button.Pressed, "#library-notes-new")
+    @on(Button.Pressed, '#library-notes-new')
     async def handle_library_notes_new(self, event: Button.Pressed) -> None:
-        """Open the in-Library Create surface from Navigator."""
-        event.stop()
-        if self._library_notes_mutation_fenced():
-            return
-        await self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
+        return await self._notes_controller.handle_library_notes_new(event)
 
     @on(Button.Pressed, "#library-notes-filter-clear")
     def handle_library_notes_filter_clear(self, event: Button.Pressed) -> None:
         """Clear the active filter without requiring an empty Enter submit."""
         event.stop()
         LibraryScreen._supersede_library_notes_navigation(self, render=False)
-        browse_receipt = self._library_notes_filter_browse_receipt
-        self._library_notes_filter_browse_receipt = None
-        self._library_notes_filter = ""
-        self._library_notes_filter_records = None
-        self._library_notes_filter_generation += 1
-        self._library_notes_tree_filter_state = None
-        self._library_notes_sort_choices_visible = False
-        self._library_notes_select_mode = False
-        self._library_notes_row_selection.clear()
+        browse_receipt = self._notes_state.filter_browse_receipt
+        self._notes_state.filter_browse_receipt = None
+        self._notes_state.filter = ""
+        self._notes_state.filter_records = None
+        self._notes_state.filter_generation += 1
+        self._notes_state.tree_filter_state = None
+        self._notes_state.sort_choices_visible = False
+        self._notes_state.select_mode = False
+        self._notes_state.row_selection.clear()
         restore = (
             partial(
                 LibraryScreen._restore_library_notes_browse_return_receipt,
@@ -24213,23 +21492,23 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         submitted = self._safe_text(event.value, max_length=200).strip()
-        if submitted == self._library_notes_filter:
+        if submitted == self._notes_state.filter:
             return
         LibraryScreen._supersede_library_notes_navigation(self, render=False)
-        if submitted and not self._library_notes_filter:
-            self._library_notes_filter_browse_receipt = (
+        if submitted and not self._notes_state.filter:
+            self._notes_state.filter_browse_receipt = (
                 self._capture_library_notes_browse_return_receipt()
             )
-        self._library_notes_filter = submitted
-        self._library_notes_filter_records = None
-        self._library_notes_filter_generation += 1
-        self._library_notes_tree_filter_state = None
-        self._library_notes_select_mode = False
-        self._library_notes_row_selection.clear()
+        self._notes_state.filter = submitted
+        self._notes_state.filter_records = None
+        self._notes_state.filter_generation += 1
+        self._notes_state.tree_filter_state = None
+        self._notes_state.select_mode = False
+        self._notes_state.row_selection.clear()
         if not submitted:
-            browse_receipt = self._library_notes_filter_browse_receipt
-            self._library_notes_filter_browse_receipt = None
-            self._library_notes_filter_records = None
+            browse_receipt = self._notes_state.filter_browse_receipt
+            self._notes_state.filter_browse_receipt = None
+            self._notes_state.filter_records = None
             restore = (
                 partial(
                     LibraryScreen._restore_library_notes_browse_return_receipt,
@@ -24261,11 +21540,11 @@ class LibraryScreen(BaseAppScreen):
         method = getattr(service, "search_note_tree_placements", None)
         if not callable(method):
             return
-        generation = getattr(self, "_library_notes_filter_generation", 0) + 1
-        self._library_notes_filter_generation = generation
-        topology_epoch = self._library_notes_tree_topology_epoch
-        lifecycle_generation = self._library_notes_tree_lifecycle_generation
-        current = getattr(self, "_library_notes_tree_filter_state", None)
+        generation = getattr(self._notes_state, "filter_generation", 0) + 1
+        self._notes_state.filter_generation = generation
+        topology_epoch = self._notes_state.tree_topology_epoch
+        lifecycle_generation = self._notes_state.tree_lifecycle_generation
+        current = getattr(self._notes_state, "tree_filter_state", None)
         if (
             current is None
             or current.query != query
@@ -24276,28 +21555,28 @@ class LibraryScreen(BaseAppScreen):
                 generation=generation,
                 topology_epoch=topology_epoch,
             )
-        self._library_notes_tree_filter_state = current.begin(
+        self._notes_state.tree_filter_state = current.begin(
             generation=generation,
             offset=offset,
             direction=direction,
             limit=LIBRARY_NOTES_TREE_PAGE_SIZE,
             recovering=recovering,
         )
-        self._library_notes_filter_navigation_generation = navigation_generation
+        self._notes_state.filter_navigation_generation = navigation_generation
         self._sync_library_notes_tree_canvas_if_present()
 
         def current_authority() -> bool:
             return bool(
-                generation == self._library_notes_filter_generation
-                and topology_epoch == self._library_notes_tree_topology_epoch
+                generation == self._notes_state.filter_generation
+                and topology_epoch == self._notes_state.tree_topology_epoch
                 and lifecycle_generation
-                == self._library_notes_tree_lifecycle_generation
+                == self._notes_state.tree_lifecycle_generation
                 and (
                     navigation_generation is None
-                    and query == self._library_notes_filter
+                    and query == self._notes_state.filter
                     or navigation_generation is not None
                     and navigation_generation
-                    == self._library_notes_navigation_generation
+                    == self._notes_state.navigation_generation
                 )
             )
 
@@ -24323,7 +21602,7 @@ class LibraryScreen(BaseAppScreen):
                 exception_class=type(exc).__name__,
             ).warning(event)
             if current_authority():
-                failed = self._library_notes_tree_filter_state
+                failed = self._notes_state.tree_filter_state
                 assert failed is not None
                 result = fail_library_notes_filter_load(
                     failed,
@@ -24331,13 +21610,13 @@ class LibraryScreen(BaseAppScreen):
                     topology_epoch=topology_epoch,
                     error="Could not load filtered notes.",
                 )
-                self._library_notes_tree_filter_state = result.state
-                self._library_notes_filter_navigation_generation = None
+                self._notes_state.tree_filter_state = result.state
+                self._notes_state.filter_navigation_generation = None
                 self._sync_library_notes_tree_canvas_if_present()
             return
         if not current_authority():
             return
-        prior = self._library_notes_tree_filter_state
+        prior = self._notes_state.tree_filter_state
         assert prior is not None
         result = apply_library_notes_filter_page(
             prior,
@@ -24345,7 +21624,7 @@ class LibraryScreen(BaseAppScreen):
             request_generation=generation,
             topology_epoch=topology_epoch,
         )
-        self._library_notes_tree_filter_state = result.state
+        self._notes_state.tree_filter_state = result.state
         if result.kind == "drift" and result.recovery_offset is not None:
             await LibraryScreen._run_library_notes_filter(
                 self,
@@ -24356,12 +21635,12 @@ class LibraryScreen(BaseAppScreen):
                 navigation_generation=navigation_generation,
             )
             return
-        self._library_notes_filter_navigation_generation = None
+        self._notes_state.filter_navigation_generation = None
         if result.kind != "applied":
             self._sync_library_notes_tree_canvas_if_present()
             return
         incoming = result.state
-        self._library_notes_filter_records = [
+        self._notes_state.filter_records = [
             dict(placement.note) for placement in incoming.placements
         ]
         if navigation_generation is None:
@@ -24372,38 +21651,10 @@ class LibraryScreen(BaseAppScreen):
             self._sync_library_notes_tree_canvas_if_present()
 
     def _focus_library_notes_filter_input(self) -> None:
-        """Restore focus to the notes filter box after a filter recompose."""
-        try:
-            self.query_one("#library-notes-filter", Input).focus()
-        except (NoMatches, QueryError):
-            pass
-
-    def _focus_library_notes_lasting_control(self) -> None:
-        """Focus the safe primary control after a lasting-sync recompose."""
-        try:
-            self.query_one(LibraryNotesAddFromFilesCanvas).focus_first_safe_control()
-        except (NoMatches, QueryError):
-            pass
-
-    def _focus_library_note_import_control(self) -> None:
-        """Focus the enabled primary action after an import recompose."""
-        try:
-            canvas = self.query_one(LibraryNoteImportCanvas)
-            for control in canvas.query(".note-import-primary"):
-                if isinstance(control, Button) and not control.disabled:
-                    control.focus()
-                    return
-        except (NoMatches, QueryError):
-            pass
+        return self._notes_controller._focus_library_notes_filter_input()
 
     async def _reconcile_library_notes_list_canvas(self) -> None:
-        """Publish a completed editor-to-list transition before returning."""
-        self._request_library_notes_tree_initial_load()
-        _sync_library_canvas(
-            self,
-            "notes",
-            then=self._focus_library_notes_filter_input,
-        )
+        return await self._notes_controller._reconcile_library_notes_list_canvas()
 
     @on(Button.Pressed, "#library-prompts-sort")
     def handle_library_prompts_sort(self, event: Button.Pressed) -> None:
@@ -25336,7 +22587,7 @@ class LibraryScreen(BaseAppScreen):
             "library_notes_escape",
         }:
             visible_notes = self._library_notes_workflow_active() and not (
-                self._library_notes_compact and self._library_notes_stage != "notes"
+                self._notes_state.compact and self._notes_state.stage != "notes"
             )
             region = self._library_notes_focus_region()
             if action == "library_notes_new":
@@ -25355,7 +22606,7 @@ class LibraryScreen(BaseAppScreen):
             if action == "library_notes_save":
                 return (
                     visible_notes
-                    and not self._library_notes_select_mode
+                    and not self._notes_state.select_mode
                     and region in {"editor", "preview", "context"}
                 )
             return visible_notes
@@ -25400,7 +22651,7 @@ class LibraryScreen(BaseAppScreen):
         if action == "library_note_editor_back":
             return (
                 self._library_note_editor_active()
-                and not self._library_notes_select_mode
+                and not self._notes_state.select_mode
             )
         if action == "library_prompt_editor_back":
             return (
@@ -27298,80 +24549,27 @@ class LibraryScreen(BaseAppScreen):
         return self._prompts_controller.handle_library_prompt_conflict_reload(event)
 
     def _library_note_import_database(self) -> CharactersRAGDB:
-        """Return the current local Database Notes authority or fail closed."""
-        database = getattr(self.app_instance, "chachanotes_db", None)
-        if not isinstance(database, CharactersRAGDB):
-            raise RuntimeError("Local Database Notes are unavailable.")
-        return database
+        return self._notes_controller._library_note_import_database()
 
     def _library_note_import_folder_repository(self) -> LocalNoteFolderRepository:
-        """Return the current app-owned local folder repository."""
-        service = getattr(self.app_instance, "notes_scope_service", None)
-        repository = getattr(service, "folder_repository", None)
-        if not isinstance(repository, LocalNoteFolderRepository):
-            raise RuntimeError("Local Database Notes folders are unavailable.")
-        if repository.db is not self._library_note_import_database():
-            raise RuntimeError("Local Database Notes authority changed.")
-        return repository
+        return self._notes_controller._library_note_import_folder_repository()
 
     @staticmethod
-    def _build_library_note_import_executor(
-        database: CharactersRAGDB,
-        repository: LocalNoteFolderRepository,
-        receipts: NoteImportReceiptRepository,
-    ) -> NoteImportExecutor:
-        """Build one executor from exact current local authorities."""
-        from ...Notes.note_import_executor import (
-            LocalNoteImportTarget,
-            NoteImportExecutor,
-        )
+    def _build_library_note_import_executor(database: CharactersRAGDB, repository: LocalNoteFolderRepository, receipts: NoteImportReceiptRepository) -> NoteImportExecutor:
+        from ..Library_Modules.library_notes_controller import LibraryNotesController
+        return LibraryNotesController._build_library_note_import_executor(database, repository, receipts)
 
-        return NoteImportExecutor(
-            target=LocalNoteImportTarget(db=database, folder_repository=repository),
-            receipt_repository=receipts,
-        )
-
-    def _publish_library_note_import_snapshot(
-        self, snapshot: LibraryNoteImportSnapshot
-    ) -> None:
-        """Retain completion while patching the DOM only on its visible route."""
-        self._library_note_import_snapshot = snapshot
-        if (
-            self.is_mounted
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._library_notes_view == "import"
-        ):
-            _sync_library_canvas(self, "notes")
+    def _publish_library_note_import_snapshot(self, snapshot: LibraryNoteImportSnapshot) -> None:
+        return self._notes_controller._publish_library_note_import_snapshot(snapshot)
 
     def _refresh_after_library_note_import(self) -> None:
-        """Refresh local list/count and folder tree after execution settles."""
-        self._refresh_local_source_snapshot()
-        self._request_library_notes_tree_initial_load()
+        return self._notes_controller._refresh_after_library_note_import()
 
-    def _publish_library_notes_lasting_sync_snapshot(
-        self, snapshot: LibraryNotesLastingSyncSnapshot
-    ) -> None:
-        """Retain one typed projection and patch only a visible inert route."""
-
-        self._library_notes_lasting_sync_snapshot = snapshot
-        if self.is_mounted:
-            self._apply_library_notes_footer_context()
-        if (
-            self.is_mounted
-            and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
-            and self._library_notes_view in {"lasting_add", "lasting_roots"}
-        ):
-            _sync_library_canvas(self, "notes")
+    def _publish_library_notes_lasting_sync_snapshot(self, snapshot: LibraryNotesLastingSyncSnapshot) -> None:
+        return self._notes_controller._publish_library_notes_lasting_sync_snapshot(snapshot)
 
     def _notify_library_note_import_failure(self) -> None:
-        """Show one bounded recovery notification without leaking backend detail."""
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(
-                "Notes import needs attention. Review the import panel and try again.",
-                severity="warning",
-            )
+        return self._notes_controller._notify_library_note_import_failure()
 
     def _push_library_note_import_picker(self) -> None:
         """Select one file at a time or the current folder through FileOpen."""
@@ -27395,29 +24593,9 @@ class LibraryScreen(BaseAppScreen):
             import_callback,
         )
 
-    @on(Button.Pressed, "#library-notes-add-from-files")
+    @on(Button.Pressed, '#library-notes-add-from-files')
     async def handle_library_notes_add_from_files(self, event: Button.Pressed) -> None:
-        """Open the one authority chooser before any source picker."""
-        event.stop()
-        if self._library_note_import_execution_active():
-            self._library_notes_view = "import"
-            self._apply_library_notes_footer_context()
-            _sync_library_canvas(
-                self, "notes", then=self._focus_library_note_import_control
-            )
-            return
-        if self._library_notes_mutation_fenced():
-            return
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        self._supersede_library_notes_navigation()
-        self._library_notes_lasting_origin = "setup"
-        self._library_notes_view = "lasting_add"
-        self._apply_library_notes_footer_context()
-        _sync_library_canvas(
-            self, "notes", then=self._focus_library_notes_lasting_control
-        )
+        return await self._notes_controller.handle_library_notes_add_from_files(event)
 
     @on(Button.Pressed, "#library-notes-manage-sync-folders")
     async def handle_library_notes_manage_sync_folders(
@@ -27431,282 +24609,83 @@ class LibraryScreen(BaseAppScreen):
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         self._library_notes_sync_controller.refresh_roots()
-        self._library_notes_lasting_origin = None
-        self._library_notes_view = "lasting_roots"
+        self._notes_state.lasting_origin = None
+        self._notes_state.view = "lasting_roots"
         self._apply_library_notes_footer_context()
         _sync_library_canvas(self, "notes")
 
     @on(LibraryNotesAddFromFilesCanvas.RelationshipRequested)
-    def handle_library_notes_relationship_choice(
-        self, event: LibraryNotesAddFromFilesCanvas.RelationshipRequested
-    ) -> None:
-        """Keep the inert chooser honest and reuse the incumbent import flow."""
-
-        event.stop()
-        route = self._library_notes_sync_controller.choose_relationship(
-            event.relationship
-        )
-        if route == "import":
-            self._library_notes_lasting_origin = None
-            self._library_notes_view = "import"
-            self._apply_library_notes_footer_context()
-            _sync_library_canvas(self, "notes")
-            self._push_library_note_import_picker()
-            return
-        _sync_library_canvas(self, "notes")
+    def handle_library_notes_relationship_choice(self, event: LibraryNotesAddFromFilesCanvas.RelationshipRequested) -> None:
+        return self._notes_controller.handle_library_notes_relationship_choice(event)
 
     @on(LibraryNotesAddFromFilesCanvas.SetupChanged)
-    def handle_library_notes_lasting_setup_changed(
-        self, event: LibraryNotesAddFromFilesCanvas.SetupChanged
-    ) -> None:
-        event.stop()
-        self._library_notes_sync_controller.set_setup(event.field, event.value)
+    def handle_library_notes_lasting_setup_changed(self, event: LibraryNotesAddFromFilesCanvas.SetupChanged) -> None:
+        return self._notes_controller.handle_library_notes_lasting_setup_changed(event)
 
     @on(LibraryNotesAddFromFilesCanvas.FolderRequested)
-    def handle_library_notes_lasting_folder_requested(
-        self, event: LibraryNotesAddFromFilesCanvas.FolderRequested
-    ) -> None:
-        event.stop()
-
-        async def selected(path: Path | None) -> None:
-            if path is None or not path.is_dir():
-                return
-            controller = self._library_notes_sync_controller
-            controller.set_setup("folder", str(path))
-            if not controller.snapshot.setup.display_name:
-                controller.set_setup("display_name", path.name)
-
-        self.app.push_screen(
-            FileOpen(title="Choose a folder to keep synced", offer_select_folder=True),
-            selected,
-        )
+    def handle_library_notes_lasting_folder_requested(self, event: LibraryNotesAddFromFilesCanvas.FolderRequested) -> None:
+        return self._notes_controller.handle_library_notes_lasting_folder_requested(event)
 
     @on(LibraryNotesAddFromFilesCanvas.CheckRequested)
-    async def handle_library_notes_lasting_check(
-        self, event: LibraryNotesAddFromFilesCanvas.CheckRequested
-    ) -> None:
-        event.stop()
-        if event.source is None:
-            await self._library_notes_sync_controller.check_setup()
-            return
-        await self._library_notes_sync_controller.recheck_review(
-            event.root_id, event.observation_token, event.source
-        )
+    async def handle_library_notes_lasting_check(self, event: LibraryNotesAddFromFilesCanvas.CheckRequested) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_check(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ApplyRequested)
-    async def handle_library_notes_lasting_apply(
-        self, event: LibraryNotesAddFromFilesCanvas.ApplyRequested
-    ) -> None:
-        event.stop()
-        await self._library_notes_sync_controller.apply_reviewed(
-            event.root_id, event.observation_token
-        )
-        if self._library_notes_sync_controller.snapshot.phase == "roots":
-            self._library_notes_lasting_origin = None
-            self._library_notes_view = "lasting_roots"
-            self._apply_library_notes_footer_context()
-            _sync_library_canvas(self, "notes")
+    async def handle_library_notes_lasting_apply(self, event: LibraryNotesAddFromFilesCanvas.ApplyRequested) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_apply(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ActivateRequested)
-    async def handle_library_notes_lasting_activate(
-        self, event: LibraryNotesAddFromFilesCanvas.ActivateRequested
-    ) -> None:
-        event.stop()
-        await self._library_notes_sync_controller.activate_root(
-            event.root_id, event.observation_token
-        )
-        if self._library_notes_sync_controller.snapshot.phase == "roots":
-            self._library_notes_view = "lasting_roots"
-            _sync_library_canvas(self, "notes")
+    async def handle_library_notes_lasting_activate(self, event: LibraryNotesAddFromFilesCanvas.ActivateRequested) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_activate(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ChoiceRequested)
-    def handle_library_notes_lasting_choice(
-        self, event: LibraryNotesAddFromFilesCanvas.ChoiceRequested
-    ) -> None:
-        event.stop()
-        self._library_notes_sync_controller.stage_attention_choice(
-            event.root_id,
-            event.observation_token,
-            event.binding_id,
-            event.choice,
-        )
+    def handle_library_notes_lasting_choice(self, event: LibraryNotesAddFromFilesCanvas.ChoiceRequested) -> None:
+        return self._notes_controller.handle_library_notes_lasting_choice(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ViewRequested)
-    def handle_library_notes_lasting_comparison(
-        self, event: LibraryNotesAddFromFilesCanvas.ViewRequested
-    ) -> None:
-        """Run the private comparison away from the Textual message pump."""
-
-        event.stop()
-        self.run_worker(
-            self._library_notes_sync_controller.show_conflict_comparison(
-                event.root_id,
-                event.observation_token,
-                event.binding_id,
-            ),
-            exclusive=True,
-            group="library_notes_sync_comparison",
-        )
+    def handle_library_notes_lasting_comparison(self, event: LibraryNotesAddFromFilesCanvas.ViewRequested) -> None:
+        return self._notes_controller.handle_library_notes_lasting_comparison(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ReturnRequested)
-    def handle_library_notes_lasting_comparison_return(
-        self, event: LibraryNotesAddFromFilesCanvas.ReturnRequested
-    ) -> None:
-        event.stop()
-        self._library_notes_sync_controller.return_to_conflict_choices(
-            event.root_id,
-            event.observation_token,
-            event.binding_id,
-        )
+    def handle_library_notes_lasting_comparison_return(self, event: LibraryNotesAddFromFilesCanvas.ReturnRequested) -> None:
+        return self._notes_controller.handle_library_notes_lasting_comparison_return(event)
 
     @on(LibraryNotesAddFromFilesCanvas.UndoRequested)
-    async def handle_library_notes_lasting_undo(
-        self, event: LibraryNotesAddFromFilesCanvas.UndoRequested
-    ) -> None:
-        event.stop()
-        await self._library_notes_sync_controller.undo_conflict_resolution(
-            event.root_id,
-            event.observation_token,
-            event.operation_id,
-            history_page=event.page,
-        )
-        if self._library_notes_sync_controller.snapshot.phase == "roots":
-            self._library_notes_lasting_origin = None
-            self._library_notes_view = "lasting_roots"
-            self._apply_library_notes_footer_context()
-            _sync_library_canvas(self, "notes")
+    async def handle_library_notes_lasting_undo(self, event: LibraryNotesAddFromFilesCanvas.UndoRequested) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_undo(event)
 
     @on(LibraryNotesAddFromFilesCanvas.DismissRequested)
-    async def handle_library_notes_lasting_dismiss(
-        self, event: LibraryNotesAddFromFilesCanvas.DismissRequested
-    ) -> None:
-        event.stop()
-        await self._library_notes_sync_controller.dismiss_conflict_receipt(
-            event.root_id, event.observation_token, event.operation_id
-        )
+    async def handle_library_notes_lasting_dismiss(self, event: LibraryNotesAddFromFilesCanvas.DismissRequested) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_dismiss(event)
 
     @on(LibraryNotesAddFromFilesCanvas.HistoryRequested)
-    async def handle_library_notes_lasting_history(
-        self, event: LibraryNotesAddFromFilesCanvas.HistoryRequested
-    ) -> None:
-        event.stop()
-        await self._library_notes_sync_controller.open_resolution_history(
-            event.root_id, event.observation_token
-        )
+    async def handle_library_notes_lasting_history(self, event: LibraryNotesAddFromFilesCanvas.HistoryRequested) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_history(event)
 
     @on(LibraryNotesAddFromFilesCanvas.HistoryPageRequested)
-    async def handle_library_notes_lasting_history_page(
-        self, event: LibraryNotesAddFromFilesCanvas.HistoryPageRequested
-    ) -> None:
-        event.stop()
-        await self._library_notes_sync_controller.page_resolution_history(
-            event.root_id,
-            event.observation_token,
-            event.from_page,
-            event.page,
-        )
+    async def handle_library_notes_lasting_history_page(self, event: LibraryNotesAddFromFilesCanvas.HistoryPageRequested) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_history_page(event)
 
     @on(LibraryNotesAddFromFilesCanvas.HistoryReturnRequested)
-    def handle_library_notes_lasting_history_return(
-        self, event: LibraryNotesAddFromFilesCanvas.HistoryReturnRequested
-    ) -> None:
-        event.stop()
-        self._library_notes_sync_controller.return_from_resolution_history(
-            event.root_id, event.observation_token, event.from_page
-        )
+    def handle_library_notes_lasting_history_return(self, event: LibraryNotesAddFromFilesCanvas.HistoryReturnRequested) -> None:
+        return self._notes_controller.handle_library_notes_lasting_history_return(event)
 
     @on(LibraryNotesAddFromFilesCanvas.PageRequested)
-    def handle_library_notes_lasting_review_page(
-        self, event: LibraryNotesAddFromFilesCanvas.PageRequested
-    ) -> None:
-        event.stop()
-        self._library_notes_sync_controller.page_review(
-            event.root_id,
-            event.observation_token,
-            event.from_page,
-            event.page,
-        )
+    def handle_library_notes_lasting_review_page(self, event: LibraryNotesAddFromFilesCanvas.PageRequested) -> None:
+        return self._notes_controller.handle_library_notes_lasting_review_page(event)
 
     @on(LibraryNotesSyncRootsCanvas.PageRequested)
-    def handle_library_notes_lasting_root_page(
-        self, event: LibraryNotesSyncRootsCanvas.PageRequested
-    ) -> None:
-        event.stop()
-        page = self._library_notes_sync_controller.snapshot.root_page + event.delta
-        self._library_notes_sync_controller.set_root_page(page)
+    def handle_library_notes_lasting_root_page(self, event: LibraryNotesSyncRootsCanvas.PageRequested) -> None:
+        return self._notes_controller.handle_library_notes_lasting_root_page(event)
 
     @on(LibraryNotesSyncRootsCanvas.RootActionRequested)
-    async def handle_library_notes_lasting_root_action(
-        self, event: LibraryNotesSyncRootsCanvas.RootActionRequested
-    ) -> None:
-        event.stop()
-        controller = self._library_notes_sync_controller
-        if event.action == "check":
-            await controller.sync_now(event.root_id)
-        elif event.action in {"migration", "review"}:
-            self._library_notes_lasting_origin = "roots"
-            self._library_notes_view = "lasting_add"
-            self._apply_library_notes_footer_context()
-            _sync_library_canvas(self, "notes")
-            if event.action == "migration":
-                await controller.check_migration(event.root_id)
-            else:
-                await controller.check_root(event.root_id)
-        elif event.action == "pause":
-            await controller.pause_root(event.root_id)
-        elif event.action == "resume":
-            await controller.resume_root(event.root_id)
-        elif event.action == "recover":
-            root = next(
-                (
-                    row
-                    for row in controller.snapshot.roots
-                    if row.root_id == event.root_id
-                ),
-                None,
-            )
-            if root is not None and root.action_id is not None:
-                await controller.resolve_cleanup(event.root_id, root.action_id)
-            else:
-                controller.stage_root_action(event.root_id, "recover")
-        elif event.action == "disconnect":
-            await controller.disconnect_root(
-                event.root_id, keep_folder_organization=True
-            )
-        else:
-            controller.stage_root_action(event.root_id, "retarget")
+    async def handle_library_notes_lasting_root_action(self, event: LibraryNotesSyncRootsCanvas.RootActionRequested) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_root_action(event)
 
     @on(LibraryNotesAddFromFilesCanvas.BackRequested)
     @on(LibraryNotesSyncRootsCanvas.BackRequested)
     async def handle_library_notes_lasting_back(self, event: Any) -> None:
-        """Return from a directly mounted inert surface without mutation."""
-
-        event.stop()
-        if (
-            isinstance(event, LibraryNotesAddFromFilesCanvas.BackRequested)
-            and self._library_notes_lasting_origin == "roots"
-        ):
-            self._library_notes_sync_controller.return_to_roots()
-            self._library_notes_lasting_origin = None
-            self._library_notes_view = "lasting_roots"
-            self._apply_library_notes_footer_context()
-            _sync_library_canvas(self, "notes")
-            return
-        await self._exit_library_notes_lasting_sync()
-
-    async def _exit_library_notes_lasting_sync(self) -> bool:
-        """Settle provisional authority before leaving a lasting-sync canvas."""
-
-        phase = self._library_notes_sync_controller.snapshot.phase
-        if phase in {"checking", "activating"}:
-            self._apply_library_notes_footer_context()
-            return False
-        await self._library_notes_sync_controller.abandon_setup()
-        self._supersede_library_notes_navigation()
-        self._library_notes_lasting_origin = None
-        self._library_notes_view = "list"
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
-        return True
+        return await self._notes_controller.handle_library_notes_lasting_back(event)
 
     @on(Button.Pressed, "#library-notes-import-receipt")
     async def handle_library_notes_import_receipt(self, event: Button.Pressed) -> None:
@@ -27718,111 +24697,48 @@ class LibraryScreen(BaseAppScreen):
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         self._library_note_import_controller.revisit_receipt()
-        self._library_notes_view = "import"
+        self._notes_state.view = "import"
         _sync_library_canvas(self, "notes")
 
-    @on(Button.Pressed, "#library-notes-import-back")
+    @on(Button.Pressed, '#library-notes-import-back')
     def handle_library_notes_import_back(self, event: Button.Pressed) -> None:
-        """Return to Notes while any running import continues off-canvas."""
-        event.stop()
-        self._library_notes_view = "list"
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
+        return self._notes_controller.handle_library_notes_import_back(event)
 
     @on(LibraryNoteImportCanvas.AddSourceRequested)
-    def handle_library_note_import_add_source(
-        self, event: LibraryNoteImportCanvas.AddSourceRequested
-    ) -> None:
-        event.stop()
-        self._push_library_note_import_picker()
+    def handle_library_note_import_add_source(self, event: LibraryNoteImportCanvas.AddSourceRequested) -> None:
+        return self._notes_controller.handle_library_note_import_add_source(event)
 
     @on(LibraryNoteImportCanvas.DestinationChanged)
-    def handle_library_note_import_destination(
-        self, event: LibraryNoteImportCanvas.DestinationChanged
-    ) -> None:
-        event.stop()
-        try:
-            self._library_note_import_controller.set_destination(event.destination)
-        except (TypeError, ValueError):
-            self._notify_library_note_import_failure()
-
-    async def _run_library_note_import_check(self) -> None:
-        try:
-            await self._library_note_import_controller.check()
-        except Exception as exc:  # noqa: BLE001 - controller publishes safe recovery
-            logger.warning(
-                "Notes import check failed; error_type={}", type(exc).__name__
-            )
-            self._notify_library_note_import_failure()
+    def handle_library_note_import_destination(self, event: LibraryNoteImportCanvas.DestinationChanged) -> None:
+        return self._notes_controller.handle_library_note_import_destination(event)
 
     @on(LibraryNoteImportCanvas.CheckRequested)
-    def handle_library_note_import_check(
-        self, event: LibraryNoteImportCanvas.CheckRequested
-    ) -> None:
-        event.stop()
-        self.run_worker(
-            self._run_library_note_import_check(),
-            exclusive=True,
-            group="library_note_import_check",
-        )
+    def handle_library_note_import_check(self, event: LibraryNoteImportCanvas.CheckRequested) -> None:
+        return self._notes_controller.handle_library_note_import_check(event)
 
     @on(LibraryNoteImportCanvas.CollisionNameChanged)
-    def handle_library_note_import_collision_name(
-        self, event: LibraryNoteImportCanvas.CollisionNameChanged
-    ) -> None:
-        event.stop()
-        self._library_note_import_controller.set_collision_name(event.name)
+    def handle_library_note_import_collision_name(self, event: LibraryNoteImportCanvas.CollisionNameChanged) -> None:
+        return self._notes_controller.handle_library_note_import_collision_name(event)
 
     @on(LibraryNoteImportCanvas.CollisionChoiceRequested)
-    def handle_library_note_import_collision_choice(
-        self, event: LibraryNoteImportCanvas.CollisionChoiceRequested
-    ) -> None:
-        event.stop()
-        try:
-            self._library_note_import_controller.set_collision_choice(event.choice)
-        except (TypeError, ValueError):
-            self._notify_library_note_import_failure()
+    def handle_library_note_import_collision_choice(self, event: LibraryNoteImportCanvas.CollisionChoiceRequested) -> None:
+        return self._notes_controller.handle_library_note_import_collision_choice(event)
 
     @on(LibraryNoteImportCanvas.UncertainMatchConfirmed)
-    def handle_library_note_import_confirm_match(
-        self, event: LibraryNoteImportCanvas.UncertainMatchConfirmed
-    ) -> None:
-        event.stop()
-        try:
-            self._library_note_import_controller.confirm_uncertain(event.item_id)
-        except (TypeError, ValueError):
-            self._notify_library_note_import_failure()
+    def handle_library_note_import_confirm_match(self, event: LibraryNoteImportCanvas.UncertainMatchConfirmed) -> None:
+        return self._notes_controller.handle_library_note_import_confirm_match(event)
 
     @on(LibraryNoteImportCanvas.ItemActionRequested)
-    def handle_library_note_import_item_action(
-        self, event: LibraryNoteImportCanvas.ItemActionRequested
-    ) -> None:
-        event.stop()
-        try:
-            self._library_note_import_controller.set_item_action(
-                event.item_id, event.action
-            )
-        except (TypeError, ValueError):
-            self._notify_library_note_import_failure()
+    def handle_library_note_import_item_action(self, event: LibraryNoteImportCanvas.ItemActionRequested) -> None:
+        return self._notes_controller.handle_library_note_import_item_action(event)
 
     @on(LibraryNoteImportCanvas.ItemChoiceRequested)
-    def handle_library_note_import_item_choice(
-        self, event: LibraryNoteImportCanvas.ItemChoiceRequested
-    ) -> None:
-        event.stop()
-        try:
-            self._library_note_import_controller.set_item_choice(
-                event.item_id, event.choice, event.enabled
-            )
-        except (TypeError, ValueError):
-            self._notify_library_note_import_failure()
+    def handle_library_note_import_item_choice(self, event: LibraryNoteImportCanvas.ItemChoiceRequested) -> None:
+        return self._notes_controller.handle_library_note_import_item_choice(event)
 
     @on(LibraryNoteImportCanvas.PageRequested)
-    def handle_library_note_import_page(
-        self, event: LibraryNoteImportCanvas.PageRequested
-    ) -> None:
-        event.stop()
-        current = self._library_note_import_controller.snapshot.page.page_number
-        self._library_note_import_controller.set_page(current + event.delta)
+    def handle_library_note_import_page(self, event: LibraryNoteImportCanvas.PageRequested) -> None:
+        return self._notes_controller.handle_library_note_import_page(event)
 
     async def _run_library_note_import_execution(
         self, execution: asyncio.Task[None]
@@ -27862,33 +24778,12 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @on(LibraryNoteImportCanvas.RetryRequested)
-    def handle_library_note_import_retry(
-        self, event: LibraryNoteImportCanvas.RetryRequested
-    ) -> None:
-        event.stop()
-        try:
-            execution = self._library_note_import_controller.admit_execution(retry=True)
-        except Exception as exc:  # noqa: BLE001 - publish only bounded recovery
-            logger.warning(
-                "Notes import retry admission failed; error_type={}",
-                type(exc).__name__,
-            )
-            self._notify_library_note_import_failure()
-            return
-        if execution is None:
-            return
-        self.run_worker(
-            self._run_library_note_import_execution(execution),
-            exclusive=True,
-            group="library_note_import_execute",
-        )
+    def handle_library_note_import_retry(self, event: LibraryNoteImportCanvas.RetryRequested) -> None:
+        return self._notes_controller.handle_library_note_import_retry(event)
 
     @on(LibraryNoteImportCanvas.CancelRequested)
-    def handle_library_note_import_cancel(
-        self, event: LibraryNoteImportCanvas.CancelRequested
-    ) -> None:
-        event.stop()
-        self._library_note_import_controller.cancel()
+    def handle_library_note_import_cancel(self, event: LibraryNoteImportCanvas.CancelRequested) -> None:
+        return self._notes_controller.handle_library_note_import_cancel(event)
 
     # ----- Ingest canvas -----------------------------------------------
 
@@ -29728,18 +26623,9 @@ class LibraryScreen(BaseAppScreen):
         return await self._conversations_controller.handle_library_conversations_export(event)
 
 
-    @on(Button.Pressed, "#library-notes-export")
+    @on(Button.Pressed, '#library-notes-export')
     async def handle_library_notes_export(self, event: Button.Pressed) -> None:
-        """Open the export canvas scoped to Notes.
-
-        Args:
-            event: Button press event emitted by the notes list canvas's
-                "Export…" action.
-        """
-        event.stop()
-        if self._library_notes_mutation_fenced():
-            return
-        await self._open_library_export_canvas(ExportScope(kind="notes"))
+        return await self._notes_controller.handle_library_notes_export(event)
 
     # ----- Export canvas: form fields ------------------------------------
 
@@ -29796,62 +26682,39 @@ class LibraryScreen(BaseAppScreen):
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
-        self._library_notes_tree_selected_placement_id = placement_id
+        self._notes_state.tree_selected_placement_id = placement_id
         note_id = str(getattr(event.button, "note_id", "") or "")
-        if self._library_notes_select_mode:
-            self._library_notes_row_selection.toggle(note_id)
+        if self._notes_state.select_mode:
+            self._notes_state.row_selection.toggle(note_id)
             _apply_library_row_toggle(self, "notes", event.button, note_id)
             return
-        self._library_notes_browse_return_receipt = (
+        self._notes_state.browse_return_receipt = (
             self._capture_library_notes_browse_return_receipt(
                 note_id=note_id,
-                placement_id=self._library_notes_tree_selected_placement_id,
+                placement_id=self._notes_state.tree_selected_placement_id,
             )
         )
-        self._library_notes_notice = ""
+        self._notes_state.notice = ""
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         # A normal row switch never carries the blank-note GC identity.
-        self._library_note_pending_blank_gc_id = None
-        self._library_note_session_blank_id = None
-        self._library_note_title_user_edited = False
+        self._notes_state.pending_blank_gc_id = None
+        self._notes_state.session_blank_id = None
+        self._notes_state.title_user_edited = False
         if note_id:
             self._acknowledge_library_destination_change()
             self._begin_library_note_load(note_id)
         _sync_library_canvas(self, "notes")
 
-    @on(Button.Pressed, ".library-notes-folder-row")
+    @on(Button.Pressed, '.library-notes-folder-row')
     def handle_library_notes_folder_row(self, event: Button.Pressed) -> None:
-        """Expand or collapse one real folder through stable folder identity."""
-        event.stop()
-        folder_id = str(getattr(event.button, "folder_id", "") or "")
-        if not folder_id:
-            return
-        self._library_notes_tree_selected_placement_id = str(
-            getattr(event.button, "placement_id", "") or ""
-        )
-        if folder_id in self._library_notes_tree_expanded_ids:
-            self._library_notes_tree_expanded_ids.remove(folder_id)
-            _sync_library_canvas(self, "notes")
-            return
-        self._library_notes_tree_expanded_ids.add(folder_id)
-
-        def _load_expanded_folder() -> None:
-            if folder_id not in self._library_notes_tree_expanded_ids:
-                return
-            for kind in ("folders", "placements"):
-                key = NotesBranchKey(folder_id, kind)
-                state = self._library_notes_tree_branches.get(key)
-                if state is None or state.freshness == "uninitialized":
-                    self._request_library_notes_tree_slice(key)
-
-        _sync_library_canvas(self, "notes", then=_load_expanded_folder)
+        return self._notes_controller.handle_library_notes_folder_row(event)
 
     @on(Button.Pressed, ".library-notes-tree-pager")
     def handle_library_notes_tree_pager(self, event: Button.Pressed) -> None:
         """Page exactly the semantic branch recorded by the inline control."""
         event.stop()
-        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
-        if getattr(self, "_library_notes_filter", "").strip() and filter_state:
+        filter_state = getattr(self._notes_state, "tree_filter_state", None)
+        if getattr(self._notes_state, "filter", "").strip() and filter_state:
             action = getattr(event.button, "paging_action", None)
             if filter_state.loading:
                 return
@@ -29874,7 +26737,7 @@ class LibraryScreen(BaseAppScreen):
                         recovery_attempted=False,
                         error="",
                     )
-                    self._library_notes_tree_filter_state = filter_state
+                    self._notes_state.tree_filter_state = filter_state
             else:
                 return
             if offset is None:
@@ -29896,7 +26759,7 @@ class LibraryScreen(BaseAppScreen):
         if content_kind not in ("folders", "placements"):
             return
         key = NotesBranchKey(parent_id, content_kind)
-        state = self._library_notes_tree_branches.get(key)
+        state = self._notes_state.tree_branches.get(key)
         if state is None or state.loading:
             return
         if action == "earlier":
@@ -29911,7 +26774,7 @@ class LibraryScreen(BaseAppScreen):
                 "target"
                 if retry_direction is None
                 and state.freshness == "stale"
-                and key in self._library_notes_tree_target_offsets
+                and key in self._notes_state.tree_target_offsets
                 else retry_direction or "replace"
             )
             if direction == "previous":
@@ -29919,7 +26782,7 @@ class LibraryScreen(BaseAppScreen):
             elif direction == "more":
                 offset = state.next_offset
             elif direction == "target":
-                offset = self._library_notes_tree_target_offsets.get(key)
+                offset = self._notes_state.tree_target_offsets.get(key)
             else:
                 offset = 0
         else:
@@ -29943,7 +26806,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         selected = self._selected_library_notes_tree_row()
         if selected is not None and selected.kind == "folder" and selected.protected:
-            self._library_notes_notice = (
+            self._notes_state.notice = (
                 "This folder is managed by sync; change its sync root instead."
             )
             _sync_library_canvas(self, "notes")
@@ -30065,7 +26928,7 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_notes_folder_restore(self, event: Button.Pressed) -> None:
         """Restore the exact last removed folder subtree."""
         event.stop()
-        receipt = self._library_notes_deleted_folder_receipt
+        receipt = self._notes_state.deleted_folder_receipt
         if receipt is None:
             return
         self._schedule_library_notes_tree_mutation(
@@ -30080,7 +26943,7 @@ class LibraryScreen(BaseAppScreen):
         if selected is None or selected.kind != "note" or not selected.note_id:
             return
         if move and selected.protected:
-            self._library_notes_notice = (
+            self._notes_state.notice = (
                 "This placement is managed by sync; change its sync root instead."
             )
             _sync_library_canvas(self, "notes")
@@ -30147,33 +27010,9 @@ class LibraryScreen(BaseAppScreen):
             protected=selected.protected,
         )
 
-    @on(Button.Pressed, "#library-notes-select-toggle")
+    @on(Button.Pressed, '#library-notes-select-toggle')
     async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:
-        """Enter/exit notes select mode; clears the selection set (both on enter and exit).
-
-        Flushes any dirty edit first (awaited) so entering select mode
-        never strands a dirty note edit mid-save -- select mode is only
-        reachable from the notes list view, but the flush stays
-        unconditional here to mirror ``handle_library_notes_row``'s
-        always-flush-first behavior.
-
-        TASK-15457 renames the unrelated sync-panel constructor field and
-        routes this structural list change through the Notes canvas's own
-        ``sync_state`` hook.
-
-        Args:
-            event: Button press event emitted by the notes canvas's
-                Select/Done toggle.
-        """
-        event.stop()
-        if self._library_notes_mutation_fenced():
-            return
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        self._library_notes_select_mode = not self._library_notes_select_mode
-        self._library_notes_row_selection.clear()
-        _sync_library_canvas(self, "notes")
+        return await self._notes_controller.handle_library_notes_select_toggle(event)
 
     @on(Button.Pressed, "#library-notes-select-all")
     def handle_library_notes_select_all(self, event: Button.Pressed) -> None:
@@ -30193,20 +27032,12 @@ class LibraryScreen(BaseAppScreen):
                 for row in projection.rows
                 if row.kind == "note" and row.note_id
             )
-        self._library_notes_row_selection.select_all(note_ids)
+        self._notes_state.row_selection.select_all(note_ids)
         _sync_library_canvas(self, "notes")
 
-    @on(Button.Pressed, "#library-notes-select-clear")
+    @on(Button.Pressed, '#library-notes-select-clear')
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
-        """Clear the current notes selection without leaving select mode.
-
-        Rebuilds only the mounted Notes canvas.
-        """
-        event.stop()
-        if self._library_notes_mutation_fenced():
-            return
-        self._library_notes_row_selection.clear()
-        _sync_library_canvas(self, "notes")
+        return self._notes_controller.handle_library_notes_select_clear(event)
 
     @on(Button.Pressed, "#library-notes-export-selected")
     async def handle_library_notes_export_selected(self, event: Button.Pressed) -> None:
@@ -30216,21 +27047,15 @@ class LibraryScreen(BaseAppScreen):
             return
         # Defensive: an empty selection would resolve to a whole-source export
         # (empty ids == whole source); the button is disabled at 0 selected.
-        if not self._library_notes_row_selection.count:
+        if not self._notes_state.row_selection.count:
             return
         await self._open_library_export_canvas(
-            self._library_notes_row_selection.export_scope()
+            self._notes_state.row_selection.export_scope()
         )
 
-    @on(Button.Pressed, "#library-note-back")
+    @on(Button.Pressed, '#library-note-back')
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
-        """Return the Library notes canvas from the editor to its list view.
-
-        Args:
-            event: Button press event emitted by the "‹ Back to list" action.
-        """
-        event.stop()
-        await self._exit_library_note_editor_guarded()
+        return await self._notes_controller.handle_library_note_back(event)
 
     async def _exit_library_note_editor_guarded(self) -> bool:
         """Shared Back exit: veto while dirty, else reset to list.
@@ -30258,15 +27083,15 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             ``True`` when the editor was exited; ``False`` on a dirty veto.
         """
-        if self._library_notes_select_mode:
+        if self._notes_state.select_mode:
             return False
-        note_id = self._selected_note_id
+        note_id = self._notes_state.selected_note_id
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return False
         navigation_generation = self._supersede_library_notes_navigation()
-        placement_id = self._library_notes_tree_selected_placement_id
-        receipt = self._library_notes_browse_return_receipt
+        placement_id = self._notes_state.tree_selected_placement_id
+        receipt = self._notes_state.browse_return_receipt
         identity = (
             LibraryNotesFocusIdentity(
                 stage="notes",
@@ -30291,9 +27116,9 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
         )
-        self._library_notes_pending_focus_identity = identity
-        self._library_notes_pending_focus_waits_for_snapshot = True
-        self._library_notes_pending_focus_generation = navigation_generation
+        self._notes_state.pending_focus_identity = identity
+        self._notes_state.pending_focus_waits_for_snapshot = True
+        self._notes_state.pending_focus_generation = navigation_generation
         self._dispatch_database_note_identity_cleared()
         self._reset_library_note_editor_state()
         if receipt is None:
@@ -30305,8 +27130,8 @@ class LibraryScreen(BaseAppScreen):
                 self._restore_library_notes_browse_return_receipt,
                 receipt,
                 _LibraryNotesRestoreGuard(
-                    scroll_generation=self._library_notes_scroll_intent_generation,
-                    focus_generation=self._library_notes_focus_intent_generation,
+                    scroll_generation=self._notes_state.scroll_intent_generation,
+                    focus_generation=self._notes_state.focus_intent_generation,
                 ),
             )
 
@@ -30318,111 +27143,19 @@ class LibraryScreen(BaseAppScreen):
         return True
 
     async def action_library_note_editor_back(self) -> None:
-        """Escape: leave the note editor while honoring the dirty guard."""
-        await self._exit_library_note_editor_guarded()
+        return await self._notes_controller.action_library_note_editor_back()
 
-    @on(Button.Pressed, "#library-note-load-retry")
+    @on(Button.Pressed, '#library-note-load-retry')
     def handle_library_note_load_retry(self, event: Button.Pressed) -> None:
-        """Retry the current typed note-load failure without leaving Editor."""
-        event.stop()
-        note_id = self._selected_note_id
-        if not note_id or self._library_notes_view != "editor":
-            return
-        self._library_note_load_state = "loading"
-        self._library_note_load_message = ""
-        self.run_worker(
-            self._refresh_library_note_detail(note_id),
-            exclusive=True,
-            group="library_note_detail",
-        )
-        _sync_library_canvas(self, "notes")
+        return self._notes_controller.handle_library_note_load_retry(event)
 
-    @on(Button.Pressed, "#library-note-context-delete")
-    @on(Button.Pressed, "#library-note-delete")
+    @on(Button.Pressed, '#library-note-context-delete')
+    @on(Button.Pressed, '#library-note-delete')
     async def handle_library_note_delete(self, event: Button.Pressed) -> None:
-        """Enter the inline delete-confirmation state for the open note.
-
-        Deleting is destructive, so the first press only swaps the normal
-        action row for a "Delete" / "Cancel" confirm affordance (mirroring
-        ``handle_library_media_delete``); the actual service call only
-        happens once the confirm button (``#library-note-delete-confirm``)
-        is pressed. Before confirmation is shown, the coordinator atomically
-        admits this exact note/session/version tuple so typing, Save, and a
-        duplicate destructive action cannot race the user's decision.
-
-        Flushes a dirty edit first (awaited) so the version the confirmed
-        delete sends is never stale; an unsaved edit surviving the flush
-        aborts entering the confirm state, same as Back and note-row selection.
-
-        Args:
-            event: Button press event emitted by the editor's "Delete" action.
-        """
-        event.stop()
-        if self._library_notes_mutation_fenced():
-            return
-        initiating_snapshot = self._library_note_session.snapshot
-        if (
-            initiating_snapshot is None
-            or initiating_snapshot.note_id != self._selected_note_id
-        ):
-            return
-        initiating_note_id = initiating_snapshot.note_id
-        initiating_session_generation = initiating_snapshot.session_generation
-        origin_context = self._library_note_context
-        origin_preview = self._library_note_preview
-        # The user is explicitly managing deletion now; disarm the legacy
-        # blank-note GC path so it cannot race the admitted destructive flow.
-        self._library_note_pending_blank_gc_id = None
-        self._library_note_session_blank_id = None
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        snapshot = self._library_note_session.snapshot
-        if (
-            snapshot is None
-            or snapshot.note_id != initiating_note_id
-            or snapshot.session_generation != initiating_session_generation
-            or snapshot.note_id != self._selected_note_id
-            or self._library_notes_view != "editor"
-        ):
-            return
-        admission_outcome = (
-            await self._library_note_session.request_destructive_admission(
-                DestructiveKind.DELETE,
-                note_id=snapshot.note_id,
-                session_generation=snapshot.session_generation,
-                expected_version=snapshot.version,
-            )
-        )
-        if (
-            admission_outcome.kind is not DestructiveAdmissionOutcomeKind.ADMITTED
-            or admission_outcome.admission is None
-        ):
-            self._library_note_shortcut_status = admission_outcome.message
-            self._apply_library_note_presentation_state()
-            return
-        admission = admission_outcome.admission
-        current = self._library_note_session.snapshot
-        if (
-            current is None
-            or current.note_id != initiating_note_id
-            or current.session_generation != initiating_session_generation
-            or current.note_id != self._selected_note_id
-            or self._library_notes_view != "editor"
-        ):
-            self._library_note_session.cancel_destructive(admission)
-            return
-        self._library_note_delete_origin_context = origin_context
-        self._library_note_delete_origin_preview = origin_preview
-        self._library_note_confirming_delete = True
-        self._library_note_preview = False
-        self._library_note_context = False
-        self._apply_library_note_presentation_state()
-        self._focus_library_note_control("#library-note-delete-cancel")
+        return await self._notes_controller.handle_library_note_delete(event)
 
     def _focus_library_note_control(self, selector: str) -> None:
-        """Focus one stable note control when its presentation is visible."""
-        self._focus_library_control(selector)
+        return self._notes_controller._focus_library_note_control(selector)
 
     def _focus_library_control(self, selector: str) -> None:
         """Focus one stable Library control if it is currently mounted."""
@@ -30452,39 +27185,11 @@ class LibraryScreen(BaseAppScreen):
         buttons[0].focus()
 
     def _restore_library_note_delete_origin(self) -> None:
-        """Leave confirmation and restore its stable source presentation."""
-        origin_context = self._library_note_delete_origin_context
-        origin_preview = self._library_note_delete_origin_preview
-        self._library_note_shortcut_status = ""
-        self._library_note_confirming_delete = False
-        self._library_note_context = origin_context
-        self._library_note_preview = origin_preview
-        self._apply_library_note_presentation_state()
-        selector = (
-            "#library-note-context-delete" if origin_context else "#library-note-delete"
-        )
-        self._focus_library_note_control(selector)
-        self._library_note_delete_origin_context = False
-        self._library_note_delete_origin_preview = False
+        return self._notes_controller._restore_library_note_delete_origin()
 
-    @on(Button.Pressed, "#library-note-delete-cancel")
+    @on(Button.Pressed, '#library-note-delete-cancel')
     def handle_library_note_delete_cancel(self, event: Button.Pressed) -> None:
-        """Discard the pending delete confirmation and restore the normal action row.
-
-        Args:
-            event: Button press event emitted by the confirm affordance's
-                "Cancel" action.
-        """
-        event.stop()
-        admission = self._library_note_session.destructive_admission
-        if admission is not None and not self._library_note_session.cancel_destructive(
-            admission
-        ):
-            self._show_library_note_shortcut_refusal(
-                "Delete is running — wait for it to finish."
-            )
-            return
-        self._restore_library_note_delete_origin()
+        return self._notes_controller.handle_library_note_delete_cancel(event)
 
     @on(Button.Pressed, "#library-note-delete-confirm")
     def handle_library_note_delete_confirm(self, event: Button.Pressed) -> None:
@@ -30505,12 +27210,12 @@ class LibraryScreen(BaseAppScreen):
         if admission is None or admission.kind is not DestructiveKind.DELETE:
             self._restore_library_note_delete_origin()
             return
-        if self._library_notes_mutation_in_flight:
+        if self._notes_state.mutation_in_flight:
             return
         # A newer admitted delete supersedes an older receipt, matching the
         # media receipt lifecycle in ADR-055.
-        self._library_note_delete_receipt = None
-        self._library_notes_mutation_in_flight = True
+        self._notes_state.delete_receipt = None
+        self._notes_state.mutation_in_flight = True
         LibraryScreen._fence_library_notes_tree_mutation(self)
         self.run_worker(
             self._delete_library_note(admission),
@@ -30519,17 +27224,7 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _delete_library_note(self, admission: DestructiveAdmission) -> None:
-        """Run one preclaimed Notes delete and always release its interlock."""
-        try:
-            await self._delete_library_note_claimed(admission)
-        finally:
-            self._library_notes_mutation_in_flight = False
-            if (
-                self.is_mounted
-                and self._library_notes_view == "list"
-                and self._library_note_delete_receipt is not None
-            ):
-                _sync_library_canvas(self, "notes")
+        return await self._notes_controller._delete_library_note(admission)
 
     async def _delete_library_note_claimed(
         self, admission: DestructiveAdmission
@@ -30617,14 +27312,14 @@ class LibraryScreen(BaseAppScreen):
             except Exception as exc:  # noqa: BLE001 - privacy-safe service boundary
                 logger.warning(
                     "Database Notes note delete failed; epoch={}; error_type={}",
-                    self._library_notes_tree_topology_epoch,
+                    self._notes_state.tree_topology_epoch,
                     type(exc).__name__,
                 )
                 failure_message = "Could not delete this note."
 
         if deleted:
             self._remove_library_note_source_record(admission.note_id)
-            self._library_note_delete_receipt = LibraryNoteDeleteReceipt(
+            self._notes_state.delete_receipt = LibraryNoteDeleteReceipt(
                 note_id=admission.note_id,
                 title=deleted_title or "Untitled",
                 expected_version=admission.expected_version + 1,
@@ -30648,8 +27343,8 @@ class LibraryScreen(BaseAppScreen):
         # Discard a stale result: the user has since switched to a different
         # note (or left the editor) while this delete was in flight.
         if (
-            admission.note_id != self._selected_note_id
-            or self._library_notes_view != "editor"
+            admission.note_id != self._notes_state.selected_note_id
+            or self._notes_state.view != "editor"
         ):
             return
 
@@ -30668,22 +27363,15 @@ class LibraryScreen(BaseAppScreen):
         # ``_create_library_note``): the filtered result set is now stale,
         # and leaving it in place would let the just-deleted note keep
         # rendering as a ghost row until the filter box is resubmitted.
-        self._library_notes_filter = ""
-        self._library_notes_filter_records = None
-        self._library_notes_filter_generation += 1
-        self._library_notes_tree_filter_state = None
+        self._notes_state.filter = ""
+        self._notes_state.filter_records = None
+        self._notes_state.filter_generation += 1
+        self._notes_state.tree_filter_state = None
         if self.is_mounted:
             _sync_library_canvas(self, "notes")
 
     def _notify_library_note_delete_warning(self, message: str) -> None:
-        """Surface a quiet warning notice for a failed Library note delete.
-
-        Args:
-            message: Human-readable warning text to notify with.
-        """
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(message, severity="warning")
+        return self._notes_controller._notify_library_note_delete_warning(message)
 
     @on(Button.Pressed, "#library-notes-delete-undo")
     def handle_library_note_delete_undo(self, event: Button.Pressed) -> None:
@@ -30695,10 +27383,10 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_notes_mutation_fenced():
             return
-        receipt = self._library_note_delete_receipt
+        receipt = self._notes_state.delete_receipt
         if receipt is None:
             return
-        self._library_notes_mutation_in_flight = True
+        self._notes_state.mutation_in_flight = True
         if self.is_mounted:
             _sync_library_canvas(self, "notes")
         self.run_worker(
@@ -30707,189 +27395,46 @@ class LibraryScreen(BaseAppScreen):
             group="library_note_mutation",
         )
 
-    @on(Button.Pressed, "#library-notes-delete-receipt-dismiss")
+    @on(Button.Pressed, '#library-notes-delete-receipt-dismiss')
     def handle_library_note_delete_receipt_dismiss(self, event: Button.Pressed) -> None:
-        """Dismiss the recovery receipt without changing persisted data.
+        return self._notes_controller.handle_library_note_delete_receipt_dismiss(event)
 
-        Args:
-            event: Press event emitted by the receipt's Dismiss button.
-        """
-        event.stop()
-        if self._library_notes_mutation_in_flight:
-            return
-        self._library_note_delete_receipt = None
-        if self.is_mounted:
-            _sync_library_canvas(
-                self,
-                "notes",
-                then=self._arm_library_list_entry_focus,
-            )
-
-    async def _undo_library_note_delete(
-        self, receipt: LibraryNoteDeleteReceipt
-    ) -> None:
-        """Undo one delete through ``NotesScopeService.restore_note``."""
-        restored_record: Mapping[str, Any] | None = None
-        failure_message = ""
-        try:
-            service = getattr(self.app_instance, "notes_scope_service", None)
-            restore_note = getattr(service, "restore_note", None)
-            if not callable(restore_note):
-                failure_message = "Note restore is unavailable."
-            else:
-                try:
-                    result = await self._run_library_service_call(
-                        restore_note,
-                        scope="local_note",
-                        note_id=receipt.note_id,
-                        version=receipt.expected_version,
-                        user_id=self._library_notes_user_id(),
-                        isolate_in_worker=True,
-                    )
-                    if (
-                        isinstance(result, Mapping)
-                        and self._source_record_id(result) == receipt.note_id
-                    ):
-                        restored_record = result
-                    else:
-                        failure_message = "The note could not be restored."
-                except ConflictError:
-                    failure_message = (
-                        "This deleted note changed elsewhere — refresh and try again."
-                    )
-                except Exception:
-                    logger.warning("Failed to restore a Library note")
-                    failure_message = "Could not restore this note."
-
-            if restored_record is not None:
-                self._append_library_note_source_record(restored_record)
-                if self._library_note_delete_receipt == receipt:
-                    self._library_note_delete_receipt = None
-            else:
-                self._notify_library_note_delete_warning(
-                    failure_message or "Could not restore this note."
-                )
-        finally:
-            self._library_notes_mutation_in_flight = False
-            if self.is_mounted:
-                if restored_record is not None:
-                    identity = LibraryNotesFocusIdentity(
-                        stage="notes",
-                        region="navigator",
-                        note_id=receipt.note_id,
-                        semantic_role=f"note-row:{receipt.note_id}",
-                    )
-                    finish = partial(
-                        self._restore_library_notes_focus_identity, identity
-                    )
-                else:
-                    finish = partial(
-                        self._focus_library_note_control,
-                        "#library-notes-delete-undo",
-                    )
-                _sync_library_canvas(self, "notes", then=finish)
+    async def _undo_library_note_delete(self, receipt: LibraryNoteDeleteReceipt) -> None:
+        return await self._notes_controller._undo_library_note_delete(receipt)
 
     def _notify_library_note_missing_warning(self) -> None:
-        """Surface a quiet warning when an opened note is no longer available.
+        return self._notes_controller._notify_library_note_missing_warning()
 
-        Used by ``_refresh_library_note_detail`` when the fetched detail
-        resolves to nothing -- the note was deleted elsewhere, or the row
-        pressed was already a stale ghost row.
-        """
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify("That note is no longer available.", severity="warning")
-
-    @on(Button.Pressed, "#library-notes-create-blank")
+    @on(Button.Pressed, '#library-notes-create-blank')
     def handle_library_notes_create_blank(self, event: Button.Pressed) -> None:
-        """Create a blank local note from the in-canvas Create view.
+        return self._notes_controller.handle_library_notes_create_blank(event)
 
-        Args:
-            event: Button press event emitted by the "Blank note" action.
-        """
-        event.stop()
-        create_token = self._begin_library_note_create()
-        if create_token is None:
-            return
-        self.run_worker(
-            self._create_library_note(
-                title=LIBRARY_NOTE_BLANK_SEED_TITLE,
-                content="",
-                create_token=create_token,
-                blank=True,
-            ),
-            exclusive=True,
-            group="library_note_mutation",
-        )
-
-    @on(Button.Pressed, ".library-notes-template-row")
+    @on(Button.Pressed, '.library-notes-template-row')
     def handle_library_notes_create_template(self, event: Button.Pressed) -> None:
-        """Create a local note pre-filled from the pressed template row.
+        return self._notes_controller.handle_library_notes_create_template(event)
 
-        Args:
-            event: Button press event emitted by a template row button.
-        """
-        event.stop()
-        template_key = str(getattr(event.button, "template_key", "") or "")
-        from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
-
-        template = NOTE_TEMPLATES.get(template_key)
-        title, content = self._library_note_template_fields(template)
-        # Templates carry keywords ("meeting, notes") that the standalone
-        # screen applies on create. Preserve the raw shape until the shared
-        # lossless validator can either accept it or surface a typed veto.
-        keywords: Any = ""
-        if isinstance(template, Mapping):
-            keywords = template.get("keywords", "")
-        create_token = self._begin_library_note_create()
-        if create_token is None:
-            return
-        self.run_worker(
-            self._create_library_note(
-                title=title,
-                content=content,
-                keywords=keywords,
-                create_token=create_token,
-            ),
-            exclusive=True,
-            group="library_note_mutation",
-        )
-
-    @on(Button.Pressed, "#library-notes-create-back")
+    @on(Button.Pressed, '#library-notes-create-back')
     async def handle_library_notes_create_back(self, event: Button.Pressed) -> None:
-        """Leave Create without creating anything."""
-        event.stop()
-        if self._library_note_create_running:
-            return
-        self._library_note_create_status = ""
-        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        return await self._notes_controller.handle_library_notes_create_back(event)
 
     def _begin_library_note_create(self) -> str | None:
         """Claim one monotonic Create token before a worker can be scheduled."""
-        if self._library_note_create_running or self._library_notes_mutation_fenced():
+        if self._notes_state.create_running or self._library_notes_mutation_fenced():
             return None
-        self._library_notes_notice = ""
-        self._library_note_create_counter += 1
-        token = f"create-{self._library_note_create_counter}"
-        self._library_note_create_token = token
-        self._library_note_create_running = True
-        self._library_notes_mutation_in_flight = True
+        self._notes_state.notice = ""
+        self._notes_state.create_counter += 1
+        token = f"create-{self._notes_state.create_counter}"
+        self._notes_state.create_token = token
+        self._notes_state.create_running = True
+        self._notes_state.mutation_in_flight = True
         LibraryScreen._fence_library_notes_tree_mutation(self)
-        self._library_note_create_status = "Create…"
+        self._notes_state.create_status = "Create…"
         if self.is_mounted:
             _sync_library_canvas(self, "notes")
         return token
 
-    def _finish_library_note_create(
-        self, create_token: str, *, status: str = ""
-    ) -> bool:
-        """Finish only the still-current Create attempt."""
-        if create_token != self._library_note_create_token:
-            return False
-        self._library_note_create_running = False
-        self._library_notes_mutation_in_flight = False
-        self._library_note_create_status = status
-        return True
+    def _finish_library_note_create(self, create_token: str, *, status: str='') -> bool:
+        return self._notes_controller._finish_library_note_create(create_token, status=status)
 
     @staticmethod
     def _library_note_template_fields(template: Any) -> tuple[Any, Any]:
@@ -30980,7 +27525,7 @@ class LibraryScreen(BaseAppScreen):
             and a successfully opened editor session.
         """
         origin_row = self._library_selected_row_id
-        origin_view = self._library_notes_view
+        origin_view = self._notes_state.view
         active_token = create_token or self._begin_library_note_create()
         if active_token is None:
             return LibraryNoteCreateOutcome("failed")
@@ -31034,7 +27579,7 @@ class LibraryScreen(BaseAppScreen):
         except Exception as exc:  # noqa: BLE001 - privacy-safe service boundary
             logger.warning(
                 "Database Notes note create failed; epoch={}; error_type={}",
-                self._library_notes_tree_topology_epoch,
+                self._notes_state.tree_topology_epoch,
                 type(exc).__name__,
             )
             self._notify_library_note_create_warning("Could not create the note.")
@@ -31045,7 +27590,7 @@ class LibraryScreen(BaseAppScreen):
                 _sync_library_canvas(self, "notes")
             return LibraryNoteCreateOutcome("failed")
 
-        if active_token != self._library_note_create_token:
+        if active_token != self._notes_state.create_token:
             return LibraryNoteCreateOutcome("failed")
 
         created_id = result.get("id") if isinstance(result, Mapping) else result
@@ -31086,67 +27631,67 @@ class LibraryScreen(BaseAppScreen):
         self._refresh_local_source_snapshot()
         route_is_current = (
             self._library_selected_row_id == origin_row
-            and self._library_notes_view == origin_view
+            and self._notes_state.view == origin_view
         )
         if not route_is_current:
             self._finish_library_note_create(active_token)
-            self._library_notes_notice = "Note created — select it from Notes to open."
+            self._notes_state.notice = "Note created — select it from Notes to open."
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
 
         outcome = await self._library_note_session.open_session(
             created_id, untouched_create_token=active_token
         )
-        if active_token != self._library_note_create_token:
+        if active_token != self._notes_state.create_token:
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
         route_is_current = (
             self._library_selected_row_id == origin_row
-            and self._library_notes_view == origin_view
+            and self._notes_state.view == origin_view
         )
         if outcome.kind is not NoteLoadOutcomeKind.LOADED or not route_is_current:
             if outcome.kind is NoteLoadOutcomeKind.LOADED:
                 self._library_note_session.close_session()
             self._finish_library_note_create(active_token)
-            self._library_notes_notice = "Note created — select it from Notes to open."
+            self._notes_state.notice = "Note created — select it from Notes to open."
             if route_is_current:
                 self._dispatch_database_note_identity_cleared()
                 self._reset_library_note_editor_state()
                 self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-                self._library_notes_filter = ""
-                self._library_notes_filter_records = None
-                self._library_notes_filter_generation += 1
-                self._library_notes_tree_filter_state = None
+                self._notes_state.filter = ""
+                self._notes_state.filter_records = None
+                self._notes_state.filter_generation += 1
+                self._notes_state.tree_filter_state = None
             if self.is_mounted:
                 await self._reconcile_library_notes_list_canvas()
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
 
-        self._library_notes_notice = ""
+        self._notes_state.notice = ""
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-        self._library_notes_filter = ""
-        self._library_notes_filter_records = None
-        self._library_notes_filter_generation += 1
-        self._library_notes_tree_filter_state = None
-        self._selected_note_id = created_id
-        self._library_notes_view = "editor"
-        self._library_note_load_state = "loaded"
-        self._library_note_load_message = ""
-        self._library_note_autosave_state = "idle"
-        self._library_note_confirming_delete = False
-        self._library_note_preview = False
-        self._library_note_context = False
-        self._library_note_delete_origin_context = False
-        self._library_note_delete_origin_preview = False
-        self._library_note_editor_armed = False
-        self._library_notes_work_session_activation_pending = True
+        self._notes_state.filter = ""
+        self._notes_state.filter_records = None
+        self._notes_state.filter_generation += 1
+        self._notes_state.tree_filter_state = None
+        self._notes_state.selected_note_id = created_id
+        self._notes_state.view = "editor"
+        self._notes_state.load_state = "loaded"
+        self._notes_state.load_message = ""
+        self._notes_state.autosave_state = "idle"
+        self._notes_state.confirming_delete = False
+        self._notes_state.preview = False
+        self._notes_state.context = False
+        self._notes_state.delete_origin_context = False
+        self._notes_state.delete_origin_preview = False
+        self._notes_state.editor_armed = False
+        self._notes_state.work_session_activation_pending = True
         if self.is_mounted:
             self.call_later(
                 self._activate_database_note_work_session,
                 created_id,
             )
-        self._library_note_pending_blank_gc_id = created_id if blank else None
-        self._library_note_session_blank_id = created_id if blank else None
+        self._notes_state.pending_blank_gc_id = created_id if blank else None
+        self._notes_state.session_blank_id = created_id if blank else None
         # (P0) A freshly created note's title is whatever the create seam
         # seeded -- untouched by definition.
-        self._library_note_title_user_edited = False
+        self._notes_state.title_user_edited = False
         self._finish_library_note_create(active_token)
         if self.is_mounted:
 
@@ -31157,26 +27702,16 @@ class LibraryScreen(BaseAppScreen):
             _sync_library_canvas(self, "notes", then=finish_create_projection)
         return LibraryNoteCreateOutcome("opened", created_id)
 
-    @on(Button.Pressed, "#library-note-discard-new")
+    @on(Button.Pressed, '#library-note-discard-new')
     def handle_library_note_discard_new(self, event: Button.Pressed) -> None:
-        """Discard only the coordinator-certified untouched new note."""
-        event.stop()
-        create_token = self._library_note_session.untouched_create_token
-        if create_token is None or self._library_notes_mutation_in_flight:
-            return
-        self._library_notes_mutation_in_flight = True
-        self.run_worker(
-            self._discard_new_library_note(create_token),
-            exclusive=True,
-            group="library_note_mutation",
-        )
+        return self._notes_controller.handle_library_note_discard_new(event)
 
     async def _discard_new_library_note(self, create_token: str) -> None:
         """Run one preclaimed untouched-create discard and release its lock."""
         try:
             await self._discard_new_library_note_claimed(create_token)
         finally:
-            self._library_notes_mutation_in_flight = False
+            self._notes_state.mutation_in_flight = False
             # task-16480: the claimed coroutine's list reconcile runs while
             # the interlock is still held, so the rebuilt canvas freezes
             # operation_running=True into the browse action toolbar
@@ -31186,83 +27721,10 @@ class LibraryScreen(BaseAppScreen):
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
     async def _discard_new_library_note_claimed(self, create_token: str) -> None:
-        """Delete one untouched create through typed destructive admission."""
-        snapshot = self._library_note_session.snapshot
-        if snapshot is None:
-            return
-        admission_outcome = (
-            await self._library_note_session.request_destructive_admission(
-                DestructiveKind.DISCARD_NEW_NOTE,
-                note_id=snapshot.note_id,
-                session_generation=snapshot.session_generation,
-                expected_version=snapshot.version,
-                create_token=create_token,
-            )
-        )
-        if (
-            admission_outcome.kind is not DestructiveAdmissionOutcomeKind.ADMITTED
-            or admission_outcome.admission is None
-        ):
-            self._library_note_shortcut_status = ""
-            self._apply_library_note_presentation_state()
-            return
-        admission = admission_outcome.admission
-        self._apply_library_note_presentation_state()
-        if not self._library_note_session.mark_destructive_running(admission):
-            self._library_note_session.cancel_destructive(admission)
-            self._library_note_shortcut_status = ""
-            self._apply_library_note_presentation_state()
-            return
-        self._apply_library_note_presentation_state()
-
-        service = getattr(self.app_instance, "notes_scope_service", None)
-        delete_note = getattr(service, "delete_note", None)
-        deleted = False
-        if callable(delete_note):
-            try:
-                deleted = bool(
-                    await self._run_library_service_call(
-                        delete_note,
-                        scope="local_note",
-                        note_id=admission.note_id,
-                        version=admission.expected_version,
-                        user_id=self._library_notes_user_id(),
-                        isolate_in_worker=True,
-                    )
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Failed to discard new Library note {admission.note_id!r}."
-                )
-        self._library_note_session.finish_destructive(admission, success=deleted)
-        self._library_note_shortcut_status = ""
-        if not deleted:
-            self._notify_library_note_delete_warning(
-                "Could not discard this new note. Try again."
-            )
-            self._apply_library_note_presentation_state()
-            return
-
-        self._dispatch_database_note_identity_cleared()
-        self._reset_library_note_editor_state()
-        self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-        self._library_notes_filter = ""
-        self._library_notes_filter_records = None
-        self._library_notes_filter_generation += 1
-        self._library_notes_tree_filter_state = None
-        self._remove_library_note_source_record(admission.note_id)
-        if self.is_mounted:
-            await self._reconcile_library_notes_list_canvas()
+        return await self._notes_controller._discard_new_library_note_claimed(create_token)
 
     def _notify_library_note_create_warning(self, message: str) -> None:
-        """Surface a quiet warning notice for a failed Library note create.
-
-        Args:
-            message: Human-readable warning text to notify with.
-        """
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(message, severity="warning")
+        return self._notes_controller._notify_library_note_create_warning(message)
 
     @on(Button.Pressed, '#library-media-back')
     def handle_library_media_back(self, event: Button.Pressed) -> None:
@@ -35061,7 +31523,7 @@ class LibraryScreen(BaseAppScreen):
             if not entry_origin:
                 self._acknowledge_library_destination_change()
             self._clear_library_prompt_selection(announce=True)
-            self._library_notes_browse_return_receipt = None
+            self._notes_state.browse_return_receipt = None
             self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
             self._set_library_destination_with_conversation_fence(
                 LIBRARY_ROW_BROWSE_NOTES
@@ -35069,18 +31531,18 @@ class LibraryScreen(BaseAppScreen):
             if entry_origin:
                 self._supersede_library_notes_navigation()
                 self._library_note_session.close_session()
-                self._selected_note_id = record_id
-                self._library_notes_view = "editor"
-                self._library_note_load_state = "loading"
-                self._library_note_load_message = ""
-                self._library_note_autosave_state = "idle"
-                self._library_note_shortcut_status = ""
-                self._library_note_confirming_delete = False
-                self._library_note_preview = False
-                self._library_note_context = False
-                self._library_note_delete_origin_context = False
-                self._library_note_delete_origin_preview = False
-                self._library_note_editor_armed = False
+                self._notes_state.selected_note_id = record_id
+                self._notes_state.view = "editor"
+                self._notes_state.load_state = "loading"
+                self._notes_state.load_message = ""
+                self._notes_state.autosave_state = "idle"
+                self._notes_state.shortcut_status = ""
+                self._notes_state.confirming_delete = False
+                self._notes_state.preview = False
+                self._notes_state.context = False
+                self._notes_state.delete_origin_context = False
+                self._notes_state.delete_origin_preview = False
+                self._notes_state.editor_armed = False
                 generation = self._library_snapshot_state_generation
                 route_key = self._library_entry_route_key()
                 result = await self._replace_library_canvas_child(
@@ -36020,3 +32482,15 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # for where the SAME shape now lives permanently, one layer down, exactly
 # mirroring the collections/search+RAG/skills/ingest/prompts precedents
 # immediately above.
+
+# wave-8 task 3 (notes cleanup, notes series 3/3) deleted the generated
+# notes-state shim block that used to live here (wave-8 task 1): every
+# remaining screen-side `_library_notes_<field>`/`_library_note_<field>`/
+# `_library_file_notes_<field>`/`_selected_note_id` reference was retargeted
+# to `self._notes_state.<field>` and every test attribute path/dynamic-
+# dispatch string was retargeted to match, so nothing on `LibraryScreen`
+# needs the flat property names anymore -- see `LibraryNotesController`'s
+# own generated shim loop (installed by task 2) for where the SAME shape now
+# lives permanently, one layer down, exactly mirroring the collections/
+# search+RAG/skills/ingest/prompts/media precedents immediately above. This
+# is the LAST of the eight; no generated shim block remains in this file.
