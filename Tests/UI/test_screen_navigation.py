@@ -2859,9 +2859,8 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     actions legitimately apply -- each one must either be gated (``check_
     action`` returns ``False``) or be explicitly declared universal below
     (works identically on every surface, so ``True`` would be correct
-    even on the landing). Nothing is declared universal today; the
-    allowlist exists so a genuinely screen-wide binding could be added
-    later without failing this test for the right reason.
+    even on the landing). Tab and Shift+Tab are the only current
+    universal bindings; context-specific pane movement remains gated.
     """
     from textual.binding import Binding
 
@@ -2871,7 +2870,8 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     # (focus search) and F6 (next pane) are also screen-wide keys, but they
     # are not Bindings (see ``LibraryScreen.on_key`` and the app-global F6
     # wiring), so they never appear in this audit.
-    # task-32052: Tab/Shift+Tab join Shift+F6 as genuinely screen-wide --
+    # task-32052: Tab/Shift+Tab are genuinely screen-wide; Shift+F6 remains
+    # route-gated until visible workbench panes exist. For Tab/Shift+Tab,
     # this screen re-declares Textual's own focus-movement keys only to
     # SCOPE them to ``#screen-content`` (``action_focus_next``), so they
     # must stay active on every surface, the landing included. They are
@@ -2879,7 +2879,7 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     # ``_active_library_binding_shortcuts``), since app-wide keyboard
     # chrome is not a Library shortcut.
     universal_actions = frozenset(
-        {"focus_previous_workbench_pane", "focus_next", "focus_previous"}
+        {"focus_next", "focus_previous"}
     )
 
     app = _build_test_app()
