@@ -1564,7 +1564,7 @@ async def test_media_trash_compact_status_folds_after_two_readable_rows():
             message="Compact Media layout never settled.",
         )
         if not screen._media_state.reader_layout.items_open:
-            grip = screen.query_one("#library-media-items-grip", Button)
+            grip = screen.query_one("#library-browse-items-grip", Button)
             grip.focus()
             await pilot.press("enter")
             await _wait_for_condition(
@@ -2508,7 +2508,7 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
             message="Media reader allocation never settled for geometry inspection.",
         )
         if not screen._media_state.reader_layout.items_open:
-            items_grip = screen.query_one("#library-media-items-grip", Button)
+            items_grip = screen.query_one("#library-browse-items-grip", Button)
             items_grip.focus()
             await pilot.press("enter")
             await _wait_for_condition(
@@ -4702,7 +4702,7 @@ async def test_trash_list_cap_follows_a_resize():
         await pilot.resize_terminal(100, 30)
         await pilot.pause()
         if not screen._media_state.reader_layout.items_open:
-            grip = screen.query_one("#library-media-items-grip", Button)
+            grip = screen.query_one("#library-browse-items-grip", Button)
             grip.focus()
             await pilot.press("enter")
             await _wait_for_condition(

@@ -115,7 +115,7 @@ EXPECTED_CURATED_PYTEST_FILES = (
     "Tests/Library/test_library_skills_reader_state.py",
     "Tests/Library/test_collections_capture_scope_service.py",
     "Tests/UI/test_library_adaptive_reader_shell.py",
-    "Tests/UI/test_library_media_reader_shell.py",
+    "Tests/UI/test_library_browse_reader_shell.py",
     "Tests/UI/test_library_media_reader_flow.py",
     "Tests/UI/test_library_conversation_reader.py",
     "Tests/UI/test_library_notes_reader.py",
@@ -408,7 +408,7 @@ def test_catalogue_contains_the_exact_declared_contract_mapping():
         "SH-01": contract(
             (
                 "Tests/UI/test_library_adaptive_reader_shell.py::test_sync_layout_retains_every_mounted_child_identity",
-                "Tests/UI/test_library_media_reader_shell.py::test_media_shell_mounts_library_items_reader_and_its_two_grips",
+                "Tests/UI/test_library_browse_reader_shell.py::test_media_shell_mounts_library_items_reader_and_its_two_grips",
                 "Tests/UI/test_library_conversation_reader.py::test_conversations_mount_three_retained_roles_once",
                 "Tests/UI/test_library_notes_reader.py::test_database_notes_mount_three_retained_roles_once",
                 "Tests/UI/test_library_prompts_reader.py::test_prompts_mount_three_retained_roles_once",
@@ -425,7 +425,7 @@ def test_catalogue_contains_the_exact_declared_contract_mapping():
         ),
         "SH-03": contract(
             (
-                "Tests/UI/test_library_media_reader_shell.py::test_shared_library_pane_choice_round_trips_between_media_and_conversations",
+                "Tests/UI/test_library_browse_reader_shell.py::test_shared_library_pane_choice_round_trips_between_media_and_conversations",
                 "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_preferences_restore_in_fresh_screen",
                 "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle",
             ),
@@ -459,7 +459,7 @@ def test_catalogue_contains_the_exact_declared_contract_mapping():
         "SH-06": contract(
             (
                 "Tests/Library/test_library_adaptive_reader_state.py::test_resolution_never_mutates_saved_preferences",
-                "Tests/UI/test_library_media_reader_shell.py::test_media_shell_resize_uses_resolver_without_reads_or_recompose",
+                "Tests/UI/test_library_browse_reader_shell.py::test_media_shell_resize_uses_resolver_without_reads_or_recompose",
                 "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_resize_is_presentation_only",
             ),
             ("resize_purity",),
@@ -2509,7 +2509,7 @@ def test_real_hermetic_child_still_runs_declared_synchronous_selector(tmp_path):
 def test_real_hermetic_child_allows_legacy_config_private_read(tmp_path):
     module = _load_runner()
     selector = (
-        "Tests/UI/test_library_media_reader_shell.py::"
+        "Tests/UI/test_library_browse_reader_shell.py::"
         "test_persisted_shared_library_read_honors_real_legacy_config"
     )
     scratch = tmp_path / "legacy-config-child"

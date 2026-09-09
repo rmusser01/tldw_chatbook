@@ -1,7 +1,7 @@
 """Phase-C acceptance pin: a Library rail-mode switch must stop rebuilding the screen.
 
-**This test is RED BY CONSTRUCTION until phase C lands.** It is the failing
-acceptance test called for by Task 1 of
+**Red by construction when written; green since Task 2.** It is the acceptance
+test called for by Task 1 of
 ``Docs/superpowers/plans/2026-09-08-library-phase-c-media-graduation.md``, and
 the thresholds below are the resident-canvas targets recorded in the design
 record appended to
@@ -37,25 +37,37 @@ this test is deterministic on a loaded machine, which a settle-time pin is not.
 
 ## Where the thresholds come from
 
-Measured on this branch's parent commit, from a scratch worktree, media
-switch-in, by region (probe run 2026-09-08):
+**Re-derived 2026-09-08 when Task 2 landed, from a fresh measurement, exactly
+as the design record's ceiling-provenance paragraph instructs.** The original
+25 came from the mechanism spike's floor, which toggled ``display`` on two
+already-correct canvases and synced neither. A real switch cannot do that: the
+canvas it switches TO has been off-route since the last visit -- and, under the
+TASK-32089 route-ownership guard this task added, deliberately un-synced while
+it was there -- so switching back MUST repaint it. That repaint is
+``LibraryMediaCanvas.sync_state`` -> ``refresh(recompose=True)``, a rebuild of
+the canvas's own 28 children, and it happens TWICE per media switch: once in
+the synchronous group (the swap's own sync, the browse request's immediate
+sync, the facets request's immediate sync -- all one frame, so they coalesce)
+and once when the browse worker's result lands a frame later. That second
+rebuild is not redundant: it paints results the first one did not have.
 
-    177 mounts = 87 canvas (media) + 52 rail + 19 nav bar + 6 footer
-               +  6 screen chrome + 5 reader shell + 2 media viewer
-    162 unmounts, same shape
+Measured on this branch, six interleaved Media<->Notes round trips in one
+process, counts identical on every iteration:
 
-A resident design keeps the rail, nav bar, footer, chrome and both canvases
-mounted, so the only legitimate per-switch mounts are the route's STRUCTURAL
-delta -- the Notes source strip (``#library-notes-source-strip``, 5 widgets)
-appearing or disappearing, and the media viewer (2). ``_MAX_SWITCH_MOUNTS``
-below is 25: more than three times that seven-widget structural delta, and
-still a 7x reduction on today's 177. It is deliberately generous, because the
-pin that carries the design is ``_MAX_WHOLE_SCREEN_RECOMPOSES``.
+    media (switch-back)      77-81 mounts / 82-86 unmounts   (2 canvas rebuilds)
+    notes (switch), 1st      26 mounts /  2 unmounts   (lazy first mount)
+    notes (switch), later    62 mounts / 57 unmounts   (canvas rebuilds)
 
-**That ceiling was derived from a floor measured WITHOUT the reader-shell id
-split resolved** (the spec's Task 2 step 1). If the implementation finds 25
-tight, re-derive it from a fresh measurement and say so in the same commit --
-do not quietly raise it.
+The ceilings below are that maximum plus ~11%. What they replace: 114-179
+mounts and 121-176 unmounts, plus one whole-screen recompose, per switch.
+
+**The remaining term is the redundant sync storm, not the mechanism.** The
+design record scoped that out of Task 2 and predicted this pin would not depend
+on it; that prediction was wrong, and this paragraph is the correction. Every
+mount left in the numbers above is a canvas rebuild; the mechanism's own cost
+is the 7-widget structural delta. When the storm is fixed, LOWER these numbers
+-- they are a ratchet, and the design carrier remains
+``_MAX_WHOLE_SCREEN_RECOMPOSES``.
 
 ## Every count here is an upper bound, so the liveness assertions are load-bearing
 
@@ -92,9 +104,11 @@ from tldw_chatbook.Library.library_shell_state import (
 #: A rail-mode switch may not rebuild the whole screen. This is the pin the
 #: design record turns on; see the module docstring.
 _MAX_WHOLE_SCREEN_RECOMPOSES = 0
-#: Per-switch widget mounts/unmounts. Today: 114-179 mounts, 121-176 unmounts.
-_MAX_SWITCH_MOUNTS = 25
-_MAX_SWITCH_UNMOUNTS = 25
+#: Per-switch widget mounts/unmounts. Re-derived from measurement when Task 2
+#: landed (see "Where the thresholds come from"); was 25, from a spike floor
+#: that repainted no canvas. Before phase C: 114-179 mounts, 121-176 unmounts.
+_MAX_SWITCH_MOUNTS = 90
+_MAX_SWITCH_UNMOUNTS = 95
 
 
 class _SwitchCounters:
@@ -221,25 +235,17 @@ def _assert_switch_did_something(label: str, tallies: dict, failures: list) -> N
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Phase C not implemented: the rail switch still awaits "
-        "Widget.recompose(). strict=True so the red->green flip is caught "
-        "automatically when Task 2 lands -- an XPASS fails the suite and is "
-        "the signal to delete this marker "
-        "(Docs/superpowers/plans/2026-09-08-library-phase-c-media-graduation.md)."
-    ),
-)
 @pytest.mark.asyncio
 async def test_library_rail_mode_switch_does_not_rebuild_the_screen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A media<->notes rail switch keeps the shell and canvases resident.
 
-    RED until phase C lands -- see the module docstring for the measured
-    numbers this replaces and why the pins are structural rather than timed.
-    Run with ``--runxfail`` to see the real failure text.
+    GREEN since phase C Task 2 landed the resident browse shell
+    (``UI/Library_Modules/library_browse_route_swap.py``). It was written RED
+    by construction in Task 1; the strict xfail marker that guarded the flip
+    was removed in the commit that made it pass, with the flip evidence in that
+    commit's message.
     """
     app = _build_test_app()
     _seed_conversations(

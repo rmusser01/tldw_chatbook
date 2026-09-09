@@ -1,0 +1,204 @@
+"""One resident adaptive shell shared by the Media and Notes browse routes.
+
+Phase C (``Docs/superpowers/specs/2026-09-01-library-screen-decomposition-
+design.md``, "Design record — phase C, media") measured that a Library
+rail-mode switch rebuilt the whole screen: 177 mounts for a media switch-in,
+of which **55** existed only because the rail lives INSIDE the route's reader
+shell (``#library-shell-grid > <route shell> > LibraryRail``) and the two
+routes used two different shell ids. Keeping the rail resident therefore
+requires the SHELL to be resident, which requires the two ids to become one.
+
+This class is that one shell. It carries a route-neutral id
+(``#library-browse-reader-shell``) and wears a per-route **marker class**
+--- ``.library-media-route`` / ``.library-notes-route`` --- set exactly while
+that route owns it. The marker is what preserves the meaning of the ~35
+production sites that used to read "is ``#library-media-reader-shell``
+mounted?" as "is the media route active?": under residency shell PRESENCE is
+permanently true, but the marker is not, so those sites become
+``.library-media-route`` and keep their original semantics with one seam
+(``apply_route``) as the single writer.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from textual.widget import Widget
+
+from tldw_chatbook.Library.library_media_reader_state import (
+    MediaReaderEffectiveLayout,
+)
+
+from .library_adaptive_reader_shell import (
+    AdaptiveReaderShellResized,
+    LibraryAdaptiveReaderShell,
+    PaneToggleRequested as SharedPaneToggleRequested,
+)
+
+MediaShellResized = AdaptiveReaderShellResized
+PaneToggleRequested = SharedPaneToggleRequested
+
+#: The one resident browse shell's id. Route-neutral on purpose: it is the
+#: same widget on both routes, so naming it after either one would lie.
+LIBRARY_BROWSE_READER_SHELL_ID = "library-browse-reader-shell"
+
+#: Marker classes. Exactly one is present at a time, and ``apply_route`` is
+#: their only writer.
+LIBRARY_MEDIA_ROUTE_CLASS = "library-media-route"
+LIBRARY_NOTES_ROUTE_CLASS = "library-notes-route"
+
+#: Selector equivalents, so callers spell the marker once.
+LIBRARY_MEDIA_ROUTE_SELECTOR = f".{LIBRARY_MEDIA_ROUTE_CLASS}"
+LIBRARY_NOTES_ROUTE_SELECTOR = f".{LIBRARY_NOTES_ROUTE_CLASS}"
+
+#: The visual grip class the Media route used to bake into its grips at
+#: construction. Toggled per route now (the grips are shared).
+LIBRARY_MEDIA_PANE_GRIP_CLASS = "library-media-pane-grip"
+
+#: The two routes this shell hosts.
+LIBRARY_BROWSE_ROUTE_MEDIA = "media"
+LIBRARY_BROWSE_ROUTE_NOTES = "notes"
+
+
+class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
+    """Adaptive reader shell that outlives a Media<->Notes route switch."""
+
+    def __init__(
+        self,
+        library: Widget,
+        items: Widget,
+        work: Widget,
+        layout: MediaReaderEffectiveLayout,
+        *,
+        route: str = LIBRARY_BROWSE_ROUTE_MEDIA,
+        **kwargs: Any,
+    ) -> None:
+        """Assemble the shared shell around the active route's panes.
+
+        Args:
+            library: Widget for the Library rail pane -- resident across a
+                Media<->Notes switch, which is the whole point of this class.
+            items: Widget for the list pane (``#library-canvas``), which hosts
+                both routes' canvases once each has been visited.
+            work: Widget for the work pane -- Media's Reader or Notes' work
+                pane. Swapped per route by ``swap_work``; it is small (2-3
+                widgets) and every route entry already rebuilt it, so it is
+                deliberately NOT made resident.
+            layout: The resolved layout to mount with.
+            route: Which route owns the shell right now.
+            **kwargs: Forwarded to ``LibraryAdaptiveReaderShell`` (``id``,
+                ``classes``, ...). The shared identity arguments (id prefix,
+                pane labels) are fixed here.
+        """
+        super().__init__(
+            library=library,
+            items=items,
+            work=work,
+            layout=layout,
+            id_prefix="library-browse",
+            library_label="Library",
+            items_label="Items",
+            **kwargs,
+        )
+        self.route = ""
+        self.apply_route(route)
+
+    @property
+    def reader(self) -> Widget:
+        """The work pane under Media's own vocabulary.
+
+        Media callers reach for ``shell.reader``; the shared shell calls the
+        same pane ``work``. Kept as a read-only alias rather than a second
+        attribute so the two cannot drift after ``swap_work``.
+        """
+        return self.work
+
+    def apply_route(self, route: str) -> None:
+        """Project which route owns this shell onto its marker classes.
+
+        The single writer of ``.library-media-route`` / ``.library-notes-
+        route``. Every "is this route active?" DOM probe reads those markers,
+        so this method is the seam that keeps them honest -- it is called both
+        at construction (whole-screen recompose) and on the resident switch
+        path.
+
+        Args:
+            route: ``"media"`` or ``"notes"``.
+
+        Returns:
+            None.
+        """
+        self.route = route
+        self.set_class(route == LIBRARY_BROWSE_ROUTE_MEDIA, LIBRARY_MEDIA_ROUTE_CLASS)
+        self.set_class(route == LIBRARY_BROWSE_ROUTE_NOTES, LIBRARY_NOTES_ROUTE_CLASS)
+        for grip in (self.library_grip, self.items_grip):
+            grip.set_class(
+                route == LIBRARY_BROWSE_ROUTE_MEDIA,
+                LIBRARY_MEDIA_PANE_GRIP_CLASS,
+            )
+        # The items pane is called "Notes" on one route and "Items" on the
+        # other, and that label is the grip's tooltip AND accessible name --
+        # user-visible copy, so it travels with the route rather than being
+        # frozen at construction the way a per-route shell could afford.
+        items_label = "Notes" if route == LIBRARY_BROWSE_ROUTE_NOTES else "Items"
+        if self.items_grip.pane_label != items_label:
+            self.items_grip.pane_label = items_label
+            self.items_grip.sync_open(self.effective_layout.items_open)
+
+    def adopt_route_layout(self, layout: MediaReaderEffectiveLayout) -> None:
+        """Apply the destination route's layout as if freshly composed.
+
+        The two routes keep SEPARATE resolved layouts, and each route's
+        resolver only re-applies its own when it differs from that route's
+        stored value -- so after a switch the shell would otherwise keep the
+        outgoing route's pane geometry until something else moved. Dropping
+        ``_applied_layout`` first takes ``sync_layout``'s initial-mount branch
+        (no focus evacuation, no automatic pane-reopen focus), which is
+        exactly what a composed shell gets.
+
+        Args:
+            layout: The destination route's resolved layout.
+
+        Returns:
+            None.
+        """
+        self._applied_layout = None
+        self.sync_layout(layout)
+
+    async def swap_work(self, work: Widget) -> None:
+        """Replace the work pane in place, keeping the shell mounted.
+
+        Mounted before the outgoing pane is removed so the shell is never
+        childless mid-switch (Textual would otherwise reflow to a two-pane
+        allocation for a frame). The new pane inherits exactly the geometry
+        ``sync_layout`` gives a freshly composed work pane.
+
+        Args:
+            work: The destination route's work pane.
+
+        Returns:
+            None.
+        """
+        previous = self.work
+        if previous is work:
+            return
+        work.add_class("library-adaptive-reader-work")
+        await self.mount(work, after=self.items_grip)
+        self.work = work
+        work.display = True
+        work.styles.width = "1fr"
+        work.styles.min_width = 0
+        work.styles.height = "100%"
+        if previous is not None and previous.parent is self:
+            await previous.remove()
+
+    def on_mount(self) -> None:
+        """Hide the rail's legacy collapse control beside the grips.
+
+        No ``super().on_mount()``: Textual's dispatcher already invokes
+        ``LibraryAdaptiveReaderShell.on_mount`` separately for this Mount
+        event (TASK-31822).
+        """
+        collapse = self.query("#library-rail-collapse")
+        if collapse:
+            collapse.first().display = False

@@ -1326,7 +1326,7 @@ def _escape_fake_query_one(shell, find, *, mounted):
     from textual.css.query import NoMatches
 
     def query_one(selector, *_args):
-        if selector == "#library-media-reader-shell":
+        if selector == ".library-media-route":
             return shell
         if selector == "#library-media-content-search-controls" and not mounted:
             raise NoMatches(selector)
@@ -1726,8 +1726,8 @@ async def test_hidden_panes_have_no_focusable_descendants_but_grips_remain_reach
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        shell = screen.query_one("#library-media-reader-shell")
-        screen.query_one("#library-media-items-grip", Button).press()
+        shell = screen.query_one(".library-media-route")
+        screen.query_one("#library-browse-items-grip", Button).press()
         await pilot.pause()
 
         assert shell.items.display is False
@@ -2338,10 +2338,10 @@ async def test_c_key_in_reader_opens_console_handoff_end_to_end(monkeypatch):
 # held it -- never to a pane grip. Measured on this branch's head (d7d8c687df),
 # real gestures, at BOTH sizes:
 #
-#   content focused -> Reader recompose        -> library-media-items-grip
-#   Find input focused -> Reader recompose     -> library-media-items-grip
-#   media row focused -> receipt repaint       -> library-media-library-grip
-#   media row focused -> leave select mode     -> library-media-library-grip
+#   content focused -> Reader recompose        -> library-browse-items-grip
+#   Find input focused -> Reader recompose     -> library-browse-items-grip
+#   media row focused -> receipt repaint       -> library-browse-library-grip
+#   media row focused -> leave select mode     -> library-browse-library-grip
 #
 # Textual re-picks focus after the widget that held it is removed, and the
 # grips are the first focusable widgets in the adaptive shell. Every earlier
@@ -2349,7 +2349,7 @@ async def test_c_key_in_reader_opens_console_handoff_end_to_end(monkeypatch):
 # PR F Task 1's select-mode entry); this is the general seam.
 # ---------------------------------------------------------------------------
 
-_MEDIA_GRIP_IDS = {"library-media-library-grip", "library-media-items-grip"}
+_MEDIA_GRIP_IDS = {"library-browse-library-grip", "library-browse-items-grip"}
 
 
 def _focused_id(screen) -> str:
@@ -2630,7 +2630,7 @@ async def test_opening_find_costs_no_extra_focus_move(size):
         # Exact list, not just a ceiling (review M-5): an inequality would let
         # a future regression that silently DROPS a legitimate move pass.
         assert moves == [
-            "library-media-items-grip",
+            "library-browse-items-grip",
             "library-media-content-search",
         ], moves
         for media_id in tuple(service.detail_release):

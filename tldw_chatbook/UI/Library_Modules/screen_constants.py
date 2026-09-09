@@ -241,10 +241,12 @@ LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT = 100
 # ``compose_content`` -- the basis for the one-probe-per-recompose negative
 # cache in ``_library_adaptive_reader_shell_active``.
 _LIBRARY_READER_SHELL_SELECTOR = (
-    "#library-media-reader-shell, "
+    # Phase C: Media and Notes now share ONE resident shell
+    # (``#library-browse-reader-shell``), so this union lists five ids for
+    # six routes.
+    "#library-browse-reader-shell, "
     "#library-collections-reader-shell, "
     "#library-conversations-reader-shell, "
-    "#library-notes-reader-shell, "
     "#library-prompts-reader-shell, "
     "#library-skills-reader-shell"
 )

@@ -272,7 +272,7 @@ def _assert_reader_width_contract(
 
 def _assert_media_reader_geometry(screen: LibraryScreen) -> dict[str, int]:
     """Prove layout allocations, hidden panes, chrome, and row fill structurally."""
-    shell = screen.query_one("#library-media-reader-shell")
+    shell = screen.query_one(".library-media-route")
     layout = shell.effective_layout
     _assert_reader_width_contract(
         shell_content_width=shell.content_region.width,
@@ -481,7 +481,7 @@ async def _wait_for_trash_page(
 async def _ensure_items_open(screen: LibraryScreen, pilot) -> None:
     if screen._media_state.reader_layout.items_open:
         return
-    grip = screen.query_one("#library-media-items-grip", Button)
+    grip = screen.query_one("#library-browse-items-grip", Button)
     grip.focus()
     await pilot.press("enter")
     await _wait_for_condition(
@@ -497,7 +497,7 @@ async def _ensure_items_open(screen: LibraryScreen, pilot) -> None:
 async def _toggle_pane(
     screen: LibraryScreen, pilot, *, pane: str, expected_open: bool
 ) -> None:
-    grip = screen.query_one(f"#library-media-{pane}-grip", Button)
+    grip = screen.query_one(f"#library-browse-{pane}-grip", Button)
     grip.focus()
     await pilot.press("enter")
     await _wait_for_condition(

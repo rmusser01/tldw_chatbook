@@ -842,7 +842,17 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # this ratchet exists to make visible, not a regression. Re-pinned to the
     # measured post-merge value per `test_budget_is_not_left_slack_after_a_
     # wave`'s own instruction ("set it to {lines} so the gain is locked in").
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32263, 1258),
+    # 2026-09-08, Library phase C task 2 (the resident browse shell): 32263 ->
+    # 32238. The gain is one move, not a compression: the ~100-line body of
+    # `_replace_library_browse_canvas` became a 26-line delegation to
+    # `UI/Library_Modules/library_browse_route_swap.py`, and the Notes
+    # source-strip compose block moved to that module's shared builder (the
+    # route swap MOUNTS the same strip a recompose composes, so one builder is
+    # the only way the two can't drift). Method count is untouched at 1259 --
+    # which is 1 OVER the 1258 budget dev left here, so this row still fails on
+    # methods; that red predates this task (measured identical at its base
+    # commit 9158fac98) and the budget is deliberately NOT raised to hide it.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32238, 1258),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

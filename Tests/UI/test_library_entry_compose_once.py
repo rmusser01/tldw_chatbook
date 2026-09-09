@@ -1986,7 +1986,7 @@ async def test_stale_media_detail_cannot_project_after_route_switch() -> None:
 
         assert result is LibraryEntryReconcileResult.SUPERSEDED
         _assert_new_route_unchanged(screen, owner=owner, focus=focus)
-        assert not screen.query("#library-media-reader-shell")
+        assert not screen.query(".library-media-route")
 
 
 @pytest.mark.asyncio
@@ -2281,7 +2281,7 @@ async def test_media_trash_replaces_only_items_and_keeps_reader() -> None:
         screen.query_one("#library-media-trash-open").press()
         await _wait_for_selector(screen, pilot, "#library-media-trash-title")
 
-        assert screen.query("#library-media-reader-shell")
+        assert screen.query(".library-media-route")
         assert screen.query("#library-media-viewer")
         assert isinstance(screen._library_entry_canvas_owner(), LibraryMediaTrashCanvas)
 

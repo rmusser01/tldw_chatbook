@@ -766,7 +766,7 @@ async def test_media_items_pane_grows_with_the_terminal_once_reader_is_comfortab
             await pilot.pause()
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryAdaptiveReaderShell
+            ".library-media-route", LibraryAdaptiveReaderShell
         )
         row = next(
             candidate
@@ -825,7 +825,7 @@ async def test_no_dead_gutter_flanks_the_media_items_pane_at_235x52() -> None:
             await pilot.pause()
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryAdaptiveReaderShell
+            ".library-media-route", LibraryAdaptiveReaderShell
         )
         assert shell.library.display, "the rail pane is closed at 235x52"
         left_gutter, right_gutter = _dead_gutters(host, screen, shell)

@@ -36,8 +36,8 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import (
     library_media_canvas as library_media_canvas_module,
 )
-from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
-    LibraryMediaReaderShell,
+from tldw_chatbook.Widgets.Library.library_browse_reader_shell import (
+    LibraryBrowseReaderShell,
     MediaShellResized,
 )
 
@@ -76,7 +76,7 @@ async def _open_compact_media(host, pilot) -> LibraryScreen:
     await _wait_for_library_shell(screen, pilot)
     screen._notes_state.compact = True
     screen.query_one("#library-row-browse-media").press()
-    await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+    await _wait_for_selector(screen, pilot, ".library-media-route")
     return screen
 
 
@@ -141,7 +141,7 @@ async def test_media_shell_lifecycle_reconciles_current_stage_once(
     async with host.run_test(size=(170, 48)) as pilot:
         screen = await _open_compact_media(host, pilot)
         stage = screen.query_one("#library-shell-grid", Horizontal)
-        shell = screen.query_one("#library-media-reader-shell", LibraryMediaReaderShell)
+        shell = screen.query_one(".library-media-route", LibraryBrowseReaderShell)
         stage.set_class(True, "library-notes-compact")
         stage.set_class(False, "library-adaptive-compact")
 
@@ -2017,7 +2017,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
         old_request = screen._media_state.return_settlement
         assert old_request is not None
         old_shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         old_items = screen.query_one("#library-canvas", Vertical)
         active_child = old_items.children[0]
@@ -2032,12 +2032,12 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
         await old_items.remove()
         await retained_rail.remove()
         await old_shell.remove()
-        replacement_shell = LibraryMediaReaderShell(
+        replacement_shell = LibraryBrowseReaderShell(
             retained_rail,
             old_items,
             screen._build_library_media_reader(),
             screen._media_state.reader_layout,
-            id="library-media-reader-shell",
+            id="library-browse-reader-shell",
         )
         held_shell_resizes: list[MediaShellResized] = []
         real_shell_post_message = replacement_shell.post_message
@@ -2075,7 +2075,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
             "#library-media-row-scroll", row_scroll_type
         )
         assert screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         ) is replacement_shell
         assert screen.query_one("#library-canvas", Vertical) is old_items
         assert replacement_shell is not old_shell
@@ -2145,7 +2145,7 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
         old_request = screen._media_state.return_settlement
         assert old_request is not None
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         old_items = screen.query_one("#library-canvas", Vertical)
         active_child = old_items.children[0]
@@ -2191,7 +2191,7 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
             message="Retained shell did not queue its real resize lifecycle.",
         )
         replacement_shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         replacement_owner = screen.query_one(
             "#library-media-row-scroll", row_scroll_type
