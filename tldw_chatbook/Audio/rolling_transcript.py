@@ -170,7 +170,15 @@ def _normalized_text(text: str) -> str:
 
 
 def is_material_transcript_change(before: str, after: str) -> bool:
-    """Return whether a correction changes content, not its presentation."""
+    """Return whether a correction changes content, not its presentation.
+
+    Args:
+        before: Transcript text before the correction.
+        after: Transcript text after the correction.
+
+    Returns:
+        ``True`` when normalized transcript content differs.
+    """
 
     return _normalized_text(before) != _normalized_text(after)
 

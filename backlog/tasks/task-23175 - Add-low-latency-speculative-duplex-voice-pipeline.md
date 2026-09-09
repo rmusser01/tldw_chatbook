@@ -36,6 +36,7 @@ Reduce perceived voice-response latency by starting a cancellable speculative re
 - [x] #17 Retired speculative requests that were never issued reject provider terminal traffic while admitted requests preserve bounded valid late-record handling.
 - [x] #18 Queued startup heartbeat or close traffic cannot displace the already-read bootstrap; startup control sequence and credit accounting remain valid and early close still prevents native start.
 - [x] #19 The combined audio integration branch is based on current dev, includes the existing Console functionality required by the complete audio feature, preserves newer dev behavior and schema history, and passes targeted port/integration checks before a PR targets dev.
+- [ ] #20 The rebased PR corrects validated review findings with focused software evidence and records an open-PR handoff without claiming broader voice qualification complete.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -98,6 +99,13 @@ ADR required: no new ADR; amend existing ADR-098.
 ADR path: `backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md`.
 Reason: preserve the approved runtime/promotion boundary while integrating current dev scoped/custom trace privacy and migration slot 69; no new owner, service or table.
 26. Follow `Docs/superpowers/plans/2026-09-08-voice-pr-2504-followup.md` for the authorized local PR #2504 rebase and scoped fixes. Back up the published head, consolidate its exact tree, rebase onto pinned fetched dev, and compose voice schema 70 after unchanged dev schema 69. Verify targeted SQLite/fake-software cases and derived inventory only; do not push or merge.
+
+27. Correct the validated PR-review findings under the rebased tree: reproduce deleted-session send admission and unrelated valid-owner `KeyError` behavior before narrowly normalizing only a proven missing owner; apply import grouping, Google-style transcript comparison documentation, the ADR-098 isolated-child AEC explanation, and the schema-70 census comment correction. Verify only the named fake/software nodes, retain the independent rejection analysis for the unnecessary UI-thread hop, optional-dependency registry import, and Pydantic rewrite, commit explicit paths, and write the open-PR handoff report without completing qualification.
+
+Follow-up review ADR check:
+ADR required: no new ADR
+ADR path: `backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md`
+Reason: The fixes preserve the accepted runtime, custody, child-dependency, and stdlib protocol boundaries; they correct one stale-owner refusal and documentation/import metadata only.
 
 ADR required: no new ADR.
 ADR path: backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md

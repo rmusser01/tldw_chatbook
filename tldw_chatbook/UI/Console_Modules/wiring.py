@@ -259,6 +259,7 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
     from tldw_chatbook.Chat.console_send_diagnostics import record_send_stage
 
     record_send_stage("ui_submit")
+    store = None
     try:
         store = screen._ensure_console_chat_store()
         one_shot_prefill, one_shot_prefill_revision = (
@@ -282,6 +283,16 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
             ],
         )
         turn_id = screen._console_runtime().accept_turn(request)
+    except KeyError as error:
+        if store is not None:
+            try:
+                store.session_settings(session_id)
+            except KeyError:
+                refusal = RuntimeError("Console session is closed.")
+                record_send_stage("ui_submit", "failed", error=refusal)
+                raise refusal from error
+        record_send_stage("ui_submit", "failed", error=error)
+        raise
     except Exception as error:
         record_send_stage("ui_submit", "failed", error=error)
         raise

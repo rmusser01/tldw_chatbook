@@ -32,13 +32,14 @@ Reason: Behavior-preserving integration, targeted admission/boot defects, and de
 
 ## Task 2: Correct validated review findings
 
-**Owner/files:** `UI/Console_Modules/wiring.py`, targeted UI admission tests, `Chat/console_speculative_voice_session.py`, `Audio/rolling_transcript.py`, optional explanatory `Audio/aec_backend.py` docstring, and TASK-23175 follow-up notes.
+**Owner/files:** `UI/Console_Modules/wiring.py`, targeted UI admission tests, `Chat/console_speculative_voice_session.py`, `Audio/rolling_transcript.py`, optional explanatory `Audio/aec_backend.py` docstring, TASK-23175 follow-up notes, and the stale schema label at `scripts/index_plan_pin_census.tsv:15` found by Task 1 review.
 
 1. Before implementation add a follow-up acceptance criterion/plan to TASK-23175 for rebased PR fixes and open-PR handoff, without marking broader qualification complete.
 2. Add a regression for a deleted session during synchronous send admission: missing owner must give the established closed-session refusal while preserving the captured draft and attachments. Add a control proving unrelated internal `KeyError` for a valid owner is not hidden. Demonstrate RED before narrowly normalizing only a proven missing owner in the shared admission boundary; do not blanket-catch `KeyError` in the UI.
 3. Move `FrozenTracePolicy` into the local import group. Add Google-style Args/Returns for material transcript comparison without changing normalization behavior. Optionally explain why the native child's lazy AEC import intentionally avoids the app-side optional-dependency registry under ADR-098.
 4. Do not add a second UI-thread hop: existing process delivery runs on the UI loop. Do not import the app optional-dependency graph into the isolated child. Do not replace the bounded stdlib wire validator with Pydantic. Cite the independent report for these three rejected suggestions.
 5. Run the new regression/control plus exact adjacent draft refusal, rolling comparison, lazy AEC and UI-thread identity tests, excluding all real-native nodes. Apply scoped lint/diff checks, commit explicit paths, write `task-2-report.md` with RED/GREEN evidence.
+6. Correct the census's comment-only schema label from 69 to 70; the index/test entries already reference v70 and must remain unchanged.
 
 ## Task 3: Restore lazy boot without weakening performance guards
 

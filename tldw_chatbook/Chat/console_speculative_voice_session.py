@@ -8,7 +8,6 @@ import time
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy
 from functools import partial
 from typing import Any, TYPE_CHECKING
 
@@ -29,6 +28,7 @@ from tldw_chatbook.Chat.console_speculative_voice import (
     AttemptTtsFailed,
     SpeculativeTurnCoordinator,
 )
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
 from tldw_chatbook.Chat.console_voice_attempts import (
     AttemptCleanupManager,

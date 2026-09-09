@@ -27,6 +27,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunState,
     ConsoleRunStatus,
@@ -693,6 +694,104 @@ async def test_console_synchronous_custody_refusal_notifies_and_keeps_draft(
         assert sent is False
         assert notices == [("Console session is closed.", "warning")]
         assert composer.draft_text() == "keep me"
+
+
+@pytest.mark.asyncio
+async def test_console_deleted_owner_refuses_and_keeps_captured_inputs(monkeypatch):
+    """A session deleted during admission becomes the normal custody refusal."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep deleted owner draft")
+        stash = composer.capture_draft_for_send()
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        attachment = PendingAttachment(
+            "/private/deleted-owner.png",
+            "deleted-owner.png",
+            "image",
+            "attachment",
+            data=b"private attachment",
+        )
+        assert store.add_pending_attachment(session.id, attachment)
+        monkeypatch.setattr(
+            console._prompt_queue, "_blocked_reason_accessor", lambda: ""
+        )
+        controller = console._ensure_console_chat_controller()
+
+        def delete_owner(_session_id: str) -> None:
+            store.close_session(session.id)
+            return None
+
+        monkeypatch.setattr(controller, "send_refusal_copy", delete_owner)
+        notices: list[tuple[str, str]] = []
+        console.app_instance.notify = lambda message, **kwargs: notices.append(
+            (str(message), kwargs.get("severity", ""))
+        )
+
+        sent = await console._dispatch_console_draft_send(
+            stash.text, stash=stash, session_id=session.id
+        )
+
+        assert sent is False
+        assert notices == [("Console session is closed.", "warning")]
+        assert composer.draft_text() == "keep deleted owner draft"
+        assert session.pending_attachments == [attachment]
+
+
+@pytest.mark.asyncio
+async def test_console_valid_owner_internal_key_error_is_not_a_custody_refusal(
+    monkeypatch,
+):
+    """A valid owner's unrelated admission defect must remain observable."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep valid owner draft")
+        stash = composer.capture_draft_for_send()
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        attachment = PendingAttachment(
+            "/private/valid-owner.png",
+            "valid-owner.png",
+            "image",
+            "attachment",
+            data=b"private attachment",
+        )
+        assert store.add_pending_attachment(session.id, attachment)
+        monkeypatch.setattr(
+            console._prompt_queue, "_blocked_reason_accessor", lambda: ""
+        )
+        monkeypatch.setattr(
+            console._ensure_console_chat_controller(),
+            "send_refusal_copy",
+            lambda _session_id: None,
+        )
+
+        def fail_internal_context(_session_id: str) -> None:
+            raise KeyError("internal settings lookup")
+
+        monkeypatch.setattr(
+            console._session,
+            "_build_console_turn_execution_context",
+            fail_internal_context,
+        )
+
+        with pytest.raises(KeyError, match="internal settings lookup"):
+            await console._dispatch_console_draft_send(
+                stash.text, stash=stash, session_id=session.id
+            )
+
+        assert composer.draft_text() == "keep valid owner draft"
+        assert store.pending_attachments(session.id) == [attachment]
 
 
 @pytest.mark.asyncio

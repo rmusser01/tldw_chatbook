@@ -12,7 +12,7 @@
 # measurements in its docstring where a textbook index was simply never
 # chosen because no media DB has ever run ANALYZE.
 
-# ADR-098 completed-pair reconciliation locators (schema 69).
+# ADR-098 completed-pair reconciliation locators (schema 70).
 idx_console_dispatch_checkpoints_user_message	plan-pinned	Tests/DB/test_chachanotes_v70_voice_trace_provenance_migration.py
 idx_console_trace_events_semantic_revision_exact	plan-pinned	Tests/DB/test_chachanotes_v70_voice_trace_provenance_migration.py
 idx_console_trace_redaction_spans_semantic_revision_exact	plan-pinned	Tests/DB/test_chachanotes_v70_voice_trace_provenance_migration.py

@@ -27,6 +27,8 @@ def create_aec_processor() -> AecProcessor | None:
     The companion is imported only here so importing the application or duplex
     contracts never initializes native audio/DSP code. Absence or an unusable
     binary is represented as ``None`` and must select honest half duplex.
+    ADR-098 keeps this isolated-child loader independent of the app-side
+    ``Utils.optional_deps`` configuration and dependency graph.
     """
 
     try:
