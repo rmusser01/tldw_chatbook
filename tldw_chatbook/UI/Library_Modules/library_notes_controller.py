@@ -700,6 +700,7 @@ class LibraryNotesController:
         library_notes_workflow_active,
         library_rail_preferences,
         library_rail_search_placeholder,
+        library_rail_search_value,
         library_workspace_depth_state,
         locate_library_notes_tree_target,
         open_library_export_canvas,
@@ -818,6 +819,7 @@ class LibraryNotesController:
         self._library_notes_workflow_active_fn = library_notes_workflow_active
         self._library_rail_preferences_fn = library_rail_preferences
         self._library_rail_search_placeholder_fn = library_rail_search_placeholder
+        self._library_rail_search_value_fn = library_rail_search_value
         self._library_workspace_depth_state_fn = library_workspace_depth_state
         self._locate_library_notes_tree_target_fn = locate_library_notes_tree_target
         self._open_library_export_canvas_fn = open_library_export_canvas
@@ -1208,6 +1210,10 @@ class LibraryNotesController:
     @property
     def _library_rail_search_placeholder(self) -> Any:
         return self._library_rail_search_placeholder_fn
+
+    @property
+    def _library_rail_search_value(self) -> Any:
+        return self._library_rail_search_value_fn
 
     @property
     def _library_workspace_depth_state(self) -> Any:
@@ -4029,7 +4035,7 @@ class LibraryNotesController:
                     library_pane=LibraryRail(
                         shell_state,
                         self._library_rail_preferences(),
-                        query=self._rag_search_state.query,
+                        query=self._library_rail_search_value(),
                         search_placeholder=self._library_rail_search_placeholder(),
                         workspaces_body_factory=self._compose_workspaces_rail_body,
                         top_action_factory=self._compose_library_rail_top_action,

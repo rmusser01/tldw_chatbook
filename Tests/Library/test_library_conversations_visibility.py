@@ -261,3 +261,39 @@ async def test_scope_locator_explicitly_rejects_unsupported_server_mode() -> Non
         await service.locate_conversation_page(
             "conv-target", mode="server", scope_type="all", limit=20
         )
+
+
+def test_export_everything_counts_every_conversation_the_rail_counts(tmp_path) -> None:
+    """task-32058: Export "Everything" reported 0 against a rail count of 6.
+
+    ``search_conversations_page`` dropped its ``client_id`` filter for the
+    browse-everything scope in TASK-721, but ``get_all_conversation_ids`` --
+    the export enumerator -- kept it, so a library whose rows were written by
+    another client (server sync, a seeded profile, another install) counted
+    six in the rail and zero in the export form. Both surfaces must resolve
+    the same population.
+    """
+    from tldw_chatbook.Library.library_export_scope import (
+        ExportScope,
+        count_export_scope,
+    )
+
+    db_path = str(tmp_path / "shared.db")
+    mine = CharactersRAGDB(db_path, "app-client")
+    seeded = CharactersRAGDB(db_path, "seed-client")
+    for index in range(6):
+        seeded.add_conversation({"title": f"Seeded {index}"})
+
+    service = ChatConversationService(mine)
+    rail = service.list_conversations(scope_type="all", limit=50, offset=0)
+
+    class _NoMedia:
+        def get_all_active_media_ids(self, media_type=None):
+            return []
+
+    counts = count_export_scope(
+        ExportScope(kind="everything"), _NoMedia(), mine, None
+    )
+
+    assert rail["pagination"]["total"] == 6
+    assert counts["conversations"] == 6

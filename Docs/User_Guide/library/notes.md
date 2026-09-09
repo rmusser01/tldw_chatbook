@@ -339,6 +339,14 @@ somewhere else while you were editing, a banner appears: "This note
 changed elsewhere — Overwrite saves your text; Reload discards it." —
 pick **Overwrite** or **Reload**.
 
+While any editor field — the title, the body, or either keyword box — has
+keyboard focus, nothing repaints the editor underneath you: a refresh that
+arrives mid-sentence — a save landing, the
+first note reaching the list, the Library graduating to its full rail — leaves
+the editor alone, so keystrokes never land in the wrong box and focus never
+jumps away as you type or after you move to another field. The next refresh
+that arrives once your hands are off the field paints normally.
+
 Notes does not use **Ctrl+S**, and there is no replacement Notes save
 shortcut. Use the visible **Save** button when you want an immediate Database
 save; normal Tab navigation and **F6** can reach it. Autosave continues to
@@ -650,6 +658,25 @@ foreground approval, subagent draft boundary, credential refusal, and
 untrusted-retrieval contract added for TASK-24309 — 2026-08-30. See
 [ADR-105](../../../backlog/decisions/105-portable-notes-organization-and-agent-lessons.md)
 and [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md).*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32063: the
+work pane no longer restates the list pane's "Library notes · Library
+database …" authority sentence, a "Next:" clause only appears when it names a
+control on screen, and the Add-from-files header is one sentence ("Add files to
+Library notes.") instead of a run-on stacked under three more. task-32061:
+Escape from the editor leaves the Notes list at the visibility it had.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32062: a
+Notes refresh that arrives while the title or body has focus leaves the editor
+alone, and a snapshot that is a keystroke behind no longer rewrites the
+focused field — measured live, a title and body typed within ~0.4 s used to be
+stored as one scrambled title with an empty body. task-32061 re-checked on a
+fresh profile: the list pane survives the first note's Escape.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (review of
+PR #2531: the keyword boxes get the same protection as the title and body — a
+refresh landing while you type keywords no longer rebuilds the editor or
+rewrites the box from an older snapshot.)*
 
 *Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
 docs-vs-live pass from critique #8; live at 235x52 on a seeded profile):

@@ -1257,12 +1257,23 @@ class _FailOnceOnboardingCreateNotesService(StaticLibraryNotesScopeService):
         return await super().save_note(**kwargs)
 
 
-def _new_library_onboarding_app(gates: _LibraryEvidenceGates):
+def _new_library_onboarding_app(gates: _LibraryEvidenceGates, *, starter: bool = False):
+    """Build an app whose Library has not settled a lifecycle yet.
+
+    ``starter=True`` seeds the settled COMPACT rail instead. task-32063: the
+    graduation notice now fires only for STARTER -> GRADUATED (the transition
+    where hidden tools actually appear); a test that is ABOUT the notice has
+    to start from the state a real user would be in when it fires.
+    """
     app = _build_test_app()
     app.library_new_profile_admission = True
     library = app.app_config.setdefault("library", {})
     rail_state = library.setdefault("rail_state", {})
-    rail_state.pop("lifecycle", None)
+    if starter:
+        app.library_new_profile_admission = False
+        rail_state["lifecycle"] = "starter"
+    else:
+        rail_state.pop("lifecycle", None)
     gates.install(app)
     return app
 
@@ -1450,7 +1461,12 @@ async def test_library_starter_landing_orients_without_counts_or_search() -> Non
             )
             await pilot.pause()
 
-            assert "1 Add · 2 Find · 3 Use" in _visible_text(screen)
+            # task-32072: the orientation line became three live controls
+            # that unlock in order.
+            visible = _visible_text(screen)
+            for step in ("Import a file", "Find it", "Use it in Console"):
+                assert step in visible
+            assert "1 Add · 2 Find · 3 Use" not in visible
             assert (
                 str(screen.query_one("#library-canvas-landing", Static).renderable)
                 == "Add something useful, then use it in Console or Study."
@@ -2192,7 +2208,7 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
-    app = _new_library_onboarding_app(gates)
+    app = _new_library_onboarding_app(gates, starter=True)
     app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
     host = LibraryHarness(app)
 
@@ -2221,7 +2237,9 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
                 "Library tools are now available.",
                 {"severity": "information"},
             )
-            assert "Library tools are now available." in str(
+            # task-32063: the toast is the only surface; the canvas line that
+            # used to repeat it is gone.
+            assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
     finally:
@@ -2229,13 +2247,20 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_persists_on_note_creation_canvas() -> (
-    None
-):
+async def test_library_graduation_leaves_the_note_creation_canvas_intact() -> None:
+    """task-32063: graduating mid-note announces by toast and disturbs nothing.
+
+    This used to pin a durable `#library-lifecycle-status` line that survived
+    the transition and cleared on the next destination change. The line is
+    gone -- one event, one surface -- so what is pinned here is the canvas the
+    reader is standing in: the work pane, its focus, and no landing.
+    """
+    notifications: list = []
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
     app = _new_library_onboarding_app(gates)
+    app.notify = lambda message, **kwargs: notifications.append(message)
     app.library_new_profile_admission = False
     app.app_config["library"]["rail_state"]["lifecycle"] = "starter"
     screen = LibraryScreen(app)
@@ -2260,21 +2285,22 @@ async def test_library_graduation_announcement_persists_on_note_creation_canvas(
 
             assert screen.query_one("#library-note-work-pane")
             assert creation_action.has_focus
+            assert notifications == ["Library tools are now available."]
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert "Library tools are now available." in str(
+            assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
-            assert lifecycle_status in screen._compositor.visible_widgets
             painted = "\n".join(
                 "".join(segment.text for segment in strip)
                 for strip in screen._compositor.render_strips()
             )
-            assert "Library tools are now available." in painted
+            assert "Library tools are now available." not in painted
             assert not screen.query("#library-landing-canvas")
 
             await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
             await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
             await pilot.pause()
+            assert notifications == ["Library tools are now available."]
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2286,11 +2312,16 @@ async def test_library_graduation_announcement_persists_on_note_creation_canvas(
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_clears_on_notes_files_switch() -> None:
+async def test_library_graduation_paints_no_canvas_line_across_a_notes_files_switch() -> (
+    None
+):
+    """task-32063: the notice is a toast, so a source switch has nothing to clear."""
+    notifications: list = []
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
-    app = _new_library_onboarding_app(gates)
+    app = _new_library_onboarding_app(gates, starter=True)
+    app.notify = lambda message, **kwargs: notifications.append(message)
     screen = LibraryScreen(app)
     host = LibraryHarness(app, screen=screen)
 
@@ -2307,7 +2338,8 @@ async def test_library_graduation_announcement_clears_on_notes_files_switch() ->
                 message="note evidence did not graduate before the source switch",
             )
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert "Library tools are now available." in str(
+            assert notifications == ["Library tools are now available."]
+            assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
 
@@ -2322,6 +2354,7 @@ async def test_library_graduation_announcement_clears_on_notes_files_switch() ->
             )
             await pilot.pause()
 
+            assert notifications == ["Library tools are now available."]
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2330,11 +2363,14 @@ async def test_library_graduation_announcement_clears_on_notes_files_switch() ->
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_clears_on_direct_item_open() -> None:
+async def test_library_graduation_paints_no_canvas_line_on_a_direct_item_open() -> None:
+    """task-32063: the notice is a toast, so a direct open has nothing to clear."""
+    notifications: list = []
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
-    app = _new_library_onboarding_app(gates)
+    app = _new_library_onboarding_app(gates, starter=True)
+    app.notify = lambda message, **kwargs: notifications.append(message)
     screen = LibraryScreen(app)
     host = LibraryHarness(app, screen=screen)
 
@@ -2348,7 +2384,8 @@ async def test_library_graduation_announcement_clears_on_direct_item_open() -> N
                 message="note evidence did not graduate before the direct open",
             )
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert "Library tools are now available." in str(
+            assert notifications == ["Library tools are now available."]
+            assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
 
@@ -2382,6 +2419,7 @@ async def test_library_graduation_announcement_clears_on_direct_item_open() -> N
             )
             await pilot.pause()
 
+            assert notifications == ["Library tools are now available."]
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2390,13 +2428,16 @@ async def test_library_graduation_announcement_clears_on_direct_item_open() -> N
 
 
 @pytest.mark.asyncio
-async def test_library_graduation_announcement_survives_cancelled_source_switch(
+async def test_library_cancelled_source_switch_keeps_the_notes_database_source(
     monkeypatch,
 ) -> None:
+    """A dirty note blocks the Files switch; the graduation toast is not repeated."""
+    notifications: list = []
     gates = _LibraryEvidenceGates(
         outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT]}
     )
-    app = _new_library_onboarding_app(gates)
+    app = _new_library_onboarding_app(gates, starter=True)
+    app.notify = lambda message, **kwargs: notifications.append(message)
     screen = LibraryScreen(app)
     host = LibraryHarness(app, screen=screen)
 
@@ -2428,7 +2469,8 @@ async def test_library_graduation_announcement_survives_cancelled_source_switch(
                 screen._notes_state.source
                 == library_screen_module.LIBRARY_NOTES_SOURCE_DATABASE
             )
-            assert "Library tools are now available." in str(
+            assert notifications == ["Library tools are now available."]
+            assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
     finally:
@@ -2701,7 +2743,10 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
                 f"#library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "#library-rail-explore-all",
                 "#library-hub-heading",
-                "#library-hub-orientation",
+                # task-32072: the orientation line is three controls now.
+                "#library-hub-step-import",
+                "#library-hub-step-find",
+                "#library-hub-step-use",
                 "#library-hub-action-import",
                 "#library-hub-action-new-note",
             )
@@ -2720,6 +2765,9 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
                 f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "library-rail-explore-all",
+                "library-hub-step-import",
+                "library-hub-step-find",
+                "library-hub-step-use",
                 "library-hub-action-import",
                 "library-hub-action-new-note",
             ]
@@ -2758,7 +2806,10 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             assert "No recent" not in painted
             assert "Checking existing Library content…" not in painted
             assert "Get started" in painted
-            assert "1 Add · 2 Find · 3 Use" in painted
+            # task-32072: three live controls, not one orientation line.
+            assert "Import a file" in painted
+            assert "Find it" in painted
+            assert "Use it in Console" in painted
             assert "Import…" in painted
             assert "New note" in painted
             assert "Explore all tools" in painted
@@ -6370,16 +6421,17 @@ def test_library_dead_inspector_copy_is_removed():
 
 
 @pytest.mark.asyncio
-async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
-    """F-011: rail rows are one terminal line by default -- the blanket
-    "in Library" second line (pure stutter on all ~11 rows) is gone. A
-    meta line survives ONLY where it discriminates: the Study handoff
-    rows, which are a two-step trip out of Library to another screen.
+async def test_rail_rows_are_one_line_including_the_handoff_rows():
+    """F-011: rail rows are one terminal line -- the blanket "in Library"
+    second line (pure stutter on all ~11 rows) is gone.
 
-    task-2854: the meta line reads "opens staging canvas", not "opens
-    Study" -- the click this row responds to only ever opens a Library-
-    local staging canvas; leaving Library for Study is a second click
-    ("Continue in Study") from inside that canvas.
+    task-32069: so is the handoff rows' own second line. F-011 kept one for
+    the three Study rows ("see what carries over", after task-2854 retired
+    the false "opens Study"), and critique #8 measured what that cost: six
+    rail rows for three destinations, with the same sentence printed three
+    times in the primary nav. The promise moved onto the staging canvas that
+    keeps it (``LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY``), which is where a
+    reader is when it matters.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -6396,17 +6448,14 @@ async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
         }
         rows = list(screen.query("Button.library-rail-row"))
         assert rows, "expected rail rows to be mounted"
+        assert handoff_ids <= {row.id for row in rows}
         for row in rows:
             label = str(row.label)
-            if row.id in handoff_ids:
-                assert "\n" in label, f"{row.id} lost its handoff discriminator"
-                assert "see what carries over" in label
-                assert "opens Study" not in label
-                assert row.styles.height.value == 2
-            else:
-                assert "\n" not in label, f"{row.id} still carries a second line"
-                assert "in Library" not in label
-                assert row.styles.height.value == 1
+            assert "\n" not in label, f"{row.id} still carries a second line"
+            assert "in Library" not in label
+            assert "see what carries over" not in label
+            assert "opens Study" not in label
+            assert row.styles.height.value == 1
 
 
 @pytest.mark.asyncio
@@ -7271,7 +7320,12 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
         )
 
         owner = screen.query_one("#library-study-handoff-owner", Static)
-        assert str(owner.renderable) == "Generation and review run in Study."
+        # task-32069: the rail's three handoff rows each repeated "see what
+        # carries over" under them (six rows for three destinations); the
+        # promise moved onto this canvas, which is the thing that keeps it.
+        assert str(owner.renderable) == (
+            "This page shows what carries over; generation and review run in Study."
+        )
 
         # D2: ready state is a plain line, no warning-callout classes.
         recovery = screen.query_one("#library-study-handoff-recovery", Static)

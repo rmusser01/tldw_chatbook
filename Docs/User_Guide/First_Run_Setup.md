@@ -56,6 +56,10 @@ rejected API key, an unreachable local server), the summary says so instead
 of showing a ✓, the progress tracker marks those steps with !, and moving
 past the model step asks for an explicit "Continue anyway".
 
+The Summary's exits are **Review provider setup**, **Add your first document**
+(lands on Library's Import canvas — this is where your content lives),
+**Explore Home**, and **Review settings**.
+
 The Summary also asks — once, default off — whether chatbook may check your
 configured providers' model lists online at startup. Whatever you choose is
 final until you change it in Settings; finishing setup never hands you a
@@ -69,3 +73,7 @@ probe traffic leaves your machine without your action.
 
 On a re-run, current values are prefilled and stored API keys are shown only
 as "configured" — never displayed.
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32072: the
+Summary now offers "Add your first document", which finishes setup on Library's
+Import canvas; the wizard previously never mentioned Library at all.)*

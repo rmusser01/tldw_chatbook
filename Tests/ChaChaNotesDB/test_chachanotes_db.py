@@ -868,11 +868,10 @@ class TestGetAllConversationIds:
     """``get_all_conversation_ids`` -- the truncation-proof id source for
     Library chatbook export (see ``Library/library_export_scope.py``).
 
-    Mirrors the WHERE clause ``search_conversations_page`` builds for the
+    Built from the SAME filter ``search_conversations_page`` builds for the
     Library's conversations snapshot fetch (``ChatConversationService.
     list_conversations`` with ``scope_type='all'``, spanning global- and
-    workspace-scoped rows): ``client_id = ? AND deleted = 0``, but with no
-    page cap.
+    workspace-scoped rows and every client id), but with no page cap.
     """
 
     def test_returns_all_non_deleted_conversation_ids(
@@ -908,17 +907,26 @@ class TestGetAllConversationIds:
 
         assert set(ids) == {global_id, workspace_id}
 
-    def test_excludes_conversations_from_a_different_client_id(
+    def test_includes_conversations_from_a_different_client_id(
         self, db_instance: CharactersRAGDB
     ):
+        """task-32058: this used to assert the opposite, and that is the bug.
+
+        TASK-721 removed the ``client_id`` filter from the browse-everything
+        scope (rows written by server sync, a seed, or another install are
+        real conversations the Library lists), but ``get_all_conversation_ids``
+        kept its own hand-copied clause. The critique-8 live review then saw
+        the rail count "Conversations (6)" against an Export ▸ Everything
+        summary of "0 conversations". Both now resolve the same population.
+        """
         own_id = db_instance.add_conversation({"title": "Own conv"})
-        db_instance.add_conversation(
+        other_id = db_instance.add_conversation(
             {"title": "Other client conv", "client_id": "some-other-client"}
         )
 
         ids = db_instance.get_all_conversation_ids()
 
-        assert ids == [own_id]
+        assert set(ids) == {own_id, other_id}
 
     def test_returns_every_row_beyond_a_50_row_page_cap(
         self, db_instance: CharactersRAGDB

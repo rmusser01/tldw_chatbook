@@ -303,7 +303,12 @@ LIBRARY_STUDY_HANDOFF_MODES = {
 
 # Single shared ownership line for all three handoff canvases: Library only
 # prepares source context, Study owns everything downstream of "open".
-LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = "Generation and review run in Study."
+# task-32069: the rail spent a second row per handoff row repeating "see
+# what carries over" -- six rows for three destinations. The promise belongs
+# on the staging canvas that keeps it, so it is stated here instead.
+LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = (
+    "This page shows what carries over; generation and review run in Study."
+)
 
 # How many carried-forward source titles the handoff canvas names before
 # collapsing the rest into an "and N more" count.

@@ -2384,8 +2384,27 @@ a deliberate $ds-grid-line frame on the raised surface instead of the
 near-invisible Textual default border (which read as a borderless void
 with stray left-edge border fragments), and padding 0 1 so the full
 "Search Library…" placeholder still fits at 100 columns. */
-#library-search-input {
+/* task-32069: the box shares its row with a "x" clear button now, so it
+   takes the remaining width rather than the whole row (which squeezed the
+   button to zero cells and painted nothing where the affordance should be). */
+#library-rail-search-row {
+    height: 3;
     width: 100%;
+}
+
+#library-search-clear {
+    width: 3;
+    min-width: 3;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-search-input {
+    width: 1fr;
     height: 3;
     min-height: 3;
     margin: 0 0 1 0;

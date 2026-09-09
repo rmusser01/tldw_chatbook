@@ -243,7 +243,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "Library notes · Add from files · Choose authority before changes",
+            # task-32063: one sentence. This was a three-fragment run-on
+            # stacked under the work pane's own authority line, its status
+            # line and the phase purpose -- four headers over one idea.
+            "Add files to Library notes.",
             id="notes-sync-authority",
             classes="destination-section",
             markup=False,

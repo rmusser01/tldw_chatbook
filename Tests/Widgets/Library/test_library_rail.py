@@ -602,13 +602,14 @@ async def test_no_row_label_truncates_mid_word_at_120_100_and_80_columns():
                 assert fragment not in label, (row.row_id, label)
 
 
-async def test_handoff_meta_line_drops_rather_than_ellipsizing_mid_word():
-    """LIB-18: "opens staging canvas" (24 cells with its indent) does not
-    fit the real 17-cell row width -- it must drop entirely rather than
-    render Textual's own "opens stagin…" mid-word ellipsis (reproduced
-    live at 120x35). At width 0 (compose time, before layout) it still
-    renders in full, matching every other element's unfitted-until-resize
-    behavior."""
+async def test_handoff_rows_carry_no_meta_line_at_any_width():
+    """LIB-18 fitted a handoff meta line to the row width so it dropped
+    rather than ellipsizing mid-word ("opens stagin…", live at 120x35).
+
+    task-32069 removed the line outright: three destinations were spending
+    six rail rows on the same sentence. This keeps the width sweep as the
+    regression pin -- neither the fitted nor the unfitted label may grow a
+    second line back."""
     row = LibraryRailRow(
         row_id="create-flashcards",
         section_id="study",
@@ -625,7 +626,8 @@ async def test_handoff_meta_line_drops_rather_than_ellipsizing_mid_word():
     assert "\n" not in fitted
 
     unfitted = LibraryRail._row_label(row, selected=False, width=0)
-    assert "see what carries over" in unfitted
+    assert "see what carries over" not in unfitted
+    assert "\n" not in unfitted
 
 
 # -- LIB-17: prefilled search inputs are editable without cursor traps -----

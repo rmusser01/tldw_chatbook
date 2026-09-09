@@ -545,9 +545,12 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 button.set_class(selected, "library-rail-row-selected")
                 if row.count_emphasis:
                     button.add_class(f"library-rail-row-due-{row.count_emphasis}")
-                is_handoff = row.target_kind == "handoff"
-                button.styles.height = 2 if is_handoff else 1
-                button.styles.min_height = 2 if is_handoff else 1
+                # task-32069: handoff rows were two cells high to seat a
+                # "see what carries over" meta line under each -- six rail
+                # rows for three destinations. The promise now lives on the
+                # staging canvas that keeps it, so every row is one cell.
+                button.styles.height = 1
+                button.styles.min_height = 1
 
         details_lines = shell.details_lines
         try:
@@ -698,30 +701,6 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 if gloss_fit_len + len(f" — {row.subtitle}") > width:
                     subtitle_markup = ""
         label = f"{prefix}{escape_markup(raw_title)}{count_markup}{subtitle_markup}"
-        if row.target_kind == "handoff":
-            # F-011: a meta line survives ONLY where it discriminates --
-            # handoff rows are a two-step trip out of Library, unlike the
-            # plain canvas rows around them. task-2854: "opens Study" was
-            # false for THIS click -- it opens a Library-local staging
-            # canvas ("Continue in Study" lives inside that canvas, one
-            # click later, and is the one that actually leaves Library for
-            # the Study screen family).
-            # task-4023 AC#7: "opens staging canvas" traded the old lie
-            # ("opens Study") for internal jargon, printed three times in
-            # the primary nav. User language: the click shows what will
-            # carry over to Study before anything leaves the Library.
-            meta_text = "see what carries over"
-            meta_line = f"\n    {meta_text}"
-            # LIB-18: the meta line is the LOWEST-priority element (below
-            # even the gloss) -- at width 0 (compose time) it always shows,
-            # matching every other element's unfitted-until-resize
-            # behavior; once a real width is known, it shows only if it
-            # fits whole. Textual's own Static/Button overflow otherwise
-            # silently ellipsizes it mid-word ("opens stagin…"), exactly
-            # the F-015 pathology this file already exists to prevent for
-            # the count.
-            if width <= 0 or len(meta_line) - 1 <= width:
-                label += meta_line
         return label
 
     def compose(self) -> ComposeResult:
@@ -758,11 +737,20 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             return
         if self.top_action_factory is not None:
             yield from self.top_action_factory()
-        yield LibraryRailSearchInput(
-            value=self.query,
-            placeholder=self.search_placeholder,
-            id="library-search-input",
-        )
+        search_row = Horizontal(id="library-rail-search-row")
+        search_row.styles.height = "auto"
+        with search_row:
+            yield LibraryRailSearchInput(
+                value=self.query,
+                placeholder=self.search_placeholder,
+                id="library-search-input",
+            )
+            # task-32069: the box kept the last query with no visible way to
+            # empty it -- the next keystroke replaced it, but a reader looking
+            # at a stale query had no affordance at all.
+            clear = Button("x", id="library-search-clear", compact=True)
+            clear.tooltip = "Clear the Library search box"
+            yield clear
         for section in self.shell.sections:
             yield from self._compose_section(section)
 
@@ -831,7 +819,6 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             )
         if self.workspaces_body_factory is not None:
             yield from self.workspaces_body_factory()
-
     def _row(self, row_id: str) -> LibraryRailRow:
         """Return one canonical row from the full shell state."""
         return next(
@@ -844,7 +831,6 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     def _compose_row_button(self, row: LibraryRailRow) -> LibraryRailRowButton:
         """Build one production Library rail row button."""
         selected = row.row_id == self.shell.selected_row_id
-        is_handoff = row.target_kind == "handoff"
         button = LibraryRailRowButton(
             self._row_label(row, selected),
             id=f"{LIBRARY_RAIL_ROW_PREFIX}{row.row_id}",
@@ -862,8 +848,8 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         button.set_class(selected, "library-rail-row-selected")
         if row.count_emphasis:
             button.add_class(f"library-rail-row-due-{row.count_emphasis}")
-        button.styles.height = 2 if is_handoff else 1
-        button.styles.min_height = 2 if is_handoff else 1
+        button.styles.height = 1
+        button.styles.min_height = 1
         return button
 
     def _compose_section(self, section: LibraryRailSectionState) -> ComposeResult:

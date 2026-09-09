@@ -211,6 +211,10 @@ class ChunkingLabScreen(BaseAppScreen):
     """Compose native sample, authoring and captured-result regions."""
 
     BINDINGS: ClassVar = [
+        # task-32064: the Lab is opened from Library and had no way back but
+        # its own Back button -- Escape, the exit every other Library surface
+        # answers to, did nothing.
+        Binding("escape", "lab_back", "Back to Library"),
         Binding("r", "lab_run", "Run B", show=False),
         Binding("p", "lab_pin", "Pin A", show=False),
         Binding("s", "lab_save", "Save B", show=False),
@@ -680,11 +684,22 @@ class ChunkingLabScreen(BaseAppScreen):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        if action.startswith("lab_") and isinstance(
-            self.focused, (Input, TextArea, Select)
+        # ``lab_run``/``lab_pin``/``lab_save`` are bound to PRINTABLE keys, so
+        # a focused text control has to keep them. ``lab_back`` is Escape,
+        # which neither Input nor TextArea uses -- vetoing it there left the
+        # reader stuck in a full-screen tool from its most-focused control
+        # (review of PR #2531); an expanded Select consumes Escape itself.
+        if (
+            action.startswith("lab_")
+            and action != "lab_back"
+            and isinstance(self.focused, (Input, TextArea, Select))
         ):
             return False
         return super().check_action(action, parameters)
+
+    def action_lab_back(self) -> None:
+        """Leave the Lab for the Library canvas that opened it, from anywhere."""
+        self.run_worker(self._safe(self._action("lab-back")), exit_on_error=False)
 
     def action_lab_run(self) -> None:
         self.run_worker(self._safe(self.run_candidates()), exit_on_error=False)
