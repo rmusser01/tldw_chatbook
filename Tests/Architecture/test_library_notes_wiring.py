@@ -81,9 +81,10 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: SECOND subsystem writes -- see below), so 100 move. Pinned here so a field
 #: silently added to or dropped from the dataclass fails loudly instead of
 #: quietly resizing the shim surface this file checks. task-32145 added
-#: `backlinks` (the Info panel's "Linked from (N)" rows), taking the
-#: censused 100 to 101.
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 101
+#: `backlinks` (the Info panel's "Linked from (N)" rows) and
+#: `backlinks_status` (whether that lookup has answered yet), taking the
+#: censused 100 to 102.
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 102
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

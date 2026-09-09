@@ -490,6 +490,13 @@ class LibraryNotesState:
     #: can read ``50+`` instead of lying with an exact number.
     backlinks: tuple[tuple[str, str], ...] = ()
 
+    #: ``"loading"`` until the backlink query answers, then ``"ready"`` (the
+    #: rows above are the whole truth) or ``"failed"`` (it raised, or there
+    #: was no service to ask). Without it an unanswered lookup is
+    #: indistinguishable from a verified zero, and Info claims "no notes
+    #: link here yet" before -- or without ever -- checking.
+    backlinks_status: Literal["loading", "ready", "failed"] = "loading"
+
     # Task 7 owns measured breakpoint transitions. Task 5 consumes this
     # explicit presentation input now so compact/wide utility grouping is
     # testable without coupling the canvas to terminal geometry.

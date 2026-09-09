@@ -1471,6 +1471,7 @@ class LibraryNotesController:
             ),
             status_channels=status_channels,
             backlinks=self._library_notes_backlinks,
+            backlinks_status=self._library_notes_backlinks_status,
         )
     def _library_notes_active_region(
         self,
@@ -3254,6 +3255,7 @@ class LibraryNotesController:
         self._library_note_delete_origin_preview = False
         self._library_note_editor_armed = False
         self._library_notes_backlinks = ()
+        self._library_notes_backlinks_status = "loading"
         self._apply_library_notes_stage_visibility()
         self.run_worker(
             self._refresh_library_note_detail(
@@ -3288,22 +3290,28 @@ class LibraryNotesController:
         Args:
             note_id: The note whose inbound links to list.
         """
+        if not note_id:
+            return
         service = getattr(self.app_instance, "notes_scope_service", None)
         method = getattr(service, "list_note_backlinks", None)
-        if not callable(method) or not note_id:
-            return
-        try:
-            rows = await method(
-                scope="local_note",
-                note_id=note_id,
-                user_id=self._library_notes_user_id(),
-                limit=LIBRARY_NOTE_BACKLINK_DISPLAY_CAP + 1,
-            )
-        except Exception:  # noqa: BLE001 - one Info panel, never the note
-            logger.opt(exception=True).debug(
-                "library_note_backlinks_failed", note_id=note_id
-            )
-            return
+        rows: Any = ()
+        # A lookup that did not answer must not read as "no notes link here
+        # yet" -- no service to ask and a raising query are both `failed`.
+        status = "ready" if callable(method) else "failed"
+        if callable(method):
+            try:
+                rows = await method(
+                    scope="local_note",
+                    note_id=note_id,
+                    user_id=self._library_notes_user_id(),
+                    limit=LIBRARY_NOTE_BACKLINK_DISPLAY_CAP + 1,
+                )
+            except Exception:  # noqa: BLE001 - one Info panel, never the note
+                logger.opt(exception=True).debug(
+                    "library_note_backlinks_failed", note_id=note_id
+                )
+                rows = ()
+                status = "failed"
         if note_id != self._selected_note_id or self._library_notes_view != "editor":
             return
         self._library_notes_backlinks = tuple(
@@ -3311,6 +3319,7 @@ class LibraryNotesController:
             for row in rows or ()
             if str(row.get("id") or "")
         )
+        self._library_notes_backlinks_status = status
         self._apply_library_note_presentation_state()
     @on(Button.Pressed, ".library-note-backlink")
     async def handle_library_note_backlink(self, event: Button.Pressed) -> None:

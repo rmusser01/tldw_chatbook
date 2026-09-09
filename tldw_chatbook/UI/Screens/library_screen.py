@@ -27599,6 +27599,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-note-backlink")
     async def handle_library_note_backlink(self, event: Button.Pressed) -> None:
+        """Open the note an Info "Linked from" row names (task-32145).
+
+        Args:
+            event: Press of one ``.library-note-backlink`` row button.
+        """
         return await self._notes_controller.handle_library_note_backlink(event)
 
     @on(Button.Pressed, '.library-notes-folder-row')

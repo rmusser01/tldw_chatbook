@@ -21,6 +21,9 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+    library_note_backlink_header,
+)
 
 #: The seeded vault shape: "hub" is linked from two notes, "lonely" from none.
 _NOTES = [
@@ -163,6 +166,34 @@ async def test_late_arriving_backlinks_paint_without_a_recompose():
         ) == "Linked from (1)"
         entries = list(screen.query(".library-note-backlink"))
         assert [getattr(entry, "note_id", "") for entry in entries] == ["lonely"]
+
+
+def test_the_header_only_claims_zero_once_the_query_has_answered():
+    """A pending or failed lookup must not read as a verified zero."""
+    assert library_note_backlink_header((), "loading") == "Linked from — checking…"
+    assert library_note_backlink_header((), "failed") == "Linked from — couldn't check"
+    assert (
+        library_note_backlink_header((), "ready")
+        == "Linked from (0) — no notes link here yet"
+    )
+    assert library_note_backlink_header((("a", "A"),), "ready") == "Linked from (1)"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_backlink_lookup_does_not_claim_there_are_none():
+    host = _build_notes_host()
+
+    async def _boom(**kwargs):
+        raise RuntimeError("backlink query exploded")
+
+    host.app_instance.notes_scope_service.list_note_backlinks = _boom
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_in_info(screen, pilot, "hub")
+
+        await _wait_for_backlink_header(screen, pilot, "Linked from — couldn't check")
+        assert not list(screen.query(".library-note-backlink"))
 
 
 @pytest.mark.asyncio

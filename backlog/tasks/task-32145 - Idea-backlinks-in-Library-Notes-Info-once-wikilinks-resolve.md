@@ -62,4 +62,22 @@ Files: DB/ChaChaNotes_DB.py, Notes/Notes_Library.py, Notes/notes_scope_service.p
 Live-verified on the fresh profile after importing the review vault (59 notes): 'Zettelkasten — overview' read 'Linked from (2)' listing both linking notes; activating one opened it; 'scratch' read 'Linked from (0) — no notes link here yet'.
 
 No CSS touched (the rows reuse library-canvas-action), so no build_css run.
+
+Review round (PR #2552, Qodo): the header no longer claims a count the query
+has not answered. `backlinks_status` ("loading"/"ready"/"failed", wiring pin
+101→102) makes a pending lookup read "Linked from — checking…" and a failed
+one (raising query, or no service to ask) "Linked from — couldn't check",
+so only a completed query can say "no notes link here yet". Screen handler
+got its docstring. Rebutted: the shared-constant ask (the one production
+caller passes `LIBRARY_NOTE_BACKLINK_DISPLAY_CAP + 1` explicitly; the DB and
+service `limit=50` defaults are a bound for direct callers, and a
+dependency-neutral module for one integer is not worth its own file); the
+`transaction()`/cursor-context asks (69 sibling reads in ChaChaNotes_DB.py
+use the same `execute_query` + `fetchall`, and `execute_query` already joins
+an enclosing transaction when there is one); the in-memory-DB test ask
+(CharactersRAGDB keeps thread-local connections, so `:memory:` gives each
+thread its own empty database — the query crosses a thread through
+`asyncio.to_thread` and dies with "no such table: notes", verified). The
+full-scan performance finding is real at vault scale and deferred as
+task-32186 (it needs a persisted link relation and a migration).
 <!-- SECTION:NOTES:END -->

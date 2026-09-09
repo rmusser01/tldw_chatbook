@@ -132,18 +132,28 @@ def compose_note_row_label(
 LIBRARY_NOTE_BACKLINK_DISPLAY_CAP = 50
 
 
-def library_note_backlink_header(backlinks: tuple[tuple[str, str], ...]) -> str:
+def library_note_backlink_header(
+    backlinks: tuple[tuple[str, str], ...],
+    status: str = "ready",
+) -> str:
     """The "Linked from" heading for one note's inbound links.
 
     Args:
         backlinks: ``(note_id, title)`` rows, possibly one over the display
             cap (see ``LIBRARY_NOTE_BACKLINK_DISPLAY_CAP``).
+        status: ``"loading"``, ``"ready"`` or ``"failed"`` -- the count is
+            only claimed once the query has actually answered, so a pending
+            or failed lookup never reads as a verified zero.
 
     Returns:
         The heading, which names the count and, when there are none, says
         so in words rather than leaving a bare ``(0)`` to be read as a
         failed load.
     """
+    if status == "loading":
+        return "Linked from — checking…"
+    if status == "failed":
+        return "Linked from — couldn't check"
     if not backlinks:
         return "Linked from (0) — no notes link here yet"
     if len(backlinks) > LIBRARY_NOTE_BACKLINK_DISPLAY_CAP:
@@ -263,6 +273,9 @@ class LibraryNotePresentationState:
     status_channels: NotesStatusChannels | None = None
     #: ``(note_id, title)`` for each note linking to this one (task-32145).
     backlinks: tuple[tuple[str, str], ...] = ()
+    #: Whether the backlink query has answered yet -- see
+    #: ``library_note_backlink_header``.
+    backlinks_status: str = "loading"
 
 
 class _LibraryNotesTreePagerButton(Button):
@@ -1678,7 +1691,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             self._rendered_backlinks = tuple(backlinks)
             yield Static(
-                library_note_backlink_header(self._rendered_backlinks),
+                library_note_backlink_header(
+                    self._rendered_backlinks,
+                    presentation_state.backlinks_status
+                    if presentation_state is not None
+                    else "loading",
+                ),
                 id="library-note-context-backlinks-title",
                 markup=False,
             )
@@ -2079,7 +2097,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         backlink_title = self.query_one(
             "#library-note-context-backlinks-title", Static
         )
-        backlink_copy = library_note_backlink_header(backlinks)
+        backlink_copy = library_note_backlink_header(
+            backlinks, state.backlinks_status
+        )
         if self._static_text(backlink_title) != backlink_copy:
             backlink_title.update(backlink_copy)
         for selector in (
