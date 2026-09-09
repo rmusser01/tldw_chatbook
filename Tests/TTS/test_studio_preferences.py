@@ -845,18 +845,46 @@ def test_unrecoverable_studio_record_can_reset_without_touching_other_scopes(
     assert saved["character_tts"] == raw["character_tts"]
 
 
-def test_alltalk_historical_default_inherits_without_rewriting_saved_config(
-    tmp_path, monkeypatch
-):
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_voice", ["female_01.wav", "narrator.wav"])
+async def test_alltalk_migration_resolves_inherited_and_explicit_voices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy_voice: str
+) -> None:
+    from tldw_chatbook.TTS.effective_settings import TTSEffectiveSettingsResolver
+    from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
+    from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+
     raw = {
         "app_tts": {
             "default_provider": "alltalk",
-            "ALLTALK_TTS_VOICE_DEFAULT": "female_01.wav",
+            "default_model": "alltalk",
+            "default_voice": "alloy",
+            "ALLTALK_TTS_VOICE_DEFAULT": legacy_voice,
         }
     }
     store, config_path = _store(tmp_path, monkeypatch, raw)
     before = config_path.read_bytes()
     loaded = store.load()
-    assert loaded.state is StudioTTSLoadState.MISSING
-    assert loaded.snapshot.selection.voice_mode is None
-    assert config_path.read_bytes() == before
+    async def read_catalog(provider_id: str):
+        return legacy_catalog(provider_id)
+
+    resolved = await TTSEffectiveSettingsResolver().resolve_studio(
+        studio_preferences=loaded.snapshot,
+        global_preferences=TTSPreferencesSnapshot.from_settings(raw),
+        global_preferences_revision=0,
+        provider_revision_reader=lambda _provider: 0,
+        catalog_reader=read_catalog,
+    )
+    assert resolved.provider_id == "alltalk"
+    assert resolved.model_id == "alltalk"
+    if legacy_voice == "female_01.wav":
+        assert loaded.state is StudioTTSLoadState.MISSING
+        assert loaded.snapshot.selection.voice_mode is None
+        assert config_path.read_bytes() == before
+        assert resolved.voice_id == "alloy"
+        assert resolved.voice_id in legacy_catalog("alltalk").models[0].voices
+    else:
+        assert loaded.state is StudioTTSLoadState.MIGRATED
+        assert loaded.snapshot.selection.voice_mode == "exact"
+        assert resolved.voice_id == legacy_voice
+        assert _saved_config(config_path)["app_tts"] == raw["app_tts"]

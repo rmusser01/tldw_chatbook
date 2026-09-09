@@ -16,7 +16,8 @@ an isolated ARM container; it has no physical Linux audio device.
 | AllTalk and Higgs | [Provider receipts](providers/README.md): AllTalk p225/p226 playback passed, with unresolved content differences. Higgs passed playback, joined Stop, successor and three exact transcripts on the isolated PortAudio repair; its two original native cleanup failures are retained. |
 | PortAudio | [Native sink controls](portaudio/README.md): six corrected drain/Stop/successor controls passed on the exact candidate library, including actual callback PCM and clean process exits. The installed default library is unchanged. |
 | Linux ARM | [Headless ONNX qualification](linux-arm/README.md): real synthesis, inference-overlap Stop, successor and two full exact transcripts passed in Docker. Physical Linux playback remains untested. |
-| Final integration | [Installed wheel and targeted checks](integration/README.md): CPU, MPS and ONNX passed nine complete clips and three real Stop/recovery controls. All 2,274 packaged Python files match both source and installation. All recorded final processes exited; the user config hash is unchanged. |
+| Pre-review integration | [Installed wheel and targeted checks](integration/README.md): CPU, MPS and ONNX passed nine complete clips and three real Stop/recovery controls on the earlier 2,274-file wheel. These receipts remain frozen at their original source revision. |
+| Final review qualification | [Review fixes and clean installed wheel](review/README.md): 405 targeted tests passed, followed by 81 overlapping migration/resolver/provider tests. All 2,275 Python files match source, wheel and installation. Five real playback tuples passed; English yielded nine exact clips and three Stop/recovery controls. All 23 recorded owned processes exited and user configuration stayed unchanged. |
 
 Each package distinguishes successful runtime behavior, full-content comparison,
 failed attempts and cleanup. Source manifests bind the tested uncommitted code;
@@ -27,14 +28,16 @@ directory and are not committed.
 Upstream patches, the PortAudio license, the UniDic catalog, the macOS startup
 sample and raw command logs retain their original bytes, including whitespace.
 The authored files pass the whitespace check; seven hashed source/output
-snapshots are excluded from that check to preserve their recorded identity.
+snapshots and four raw post-review pytest failure logs are excluded from that
+check to preserve their recorded identity.
 
 The [opt-in Kokoro runner](../../Development/TTS/Live_Validation.md) provides
 repeatable production-path playback, cancellation and content checks. These
 checks exercise the mounted Speech Lab and trusted Console delivery path;
 they do not claim complete Console navigation or acoustic microphone loopback.
-The final wheel was built after rebasing onto `dev` at `a36fc6133c`; receipts
-identify the final source commit and byte hashes. The custom test host does not
+The final review wheel was built after rebasing onto `dev` at `41c4a5858f`;
+the earlier integration package targets `a36fc6133c`. Each package identifies
+its exact source revision and byte hashes. The custom test host does not
 open a TTS profile repository, so these runs do not qualify the separately
 changed SQLite profile-helper lifecycle.
 
@@ -47,7 +50,7 @@ Ten fix/qualification tasks are complete. Eleven new follow-ups remain:
 | TASK-32153 | Physical Linux audio device; Docker already passed headless ONNX qualification. |
 | TASK-32154 | Deliberately configured OpenAI cloud TTS credentials and quota. |
 | TASK-32155 | Deliberately configured ElevenLabs credentials and quota. |
-| TASK-32156 | Windows CPU/ONNX runtime and physical playback device. |
+| TASK-32156 | Windows CPU/ONNX runtime, physical playback device and a Windows-compatible guarded content reader. |
 | TASK-32157 | Real CUDA host for Kokoro. |
 | TASK-32158 | Real CUDA host for Chatterbox. |
 | TASK-32163 | Reviewed adoption of the qualified audio.cpp request-drain patch into approved runtimes. |

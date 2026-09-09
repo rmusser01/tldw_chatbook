@@ -1,11 +1,11 @@
 ---
 id: TASK-32149
 title: Qualify non-English Kokoro speech on macOS ARM
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 05:34'
-updated_date: '2026-09-09 09:01'
+updated_date: '2026-09-09 14:41'
 labels: []
 dependencies: []
 ---
@@ -23,7 +23,7 @@ Exercise the supported non-English Kokoro voices with real local model output an
 - [x] #3 Complete source and playback evidence plus language-capable independent transcription preserve raw differences and do not claim pronunciation quality from an English-only recognizer.
 - [x] #4 Targeted regressions cover any discovered application defects and remaining asset, provider or language-quality blockers have explicit backlog records.
 - [x] #5 French aliases and Japanese/Mandarin frontends reach the selected ONNX model correctly; missing language dependencies or Japanese dictionary data have actionable setup errors, and cancellation during phonemization cannot start later inference.
-- [ ] #6 Concurrent Japanese or Mandarin ONNX requests do not construct duplicate cached frontends or invoke a shared frontend concurrently; cancellation and backend close retain real frontend work until it finishes.
+- [x] #6 Concurrent Japanese or Mandarin ONNX requests do not construct duplicate cached frontends or invoke a shared frontend concurrently; cancellation and backend close retain real frontend work until it finishes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,4 +49,6 @@ Reason: Real ONNX Japanese output exposed the need to select the model-aligned o
 Qualified all fourteen CPU engine/language tuples for Spanish, French, Hindi, Italian, Brazilian Portuguese, Japanese and Mandarin. Preserved the baseline's three runtime failures and Japanese ONNX character-description output. Added model-aligned optional Misaki Japanese/Mandarin phonemization for ONNX, normalized French to fr-fr, and supplied fixed setup guidance for missing extras and UniDic data. Work remains in retained workers; cancellation during G2P prevents later inference. ADR required: yes; implemented backlog/decisions/142-kokoro-east-asian-phonemization-across-engines.md within ADR-023/140.
 
 Real repaired-language playback passed after rebase, with exact engine/voice/model/dictionary provenance and clean process exits. Complete small and medium ASR receipts preserve all differences: medium matches both French engines and Portuguese; Mandarin differs only by Traditional/Simplified script, while Hindi/Japanese content requires native-language review. The strict verifier is unchanged and no general pronunciation claim is made. Separate backlog work records unresolved language quality. Failure-first language/lifecycle tests and independent ten-case review probes pass. Docs/QA/tts-macos-burndown-2026-09-09/kokoro-languages/README.md retains all original/final attempts, raw transcripts, provisioning corrections and release evidence; the developer runbook documents setup.
+
+PR #2545 review added a backend-owned lock around cached Japanese/Mandarin frontend construction and invocation, inside retained workers. Twelve deterministic failing concurrency/cancel/close cases drove the fix; queued stopped work never enters phonemization and close joins active work before cache teardown. The dictionary helper contract is documented. ADR-142 and ADR-023 govern this retained ownership. Post-review evidence: Docs/QA/tts-macos-burndown-2026-09-09/review/README.md. The post-rebase targeted selection passed 405 tests with one explicit MPS skip; the final migration/resolver/provider selection passed 81 overlapping tests. The clean installed wheel matches 2,275 Python files (2,266 application plus nine profile-core files). Five serialized tuples passed generation/playback and joined cleanup; English CPU/MPS/ONNX produced nine exact full transcripts and three real Stop/recovery controls. Japanese/Mandarin raw content differences remain review-required. All 23 recorded owned PIDs exited and user config stayed unchanged. No new maintained-source Ruff diagnostics; existing debt and frozen QA snapshots are documented separately. Existing ADRs remain applicable.
 <!-- SECTION:NOTES:END -->

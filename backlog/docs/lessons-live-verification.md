@@ -2387,3 +2387,26 @@ Require terminal sink-event delivery, actual stream/notify completion and a
 clean worker exit in addition to generated audio and model-owner counters.
 Resolve the loaded native library path and hash when comparing environments;
 the Python package version alone does not identify the native implementation.
+
+## Wheel identity includes deleted files, and dependency checks can open profiles
+
+**PR #2545, TTS qualification, 2026-09-09.** After rebasing onto the Library
+reader split, setuptools reused an ignored `build/lib` copy of the deleted
+`library_media_reader_shell.py`. The wheel built and installed successfully,
+but complete source/wheel file-set comparison rejected the extra module. A
+controller launched despite that failed prerequisite; its successful playback
+was retained as excluded evidence. Archiving the owned build directory and
+rebuilding produced an exact 2,275-file source/wheel/install match, followed by
+a fresh serial playback run with an explicit identity gate.
+
+In the same review, routing standalone ASR discovery through `optional_deps`
+imported application configuration outside pytest. A private temporary profile
+must be selected before that lookup, then removed and the environment restored.
+The final five real ASR runs used a profile-access audit with a denied-open
+positive control, and the real user configuration hash remained unchanged.
+
+Check complete file sets as well as hashes, and make failed prerequisite checks
+stop dependent controllers. Qualify standalone dependency discovery outside the
+test suite's profile fixtures; a missing-dependency guard can itself initialize
+configuration before model loading begins. Receipts are retained in
+`Docs/QA/tts-macos-burndown-2026-09-09/review/`.
