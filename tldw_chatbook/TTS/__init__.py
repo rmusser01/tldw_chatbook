@@ -17,7 +17,6 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSVoiceDiscoveryResult,
     VoiceDiscoveryState,
 )
-from tldw_chatbook.TTS.audio_schemas import NormalizationOptions, OpenAISpeechRequest
 from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppDiagnosticLine,
     AudioCppProcessAdmissionSnapshot,
@@ -27,6 +26,7 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppReadyEndpoint,
     AudioCppTTSCapability,
 )
+from tldw_chatbook.TTS.audio_schemas import NormalizationOptions, OpenAISpeechRequest
 from tldw_chatbook.TTS.character_request_resolver import (
     CharacterTTSRequestResolution,
     CharacterTTSRequestResolver,
@@ -35,10 +35,10 @@ from tldw_chatbook.TTS.character_request_resolver import (
 )
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
-    STTSPlaygroundResultProjection,
     STTSPlaygroundCloneSnapshot,
     STTSPlaygroundProfilePreview,
     STTSPlaygroundRequest,
+    STTSPlaygroundResultProjection,
     TTSRequestedSelectionSnapshot,
 )
 from tldw_chatbook.TTS.preferences import TTSConfigMutation, TTSPreferencesSnapshot
@@ -49,8 +49,8 @@ from tldw_chatbook.TTS.profile_errors import (
 )
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
-    TTSCloneReference,
     TTSCloneRecipeRequirement,
+    TTSCloneReference,
     TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.profile_service import (
@@ -95,6 +95,7 @@ from tldw_chatbook.TTS.voice_bundle_codec import (
     encode_clone_voice_bundle,
     inspect_clone_voice_bundle,
 )
+
 # TASK-21108: `voice_bundle_service` (1,857 lines) is the one member of this
 # package nothing needs before first paint -- `app.py` builds the portability
 # service on first use and `UI/stts_profile_library` is the only other

@@ -19,7 +19,6 @@ from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
-
 LEGACY_EXPORT_FORMAT = "tldw-chatbook-legacy-collections"
 LEGACY_EXPORT_VERSION = 1
 MAX_LEGACY_RECOVERY_PAGE_SIZE = 100

@@ -15,7 +15,6 @@ from tldw_chatbook.DB.private_sqlite import (
     SQLiteTargetKind,
 )
 
-
 PROJECT_ROOT = Path(__file__).parents[2]
 PRODUCTION_ROOT = PROJECT_ROOT / "tldw_chatbook"
 INVENTORY_PATH = PROJECT_ROOT / "backlog/docs/sqlite-private-owner-inventory.md"

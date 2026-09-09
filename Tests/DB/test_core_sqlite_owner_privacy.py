@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 
 import tldw_chatbook.DB.private_sqlite as private_sqlite
-from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
 from tldw_chatbook.DB import (
     ChaChaNotes_DB,
     Client_Media_DB_v2,
@@ -22,6 +21,7 @@ from tldw_chatbook.DB import (
     base_db,
 )
 from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
+from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
 
 
 @dataclass(frozen=True)

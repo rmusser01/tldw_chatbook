@@ -17,8 +17,8 @@ from tldw_chatbook.DB.private_sqlite import connect_private_sqlite_descriptor
 from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
-    _ProfileMigrationValidationOwner,
     _migration_cleanup_owner,
+    _ProfileMigrationValidationOwner,
 )
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
@@ -32,6 +32,8 @@ from tldw_chatbook.TTS.profile_migration_namespace import (
     MigrationTombstoneKey,
     ParentAuthority,
     move_exact_noreplace,
+)
+from tldw_chatbook.TTS.profile_migration_namespace import (
     remove_exact as remove_exact_namespace,
 )
 from tldw_chatbook.Utils import private_paths
@@ -40,7 +42,6 @@ from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     secure_private_directory,
 )
-
 
 _SIDECARS: Final = ("-wal", "-shm", "-journal")
 _RECOVERY_LOCK = Lock()

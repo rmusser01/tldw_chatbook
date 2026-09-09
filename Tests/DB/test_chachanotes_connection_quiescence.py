@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import threading
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.DB.base_db import (
     SQLiteConnectionQuiescenceRegistry,
     _QuiescentSQLiteConnection,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
 
 @pytest.mark.parametrize("abort", [False, True])

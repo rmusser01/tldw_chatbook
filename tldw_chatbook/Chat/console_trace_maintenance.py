@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import shutil
+import sqlite3
+import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-import json
 from pathlib import Path
-import shutil
-import sqlite3
-import time
 from types import MappingProxyType
 
 from tldw_chatbook.Chat.console_trace_legacy import (
@@ -24,7 +24,6 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     _install_canvas_revision_payload_validator,
 )
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
-
 
 LEGACY_MIGRATION_NAME = "legacy_exchange_normalization"
 MAX_LEGACY_BATCH_ROWS = 100
