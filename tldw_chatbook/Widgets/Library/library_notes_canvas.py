@@ -488,13 +488,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         ``Button.Pressed`` and nothing else. Still ungated, deliberately:
         ``Input.Changed`` / ``Input.Submitted`` (a hidden widget is not in the
         focus chain, so a user cannot type into one, and no code drives these
-        programmatically off-route), and ``LibraryMediaRowGeometryChanged``,
-        which a hidden row owner can still post -- that one is rejected
-        screen-side by the return-settlement fence instead, pinned by
-        ``test_library_media_return_settlement.py::
-        test_route_change_rejects_later_geometry_settlement``. If a future
-        change makes a hidden canvas focusable or drives its Inputs from code,
-        this gate does NOT cover it.
+        programmatically off-route). Unlike ``LibraryMediaCanvas``, this
+        canvas has no row-geometry message of its own -- there is no Notes
+        analogue of ``LibraryMediaRowGeometryChanged`` to gate or fence
+        (verified: that message is defined and posted only in
+        ``library_media_canvas.py``). If a future change makes a hidden
+        canvas focusable, drives its Inputs from code, or adds a Notes
+        geometry message, this gate does NOT cover it.
 
         Args:
             event: The bubbling press.
