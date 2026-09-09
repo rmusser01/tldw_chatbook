@@ -1153,6 +1153,8 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         # the screen writes it at `_save_provider_category` -- but left this
         # exhaustive tuple behind. Stale contract, not a product change.
         "model_capabilities.models.<model>.context_window",
+        "llamacpp_snapshots.enabled",
+        "llamacpp_snapshots.keep_count",
     )
     assert records_by_category[
         SettingsCategoryId.CONSOLE_BEHAVIOR
@@ -7109,7 +7111,7 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them_to_raw_cli():
+async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them_to_canvas_and_host_access():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -7133,13 +7135,16 @@ async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them
             pilot,
             SettingsCategoryId.PRIVACY_SECURITY,
             expected_text=(
-                "Guided edit: raw CLI unlock only; posture remains read-only."
+                "Guided edits: Canvas controls and host-access unlock; quotas stay read-only."
             ),
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         visible = _visible_text(screen)
-        assert "Guided edit: raw CLI unlock only; posture remains read-only." in visible
+        assert (
+            "Guided edits: Canvas controls and host-access unlock; quotas stay read-only."
+            in visible
+        )
         assert "Check Privacy" in visible
 
 

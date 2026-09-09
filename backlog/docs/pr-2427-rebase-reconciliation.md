@@ -3128,3 +3128,97 @@ changed width/boot/Watchlists owners and integration-sensitive Library tests.
 ADR required: no new ADR. Existing ADR-086 and the upstream Watchlists width
 design govern; this is integration of accepted upstream behavior, not a new
 layout policy. Final publication/review/CI and protected merge remain open.
+
+### Width-churn rebase and targeted qualification
+
+Rebased onto `e574c81d22`, local checkpoint `886f94de0e`. Preserved both testing
+lessons, upstream immediate boot sentinels and on-disk splash disable, the PR's
+timer cleanup/bounded wait, fixed ordinary rail projection, and stronger loaded
+Reader readiness. Deferred Watchlists CSS remains in its existing split sheet;
+the generated split alone changes four width values to match upstream source
+(50fr, 42 minimum, 50 maximum, 42 expanded minimum). Root/sibling sheets remain
+unchanged and all generated CSS now reproduces.
+
+Independent review caught a weakened delayed census control after the sentinel
+union: ordinary immediate workers let it finish before delayed FTS starts.
+The delayed variant alone now extends its child required set with FTS and asserts
+that start in returned records. New assertion RED:
+`/private/tmp/pr2427-delayed-census-red.log` (one failure). Complete two-file boot
+GREEN: 19 passed, three warnings in 19.50s
+(`/private/tmp/pr2427-delayed-census-green.log`). A test-only in-memory mutation
+removing the required-wait loop fails the same assertion
+(`/private/tmp/pr2427-census-no-wait.log`); no source was modified for that control.
+The global required set stays upstream's immediate workers. Independent review
+approves the strengthened control and the exact generated CSS diff.
+
+Initial seven-file width/boot run passes 463 tests, three warnings in 55.82s
+(`/private/tmp/pr2427-width-boot.log`); the later 19-case run qualifies the corrected
+boot control. All 52 complete architecture ratchet cases pass, unchanged caps
+(`/private/tmp/pr2427-width-caps.log`), and all seven preflight checks pass
+(`/private/tmp/pr2427-width-preflight.log`). Scoped boot lint and whitespace pass.
+
+Two new affected-scope cohorts are active, not yet passing evidence:
+
+- Native-observed 452 Library cases, session 81802,
+  `/private/tmp/pr2427-width-library.log`, receipts
+  `$TMPDIR/pr2427-width-library.0b2MW7/fd_identity.jsonl`. Complete impacted reader,
+  Media, Notes and phase-C files plus explicitly selected width/geometry/focus,
+  breakpoint and lifecycle controls from the large Shell/Files files; not a
+  repeat of the earlier complete 16-file sweep.
+- Eight complete Watchlists/Settings/CSS files, 634 cases, session 23734,
+  `/private/tmp/pr2427-width-watchlists.log`.
+
+Wait for exact terminal results, inspect native retention, and address any
+failures before claiming this rebase qualified. Final publication/review/CI and
+normal protected merge remain open.
+
+### Targeted width-run results and bounded follow-up
+
+Both targeted runs are terminal. Session 81802: 23 failed, 428 passed, one existing
+skip, 933 deselected, six warnings in 891.56s. Its native inventory has zero
+SQLite/instance locks; final seven descriptors are stdio, the established pytest
+kqueue/socket pair and the legitimate faulthandler. Session 23734: 20 failed,
+614 passed, four warnings in 836.17s. No passing qualification is claimed for
+either run, and neither is still active.
+
+Independent diagnosis attributes all 23 Library failures to pre-PR2550 exact
+matrix values (rail +5 cells, Items target +10 cells, corresponding collapse/
+reopen boundaries), not a runtime defect. The two Settings assertions also
+predate upstream snapshot-owned keys and Canvas/host-access guidance. Eighteen
+Watchlists failures are limited to newly upstream real-bundle geometry harnesses;
+their production-equivalent stylesheet setup is under separate investigation.
+Task plan step 130 limits follow-up to proven stale fixtures/oracles and preserves
+exact geometry, zero-work, persistence and security assertions.
+
+The Library test-only repair now passes all six affected functions (44 cases,
+three warnings in 99.28s; `/private/tmp/pr2427-library-width-green.log`). It updates
+the exact upstream dimensions and adds five boundary phases proving 108/107
+collapse and 108/111/112 hysteretic reopen. All bounds, persistence, zero-work
+and style-write checks remain. Independent correctness review approves; Ruff
+and whitespace pass, and formatter differences match the inherited baseline.
+
+Watchlists diagnosis confirms that the new real-bundle harness omitted the
+runtime's deferred `screen_feature_watchlists.tcss`. Its fixture-only repair
+loads that sheet alongside the boot bundle, preserving all 18 geometry oracles.
+The two Settings oracle updates match exact upstream snapshot ownership keys
+and Canvas/host-access guidance; independent review confirms existing read-only
+Overview, disabled clean actions and privacy checks are retained. Both owners'
+complete-file verification remains in progress; no runtime changes are proposed.
+
+Watchlists verification is now complete: all 18 original failing cases pass
+(3.13s), the complete workbench file passes 44 cases (6.73s), and all three route
+CSS context cases pass (17.56s). Logs are `/private/tmp/pr2427-watchlists-width-green.log`,
+`/private/tmp/pr2427-watchlists-workbench-complete.log` and
+`/private/tmp/pr2427-watchlists-css-context.log`. The exact two-sheet fixture diff
+was reviewed against production's deferred route loading; no geometry assertions
+changed. Both formerly failing Settings cases pass (two tests, three warnings,
+4.19s; `/private/tmp/pr2427-settings-focused.log`). All four edited Python test
+files pass Ruff and whitespace checks.
+
+Thus all 43 observed failures have focused passing evidence with test-only
+repairs; none required a runtime or architecture change. The Settings agent's
+complete three-file native qualification is still running (session 1621,
+443 cases, `/private/tmp/pr2427-settings-oracle.log`, receipt directory
+`$TMPDIR/pr2427-settings-oracle.yCQl8M`). Wait for that terminal inventory and
+exit status before claiming its complete resource qualification. Publication is
+a progress checkpoint, not a declaration that final-head merge gates are met.
