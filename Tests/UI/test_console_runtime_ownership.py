@@ -1540,6 +1540,272 @@ async def test_attach_deferred_resume_failure_retries_after_view_start_once():
     assert screen._console_attach_reconciled is True
 
 
+def _post_reconciliation_admission_screen(monkeypatch, live_reason=None):
+    from contextlib import nullcontext
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    def no_op(*_args, **_kwargs):
+        return None
+
+    async def async_no_op(*_args, **_kwargs):
+        return None
+
+    screen, runtime, _scheduled = _attach_reconciliation_screen(async_no_op)
+    screen._start_console_view_after_reconciliation = (
+        ChatScreen._start_console_view_after_reconciliation.__get__(screen)
+    )
+    screen._sync_native_console_chat_ui = (
+        ChatScreen._sync_native_console_chat_ui.__get__(screen)
+    )
+    screen._console_sync_in_progress = False
+    screen._console_sync_requested = False
+    screen._console_transcript_sync_timer = None
+    runtime.chat_store = None
+    runtime.chat_controller = SimpleNamespace(
+        run_state=SimpleNamespace(
+            status=(
+                ConsoleRunStatus.STREAMING
+                if live_reason == "viewed"
+                else ConsoleRunStatus.IDLE
+            )
+        ),
+        in_flight_run_count=lambda: int(live_reason == "other"),
+        fleet_wake=SimpleNamespace(
+            delivering_conversation_id=lambda: (
+                "wake-owner" if live_reason == "wake" else None
+            )
+        ),
+    )
+    runtime.change_review_coordinator = SimpleNamespace(
+        publication_signal=SimpleNamespace(
+            snapshot=lambda: SimpleNamespace(pending=int(live_reason == "review"))
+        )
+    )
+    screen._task_resume_state = SimpleNamespace(followed_watchlists_operations=())
+    screen._resume_navigation_startup_in_progress = False
+    screen._pending_character_return_focus_id = None
+    screen._fleet = SimpleNamespace(
+        consume_pending_console_fleet_completion=no_op,
+        _maybe_start_console_fleet_survivor_tick=no_op,
+    )
+    screen._image = SimpleNamespace(_reconcile_h3_image_edit_completions=no_op)
+    screen._skill = SimpleNamespace(_refresh_console_skill_candidates=async_no_op)
+    screen._message = SimpleNamespace(reconcile_console_speech_context=no_op)
+    screen._session = SimpleNamespace(_sync_console_session_draft=no_op)
+    screen._retrieval = SimpleNamespace(
+        _warm_console_effective_scope_cache_if_stale=async_no_op,
+        _refresh_active_dictionaries_summary_if_scope_changed=async_no_op,
+        _refresh_active_world_books_summary_if_scope_changed=async_no_op,
+    )
+    screen._character = SimpleNamespace(
+        _refresh_active_character_avatar_if_scope_changed=async_no_op
+    )
+    screen._character_context = SimpleNamespace(refresh_if_scope_changed=async_no_op)
+    screen._workspace = SimpleNamespace(
+        tick_workspace_build_scope=nullcontext,
+        _invalidate_console_persisted_rows_cache=no_op,
+    )
+    for name in (
+        "_record_ui_timer_created",
+        "_record_ui_timer_stopped",
+        "_record_ui_worker_started",
+        "_record_ui_worker_finished",
+        "_sync_console_chat_core_state",
+        "_current_console_rail_state",
+        "_sync_console_settings_summary",
+        "_sync_console_control_bar",
+        "_sync_console_settings_recovery_surfaces",
+        "_sync_console_live_work_readiness_rows",
+        "_sync_console_mode_bar",
+        "_dispatch_active_console_roleplay_refresh",
+        "_sync_console_workspace_context",
+        "_sync_console_rail_visibility_if_changed",
+        "_dispatch_console_rail_preference_prune",
+    ):
+        setattr(screen, name, no_op)
+    screen._sync_console_native_session_tabs = async_no_op
+    screen._sync_native_console_transcript = async_no_op
+    monkeypatch.setattr(
+        chat_screen.project_instruction_ui,
+        "sync_project_instruction_status_for_screen",
+        no_op,
+    )
+    intervals, refreshed, workers = [], [], []
+
+    def interval(seconds, callback):
+        intervals.append((seconds, callback))
+        return SimpleNamespace(stop=no_op)
+
+    def run_worker(coroutine, **kwargs):
+        workers.append((coroutine.cr_code.co_name, kwargs.get("group")))
+        coroutine.close()
+
+    screen.set_interval = interval
+    screen.call_after_refresh = refreshed.append
+    screen.run_worker = run_worker
+    return screen, intervals, refreshed, workers
+
+
+def test_idle_reconciled_view_does_not_admit_transcript_poll(monkeypatch):
+    screen, intervals, _refreshed, _workers = _post_reconciliation_admission_screen(
+        monkeypatch
+    )
+    screen._start_console_view_after_reconciliation()
+    assert not [
+        callback for _, callback in intervals if callback.__name__ == "_poll_transcript"
+    ]
+
+
+@pytest.mark.parametrize("live_reason", ("viewed", "other", "wake", "review"))
+def test_reconciled_view_keeps_each_live_poll_reason_and_one_timer(
+    monkeypatch, live_reason
+):
+    screen, intervals, _refreshed, _workers = _post_reconciliation_admission_screen(
+        monkeypatch, live_reason
+    )
+    screen._start_console_view_after_reconciliation()
+    screen._start_console_transcript_sync_timer()
+    assert (
+        len(
+            [
+                callback
+                for _, callback in intervals
+                if callback.__name__ == "_poll_transcript"
+            ]
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_captured_attach_timer_overlap_rearms_real_sync_worker(monkeypatch):
+    screen, intervals, refreshed, workers = _post_reconciliation_admission_screen(
+        monkeypatch, "other"
+    )
+    screen._start_console_view_after_reconciliation()
+    poll = next(
+        callback for _, callback in intervals if callback.__name__ == "_poll_transcript"
+    )
+    after_refresh = next(
+        callback
+        for callback in refreshed
+        if callback.__name__ == "_sync_native_console_chat_ui"
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold_scope_warmup():
+        entered.set()
+        await release.wait()
+
+    screen._retrieval._warm_console_effective_scope_cache_if_stale = hold_scope_warmup
+    first = asyncio.create_task(after_refresh())
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        assert screen._console_sync_requested is False
+        await poll()
+        assert screen._console_sync_requested is True
+    finally:
+        release.set()
+        await asyncio.wait_for(first, 1)
+    assert ("_sync_native_console_chat_ui", "console-sync") in workers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before_sibling", (False, True))
+async def test_legacy_alias_skips_queryable_but_detached_tray(before_sibling):
+    from textual.widget import Widget
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._closing = screen._closed = False
+    tray = SimpleNamespace(
+        is_attached=False,
+        is_mounted=True,
+        is_running=True,
+        _closing=False,
+        _closed=False,
+        _pruning=False,
+    )
+    mounts, allocations = [], []
+
+    def mount(*children, **kwargs):
+        mounts.append(children)
+        return Widget.mount(tray, *children, **kwargs)
+
+    tray.mount = mount
+    screen.query_one = lambda *_args: tray
+    screen.query = lambda selector: (
+        [object()]
+        if before_sibling and selector == "#console-workspace-conversations"
+        else []
+    )
+    screen._workspace = SimpleNamespace(
+        _build_console_workspace_context_state=lambda: SimpleNamespace(
+            new_conversation_enabled=True
+        )
+    )
+    screen._request_console_context_allocation_reconcile = lambda: allocations.append(
+        True
+    )
+    await screen._sync_console_legacy_workspace_context_aliases()
+    assert mounts == allocations == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transition", ("detach", "replace", "close", "live_error", "success")
+)
+async def test_legacy_alias_allocation_requires_current_live_tray(transition):
+    from textual.widget import MountError
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._closing = screen._closed = False
+    tray = SimpleNamespace(is_attached=True)
+    current = [tray]
+    allocations, children = [], []
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def mount(child, **_kwargs):
+        if transition == "live_error":
+            raise MountError("sentinel attached-tray failure")
+        children.append(child)
+        entered.set()
+        await release.wait()
+
+    tray.mount = mount
+    screen.query_one = lambda *_args: current[0]
+    screen.query = lambda _selector: []
+    screen._workspace = SimpleNamespace(
+        _build_console_workspace_context_state=lambda: SimpleNamespace(
+            new_conversation_enabled=True
+        )
+    )
+    screen._request_console_context_allocation_reconcile = lambda: allocations.append(
+        True
+    )
+    if transition == "live_error":
+        with pytest.raises(MountError, match="sentinel attached-tray failure"):
+            await screen._sync_console_legacy_workspace_context_aliases()
+        assert allocations == []
+        return
+    pending = asyncio.create_task(
+        screen._sync_console_legacy_workspace_context_aliases()
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        if transition == "detach":
+            tray.is_attached = False
+        elif transition == "replace":
+            current[0] = SimpleNamespace(is_attached=True)
+        elif transition == "close":
+            screen._closing = True
+    finally:
+        release.set()
+        await asyncio.wait_for(pending, 1)
+    assert len(children) == 1
+    assert children[0].id == "console-new-workspace-conversation"
+    assert allocations == ([True] if transition == "success" else [])
+
+
 def test_runtime_project_decision_owner_never_constructs_textual_widgets():
     source = (_PACKAGE_ROOT.parent / _RUNTIME_MODULE).read_text(encoding="utf-8")
     assert "ProjectInstructionSetupModal" not in source

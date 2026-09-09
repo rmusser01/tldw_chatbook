@@ -285,6 +285,31 @@ dispatch pass the final 21-case focused gate (3 existing dependency warnings,
 9.03s), with scoped lint/format/diff checks. Startup diagnostics remain root-owned;
 this gate is not a boot census, native run or full-suite result.
 
+Conditional startup-admission diagnosis scope (before tests): use a hand-built
+screen to invoke the real post-reconciliation starter, captured transcript timer
+callback and sync/coalescer through an awaited dependency barrier. Prove idle
+timer admission and its actual overlap-to-worker mechanism without setting the
+coalesced-request flag by hand. Preserve independently active viewed work,
+other-session in-flight work, wake delivery and pending review publication, plus
+timer idempotence. A fix, if separately authorized after evidence, is limited to
+initial polling admission; no budget/allowlist/coalescer or lifecycle exception
+change. Existing boot/lifecycle ADR boundaries apply; no new ADR is required.
+The uncaptured early-quit MountError remains a separate root-owned diagnosis.
+Root subsequently captured the early-quit/shutdown failure at the deferred legacy
+workspace-alias worker's mount on an unattached tray (mounted/running flags still
+true). Before that repair, add exact detached-tray/sibling and post-await owner
+change regressions plus live error/success controls. Guard the captured tray's
+attachment and screen lifecycle immediately before mount and revalidate current
+tray identity after its await before allocator admission. No broad MountError
+suppression or global recomposition change. Both startup repairs are authorized;
+all focused new cases remain in the existing runtime-ownership test file.
+Both source-seam repairs passed 15 selected cases (zero skips, 3 existing warnings,
+7.87s), including real detached-mount RED and successful mounted alias controls.
+Root then ran the unchanged no-plugin six-case actual startup gate against frozen
+source: 6 passed, zero skips, 3 warnings, 54.34s. UI-ready census is 972/973;
+slow-mount scheduler, quit/shutdown/setup-failure and worker census pass without
+budget or allowlist changes. Protected original feature worktree remains unchanged.
+
 Policy review disposition before fixture adaptation: ADR-094 already retains
 approval/install/script decisions through no-view runtime domain routers; the
 incoming blanket None-setter/immediate-refusal assumption is obsolete for those

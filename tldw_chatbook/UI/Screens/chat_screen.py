@@ -13689,6 +13689,8 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
 
+        if _console_screen_is_torn_down(self) or not workspace_context.is_attached:
+            return
         state = self._workspace._build_console_workspace_context_state()
 
         if not self.query("#console-new-workspace-conversation"):
@@ -13705,6 +13707,16 @@ class ChatScreen(BaseAppScreen):
                 await workspace_context.mount(new_button, before=before_status)
             else:
                 await workspace_context.mount(new_button)
+            if _console_screen_is_torn_down(self) or not workspace_context.is_attached:
+                return
+            try:
+                current_context = self.query_one(
+                    "#console-workspace-context", ConsoleWorkspaceContextTray
+                )
+            except (NoMatches, QueryError):
+                return
+            if current_context is not workspace_context:
+                return
             self._request_console_context_allocation_reconcile()
 
     @on(ConsoleWorkspaceContextTray.Relabeled)
@@ -16200,7 +16212,8 @@ class ChatScreen(BaseAppScreen):
         # (notably while a hidden approval is pending). The initial sync only
         # paints the current snapshot, so re-arm polling for later chunks and
         # terminalization; the timer stops itself when no live work remains.
-        self._start_console_transcript_sync_timer()
+        if self._console_transcript_poll_needed():
+            self._start_console_transcript_sync_timer()
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
@@ -18085,6 +18098,27 @@ class ChatScreen(BaseAppScreen):
             message, session_id=session_id
         )
 
+    def _console_transcript_poll_needed(self) -> bool:
+        """Keep polling while any existing transcript publication owner is live."""
+        controller = self._console_chat_controller
+        if controller is None:
+            return False
+        wake = getattr(controller, "fleet_wake", None)
+        delivering_read = getattr(wake, "delivering_conversation_id", None)
+        wake_delivering = callable(delivering_read) and delivering_read() is not None
+        review_coordinator = self._console_runtime().change_review_coordinator
+        review_pending = (
+            review_coordinator.publication_signal.snapshot().pending > 0
+            if review_coordinator is not None
+            else False
+        )
+        return (
+            controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
+            or controller.in_flight_run_count() > 0
+            or wake_delivering
+            or review_pending
+        )
+
     def _start_console_transcript_sync_timer(self) -> None:
         if self._console_transcript_sync_timer is not None:
             return
@@ -18124,23 +18158,7 @@ class ChatScreen(BaseAppScreen):
             # asyncio task first runs) must not let a poll beat in that gap
             # self-stop -- the wake turn would then stream with no poll and
             # freeze exactly as before the delivery hook existed.
-            wake = getattr(controller, "fleet_wake", None)
-            delivering_read = getattr(wake, "delivering_conversation_id", None)
-            wake_delivering = (
-                callable(delivering_read) and delivering_read() is not None
-            )
-            review_coordinator = self._console_runtime().change_review_coordinator
-            review_pending = (
-                review_coordinator.publication_signal.snapshot().pending > 0
-                if review_coordinator is not None
-                else False
-            )
-            if (
-                controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
-                and controller.in_flight_run_count() == 0
-                and not wake_delivering
-                and not review_pending
-            ):
+            if not self._console_transcript_poll_needed():
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
                 # the browser promptly instead of waiting out the TTL.
