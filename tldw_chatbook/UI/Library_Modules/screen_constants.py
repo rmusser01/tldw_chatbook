@@ -250,6 +250,13 @@ _LIBRARY_READER_SHELL_SELECTOR = (
 )
 LIBRARY_NOTES_SOURCE_DATABASE = "database"
 LIBRARY_NOTES_SOURCE_FILES = "files"
+# task-32050: a note load that never returns used to leave the canvas on
+# "Loading note…" for the rest of the session. Past this deadline the load
+# is abandoned into the existing failed state, which carries Retry.
+LIBRARY_NOTE_LOAD_DEADLINE_SECONDS = 3.0
+LIBRARY_NOTE_LOAD_TIMEOUT_COPY = (
+    "Unable to load note — timed out after 3 s. Press Retry."
+)
 LIBRARY_CANVAS_KIND_NOTES = "notes"
 LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS = frozenset(
     {LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE}
