@@ -15,6 +15,78 @@ from tldw_chatbook.Persona_Buddy.interaction import (
 )
 
 
+def _review_buddy_import(library: Any, entered_path: str) -> Any:
+    """Interpret pasted local paths on the import worker, retaining no-follow review."""
+    import os
+    import stat
+    from pathlib import Path
+
+    from tldw_chatbook.Persona_Visual.importer import PersonaVisualImportError
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    invalid_path = "Check the path. Enter a local Buddy pack filename."
+    if type(entered_path) is not str or not 1 <= len(entered_path) <= 4096:
+        raise ValueError(invalid_path)
+    value = entered_path.strip()
+    if len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]:
+        value = value[1:-1]
+    if value.lower().startswith(("http://", "https://", "file://")):
+        raise ValueError(
+            "Download the pack first, then enter its local filesystem path."
+        )
+    # Expand only the current user's home shorthand. Never evaluate shell text or
+    # resolve links: the importer must still inspect the exact selected file.
+    if value.startswith("~/") or (os.name == "nt" and value.startswith("~\\")):
+        value = str(Path.home()) + value[1:]
+    try:
+        path = validate_path_simple(value, probe_existing=False)
+    except ValueError:
+        raise ValueError(invalid_path) from None
+    if not path.is_absolute():
+        raise ValueError(
+            "Enter an absolute path or a path starting with ~/ to the downloaded pack."
+        )
+    # This preflight supplies recovery copy only. The review below independently
+    # pins/revalidates the file, so a successful stat never grants read authority.
+    try:
+        entry = path.lstat()
+    except FileNotFoundError:
+        raise ValueError(
+            "Buddy pack not found. Check the filename and download location."
+        ) from None
+    except OSError:
+        raise ValueError(
+            "Could not read the Buddy pack. Check file access permissions and retry."
+        ) from None
+    if not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1:
+        raise ValueError(
+            "Choose a regular file copied to this device, not a folder or linked file."
+        )
+    try:
+        return library.review_archive(path)
+    except PersonaVisualImportError as exc:
+        message = {
+            "persona_visual_import_invalid": (
+                "This file is not a valid native Buddy pack. Download the .tldw-persona-vpack "
+                "again using GitHub's Download raw file button, then retry."
+            ),
+            "persona_visual_import_unsupported": (
+                "This pack uses an unsupported format or renderer. Choose a native "
+                ".tldw-persona-vpack compatible with this Chatbook version."
+            ),
+            "persona_visual_import_stale": "The pack changed during import. Finish downloading it, then retry.",
+            "persona_visual_import_cancelled": "Buddy import was cancelled. Retry when ready.",
+        }.get(
+            exc.category,
+            "Could not read the Buddy pack. Check file access permissions and retry.",
+        )
+        raise ValueError(message) from exc
+    except Exception as exc:
+        raise ValueError(
+            "Could not read the Buddy pack. Check the path and file access permissions, then retry."
+        ) from exc
+
+
 class BuddyManagementCoordinator:
     """Own staged-management application and scope; never own Console execution."""
 
@@ -504,17 +576,24 @@ class BuddyManagementCoordinator:
                     imports.get(choice.import_path) if imports is not None else None
                 )
                 if selected_id is None:
+                    review = await asyncio.to_thread(
+                        _review_buddy_import, self.library, choice.import_path
+                    )
+                    require_current()
                     try:
-                        review = await asyncio.to_thread(
-                            self.library.review_archive, choice.import_path
-                        )
-                        require_current()
                         record = await asyncio.to_thread(
                             self.library.publish_review, review
                         )
                     except Exception as exc:
+                        if isinstance(exc, ValueError) and str(exc) in {
+                            "buddy_source_changed",
+                            "persona_visual_authority_changed",
+                        }:
+                            raise ValueError(
+                                "The pack changed during import. Finish downloading it, then retry."
+                            ) from exc
                         raise ValueError(
-                            "Could not import this Buddy pack. Check the path, pack format and profile storage, then retry."
+                            "The pack was read but could not be installed. Check profile storage permissions and free space, then retry."
                         ) from exc
                     selected_id = record.id
                     if imports is not None:

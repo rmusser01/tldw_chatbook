@@ -1,0 +1,48 @@
+---
+id: TASK-32172
+title: Accept pasted Buddy pack paths and clarify import failures
+status: Done
+assignee:
+  - '@codex'
+created_date: '2026-09-09 17:02'
+updated_date: '2026-09-09 17:12'
+labels: []
+dependencies: []
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+A user importing Trenchcoat on dev receives a generic failure. The published archive works with an absolute path, but common home-relative and quoted path inputs fail identically. Make the import input usable and provide actionable failure messages without changing archive validation or existing selections.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Buddy management imports valid native packs entered as absolute paths, home-relative paths, or quoted local paths.
+- [x] #2 Missing files, invalid archives, unsupported packs, stale sources and storage publication failures give actionable path-free messages while preserving prior Buddy settings.
+- [x] #3 Existing no-follow source checks and rejection of links, unsafe input and malformed pack content remain enforced; focused regressions and the actual Trenchcoat archive are verified.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md (existing); backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md (existing)
+Reason: Routine import-input and error-copy correction; immutable review, no-follow checks, publication and ownership contracts stay unchanged.
+1. Reproduce the published Trenchcoat archive and common path inputs on latest dev.
+2. Add focused failing regressions through Buddy management using real archive validation and SQLite publication, plus failure/selection preservation cases.
+3. Normalize home-relative and quoted local paths in the UI worker; retain no-follow validation and provide safe actionable errors for input, review and publication.
+4. Run targeted library, coordinator and modal checks; repeat the actual pack import and review the diff.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented pasted-path handling in Buddy Management: current-home shorthand and matching outer quotes are normalized without resolving links or executing shell text. Missing/non-regular files, invalid/unsupported archives, stale sources, read permissions, storage installation and concurrent settings changes have distinct path-free recovery messages. Source-read OSError uses the existing failed category at the snapshot pinning boundary; decoder/content failures remain invalid. Previous selections and import retry identities remain intact. Updated the import placeholder and Buddy guide.
+
+Validation on dev base e574c81d22: 98 targeted tests passed across new management-import regressions, coordinator, library, modal and native importer. Initial regressions failed on the old path/error behavior; additional source-mutation, permission and double-slash-home regressions also failed before their fixes. Ruff lint/format, compile and git diff --check passed. Independent read-only review found the permission-message issue and verified it and home-prefix handling fixed.
+
+The published Trenchcoat archive is 217491 bytes, SHA-256 620f06958112d9be1dce0d6592842f47ada9c8c4d9f359c0ed92d878af4ab80f (Git blob 30207a60400e92f079f5a3bb76adfdb38dd2e75c confirmed with GitHub API). Actual bytes passed the mounted headless Textual dialog with absolute, home-relative, single-quoted and double-quoted-home inputs, independent publication and native preview in disposable profiles. This is not native-terminal or Windows qualification. The original reporter OS, download method and exact input remain unconfirmed, so the fix addresses a reproduced path/error problem without asserting their precise root cause.
+
+ADR required: no new ADR; existing ADR-139 and ADR-074 ownership, review and validation boundaries are preserved.
+<!-- SECTION:NOTES:END -->
