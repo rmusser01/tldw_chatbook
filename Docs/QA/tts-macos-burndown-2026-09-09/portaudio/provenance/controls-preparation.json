@@ -1,0 +1,25 @@
+{
+  "status": "prepared_not_run",
+  "script_sha256": "e414c9703a9d83c530c061bc714349b5ba817651edbd3663e6ab1b7d7d7c3445",
+  "candidate_library_sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+  "inputs": [
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-01/audio/console-warmup.wav",
+      "sha256": "43cdbf8f3d4d449c99513a7f3247dc88b95b9a223420b80a4cc6cb5646305cd4",
+      "sample_rate": 24000,
+      "channels": 1,
+      "seconds": 4.88
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-02/audio/console-warmup.wav",
+      "sha256": "9b7f62bcf0390eeb4fa659e38f4f7f633217417d82f1a16463f258fcb648a46a",
+      "sample_rate": 24000,
+      "channels": 1,
+      "seconds": 4.08
+    }
+  ],
+  "planned_controls": "Two cycles of full drain first WAV, Stop during audible second WAV with queued audio, successor drain second WAV; six controls total.",
+  "no_audio_or_model_initialized_during_preparation": true,
+  "outer_timeout_seconds": 90,
+  "requires_exclusive_audio_slot": true
+}

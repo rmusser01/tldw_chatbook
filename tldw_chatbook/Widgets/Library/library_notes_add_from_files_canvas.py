@@ -28,6 +28,7 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     NotesSyncConflictChoice,
 )
 from tldw_chatbook.Notes.notes_sync_models import validate_notes_sync_opaque_id
+from tldw_chatbook.Utils.Utils import elide_path_middle
 
 
 _CHOICE_SLUGS = {
@@ -297,6 +298,15 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 "Import once — Copy files into Notes. Later changes to the originals are not tracked.",
                 markup=False,
             )
+            # task-32125: both relationships are one choice, so both buttons
+            # belong here under their own description. Import once used to be
+            # composed into the pinned bar, 36 rows below its description.
+            yield Button(
+                "Import once",
+                id="notes-add-import-once",
+                classes="library-canvas-action",
+                compact=True,
+            )
             yield Static(
                 "Keep a folder synced — Create a lasting connection. Changes continue between the folder and Notes.",
                 markup=False,
@@ -343,7 +353,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             )
             yield Static("Folder", markup=False)
             yield Static(
-                setup.folder or "No folder selected",
+                elide_path_middle(setup.folder) if setup.folder
+                else "No folder selected",
                 id="notes-sync-folder-summary",
                 classes="destination-purpose",
                 markup=False,
@@ -803,12 +814,6 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         phase = self.snapshot.phase
         if phase == "choose":
             yield Button(
-                "Import once",
-                id="notes-add-import-once",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
                 "Back to Notes",
                 id="notes-sync-back",
                 classes="library-canvas-action",
@@ -987,7 +992,9 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             folder = self.query("#notes-sync-folder-summary")
             if folder:
                 folder.first(Static).update(
-                    snapshot.setup.folder or "No folder selected"
+                    elide_path_middle(snapshot.setup.folder)
+                    if snapshot.setup.folder
+                    else "No folder selected"
                 )
             server = self.query("#notes-sync-server-disabled-reason")
             if server:

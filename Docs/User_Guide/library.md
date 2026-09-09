@@ -168,7 +168,8 @@ the landing does not.
 ```
 
 When the rail is beside content, its automatic width follows the existing
-3:13 Library-to-canvas proportion and stays between 24 and 34 cells. An
+3:13 Library-to-canvas proportion plus five cells and stays between 29 and 39
+cells when space allows. Destination item lists default to 50 cells. An
 explicit custom preference can be 24–48 cells; ordinary two-pane views may
 temporarily shrink it to preserve 40 content cells, while adaptive readers
 may collapse or prioritize panes. These responsive changes never overwrite

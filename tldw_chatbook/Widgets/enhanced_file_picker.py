@@ -22,7 +22,10 @@ from textual.timer import Timer
 from textual.widgets import Button, Input, Label, ListItem, ListView, OptionList, Static
 
 from ..Third_Party.textual_fspicker import Filters
-from ..Third_Party.textual_fspicker.base_dialog import FileSystemPickerScreen
+from ..Third_Party.textual_fspicker.base_dialog import (
+    FileSystemPickerScreen,
+    resolve_typed_directory,
+)
 from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
 from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryEntry
@@ -2544,9 +2547,14 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
         self._sync_dir_path_input(nav.location)
 
     def _input_bar(self) -> ComposeResult:
-        """Provide the path input for direct navigation."""
-        from textual.widgets import Input
+        """Provide the labelled path input for direct navigation.
 
+        AC#2 (task-32122): a persistent "Folder path" label, not just a
+        placeholder that vanishes the moment the user types.
+        """
+        from textual.widgets import Input, Label
+
+        yield Label("Folder path:", id="dir-path-label")
         yield Input(id="dir-path-input", placeholder="Type path or select below")
 
     def _dir_nav(self) -> SearchableDirectoryNavigation:
@@ -2596,33 +2604,30 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
         value = event.value.strip()
         if not value:
             return
-        if "\x00" in value:
-            self._set_error("Path cannot contain null characters.")
-            self.query_one("#dir-path-input", Input).focus()
+        result = resolve_typed_directory(value, self._dir_nav().location)
+        if isinstance(result, Path):
+            self._dir_nav().location = result
             return
-        try:
-            target = MakePath.of(value).expanduser()
-            if not target.is_absolute():
-                target = self._dir_nav().location / target
-            target = target.resolve()
-        except (RuntimeError, OSError, ValueError) as error:
-            self._set_error(str(error))
-            self.query_one("#dir-path-input", Input).focus()
-            return
-        if target.is_dir():
-            self._dir_nav().location = target
-            return
-        if target.exists():
-            # A real path that is not a directory is a different mistake
-            # than a nonexistent one; the vendored SelectDirectory
-            # distinguishes them too.
-            self._set_error(f"Not a directory: {target.name}")
-        else:
-            self._set_error(f"Path not found: {value}")
+        self._set_error(result)
         self.query_one("#dir-path-input", Input).focus()
 
     @on(Button.Pressed, "#select")
     def _select_viewed_directory(self, event: Button.Pressed) -> None:
-        """Return the directory currently being viewed."""
+        """Return the typed directory, resolving it before the browsed one.
+
+        Used to always return ``_dir_nav().location`` -- the directory
+        merely being browsed -- silently discarding a path the user typed
+        but never pressed Enter on (task-32122 AC#1). Resolving the field
+        first, with an empty field falling back to the browsed directory
+        (``resolve_typed_directory``'s own empty-value behavior, matching
+        ``_sync_dir_path_input`` keeping the field in step with
+        navigation), keeps the no-typing case unchanged.
+        """
         event.stop()
-        self.dismiss(result=self._dir_nav().location)
+        value = self.query_one("#dir-path-input", Input).value
+        result = resolve_typed_directory(value, self._dir_nav().location)
+        if isinstance(result, Path):
+            self.dismiss(result=result)
+            return
+        self._set_error(result)
+        self.query_one("#dir-path-input", Input).focus()

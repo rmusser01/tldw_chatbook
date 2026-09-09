@@ -1,0 +1,66 @@
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/TTS/test_studio_preferences.py:1:1
+   |
+ 1 | / from __future__ import annotations
+ 2 | |
+ 3 | | from concurrent.futures import ThreadPoolExecutor
+ 4 | | from dataclasses import FrozenInstanceError, replace
+ 5 | | import math
+ 6 | | from pathlib import Path
+ 7 | | from threading import Barrier
+ 8 | | from types import MappingProxyType
+ 9 | | import tomllib
+10 | |
+11 | | import pytest
+12 | | import toml
+13 | |
+14 | | from tldw_chatbook import config as config_module
+15 | | from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
+16 | | from tldw_chatbook.TTS.studio_preferences import (
+17 | |     STUDIO_TTS_PROVIDER_OPTION_KEYS,
+18 | |     STUDIO_TTS_SCHEMA_VERSION,
+19 | |     StudioTTSLoadState,
+20 | |     StudioTTSPreferenceStore,
+21 | |     StudioTTSPreferencesSnapshot,
+22 | |     StudioTTSSelectionOverrides,
+23 | |     StudioTTSWriteStatus,
+24 | | )
+25 | | from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+26 | |     BUILT_IN_TTS_PROVIDER_IDS as OWNERSHIP_PROVIDER_IDS,
+27 | | )
+   | |_^
+help: Organize imports
+   |
+2  |
+3  + import math
+4  + import tomllib
+5  | from concurrent.futures import ThreadPoolExecutor
+6  | from dataclasses import FrozenInstanceError, replace
+   - import math
+7  | from pathlib import Path
+8  | from threading import Barrier
+9  | from types import MappingProxyType
+   - import tomllib
+10 |
+--------------------------------------------------------------------------------
+19 |     StudioTTSLoadState,
+   -     StudioTTSPreferenceStore,
+20 |     StudioTTSPreferencesSnapshot,
+21 +     StudioTTSPreferenceStore,
+22 |     StudioTTSSelectionOverrides,
+   |
+
+RUF059 Unpacked variable `config_path` is never used
+   --> Tests/TTS/test_studio_preferences.py:614:12
+    |
+612 |     monkeypatch: pytest.MonkeyPatch,
+613 | ) -> None:
+614 |     store, config_path = _store(
+    |            ^^^^^^^^^^^
+615 |         tmp_path,
+616 |         monkeypatch,
+    |
+help: Prefix it with an underscore or any other dummy variable pattern
+
+Found 2 errors.
+[*] 1 fixable with the `--fix` option (1 hidden fix can be enabled with the `--unsafe-fixes` option).

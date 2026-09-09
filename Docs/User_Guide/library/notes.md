@@ -30,10 +30,10 @@ Wide Database Notes keeps Library navigation beside the list while you scan:
 +----------------------+-----------------------------------------------+
 | Library              | Database | Files                              |
 | Browse               | Notes (N)                                     |
-|   Notes              | Filter...   Sort   Sync   Import   Export     |
-|   Media              |                                               |
-|   Conversations      |  Note title                           age     |
-| ...                  |  Note title                           age     |
+|   Notes              | Filter...  New  Select  Add from files… Export |
+|   Media              | New folder   Move   Remove                    |
+|   Conversations      |  Note title · age                             |
+| ...                  |  Note title · Folder · age                    |
 +----------------------+-----------------------------------------------+
 ```
 
@@ -74,16 +74,38 @@ editor's own Back control returns to its list.
 - **Source strip** — a "Library notes | Folder files" toggle above the canvas.
   This page covers the Library notes side; see below for Folder files.
 - **Notes list** — the default view: a "Notes (N)" header, the
-  "Filter notes… (Enter)" field, a toolbar (**New** / sort / Add from
-  files… / Export… / Select), a **New folder** action beneath it, the
-  folder tree, and one row per note showing its title and age. Its own
-  grip collapses or restores the list without changing the Folder Files tree
-  choice. Renaming a note updates its list row as soon as the note saves —
-  returning to the list shows the new title with no filter re-query needed.
+  "Filter notes… (Enter)" field, a toolbar (**New** / Select / Add from
+  files… / Export, plus the folder and placement actions — two rows on a
+  wide list, three when the list is too narrow to seat two groups on one),
+  the folder tree, and one row per note showing its title and how long ago
+  it changed
+  ("3m", "1d"). When two notes in the same folder share a title, each row
+  also names its folder — "Reading list · Unfiled · 2h". While no note is
+  open the list takes the width the empty work area would otherwise waste,
+  so long titles are not truncated on a wide terminal; opening a note hands
+  that width back. Its own grip collapses or restores the list without
+  changing the Folder Files tree choice. Renaming a note updates its list
+  row as soon as the note saves — returning to the list shows the new title
+  with no filter re-query needed.
+
+  The folder tree is ordered by title, which is the order the database pages
+  notes in, so it carries no sort control; the sort control belongs to the
+  flat list shown when no folder tree is loaded.
 
   *Verified against fix/library-uat-31796-31797 — 2026-09-06 (task-31796: the
   list row no longer keeps the pre-rename "Untitled" title until a filter
   re-query).*
+
+  In a narrow list pane the toolbar's action groups stack one action per
+  line rather than running off the pane edge, so every action stays
+  pressable.
+
+  *Verified against fix/library-notes-list — 2026-09-09 (task-32127: the list
+  no longer sits at 38 columns beside an empty work area, and its action
+  groups stack rather than clip in a narrow pane; task-32137: rows
+  carry an age and same-folder duplicate titles name their folder;
+  task-32128: the tree's title order is the database's, so Sort is not
+  offered there).*
 - **Note work area** — opens when you click a note. **Edit** shows the title
   and body, **Preview** renders the Markdown, and **Info** holds keywords,
   dates, version details, copy/export actions, and Delete. Save status and
@@ -93,7 +115,9 @@ editor's own Back control returns to its list.
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button plus a "From a template" list.
 - **Add from files…** — asks whether this is an **Import once** or a lasting
-  **Keep a folder synced** relationship before reading a source.
+  **Keep a folder synced** relationship before reading a source. Both buttons
+  sit together, each directly under its own description; the bar below holds
+  only **Back to Notes**.
 - **Manage sync folders** — appears when roots or migration candidates exist;
   it shows text-explicit status and the valid action for each root.
 
@@ -305,8 +329,13 @@ both stay closed until you choose to reopen one.
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
 | "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. |
 
-With no notes at all, the list reads "No notes yet. Create one to see it
-here."
+With no notes at all, the list reads "No notes yet. Create your first note."
+above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
+solutions with Agent Lessons" above) is the only row showing, so a
+first-time user is never left staring at one unexplained folder with no
+other cue. While the library holds zero notes, that folder row itself also
+carries a one-line gloss: "Agent_Lessons — where Console agents file
+reusable lessons (empty)".
 
 ### Edit, Preview, and Info
 
@@ -372,11 +401,18 @@ forward, either fixing the field or discarding a still-new note.
 After a confirmed delete, the receipt stays in the Notes list until you
 choose **Undo**, choose **Dismiss**, complete a newer note deletion, or leave
 the list for **Add from files** or **Folder files** — either of those also
-dismisses a still-open receipt, since it is scoped to this list session.
-**Undo** restores that exact database note and immediately returns its row
-and the Notes rail count. **Dismiss** removes only the receipt; the note
-remains deleted. Notes do not currently expose a separate Trash browser, so
-the receipt is the in-Library recovery action.
+dismisses a still-open receipt, since it is scoped to this list session. Its
+"✓ deleted · \<title\>" line sits above the two actions rather than beside
+them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
+**Undo** restores that exact database note and immediately returns its row —
+in its folder, or under Unfiled — along with the Notes rail count, and moves
+the selection to the restored row. **Dismiss** removes only the receipt; the
+note remains deleted. Notes do not currently expose a separate Trash browser,
+so the receipt is the in-Library recovery action.
+
+*Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
+receipt's actions are no longer composed off the pane; task-32124: Undo
+returns the row to the folder tree, not only the count).*
 
 ### New note view
 
@@ -406,7 +442,9 @@ drops, because Enter there goes back rather than creating anything.
 
 ### Add from files and lasting sync
 
-**Add from files…** first asks what relationship you want:
+**Add from files…** first asks what relationship you want. Until you choose,
+the header names neither relationship — it reads "Add from files" and its next
+action is to pick one:
 
 - **Import once** copies supported files into Database Notes and ends after its
   reviewed receipt. Later changes to the originals are not tracked.
@@ -467,27 +505,57 @@ not the same as **Keep a folder synced**: the import ends after this reviewed
 batch, while lasting sync retains a root relationship.
 
 Choose files one at a time with **Add another file**, or choose one folder.
-A folder is exclusive; it cannot be combined with selected files. Selected
-files also need an existing-or-new destination path such as
-`Research / Interviews`. The destination is only a proposal during checking;
-no folder or note is created yet.
+A folder is exclusive; it cannot be combined with selected files, so a folder
+selection offers no **Add another file**. Either way, **Change selection**
+reopens the picker and replaces what you chose, and **Clear** drops the
+selection without leaving Import once. Selected files also need an
+existing-or-new destination path such as `Research / Interviews`. The
+destination is only a proposal during checking; no folder or note is created
+yet.
 
-Choose **Check selection** to build a read-only review. Review groups explain
-whether each source is new, an unchanged or changed repeat, an uncertain
-match, unsupported, or failed. You can skip an item, create a new note, or,
-when an existing match is authorized, update its content and/or add its folder
-placement. Uncertain matches must be confirmed. If the imported top-level
-folder already exists, choose whether to use it, create a unique sibling, or
-enter another name.
+The folder picker's **Folder path** field can be typed into directly: press
+**Enter** to browse into the typed path, or click **Select folder** to use it
+immediately without pressing Enter first — either way, whatever the field
+currently holds is what gets picked, not merely the directory being browsed.
+An invalid path shows an inline reason and leaves the dialog open. Once a
+folder is picked, the confirmation line shows its full path (elided in the
+middle for long paths, keeping the folder name itself visible), not just its
+name.
+
+Choose **Check selection** to build a read-only review. Each source is one
+line — path · what will happen · where it lands — with its **Skip** and
+**Create new** controls beside the path. Rows are grouped by outcome (**New**,
+**Unchanged repeat**, **Changed repeat**, **Uncertain match**, **Unsupported**,
+**Skipped**, **Empty**, **Failed**) and each group header carries **Skip all**
+and, where the group can create notes, **Create all** for the rows it counts.
+An empty or whitespace-only file is reported as "Empty file — nothing to
+import." and an application configuration file (a JSON or YAML document with no
+note body) as "Not a note file (app configuration)." A well-formed document
+that simply holds no note — an empty JSON array, a CSV with only headers —
+reads "This source does not contain any notes." None of these is a failure. A
+document that mixes note records with other records is still a failure ("This
+source could not be parsed as notes."), so a damaged export is never presented
+as harmless configuration. A structured source states how many notes it will
+create, so a two-row CSV reads "create 2 new notes". You can still skip an
+item, create a new note, or, when an existing match is authorized, update its
+content and/or add its folder placement; **Confirm this match**, **Replace note
+content** and **Add folder placement** sit on their own line under the row, so
+they stay reachable in a narrow pane. Uncertain matches must be confirmed. If
+the imported top-level folder already exists, choose whether to use it, create
+a unique sibling, or enter another name.
 
 Only **Import selected items** approves and executes the exact choices shown.
 Progress remains visible and **Cancel import** stops cooperatively after the
-current item; completed items are not rolled back. A partial receipt states
-what finished. Retryable failures show **Retry N failures**; a cancelled batch
-with unfinished items shows **Retry unfinished items**. **Back to Notes** may
-hide a running import without stopping it; the list then offers **View import**
-or **Continue import** until it settles. **Last import** reopens the same-session
-receipt afterward.
+current item; completed items are not rolled back. The receipt states what
+happened in plain words — "Import finished · 61 notes created · 11 files
+skipped" — and a **Skipped (N)** disclosure lists each skipped path with its
+reason. A file the app skipped for you — an unchanged repeat, an empty or
+unsupported source — keeps its own reason there; only a row you set to Skip
+yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
+**Retry N failures**; a cancelled batch with unfinished items shows **Retry
+unfinished items**. **Back to Notes** may hide a running import without
+stopping it; the list then offers **View import** or **Continue import** until
+it settles. **Last import** reopens the same-session receipt afterward.
 
 ## Common tasks
 
@@ -502,7 +570,8 @@ receipt afterward.
 1. In the notes list, click **Add from files…**, choose **Import once**, and
    pick the first file or one folder.
 2. For files, click **Add another file** as needed and enter the Database Notes
-   destination. A folder already supplies its proposed hierarchy.
+   destination. A folder already supplies its proposed hierarchy. Picked the
+   wrong source? Use **Change selection** or **Clear**.
 3. Click **Check selection** and review classifications, actions, matches, and
    any top-level folder collision.
 4. Click **Import selected items**. You can cancel cooperatively, retry work
@@ -514,7 +583,9 @@ receipt afterward.
    cutover release.
 2. In the notes list, click **Add from files…** and choose **Keep a folder
    synced**.
-3. Choose a local folder, direction, and local destination. Server sync remains
+3. Click **Choose folder…**; type into the **Folder path** field and either
+   press Enter (browses into it) or click **Select folder** (uses it right
+   away). Choose a direction and local destination. Server sync remains
    unavailable until its separate capability is installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
    deletion-like effects.
@@ -703,6 +774,43 @@ New note view focuses **Blank note** on entry, ↑/↓ walk it and the template
 rows with a visible cursor, the footer's "enter create note" follows the
 focused control, and Tab no longer leaves the Library screen for the
 navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*
+
+*Verified against fix/library-notes-onboarding — 2026-09-09 (task-32126:
+the empty-state line previously never rendered once the seeded
+Agent_Lessons folder existed, because the tree projection had a row and
+the "no rows" check never fired; the guide's copy also disagreed with the
+code's. Fixed to render "No notes yet. Create your first note." above the
+tree whenever the library holds zero notes, matching the code copy
+exactly, and to gloss the Agent_Lessons folder row while it does. Pinned
+in `Tests/Widgets/Library/test_library_notes_canvas.py`.)*
+
+*Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
+Import once and Keep-synced folder pickers used to commit the directory
+being browsed and silently ignore a typed-but-unsubmitted path when
+**Select folder** was pressed. Both now resolve the **Folder path** field
+first — Enter still browses into it, and Select/Select folder use it
+immediately, with an inline error and the dialog left open for an invalid
+path. The confirmation line shows the full picked path, not just its
+basename. Pinned in `Tests/UI/test_file_open_select_folder.py`,
+`Tests/UI/test_select_directory_typed_path.py`,
+`Tests/UI/test_enhanced_select_directory.py`.)*
+
+*Verified against fix/library-notes-import-ux — 2026-09-09 (task-32125: the
+chooser shows **Import once** and **Keep a folder synced** together, each under
+its own description, and the header no longer says "Lasting sync" before you
+have chosen. task-32130: empty files and application config files are reported
+as empty/skipped instead of failed, the receipt discloses **Skipped (N)** with
+every path and reason, and the completion line counts what happened.
+task-32134: **Change selection** and **Clear** ship beside the selection.
+task-32135: review rows are one line each, grouped, with per-group **Skip all**
+/ **Create all**.)*
+
+*Verified against fix/library-notes-import-ux — 2026-09-09 (review of
+task-32130 and task-32135: a note-free structured document is skipped rather
+than failed while a mixed one stays a failure, an automatic skip keeps its own
+reason on the receipt instead of "Skipped by you.", the receipt keeps its
+skipped paths after another selection starts, and the follow-on review choices
+moved onto their own line so nothing is clipped out of reach.)*
 
 *Verified against fix/library-notes-editor-keys — 2026-09-09 (task-32131: `/`
 no longer types itself into the filter it focuses, and a second `/` while the

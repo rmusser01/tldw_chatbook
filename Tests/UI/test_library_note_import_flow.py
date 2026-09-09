@@ -440,9 +440,10 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         screen.query_one("#library-notes-import-back").press()
         await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
 
+        # task-32128 dropped "#library-notes-sort": this list is a folder
+        # tree, which no longer composes a Sort control.
         for selector in (
             "#library-notes-new",
-            "#library-notes-sort",
             "#library-notes-select-toggle",
             "#library-notes-export",
         ):
@@ -477,9 +478,10 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         library_screen_module._sync_library_canvas(screen, "notes")
         await pilot.pause()
 
+        # task-32128 dropped "#library-notes-sort": this list is a folder
+        # tree, which no longer composes a Sort control.
         for selector in (
             "#library-notes-new",
-            "#library-notes-sort",
             "#library-notes-select-toggle",
             "#library-notes-export",
         ):
@@ -488,3 +490,89 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         screen.query_one("#library-notes-add-from-files").press()
         await _wait_for_selector(screen, pilot, "#notes-add-import-once")
         assert screen._notes_state.view == "lasting_add"
+
+
+async def test_real_import_then_back_offers_last_import_and_names_the_skips(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A settled import leaves Last import on the list and names what it skipped.
+
+    Task-32134 AC#2 and task-32130 AC#3 through the shipped path: a real
+    folder import, the shipped Back to Notes button, then the button the
+    Notes list renders from ``can_revisit_receipt``.
+    """
+    notes_path = tmp_path / "notes.sqlite"
+    receipt_path = tmp_path / "import-receipts.sqlite"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "keeper.md").write_text("# Keeper\n\nBody", encoding="utf-8")
+    (vault / "app.json").write_text('{"livePreview": true}', encoding="utf-8")
+    (vault / "empty.md").write_text("   \n", encoding="utf-8")
+    database = CharactersRAGDB(notes_path, client_id="library-import-skips")
+    folders = LocalNoteFolderRepository(database)
+    interop = NotesInteropService(
+        base_db_directory=tmp_path,
+        api_client_id="library-import-skips",
+        global_db_to_use=database,
+    )
+    scope_service = NotesScopeService(
+        local_notes_service=interop,
+        server_service=None,
+        folder_repository=folders,
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "get_notes_sync_state_db_path",
+        lambda: receipt_path,
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    app.chachanotes_db = database
+    app.notes_scope_service = scope_service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-notes").press()
+            # A folder selection renders no destination input, so this opens
+            # the chooser directly rather than through _open_import_once.
+            await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+            _resolve_picker_immediately(screen, vault)
+            screen.query_one("#library-notes-add-from-files").press()
+            await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+            screen.query_one("#notes-add-import-once").press()
+            await _wait_for_selector(screen, pilot, "#note-import-check")
+
+            screen.query_one("#note-import-check").press()
+            await _wait_for_selector(screen, pilot, "#note-import-import")
+            screen.query_one("#note-import-import").press()
+            await _wait_for_selector(screen, pilot, "#note-import-skipped")
+
+            receipt = screen._library_note_import_controller.snapshot.receipt
+            assert (receipt.imported, receipt.skipped) == (1, 2)
+            projection = screen._library_note_import_controller.presentation_snapshot
+            assert projection.skipped_count == 2
+            assert dict(projection.skipped_items) == {
+                "vault/app.json": "Not a note file (app configuration).",
+                "vault/empty.md": "Empty file — nothing to import.",
+            }
+            assert projection.receipt_detail == (
+                "Import finished · 1 note created · 2 files skipped"
+            )
+
+            # The shipped Back to Notes button, not Escape.
+            screen.query_one("#library-notes-import-back").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-import-receipt")
+            assert (
+                screen._library_notes_canvas_kwargs()["import_receipt_available"]
+                is True
+            )
+
+            screen.query_one("#library-notes-import-receipt").press()
+            await _wait_for_selector(screen, pilot, "#note-import-skipped")
+    finally:
+        interop.close_all_user_connections()
+        database.close_connection()

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+# Prepared only. Root must grant the exclusive inference/audio slot before launch.
+cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown
+export PYTHONDONTWRITEBYTECODE=1
+export PATH=/opt/homebrew/bin:$PATH
+export PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown:/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/packages/tldw_profile_core/src
+export ALLTALK_VALIDATION_SPEAKER=p226
+# Verify the unchanged bundled library in the real child; do not select the patch.
+export TLDW_VALIDATION_PORTAUDIO_PREFIX=/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/_sounddevice_data/portaudio-binaries
+export TLDW_VALIDATION_PORTAUDIO_SHA256=f48bedb7f4f79c0ca050776afe943458555db7341e0dae00511d109ccde907c0
+exec /private/tmp/tts-macos-burndown/runtime-python312/bin/python -B /private/tmp/tts-macos-burndown/higgs/qualify_providers.py --provider alltalk --format wav --scenarios playback,repeat --repeats 1 --phase-timeout 180 --cleanup-timeout 120 --run-timeout 600 --expected-package-root /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook --output "${1:?Supply a new private p226 run directory}" --play-audio

@@ -30,6 +30,9 @@ from tldw_chatbook.Notes.note_import_planner import apply_item_override
 
 MAX_IMPORT_REVIEW_PAGE_SIZE = 25
 
+MAX_RECEIPT_SKIPPED_ROWS = 50
+"""Rows the receipt lists by name before it falls back to the count alone."""
+
 
 class NoteImportPhase(str, Enum):
     """Visible phases of one import-once session."""
@@ -83,6 +86,9 @@ class NoteImportWorkflowSnapshot:
     progress: ImportExecutionProgress | None = None
     receipt: ImportExecutionReceipt | None = field(default=None, repr=False)
     latest_receipt: ImportExecutionReceipt | None = field(default=None, repr=False)
+    # The reviewed plan is discarded when a new selection starts, so the rows
+    # behind ``latest_receipt``'s skipped count are captured at settle time.
+    latest_skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     cancel_requested: bool = False
     decision_item_ids: frozenset[str] = frozenset()
     collision_rename_input: str = field(default="", repr=False)
@@ -234,6 +240,8 @@ class LibraryNoteImportSnapshot:
     retry_available: bool = False
     retry_label: str = ""
     can_cancel: bool = False
+    skipped_count: int = 0
+    skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
 
 
 def _page(
@@ -311,6 +319,28 @@ def select_folder(
         destination_segments=(),
         destination_input="",
         destination_error="",
+        revision=state.revision + 1,
+    )
+
+
+def clear_selection(
+    state: NoteImportWorkflowSnapshot,
+) -> NoteImportWorkflowSnapshot:
+    """Drop the current source selection and return to an empty SELECT phase.
+
+    Args:
+        state: The workflow state whose selection should be discarded.
+
+    Returns:
+        A fresh selection state that retains this session's latest receipt.
+    """
+
+    return replace(
+        initial_note_import_snapshot(
+            page_size=state.page.page_size,
+            latest_receipt=state.latest_receipt,
+        ),
+        latest_skipped_items=state.latest_skipped_items,
         revision=state.revision + 1,
     )
 
@@ -676,6 +706,9 @@ def settle_import(
         progress=None,
         receipt=receipt,
         latest_receipt=receipt,
+        latest_skipped_items=_skipped_items(
+            state, min(receipt.skipped, MAX_RECEIPT_SKIPPED_ROWS)
+        ),
         cancel_requested=False,
     )
 
@@ -778,7 +811,15 @@ def project_library_note_import_snapshot(
     )
     return LibraryNoteImportSnapshot(
         phase=state.phase.value,
-        selected_names=tuple(path.name for path in state.selected_paths),
+        # A folder pick keeps its full absolute path (task-32122 Step 3):
+        # "1 folder selected: notes-review" hid which of two same-named
+        # folders was actually chosen. File picks stay basenames -- the
+        # files list already shows several side by side, where full paths
+        # would overflow every reasonable pane width.
+        selected_names=tuple(
+            str(path) if state.selection_is_folder else path.name
+            for path in state.selected_paths
+        ),
         selection_kind=selection_kind,
         destination=state.destination_input,
         destination_error=state.destination_error,
@@ -829,6 +870,8 @@ def project_library_note_import_snapshot(
             else ""
         ),
         receipt_detail=_receipt_detail(receipt),
+        skipped_count=receipt.skipped if receipt else 0,
+        skipped_items=state.latest_skipped_items if receipt else (),
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
         retry_label=(
@@ -902,6 +945,42 @@ def _receipt_status(receipt: ImportExecutionReceipt | None) -> str:
     return "Import status unavailable."
 
 
+def _skipped_items(
+    state: NoteImportWorkflowSnapshot,
+    limit: int,
+) -> tuple[tuple[str, str], ...]:
+    """Name the reviewed sources this import left alone, with their reason.
+
+    The executor works the plan in order, so the first ``limit`` skips are the
+    ones a partial run actually reached. ``limit`` is the receipt's own skipped
+    count (bounded), which keeps the rendered rows and the disclosure heading
+    from disagreeing on a cancelled import.
+
+    Args:
+        state: A settling workflow state whose reviewed plan is still present.
+        limit: How many skipped rows the receipt can honestly account for.
+
+    Returns:
+        ``(display path, reason)`` for each skip, in plan order.
+    """
+
+    if state.plan is None or limit <= 0:
+        return ()
+    return tuple(
+        (
+            item.source.display_path,
+            # Only a skip the user chose is theirs: an unchanged repeat and
+            # every non-importable source already default to SKIP, and their
+            # own reason says why (review of task-32130).
+            item.reason
+            if item.default_action is ImportAction.SKIP
+            else "Skipped by you.",
+        )
+        for item in state.plan.items
+        if item.selected_action is ImportAction.SKIP
+    )[:limit]
+
+
 def _receipt_detail(receipt: ImportExecutionReceipt | None) -> str:
     if receipt is None:
         return ""
@@ -909,4 +988,16 @@ def _receipt_detail(receipt: ImportExecutionReceipt | None) -> str:
         return "Cancelled. Finished items were not rolled back."
     if receipt.state is ImportSessionState.NEEDS_ATTENTION:
         return "Some items failed. Completed changes were kept."
-    return "All planned items settled."
+    # task-32130: "All planned items settled." named no outcome at all.
+    counts = (
+        (receipt.imported, "note", "created"),
+        (receipt.updated, "note", "updated"),
+        (receipt.skipped, "file", "skipped"),
+        (receipt.failed, "file", "failed"),
+    )
+    parts = [
+        f"{count} {noun if count == 1 else noun + 's'} {verb}"
+        for count, noun, verb in counts
+        if count
+    ]
+    return " · ".join(["Import finished", *(parts or ["nothing changed"])])

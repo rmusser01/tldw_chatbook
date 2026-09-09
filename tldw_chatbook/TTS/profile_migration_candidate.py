@@ -14,7 +14,12 @@ from tldw_chatbook.DB.private_sqlite import (
     ProfileMigrationBoundaryDestination,
     backup_profile_migration_boundary,
 )
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    _migration_cleanup_owner,
+    _ProfileMigrationValidationOwner,
+    _raise_migration_cleanup_failure,
+)
 
 
 class ProfileMigrationBoundary(str, Enum):
@@ -132,7 +137,9 @@ class ProfileMigrationBoundarySnapshot:
                 ),
             )
             self.__completed = True
-        except ProfileRepositoryError:
+        except ProfileRepositoryError as error:
+            if _migration_cleanup_owner(error) is not None:
+                raise
             raise ProfileRepositoryError("migration_failed") from None
         except BaseException as error:
             if not isinstance(error, Exception):
@@ -228,12 +235,30 @@ def step_profile_migration_candidate(
             connection.rollback()
         except BaseException as error:
             cleanup_errors.append(error)
+    close_owner = None
     if isinstance(connection, sqlite3.Connection):
         try:
             connection.close()
         except BaseException as error:
             cleanup_errors.append(error)
+            close_owner = _ProfileMigrationValidationOwner(-1)
+            close_owner.connection = connection
 
+    carried_owner = next(
+        (
+            owner
+            for error in (body_error, *cleanup_errors)
+            if (owner := _migration_cleanup_owner(error)) is not None
+        ),
+        None,
+    )
+    if close_owner is not None or carried_owner is not None:
+        _raise_migration_cleanup_failure(
+            close_owner if close_owner is not None else carried_owner,
+            body_error,
+            *cleanup_errors,
+            code="migration_failed",
+        )
     for pending_error in (body_error, *cleanup_errors):
         if pending_error is not None and not isinstance(pending_error, Exception):
             raise pending_error

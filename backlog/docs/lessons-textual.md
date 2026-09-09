@@ -702,3 +702,81 @@ shape (C2, the session RLock across the ingest submit). Rule: any owner method a
 on the UI thread takes only a short pointer-swap lock and runs `close()` outside every lock; the
 structural guarantee ("the retained slot is written only after `session.stop()` returned") is
 what prevents the mid-batch close, not a lock.
+
+## A class flip restyles the flipped node's ENTIRE subtree — `update=False` is the escape for query-only markers (phase C task 2.5, 2026-09-08)
+
+`node.add_class` / `remove_class` / `set_class` / `toggle_class` call
+`DOMNode.update_node_styles()` by default, which is
+`App.update_styles(node)` -> `stylesheet.update_nodes(node.walk_children(with_self=True))`
+— **one `Stylesheet.apply` for every descendant**, not one for the node. The
+same is true of the `disabled` reactive, because `:disabled` is a pseudo-class.
+So a marker class set on a container is priced by the size of that container's
+subtree, and setting two markers on the same node pays it twice.
+
+**The incident.** Library phase C put a route marker
+(`.library-media-route` / `.library-notes-route`) on the browse shell, with
+`apply_route` as its single writer — a good design that kept ~35 route probes
+honest. Instrumenting `Stylesheet.apply` by trigger
+(`Helper_Scripts/library_restyle_attribution_probe.py`) showed those two
+`set_class` calls were **238 of the 423 apply calls on a rail switch, 43 ms of
+its 86 ms of restyle** — the largest single originator, bigger than every
+widget mount on the switch put together. Neither class appears in any
+stylesheet rule, so every one of those applies recomputed the same styles.
+
+**The fix, and the guard that makes it honest.** `set_class(..., update=False)`
+is Textual's own opt-out. It is only correct while no rule depends on the
+class, so pin that rather than assume it — scan the PARSED stylesheet
+(`app.stylesheet.rules`, each `RuleSet.selectors`), not the `.tcss` sources,
+because widget `DEFAULT_CSS` is part of the same stylesheet and a grep of the
+css directory misses it. `Tests/UI/test_library_phase_c_switch_storm.py::
+test_route_marker_classes_have_no_stylesheet_rules` is the worked example; it
+fails the moment a rule starts depending on a marker and names the seam to
+restore. Visit the routes that mount the relevant widgets BEFORE scanning — a
+widget's `DEFAULT_CSS` only joins the stylesheet once that class has been
+mounted.
+
+Corollary worth knowing: `Stylesheet.rules_map` is keyed by each rule's
+RIGHTMOST selector only, so "is this class in `rules_map`?" does NOT answer
+"can this class affect anything" — a rule like `.marker Button {}` is filed
+under `Button`. Scan the whole selector text.
+
+## A node's `@on` handlers run BEFORE its `on_<message>` method — `event.stop()` cannot un-run either (phase C task 3, 2026-09-09)
+
+Phase C moved 16 canvas-origin `@on` rows from `LibraryScreen` onto
+`LibraryMediaCanvas`. That canvas already carried a residency gate from task 2:
+
+```python
+def on_button_pressed(self, event: Button.Pressed) -> None:
+    if not self.display:          # parked off-route: refuse
+        event.stop()
+        event.prevent_default()
+```
+
+The gate looked like it would cover the migrated rows too. It does not, and
+the reason is dispatch ORDER inside a single node. `MessagePump._get_dispatch_
+methods` walks the MRO and, per class, yields that class's `_decorated_handlers`
+FIRST and the naming-convention method (`on_button_pressed`) SECOND. So the
+`@on`-decorated handler runs before the gate. And `event.stop()` only sets
+`_stop_propagation`, which `_on_message` reads AFTER the whole dispatch loop —
+it stops BUBBLING, it cannot cancel another handler on the same node.
+`prevent_default()` is no better here: `_no_default_action` is only checked at
+the top of each `for cls in MRO` iteration, so it skips PARENT classes, never
+the rest of the current one.
+
+Verified with a 20-line spike before designing around it (a `Vertical` with one
+`@on(Button.Pressed, "#b")` and one `on_button_pressed`; the order list came
+back `['decorated', 'gate']`), then reproduced on the landed code: with the
+migration in place and the refusal removed, pressing Sort on the HIDDEN
+resident Media canvas opened its chooser while the user was reading Notes.
+
+**The rule:** a same-node guard implemented as `on_<message>` protects only
+handlers on ANCESTOR nodes. The moment a region widget starts catching its own
+messages with `@on`, the guard has to move inside those handlers — one shared
+seam they all call first, not a separate method that merely runs later.
+
+**And the trap inside the trap:** the existing pin for that gate
+(`test_hidden_resident_media_canvas_does_not_process_row_presses`) stayed GREEN
+through the whole hazard, because the row it presses (`.library-media-row`) was
+NOT one of the migrated handlers. A guard's pin only covers the handlers that
+route through the guard; migrating a handler out from under one silently
+narrows what the pin proves without changing the pin's result.

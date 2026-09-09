@@ -1,0 +1,94 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-02/evidence.json",
+  "evidence_sha256": "28d474856b949fdd50f24ad5760ff4b9ba560954c809dd8a6024d64658676531",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 2,
+  "clips": [
+    {
+      "transcript": "銀色のコンパスがこの辺頭を始め ます真ん中には静かな火事円が あります。 この辺頭は小金色の浅焼けで終わり ます。",
+      "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+      "anchors": [
+        "銀色のコンパス",
+        "静かな果樹園",
+        "朝焼け"
+      ],
+      "anchor_positions": [
+        0,
+        -1,
+        -1
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "speech-lab",
+      "audio_sha256": "4ad41524be823a2976eb06bc1554dc551bc3e78808d70033702fcea49d7a5cf0",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 5.32,
+          "text": "銀色のコンパスがこの辺頭を始め ます真ん中には静かな火事円が"
+        },
+        {
+          "start": 5.32,
+          "end": 6.32,
+          "text": "あります。"
+        },
+        {
+          "start": 6.32,
+          "end": 9.200000000000001,
+          "text": "この辺頭は小金色の浅焼けで終わり ます。"
+        }
+      ],
+      "detected_language": "ja"
+    },
+    {
+      "transcript": "銀色のコンパスがこの辺頭を始め ます真ん中には静かな火事円が あります。 この辺頭は小金色の浅焼けで終わり ます。",
+      "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+      "anchors": [
+        "銀色のコンパス",
+        "静かな果樹園",
+        "朝焼け"
+      ],
+      "anchor_positions": [
+        0,
+        -1,
+        -1
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "console-warmup",
+      "audio_sha256": "4ad41524be823a2976eb06bc1554dc551bc3e78808d70033702fcea49d7a5cf0",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 5.32,
+          "text": "銀色のコンパスがこの辺頭を始め ます真ん中には静かな火事円が"
+        },
+        {
+          "start": 5.32,
+          "end": 6.32,
+          "text": "あります。"
+        },
+        {
+          "start": 6.32,
+          "end": 9.200000000000001,
+          "text": "この辺頭は小金色の浅焼けで終わり ます。"
+        }
+      ],
+      "detected_language": "ja"
+    }
+  ],
+  "status": "content_review_required"
+}

@@ -240,6 +240,11 @@ provider**, then **Choose model**) and opens the Console Settings modal.
 The composer stays locked until a provider and model are configured; once
 they are, the empty transcript reads "Ready — type a message to begin."
 
+A second action, **Write a note in Library**, stays available beside it for
+as long as the card is showing — it needs no provider, and opens Library's
+New note view directly. A local-first user who came for notes is not stuck
+behind a provider-only card.
+
 If you land here with a handoff already staged — e.g. from Library's
 **Use in Console** on a Search/RAG result while a provider isn't set up
 yet — the card shows an extra line under "Get started" naming what's
@@ -269,8 +274,22 @@ with a Kokoro voice value. If an older configuration shows **Server default**,
 choose Exact and save. Selection errors identify the setting or voice profile
 that needs attention; correct it before trying speech again. In **Lab > Speech**,
 Kokoro's **Automatic (from voice)** language option follows the selected voice.
-Speech Lab starts with **Use ONNX** enabled, matching automatic reply speech;
-the switch still allows an explicit PyTorch selection.
+Automatic reply speech follows Kokoro's **Use ONNX** setting in global Settings.
+Speech Lab starts with **Use ONNX** enabled and its switch can explicitly select
+PyTorch for a preview.
+
+Kokoro PyTorch uses the official Kokoro v1 runtime and requires Python 3.11 or
+3.12. Install `tldw_chatbook[local_tts]`; if English language setup fails, run
+`python -m spacy download en_core_web_sm` in that same environment and retry.
+Use a v1 `.pth` checkpoint and `.pt` voice packs; an adjacent `config.json` is
+used when provided, otherwise the official v1 configuration is cached on first
+use. Japanese and Chinese also need `misaki[ja]` and `misaki[zh]`, respectively.
+On Apple Silicon, the PyTorch MPS option runs neural inference on the GPU and
+Fourier operations on CPU. On Python 3.13 or later, use ONNX.
+Oversized non-English phoneme sequences
+fail with a request to split the text with newlines, rather than silently losing
+the end of the speech.
+
 Kokoro WAV, MP3 and other encoded files are limited to five minutes per request.
 For longer speech, shorten the text or choose PCM; an oversized encoded request
 fails without playing a truncated file.
@@ -651,3 +670,9 @@ width; the footer token counter is retired in favor of the status row's
 cost chip; the Status ▾ collapse choice and the status-row placement
 setting persist; compact mode (under 35 rows) drops the breathing-room
 rows. This page's layout tour re-verified against that build.*
+
+*Verified against fix/library-notes-onboarding — 2026-09-09 (task-32140:
+added the "Write a note in Library" action beside the Get started card's
+provider steps — needs no provider, opens Library's New note view, and
+stays available for the whole time the card is blocking. Widget-level
+check in `Tests/UI/test_library_notes_wave_onboarding.py`.)*

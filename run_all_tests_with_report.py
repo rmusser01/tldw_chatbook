@@ -163,8 +163,8 @@ def validate_environment() -> bool:
     print("Checking test environment...")
     
     # Check Python version
-    if sys.version_info < (3, 11):
-        print(f"Error: Python 3.11+ required, but you have {sys.version}")
+    if sys.version_info < (3, 12):
+        print(f"Error: Python 3.12+ required, but you have {sys.version}")
         return False
     
     # Check if we're in the project directory

@@ -123,7 +123,7 @@ async def test_resize_off_the_media_route_does_not_resolve_the_media_layout() ->
         screen.query_one("#library-row-browse-conversations", Button).press()
         await pilot.pause()
         await pilot.pause()
-        assert not screen.query("#library-media-reader-shell")
+        assert not screen.query(".library-media-route")
 
         calls = {"count": 0}
         original = type(screen)._sync_library_media_reader_layout_from_shell
@@ -161,7 +161,7 @@ async def test_resize_on_the_media_route_still_carries_the_focus_intent() -> Non
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-more")
-        shell = screen.query_one("#library-media-reader-shell")
+        shell = screen.query_one(".library-media-route")
         screen.query_one("#library-media-reader-more", Button).focus()
         await pilot.pause()
         assert screen.focused is not None

@@ -177,6 +177,93 @@ async def test_folder_selection_is_exclusive_and_needs_no_destination() -> None:
         assert app.query_one("#note-import-check", Button).disabled is False
 
 
+async def test_folder_selection_summary_shows_absolute_path_with_basename_intact() -> (
+    None
+):
+    """task-32122 Step 3: the folder confirmation must show a real path, not a
+
+    basename -- and a long absolute path must middle-elide rather than lose
+    the trailing folder name a user actually recognizes their pick by.
+    """
+    long_path = (
+        "/Users/robert/Documents/deeply/nested/somewhere/notes-review-vault"
+    )
+    app = _CanvasApp(
+        _snapshot(
+            selected_names=(long_path,),
+            selection_kind="folder",
+            status_line="1 folder selected.",
+            can_check=True,
+            check_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        summary = _plain(app.query_one("#note-import-source-summary", Static))
+        assert summary.startswith("1 folder selected: ")
+        assert "notes-review-vault" in summary
+        assert "…" in summary
+        assert "/Users/robert/Documents/deeply/nested/somewhere" not in summary
+
+
+async def test_long_bare_filename_in_files_list_head_truncates_not_tail() -> None:
+    """Review round 2 escalated minor: a bare filename (no "/") has no
+
+    basename/prefix split for elide_path_middle to preserve, so it used to
+    silently fall through to keeping the *tail* instead of the *head* --
+    changing the pre-existing files-list truncation direction. Must still
+    head-truncate, matching every name a user actually recognizes a file by
+    (the start, not whatever happens to be 47 characters before the end).
+    """
+    long_name = "a" * 60 + ".md"
+    app = _CanvasApp(
+        _snapshot(
+            selected_names=(long_name,),
+            selection_kind="files",
+            destination="Inbox",
+            can_check=True,
+            check_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(80, 28)) as pilot:
+        await pilot.pause()
+        summary = _plain(app.query_one("#note-import-source-summary", Static))
+        assert summary == f"1 file selected: {long_name[:47]}…"
+
+
+async def test_folder_selection_summary_middle_elides_windows_paths_too() -> None:
+    """Qodo review round 4 ("Windows users lose folder confirmation"): a
+
+    folder selection is projected as a native ``str(Path)``, which on
+    Windows uses backslash separators. The path/bare-filename branch (and
+    ``elide_path_middle``'s own basename extraction) must recognize those
+    too, or a long Windows folder path falls into the bare-filename
+    head-truncate branch and loses its basename instead of keeping it.
+    """
+    long_path = (
+        r"C:\Users\robert\Documents\deeply\nested\somewhere\notes-review-vault"
+    )
+    app = _CanvasApp(
+        _snapshot(
+            selected_names=(long_path,),
+            selection_kind="folder",
+            status_line="1 folder selected.",
+            can_check=True,
+            check_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        summary = _plain(app.query_one("#note-import-source-summary", Static))
+        assert summary.startswith("1 folder selected: ")
+        assert "notes-review-vault" in summary
+        assert "…" in summary
+        assert r"Documents\deeply\nested\somewhere" not in summary
+
+
 async def test_select_controls_post_typed_physical_messages() -> None:
     app = _CanvasApp(
         _snapshot(
@@ -234,6 +321,8 @@ async def test_checking_state_names_work_and_offers_cancel() -> None:
         ("changed_repeat", "Changed repeat"),
         ("uncertain_match", "Uncertain match"),
         ("unsupported", "Unsupported"),
+        ("skipped", "Skipped"),
+        ("empty", "Empty"),
         ("failed", "Failed"),
     ),
 )
@@ -251,7 +340,8 @@ async def test_review_groups_every_planner_classification(
     async with app.run_test(size=(80, 28)) as pilot:
         await pilot.pause()
         assert label in _plain(app.query_one(".note-import-group-heading", Static))
-        assert "draft.md" in _plain(app.query_one(".note-import-item-name", Static))
+        # task-32135: name, effect and destination now share one row.
+        assert "draft.md" in _plain(app.query_one(".note-import-row-text", Static))
 
 
 async def test_collision_review_exposes_three_explicit_choices_and_name_input() -> None:
@@ -525,7 +615,10 @@ async def test_valid_opaque_item_id_never_becomes_a_dom_identifier() -> None:
     assert (message.item_id, message.action) == ("item:1.2", "skip")
 
 
-class _ProductionCssCanvasApp(App[None]):
+class _ProductionCssCanvasApp(ConsolidatedCSSApp):
+    # The real app registers the consolidated widget defaults through
+    # `_get_default_css`; a bare `App` under-approximates it and would size
+    # the one-line review rows differently from production (task-32135).
     CSS_PATH = TldwCli.CSS_PATH
 
     def __init__(self, snapshot: LibraryNoteImportSnapshot) -> None:
@@ -544,11 +637,11 @@ class _ProductionCssCanvasApp(App[None]):
 async def test_review_is_scrollable_and_paints_next_action_at_60_columns() -> None:
     items = tuple(
         _item(item_id=f"item-{index}", name=f"draft [{index}].md")
-        for index in range(1, 9)
+        for index in range(1, 25)
     )
     snapshot = _snapshot(
         phase="review",
-        status_line="Review 8 items before import.",
+        status_line="Review 24 items before import.",
         preview_items=items,
         can_import=True,
         import_disabled_reason="",
@@ -806,7 +899,10 @@ async def test_review_item_shows_source_target_membership_and_content_effect() -
     )
     async with app.run_test(size=(70, 24)) as pilot:
         await pilot.pause()
-        text = "\n".join(_plain(widget) for widget in app.query(".note-import-quiet"))
+        text = "\n".join(
+            _plain(widget)
+            for widget in app.query(".note-import-row-text, .note-import-quiet")
+        )
         assert "Existing note: Draft" in text
         assert "replace existing content" in text
         assert "Imported / Alpha" in text

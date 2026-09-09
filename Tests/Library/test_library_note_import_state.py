@@ -27,6 +27,7 @@ from tldw_chatbook.Library.library_note_import_state import (
     set_destination_segments,
     set_item_decision,
     set_review_page,
+    clear_selection,
     set_root_collision_resolution,
     settle_import,
     show_review,
@@ -610,6 +611,23 @@ def test_presentation_projection_is_frozen_path_safe_and_redacted() -> None:
         assert secret not in rendered
 
 
+def test_folder_selection_projection_keeps_the_absolute_path_not_just_the_name() -> (
+    None
+):
+    """task-32122 Step 3: the confirmation copy needs the full path, not
+
+    ``Path.name`` -- a basename-only projection is how "1 folder selected:
+    notes-review" hid which of two same-named folders was actually picked.
+    """
+    folder = _PRIVATE_ROOT / "notes-review-vault"
+    state = select_folder(initial_note_import_snapshot(), folder)
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.selection_kind == "folder"
+    assert projected.selected_names == (str(folder),)
+
+
 def test_review_projection_exposes_relative_source_membership_and_bounded_effects() -> (
     None
 ):
@@ -651,7 +669,7 @@ def test_review_projection_exposes_relative_source_membership_and_bounded_effect
 @pytest.mark.parametrize(
     ("receipt_state", "completed", "failed", "expected_status", "detail_fragment"),
     (
-        (ImportSessionState.COMPLETED, 4, 0, "Import completed.", "settled"),
+        (ImportSessionState.COMPLETED, 4, 0, "Import completed.", "4 notes created"),
         (
             ImportSessionState.CANCELLED,
             2,
@@ -699,3 +717,197 @@ def test_receipt_projection_distinguishes_durable_session_state(
 
     assert projected.status_line == expected_status
     assert detail_fragment in projected.receipt_detail.casefold()
+
+
+# --- task-32130 / task-32134: honest receipt copy and selection changes ----
+
+
+def _skipped_item() -> ImportPreviewItem:
+    """One non-importable config source carrying its own parser reason."""
+    return ImportPreviewItem(
+        item_id="item-2",
+        source=ImportSource(
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path="vault/.obsidian/app.json",
+            source_path=_PRIVATE_ROOT / ".obsidian" / "app.json",
+        ),
+        payloads=(),
+        memberships=(),
+        classification=ImportClassification.SKIPPED,
+        reason="Not a note file (app configuration).",
+        default_action=ImportAction.SKIP,
+        selected_action=ImportAction.SKIP,
+        allowed_actions=(ImportAction.SKIP,),
+        match=None,
+        replace_content=False,
+        add_membership=False,
+    )
+
+
+def _settled_state(**counts: int) -> object:
+    """Settle one two-item reviewed plan into a RECEIPT state."""
+    plan = _plan(_item(), _skipped_item())
+    state = _file_review(plan)
+    approved = approve_note_import_plan(plan)
+    state = begin_importing(set_approved_plan(state, approved))
+    completed = sum(counts.values())
+    receipt = ImportExecutionReceipt(
+        approval_id=approved.approval_id,
+        state=ImportSessionState.COMPLETED,
+        total=completed,
+        completed=completed,
+        retryable=0,
+        **counts,
+    )
+    return settle_import(state, receipt)
+
+
+def test_receipt_lists_every_skipped_source_with_its_reason() -> None:
+    """The receipt names the files it skipped instead of only counting them."""
+    state = _settled_state(imported=1, updated=0, skipped=1, failed=0)
+
+    projection = project_library_note_import_snapshot(state)
+
+    assert projection.skipped_items == (
+        ("vault/.obsidian/app.json", "Not a note file (app configuration)."),
+    )
+
+
+def test_completion_copy_says_what_happened_in_plain_words() -> None:
+    """'All planned items settled.' is replaced by counted plain words."""
+    state = _settled_state(imported=61, updated=0, skipped=11, failed=0)
+
+    projection = project_library_note_import_snapshot(state)
+
+    assert projection.receipt_detail == (
+        "Import finished · 61 notes created · 11 files skipped"
+    )
+
+
+def test_clear_selection_returns_to_an_empty_select_phase() -> None:
+    """A wrong source can be dropped without leaving the workflow."""
+    state = select_folder(initial_note_import_snapshot(), _PRIVATE_ROOT)
+
+    cleared = clear_selection(state)
+
+    assert cleared.phase is NoteImportPhase.SELECT
+    assert cleared.selected_paths == ()
+    assert cleared.selection_is_folder is False
+    assert cleared.plan is None
+    assert cleared.can_check is False
+    assert cleared.revision > state.revision
+
+
+def test_last_import_stays_available_after_leaving_the_receipt() -> None:
+    """Back to Notes keeps the session receipt reachable from the list."""
+    state = _settled_state(imported=1, updated=0, skipped=1, failed=0)
+
+    assert state.can_revisit_receipt is True
+    assert clear_selection(state).can_revisit_receipt is True
+
+
+def test_cancelled_receipt_lists_only_the_skips_it_actually_reached() -> None:
+    """The disclosure heading and its rows come from one count."""
+    third = replace(
+        _skipped_item(),
+        item_id="item-3",
+        source=replace(
+            _skipped_item().source, display_path="vault/.obsidian/theme.json"
+        ),
+    )
+    plan = _plan(_skipped_item(), _item(5), third)
+    state = _file_review(plan)
+    approved = approve_note_import_plan(plan)
+    state = begin_importing(set_approved_plan(state, approved))
+    # Cancelled after two items: one skip reached, the second never ran.
+    receipt = ImportExecutionReceipt(
+        approval_id=approved.approval_id,
+        state=ImportSessionState.CANCELLED,
+        total=3,
+        completed=2,
+        imported=1,
+        updated=0,
+        skipped=1,
+        failed=0,
+        retryable=0,
+        reason_code="cancelled",
+    )
+
+    projection = project_library_note_import_snapshot(settle_import(state, receipt))
+
+    assert projection.skipped_count == 1
+    assert len(projection.skipped_items) == 1
+
+
+def test_a_source_you_skipped_is_not_listed_with_its_planner_reason() -> None:
+    """'Ready to import as a new note.' under Skipped would be a lie."""
+    skipped_by_user = replace(
+        _item(),
+        selected_action=ImportAction.SKIP,
+        add_membership=False,
+        replace_content=False,
+    )
+    plan = _plan(skipped_by_user, _skipped_item())
+    state = _file_review(plan)
+    approved = approve_note_import_plan(plan)
+    state = begin_importing(set_approved_plan(state, approved))
+    receipt = ImportExecutionReceipt(
+        approval_id=approved.approval_id,
+        state=ImportSessionState.COMPLETED,
+        total=2,
+        completed=2,
+        imported=0,
+        updated=0,
+        skipped=2,
+        failed=0,
+        retryable=0,
+    )
+
+    projection = project_library_note_import_snapshot(settle_import(state, receipt))
+
+    assert projection.skipped_items == (
+        ("record-1.md", "Skipped by you."),
+        ("vault/.obsidian/app.json", "Not a note file (app configuration)."),
+    )
+
+
+def test_an_unchanged_repeat_is_not_blamed_on_the_user() -> None:
+    """A repeat skips itself by default; 'Skipped by you.' would be a lie."""
+    unchanged = replace(
+        _item(3, classification=ImportClassification.UNCHANGED_REPEAT),
+        reason="This source matches an unchanged existing note.",
+    )
+    plan = _plan(unchanged)
+    state = _file_review(plan)
+    approved = approve_note_import_plan(plan)
+    state = begin_importing(set_approved_plan(state, approved))
+    receipt = ImportExecutionReceipt(
+        approval_id=approved.approval_id,
+        state=ImportSessionState.COMPLETED,
+        total=1,
+        completed=1,
+        imported=0,
+        updated=0,
+        skipped=1,
+        failed=0,
+        retryable=0,
+    )
+
+    projection = project_library_note_import_snapshot(settle_import(state, receipt))
+
+    assert projection.skipped_items == (
+        ("record-3.md", "This source matches an unchanged existing note."),
+    )
+
+
+def test_a_revisited_receipt_keeps_its_skipped_paths_after_a_new_selection() -> None:
+    """Starting another selection must not empty the retained receipt's rows."""
+    settled = _settled_state(imported=1, updated=0, skipped=1, failed=0)
+    expected = project_library_note_import_snapshot(settled).skipped_items
+    assert expected  # guard: the fixture really does skip one source
+
+    revisited = revisit_latest_receipt(clear_selection(settled))
+    projection = project_library_note_import_snapshot(revisited)
+
+    assert projection.skipped_count == 1
+    assert projection.skipped_items == expected

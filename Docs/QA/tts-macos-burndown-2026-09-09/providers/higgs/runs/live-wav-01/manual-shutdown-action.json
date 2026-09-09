@@ -1,0 +1,9 @@
+{
+  "action": "SIGINT to owned parent; parent performs bounded worker process-group cleanup",
+  "parent_pid": 4011,
+  "worker_pid": 4020,
+  "at": 0.020163625,
+  "reason": "Native sample shows PortAudio/CoreAudio shutdown deadlock after complete rendered frames; no owned model inference remains.",
+  "at_clock_domain": "System Python3.9 macOS process-relative monotonic value; do not compare to Python3.11/3.12 worker cross-process monotonic values.",
+  "recorded_utc": "2026-09-09T07:11:02.322280+00:00"
+}

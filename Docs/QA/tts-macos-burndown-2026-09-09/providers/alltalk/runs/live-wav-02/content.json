@@ -1,0 +1,126 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/alltalk/live-wav-02/evidence.json",
+  "evidence_sha256": "2fe864533d9bf2d439625d85c0ef8612349c42fe310a7228a06f6cd50f901122",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 4,
+  "clips": [
+    {
+      "transcript": "Silver campers rest by the quiet orchard under an amber sunrise.",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        -1,
+        22,
+        41
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "speech-lab",
+      "audio_sha256": "3432a8c6c597224650598338bb9390c8928ead8495129514b8f1bd39c5341e74",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 3.84,
+          "text": " Silver campers rest by the quiet orchard under an amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        23,
+        42
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-warmup",
+      "audio_sha256": "c09f97c3dbd0a2f48302e82799b9e1340f228cb7b7f3ed800de101a8e2f6010f",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 3.92,
+          "text": " Silver compass rests by the quiet orchard under an amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver compass rests by the quiet orchard under an amber semis.",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        23,
+        -1
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "console-successor",
+      "audio_sha256": "5837f9b9f5372f05cc64b4d58e79a4ac85dfde2a70483346cd32fb1ce902eaab",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 3.96,
+          "text": " Silver compass rests by the quiet orchard under an amber semis."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        23,
+        42
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-server-retry",
+      "audio_sha256": "7539ae31442cb7de008cc5dc2e8af10c96ec38df4204a01d75987d16d30271f2",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 4.0,
+          "text": " Silver compass rests by the quiet orchard under an amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    }
+  ],
+  "status": "content_review_required"
+}

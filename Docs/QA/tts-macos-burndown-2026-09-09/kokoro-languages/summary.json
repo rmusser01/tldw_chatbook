@@ -1,0 +1,2286 @@
+{
+  "package_stage": "baseline plus explicit later receipts",
+  "baseline_totals": {
+    "runtime_tuples": 14,
+    "runtime_passed": 11,
+    "runtime_failed": 3,
+    "cleanup_joined": 14,
+    "successful_phase_clips": 22,
+    "receipt_normalized_exact": 11,
+    "raw_exact": 7,
+    "complete_anchors": 11,
+    "distinct_audio_hashes": 17
+  },
+  "runs": [
+    {
+      "name": "onnx-cpu-es-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/onnx-cpu-es-final-01/evidence.json",
+      "engine": "onnx",
+      "language": "es",
+      "voice": "ef_dora",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 23626,
+      "started_utc": "2026-09-09T07:37:20.061240+00:00",
+      "ended_utc": "2026-09-09T07:37:43.463505+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175559.055710916,
+          "threads": 3,
+          "rss_bytes": 1121386496,
+          "peak_rss_bytes": 1121435648,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175567.5697065,
+          "threads": 3,
+          "rss_bytes": 1288159232,
+          "peak_rss_bytes": 1288192000,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175546.930179458,
+        "threads": 2,
+        "rss_bytes": 227999744,
+        "peak_rss_bytes": 227999744
+      },
+      "memory_after_cleanup": {
+        "at": 2175567.606459625,
+        "threads": 2,
+        "rss_bytes": 1283194880,
+        "peak_rss_bytes": 1288617984,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/onnx-cpu-es-final-01/content.json",
+          "status": "content_passed",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "215ac570559e61ebc12b1195a9b9004e2cd289a4ae4e8c3c2e614b18e0410a48",
+              "transcript": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+              "expected_text": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "215ac570559e61ebc12b1195a9b9004e2cd289a4ae4e8c3c2e614b18e0410a48",
+              "transcript": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+              "expected_text": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "onnx-cpu-fr-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/onnx-cpu-fr-final-01/evidence.json",
+      "engine": "onnx",
+      "language": "fr",
+      "voice": "ff_siwis",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 1,
+      "runtime_status": "failed",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 23826,
+      "started_utc": "2026-09-09T07:37:48.469384+00:00",
+      "ended_utc": "2026-09-09T07:37:52.974679+00:00",
+      "successful_phase_ids": [],
+      "phase_memory": {
+        "speech-lab": null
+      },
+      "memory_before_model": {
+        "at": 2175575.186409,
+        "threads": 2,
+        "rss_bytes": 230113280,
+        "peak_rss_bytes": 230113280
+      },
+      "memory_after_cleanup": {
+        "at": 2175577.089712041,
+        "threads": 2,
+        "rss_bytes": 934068224,
+        "peak_rss_bytes": 934199296,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": {
+        "type": "ValueError",
+        "message": "Speech Lab generation failed: [{'message': 'TTS generation failed: Kokoro ONNX generation failed. Retry from the STTS Playground.', 'severity': 'error'}]",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1207, in main\n    asyncio.run(run_live(args, evidence))\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1064, in run_live\n    raise ValueError(\nValueError: Speech Lab generation failed: [{'message': 'TTS generation failed: Kokoro ONNX generation failed. Retry from the STTS Playground.', 'severity': 'error'}]\n"
+      },
+      "content": {}
+    },
+    {
+      "name": "onnx-cpu-fr-final-02",
+      "matrix_path": "matrices/matrix-languages-onnx-fr-final-02.json",
+      "evidence_path": "runs/onnx-cpu-fr-final-02/evidence.json",
+      "engine": "onnx",
+      "language": "fr",
+      "voice": "ff_siwis",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 39401,
+      "started_utc": "2026-09-09T08:18:07.746058+00:00",
+      "ended_utc": "2026-09-09T08:18:29.957267+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2178004.888908,
+          "threads": 3,
+          "rss_bytes": 1123041280,
+          "peak_rss_bytes": 1123057664,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2178013.792212875,
+          "threads": 3,
+          "rss_bytes": 1305706496,
+          "peak_rss_bytes": 1305739264,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2177994.267451333,
+        "threads": 2,
+        "rss_bytes": 226115584,
+        "peak_rss_bytes": 226115584
+      },
+      "memory_after_cleanup": {
+        "at": 2178013.894868958,
+        "threads": 2,
+        "rss_bytes": 1298333696,
+        "peak_rss_bytes": 1306132480,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "1edcbb1aee9bacfd7573c53f70b22d51b27f6300",
+      "source_file_count": 2265,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/onnx-cpu-fr-final-02/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "0f1e4288c930c2d3ac981b678fd01f071425d31bd9feb49b0ebb61649992a5a7",
+              "transcript": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une obdorée.",
+              "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "0f1e4288c930c2d3ac981b678fd01f071425d31bd9feb49b0ebb61649992a5a7",
+              "transcript": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une obdorée.",
+              "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        },
+        "medium": {
+          "path": "runs/onnx-cpu-fr-final-02/content-medium.json",
+          "status": "content_passed",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "0f1e4288c930c2d3ac981b678fd01f071425d31bd9feb49b0ebb61649992a5a7",
+              "transcript": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "0f1e4288c930c2d3ac981b678fd01f071425d31bd9feb49b0ebb61649992a5a7",
+              "transcript": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "onnx-cpu-hi-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/onnx-cpu-hi-final-01/evidence.json",
+      "engine": "onnx",
+      "language": "hi",
+      "voice": "hf_alpha",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 23867,
+      "started_utc": "2026-09-09T07:37:53.665751+00:00",
+      "ended_utc": "2026-09-09T07:38:20.806681+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175594.17123625,
+          "threads": 3,
+          "rss_bytes": 1161478144,
+          "peak_rss_bytes": 1161494528,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175604.891133833,
+          "threads": 3,
+          "rss_bytes": 1378910208,
+          "peak_rss_bytes": 1378942976,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175580.341923041,
+        "threads": 2,
+        "rss_bytes": 225656832,
+        "peak_rss_bytes": 225656832
+      },
+      "memory_after_cleanup": {
+        "at": 2175604.931465791,
+        "threads": 2,
+        "rss_bytes": 1373913088,
+        "peak_rss_bytes": 1379336192,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/onnx-cpu-hi-final-01/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "e8374889a089ae4653084facda1277cd9d23113ea287d25aa6e5a6aa4d4e49e3",
+              "transcript": "चान्दिका कमपास इस उत्तर की शुर्वात करता है, बीज में एक शाद बगीचा है, यह उत्तर सुनहरी सुबह के साथ समाप्त होता है.",
+              "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "e8374889a089ae4653084facda1277cd9d23113ea287d25aa6e5a6aa4d4e49e3",
+              "transcript": "चान्दिका कमपास इस उत्तर की शुर्वात करता है, बीज में एक शाद बगीचा है, यह उत्तर सुनहरी सुबह के साथ समाप्त होता है.",
+              "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        },
+        "medium": {
+          "path": "runs/onnx-cpu-hi-final-01/content-medium.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "e8374889a089ae4653084facda1277cd9d23113ea287d25aa6e5a6aa4d4e49e3",
+              "transcript": "चान्दी का कम्पास इस उत्तर की शुर्वात करता है, बीच में एक शान्त बगीचा है, यह उत्तर सुनहरी सुबह के साथ समाप्थ होता है",
+              "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "e8374889a089ae4653084facda1277cd9d23113ea287d25aa6e5a6aa4d4e49e3",
+              "transcript": "चान्दी का कम्पास इस उत्तर की शुर्वात करता है, बीच में एक शान्त बगीचा है, यह उत्तर सुनहरी सुबह के साथ समाप्थ होता है",
+              "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "onnx-cpu-it-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/onnx-cpu-it-final-01/evidence.json",
+      "engine": "onnx",
+      "language": "it",
+      "voice": "if_sara",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 24061,
+      "started_utc": "2026-09-09T07:38:29.031237+00:00",
+      "ended_utc": "2026-09-09T07:38:52.533760+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175627.675158166,
+          "threads": 3,
+          "rss_bytes": 1122533376,
+          "peak_rss_bytes": 1122582528,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175636.644212625,
+          "threads": 3,
+          "rss_bytes": 1313931264,
+          "peak_rss_bytes": 1313964032,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175615.44954,
+        "threads": 2,
+        "rss_bytes": 226443264,
+        "peak_rss_bytes": 226443264
+      },
+      "memory_after_cleanup": {
+        "at": 2175636.680702083,
+        "threads": 2,
+        "rss_bytes": 1308917760,
+        "peak_rss_bytes": 1314340864,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/onnx-cpu-it-final-01/content.json",
+          "status": "content_passed",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "25daa5469758144148746acd9717b07b3d8d4191d223515f8a38714086bc83ad",
+              "transcript": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo, la risposta termina con un'alba dorata.",
+              "expected_text": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo. La risposta termina con un alba dorata.",
+              "raw_exact": false,
+              "normalized_exact": true,
+              "anchors_complete": true
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "25daa5469758144148746acd9717b07b3d8d4191d223515f8a38714086bc83ad",
+              "transcript": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo, la risposta termina con un'alba dorata.",
+              "expected_text": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo. La risposta termina con un alba dorata.",
+              "raw_exact": false,
+              "normalized_exact": true,
+              "anchors_complete": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "onnx-cpu-ja-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/onnx-cpu-ja-final-01/evidence.json",
+      "engine": "onnx",
+      "language": "ja",
+      "voice": "jf_alpha",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 24396,
+      "started_utc": "2026-09-09T07:39:24.644796+00:00",
+      "ended_utc": "2026-09-09T07:41:05.272260+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175721.66013975,
+          "threads": 3,
+          "rss_bytes": 1469038592,
+          "peak_rss_bytes": 1469136896,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175769.36398125,
+          "threads": 3,
+          "rss_bytes": 1856012288,
+          "peak_rss_bytes": 1911914496,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175671.310856958,
+        "threads": 2,
+        "rss_bytes": 226721792,
+        "peak_rss_bytes": 226721792
+      },
+      "memory_after_cleanup": {
+        "at": 2175769.404458916,
+        "threads": 2,
+        "rss_bytes": 1824735232,
+        "peak_rss_bytes": 1911914496,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/onnx-cpu-ja-final-01/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "88b537c6312403a1faef596b1b8e74e0bb3a18b476b1d88d4fba289f152a9865",
+              "transcript": "AIN CHINEEZIAR LETロックのAIN CHINEEZIAR LET AIN CHINEEZIAR LETを月傷発揮 will be given by",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "88b537c6312403a1faef596b1b8e74e0bb3a18b476b1d88d4fba289f152a9865",
+              "transcript": "エンチャイニーズやレト エンチャイニーズやレトのコンフ エンチャープニーズやレトするく エンチャープニーズやレトこのエンチャイニーズ やレト エンチャイニーズ やレトをエンチャイニーズやレトメモス エンチャイニーズやレトン エンチャイニーズやレトニーフ エンチャイニーズやレトクの エンチャイニーズやレト エンチャイニーズやレト エンチャイニーズやレトク エンチャイニーズやレト今する エンチャイニーズやレト",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "onnx-cpu-ja-final-02",
+      "matrix_path": "matrices/matrix-languages-onnx-ja-final-02.json",
+      "evidence_path": "runs/onnx-cpu-ja-final-02/evidence.json",
+      "engine": "onnx",
+      "language": "ja",
+      "voice": "jf_alpha",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 39820,
+      "started_utc": "2026-09-09T08:18:39.286844+00:00",
+      "ended_utc": "2026-09-09T08:19:11.672971+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2178043.325608375,
+          "threads": 3,
+          "rss_bytes": 1209794560,
+          "peak_rss_bytes": 1209942016,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2178055.592457666,
+          "threads": 3,
+          "rss_bytes": 1419198464,
+          "peak_rss_bytes": 1419231232,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2178027.256434041,
+        "threads": 2,
+        "rss_bytes": 226213888,
+        "peak_rss_bytes": 226213888
+      },
+      "memory_after_cleanup": {
+        "at": 2178055.660961375,
+        "threads": 2,
+        "rss_bytes": 1416560640,
+        "peak_rss_bytes": 1419608064,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "1edcbb1aee9bacfd7573c53f70b22d51b27f6300",
+      "source_file_count": 2265,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/onnx-cpu-ja-final-02/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "4ad41524be823a2976eb06bc1554dc551bc3e78808d70033702fcea49d7a5cf0",
+              "transcript": "銀色のコンパスがこの辺頭を始め ます真ん中には静かな火事円が あります。 この辺頭は小金色の浅焼けで終わり ます。",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "4ad41524be823a2976eb06bc1554dc551bc3e78808d70033702fcea49d7a5cf0",
+              "transcript": "銀色のコンパスがこの辺頭を始め ます真ん中には静かな火事円が あります。 この辺頭は小金色の浅焼けで終わり ます。",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        },
+        "medium": {
+          "path": "runs/onnx-cpu-ja-final-02/content-medium.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "4ad41524be823a2976eb06bc1554dc551bc3e78808d70033702fcea49d7a5cf0",
+              "transcript": "銀色のコンパスがこの辺頭を始めます真ん中には静かな火事縁があります。 この辺頭は黄金色の朝焼けで終わります。",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "4ad41524be823a2976eb06bc1554dc551bc3e78808d70033702fcea49d7a5cf0",
+              "transcript": "銀色のコンパスがこの辺頭を始めます真ん中には静かな火事縁があります。 この辺頭は黄金色の朝焼けで終わります。",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "onnx-cpu-pt-br-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/onnx-cpu-pt-br-final-01/evidence.json",
+      "engine": "onnx",
+      "language": "pt-br",
+      "voice": "pf_dora",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 24237,
+      "started_utc": "2026-09-09T07:38:57.642895+00:00",
+      "ended_utc": "2026-09-09T07:39:19.615722+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175655.470613083,
+          "threads": 3,
+          "rss_bytes": 1115488256,
+          "peak_rss_bytes": 1115537408,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175663.722850791,
+          "threads": 3,
+          "rss_bytes": 1200160768,
+          "peak_rss_bytes": 1200193536,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175644.368842666,
+        "threads": 2,
+        "rss_bytes": 224559104,
+        "peak_rss_bytes": 224559104
+      },
+      "memory_after_cleanup": {
+        "at": 2175663.758708833,
+        "threads": 2,
+        "rss_bytes": 1199931392,
+        "peak_rss_bytes": 1200603136,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/onnx-cpu-pt-br-final-01/content.json",
+          "status": "content_passed",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "0d0f5c8cb5891bc3aec61212f844c1095813150dc5a47e8e1264a044c181dfaa",
+              "transcript": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "0d0f5c8cb5891bc3aec61212f844c1095813150dc5a47e8e1264a044c181dfaa",
+              "transcript": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "onnx-cpu-zh-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/onnx-cpu-zh-final-01/evidence.json",
+      "engine": "onnx",
+      "language": "zh",
+      "voice": "zf_xiaobei",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 1,
+      "runtime_status": "failed",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 25202,
+      "started_utc": "2026-09-09T07:42:17.905449+00:00",
+      "ended_utc": "2026-09-09T07:42:22.411469+00:00",
+      "successful_phase_ids": [],
+      "phase_memory": {
+        "speech-lab": null
+      },
+      "memory_before_model": {
+        "at": 2175844.656687166,
+        "threads": 2,
+        "rss_bytes": 228835328,
+        "peak_rss_bytes": 228835328
+      },
+      "memory_after_cleanup": {
+        "at": 2175846.501926541,
+        "threads": 2,
+        "rss_bytes": 937771008,
+        "peak_rss_bytes": 937902080,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": {
+        "type": "ValueError",
+        "message": "Speech Lab generation failed: [{'message': 'TTS generation failed: Kokoro ONNX generation failed. Retry from the STTS Playground.', 'severity': 'error'}]",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1207, in main\n    asyncio.run(run_live(args, evidence))\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1064, in run_live\n    raise ValueError(\nValueError: Speech Lab generation failed: [{'message': 'TTS generation failed: Kokoro ONNX generation failed. Retry from the STTS Playground.', 'severity': 'error'}]\n"
+      },
+      "content": {}
+    },
+    {
+      "name": "onnx-cpu-zh-final-02",
+      "matrix_path": "matrices/matrix-languages-onnx-zh-final-02.json",
+      "evidence_path": "runs/onnx-cpu-zh-final-02/evidence.json",
+      "engine": "onnx",
+      "language": "zh",
+      "voice": "zf_xiaobei",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 43377,
+      "started_utc": "2026-09-09T08:19:22.828238+00:00",
+      "ended_utc": "2026-09-09T08:19:51.413806+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2178086.306670041,
+          "threads": 3,
+          "rss_bytes": 1282375680,
+          "peak_rss_bytes": 1282539520,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2178095.525567583,
+          "threads": 3,
+          "rss_bytes": 1487601664,
+          "peak_rss_bytes": 1487634432,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2178070.640124083,
+        "threads": 2,
+        "rss_bytes": 227491840,
+        "peak_rss_bytes": 227491840
+      },
+      "memory_after_cleanup": {
+        "at": 2178095.5594195,
+        "threads": 2,
+        "rss_bytes": 1482752000,
+        "peak_rss_bytes": 1487912960,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "1edcbb1aee9bacfd7573c53f70b22d51b27f6300",
+      "source_file_count": 2265,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/onnx-cpu-zh-final-02/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "9c41b30fb009a350cf4c493cab688db5fe14d43d1788675aa39ce6663de97cac",
+              "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+              "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "9c41b30fb009a350cf4c493cab688db5fe14d43d1788675aa39ce6663de97cac",
+              "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+              "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        },
+        "medium": {
+          "path": "runs/onnx-cpu-zh-final-02/content-medium.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "9c41b30fb009a350cf4c493cab688db5fe14d43d1788675aa39ce6663de97cac",
+              "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+              "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "9c41b30fb009a350cf4c493cab688db5fe14d43d1788675aa39ce6663de97cac",
+              "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+              "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pytorch-cpu-es-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/pytorch-cpu-es-final-01/evidence.json",
+      "engine": "pytorch",
+      "language": "es",
+      "voice": "ef_dora",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 22471,
+      "started_utc": "2026-09-09T07:33:57.758080+00:00",
+      "ended_utc": "2026-09-09T07:34:24.752129+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175360.14209675,
+          "threads": 3,
+          "rss_bytes": 1949007872,
+          "peak_rss_bytes": 1949040640,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175368.825581416,
+          "threads": 3,
+          "rss_bytes": 1972060160,
+          "peak_rss_bytes": 1972092928,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175344.521886083,
+        "threads": 2,
+        "rss_bytes": 227622912,
+        "peak_rss_bytes": 227622912
+      },
+      "memory_after_cleanup": {
+        "at": 2175368.886773375,
+        "threads": 2,
+        "rss_bytes": 1244135424,
+        "peak_rss_bytes": 1972486144,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/pytorch-cpu-es-final-01/content.json",
+          "status": "content_passed",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "e1eb66c7e313d955b1a1f0e116ce7a671d2814560339f07e4d17c4447007d690",
+              "transcript": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+              "expected_text": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "2a9679f8e0fdf0ef3040236e63a452862ab48b2bc60d481075246e10067791df",
+              "transcript": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+              "expected_text": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pytorch-cpu-fr-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/pytorch-cpu-fr-final-01/evidence.json",
+      "engine": "pytorch",
+      "language": "fr",
+      "voice": "ff_siwis",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 22669,
+      "started_utc": "2026-09-09T07:34:29.965095+00:00",
+      "ended_utc": "2026-09-09T07:34:54.568776+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175389.873886666,
+          "threads": 3,
+          "rss_bytes": 1945174016,
+          "peak_rss_bytes": 1945255936,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175398.651865916,
+          "threads": 3,
+          "rss_bytes": 1959804928,
+          "peak_rss_bytes": 1959804928,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175376.563337791,
+        "threads": 2,
+        "rss_bytes": 223526912,
+        "peak_rss_bytes": 223526912
+      },
+      "memory_after_cleanup": {
+        "at": 2175398.713447625,
+        "threads": 2,
+        "rss_bytes": 1220067328,
+        "peak_rss_bytes": 1960214528,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/pytorch-cpu-fr-final-01/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "53342bc32948c4311c8a44522bb2ee7eaaaf0aec2a232a29fe33bae3a9ad9d91",
+              "transcript": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une obdorée.",
+              "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "d52bfc095835369138bc44f2b68b7a8f2fee10ef4a380cfc59f6439d2939f156",
+              "transcript": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une obdorée.",
+              "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        },
+        "medium": {
+          "path": "runs/pytorch-cpu-fr-final-01/content-medium.json",
+          "status": "content_passed",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "53342bc32948c4311c8a44522bb2ee7eaaaf0aec2a232a29fe33bae3a9ad9d91",
+              "transcript": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "d52bfc095835369138bc44f2b68b7a8f2fee10ef4a380cfc59f6439d2939f156",
+              "transcript": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pytorch-cpu-hi-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/pytorch-cpu-hi-final-01/evidence.json",
+      "engine": "pytorch",
+      "language": "hi",
+      "voice": "hf_alpha",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 22898,
+      "started_utc": "2026-09-09T07:34:59.652279+00:00",
+      "ended_utc": "2026-09-09T07:35:29.415440+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175422.167303833,
+          "threads": 3,
+          "rss_bytes": 2096414720,
+          "peak_rss_bytes": 2096496640,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175433.504773958,
+          "threads": 3,
+          "rss_bytes": 1910669312,
+          "peak_rss_bytes": 2129920000,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175406.173074666,
+        "threads": 2,
+        "rss_bytes": 226672640,
+        "peak_rss_bytes": 226672640
+      },
+      "memory_after_cleanup": {
+        "at": 2175433.55312125,
+        "threads": 2,
+        "rss_bytes": 1249427456,
+        "peak_rss_bytes": 2129920000,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/pytorch-cpu-hi-final-01/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "d5b57aaa0cefc25583425897f8f09fb5972cdfc2a193920fb5f9895ce0ba8707",
+              "transcript": "चान्दिका कमपास इस उत्तर की शुर्वात करता है, बीज में एक शाद बगीचा है, यह उत्तर सुनहरी सुबह के साथ समाप्त होता है.",
+              "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "394b6873bad3aea7464ab2a0c1c830d955f360d69c93212bea170330fdc2318b",
+              "transcript": "चान्दिका कंपास इस उत्तर की शुर्वात करता है, बीज में एक शाद बगीचा है, यह उत्तर सुनहरी सुबह कि साथ समाप्त होता है.",
+              "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        },
+        "medium": {
+          "path": "runs/pytorch-cpu-hi-final-01/content-medium.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "d5b57aaa0cefc25583425897f8f09fb5972cdfc2a193920fb5f9895ce0ba8707",
+              "transcript": "चांदि का कम्पास इस उत्तर की शुर्वात करता है, बीज में एक शाथ बगीचा है, यह उत्तर सुनहरी सुबह के साथ समाप्थ होता है।",
+              "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "394b6873bad3aea7464ab2a0c1c830d955f360d69c93212bea170330fdc2318b",
+              "transcript": "चांदी का कम्पास इस उत्तर की शुर्वात करता है, बीज में एक शाथ बगीचा है, यह उत्तर सुनहरी सुबह के साथ समाप्थ होता है।",
+              "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pytorch-cpu-it-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/pytorch-cpu-it-final-01/evidence.json",
+      "engine": "pytorch",
+      "language": "it",
+      "voice": "if_sara",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 23110,
+      "started_utc": "2026-09-09T07:35:37.601621+00:00",
+      "ended_utc": "2026-09-09T07:36:03.638874+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175458.511725666,
+          "threads": 3,
+          "rss_bytes": 1983184896,
+          "peak_rss_bytes": 1983250432,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175467.754901125,
+          "threads": 3,
+          "rss_bytes": 1989591040,
+          "peak_rss_bytes": 1989623808,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175444.215613666,
+        "threads": 2,
+        "rss_bytes": 226148352,
+        "peak_rss_bytes": 226148352
+      },
+      "memory_after_cleanup": {
+        "at": 2175467.796404166,
+        "threads": 2,
+        "rss_bytes": 1227800576,
+        "peak_rss_bytes": 1990033408,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/pytorch-cpu-it-final-01/content.json",
+          "status": "content_passed",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "e3a34231ccffb61098aef724397c719e5af587904554079a5a81cb65eb312b9b",
+              "transcript": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo, la risposta termina con un'alba dorata.",
+              "expected_text": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo. La risposta termina con un alba dorata.",
+              "raw_exact": false,
+              "normalized_exact": true,
+              "anchors_complete": true
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "eab0feb74d56246c27550b8c0d63c74354f7bb9c27e7bb4d4b30894b65184494",
+              "transcript": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo, la risposta termina con un'alba dorata.",
+              "expected_text": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo. La risposta termina con un alba dorata.",
+              "raw_exact": false,
+              "normalized_exact": true,
+              "anchors_complete": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pytorch-cpu-ja-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/pytorch-cpu-ja-final-01/evidence.json",
+      "engine": "pytorch",
+      "language": "ja",
+      "voice": "jf_alpha",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 1,
+      "runtime_status": "failed",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 23423,
+      "started_utc": "2026-09-09T07:36:38.155667+00:00",
+      "ended_utc": "2026-09-09T07:36:44.766194+00:00",
+      "successful_phase_ids": [],
+      "phase_memory": {
+        "speech-lab": null
+      },
+      "memory_before_model": {
+        "at": 2175504.780696291,
+        "threads": 2,
+        "rss_bytes": 226344960,
+        "peak_rss_bytes": 226344960
+      },
+      "memory_after_cleanup": {
+        "at": 2175508.888075041,
+        "threads": 2,
+        "rss_bytes": 1479491584,
+        "peak_rss_bytes": 1479491584,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": {
+        "type": "ValueError",
+        "message": "Speech Lab generation failed: [{'message': 'TTS generation failed: Kokoro PyTorch generation failed. Retry from the STTS Playground.', 'severity': 'error'}]",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1207, in main\n    asyncio.run(run_live(args, evidence))\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1064, in run_live\n    raise ValueError(\nValueError: Speech Lab generation failed: [{'message': 'TTS generation failed: Kokoro PyTorch generation failed. Retry from the STTS Playground.', 'severity': 'error'}]\n"
+      },
+      "content": {}
+    },
+    {
+      "name": "pytorch-cpu-ja-final-02",
+      "matrix_path": "matrices/matrix-languages-pytorch-ja-final-02.json",
+      "evidence_path": "runs/pytorch-cpu-ja-final-02/evidence.json",
+      "engine": "pytorch",
+      "language": "ja",
+      "voice": "jf_alpha",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 38797,
+      "started_utc": "2026-09-09T08:17:32.652959+00:00",
+      "ended_utc": "2026-09-09T08:18:02.576530+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2177975.352238625,
+          "threads": 3,
+          "rss_bytes": 2115911680,
+          "peak_rss_bytes": 2115977216,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2177986.665938208,
+          "threads": 3,
+          "rss_bytes": 1869398016,
+          "peak_rss_bytes": 2133426176,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2177959.001175625,
+        "threads": 2,
+        "rss_bytes": 224231424,
+        "peak_rss_bytes": 224231424
+      },
+      "memory_after_cleanup": {
+        "at": 2177986.722885541,
+        "threads": 2,
+        "rss_bytes": 1246756864,
+        "peak_rss_bytes": 2133426176,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "1edcbb1aee9bacfd7573c53f70b22d51b27f6300",
+      "source_file_count": 2265,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/pytorch-cpu-ja-final-02/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "10ae8b03e2d8bcaee1a685e6ff00d2a636c88765a58ed6535a90530701882f64",
+              "transcript": "銀色のコンパスがこの辺頭を始めます真ん中には静かなカジェンがあります。 この辺頭は小金色の浅焼けで終わります。",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "729023f7d833e8c7157d8a0b6380cdc81bd299ab5ddd6812a651e957bb0df969",
+              "transcript": "銀色のコンパスがこの辺頭を始めます真ん中には静かなカジェンがあります。 この辺頭は小金色の浅焼けで終わります。",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        },
+        "medium": {
+          "path": "runs/pytorch-cpu-ja-final-02/content-medium.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "10ae8b03e2d8bcaee1a685e6ff00d2a636c88765a58ed6535a90530701882f64",
+              "transcript": "銀色のコンパスが、この辺頭を始めます真ん中には静かな火事縁があります。 この辺頭は黄金色の朝焼けで終わります。",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "729023f7d833e8c7157d8a0b6380cdc81bd299ab5ddd6812a651e957bb0df969",
+              "transcript": "銀色のコンパスが、この辺頭をはじめます真ん中には静かな火事縁があります。 この辺頭は黄金色の朝焼けで終わります。",
+              "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pytorch-cpu-pt-br-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/pytorch-cpu-pt-br-final-01/evidence.json",
+      "engine": "pytorch",
+      "language": "pt-br",
+      "voice": "pf_dora",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 23264,
+      "started_utc": "2026-09-09T07:36:08.694849+00:00",
+      "ended_utc": "2026-09-09T07:36:32.890068+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175488.587438625,
+          "threads": 3,
+          "rss_bytes": 1919057920,
+          "peak_rss_bytes": 1919139840,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175496.992554666,
+          "threads": 3,
+          "rss_bytes": 1939800064,
+          "peak_rss_bytes": 1939832832,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175475.292049291,
+        "threads": 2,
+        "rss_bytes": 225542144,
+        "peak_rss_bytes": 225542144
+      },
+      "memory_after_cleanup": {
+        "at": 2175497.0420895,
+        "threads": 2,
+        "rss_bytes": 1229602816,
+        "peak_rss_bytes": 1940258816,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/pytorch-cpu-pt-br-final-01/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "c151f439edbae1c40ac1d8f9cf7b7a1afab3547e1f618a9ed004c691e176e6b3",
+              "transcript": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "47135b18adfd54538004b7d1004a4c3624d5005dfddb68286bccc11e2f160ee8",
+              "transcript": "A bússola plateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        },
+        "medium": {
+          "path": "runs/pytorch-cpu-pt-br-final-01/content-medium.json",
+          "status": "content_passed",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "c151f439edbae1c40ac1d8f9cf7b7a1afab3547e1f618a9ed004c691e176e6b3",
+              "transcript": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "47135b18adfd54538004b7d1004a4c3624d5005dfddb68286bccc11e2f160ee8",
+              "transcript": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+              "raw_exact": true,
+              "normalized_exact": true,
+              "anchors_complete": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pytorch-cpu-zh-final-01",
+      "matrix_path": "matrices/matrix-languages-all-all-final-01.json",
+      "evidence_path": "runs/pytorch-cpu-zh-final-01/evidence.json",
+      "engine": "pytorch",
+      "language": "zh",
+      "voice": "zf_xiaobei",
+      "format": "wav",
+      "scenarios": "playback",
+      "runtime_exit": 0,
+      "runtime_status": "runtime_passed_content_pending",
+      "cleanup_joined": true,
+      "final_resources": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "pid": 23456,
+      "started_utc": "2026-09-09T07:36:45.727343+00:00",
+      "ended_utc": "2026-09-09T07:37:14.346787+00:00",
+      "successful_phase_ids": [
+        "speech-lab",
+        "console-warmup"
+      ],
+      "phase_memory": {
+        "speech-lab": {
+          "at": 2175527.774694416,
+          "threads": 3,
+          "rss_bytes": 2185396224,
+          "peak_rss_bytes": 2185445376,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        },
+        "console-warmup": {
+          "at": 2175538.43237425,
+          "threads": 3,
+          "rss_bytes": 2012250112,
+          "peak_rss_bytes": 2222014464,
+          "mps_allocated_bytes": 0,
+          "mps_driver_bytes": 458752
+        }
+      },
+      "memory_before_model": {
+        "at": 2175512.288719125,
+        "threads": 2,
+        "rss_bytes": 225804288,
+        "peak_rss_bytes": 225804288
+      },
+      "memory_after_cleanup": {
+        "at": 2175538.483053291,
+        "threads": 2,
+        "rss_bytes": 1359806464,
+        "peak_rss_bytes": 2222014464,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      },
+      "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+      "source_file_count": 2253,
+      "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+      "failure": null,
+      "content": {
+        "small": {
+          "path": "runs/pytorch-cpu-zh-final-01/content.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "bc2bafd5b6b8311553eb10cd63113e0d6bc79cb47af08ba7bd2e00c3d60e621a",
+              "transcript": "銀色的指南針開啟這段回答,中間是一座安靜的果園,這段回答以金色的日出結束。",
+              "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "93e1d03e98ca24cc591143fbda3640f9f1ac60ee50ffa5955505be517e8e61a5",
+              "transcript": "銀色的指南針開啟這段回答,中間是一座安靜的果園,這段回答以金色的日出結束。",
+              "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        },
+        "medium": {
+          "path": "runs/pytorch-cpu-zh-final-01/content-medium.json",
+          "status": "content_review_required",
+          "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+          "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+          "runtime": {
+            "faster-whisper": "1.2.1",
+            "ctranslate2": "4.8.2"
+          },
+          "clips": [
+            {
+              "phase_id": "speech-lab",
+              "audio_sha256": "bc2bafd5b6b8311553eb10cd63113e0d6bc79cb47af08ba7bd2e00c3d60e621a",
+              "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+              "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            },
+            {
+              "phase_id": "console-warmup",
+              "audio_sha256": "93e1d03e98ca24cc591143fbda3640f9f1ac60ee50ffa5955505be517e8e61a5",
+              "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+              "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+              "raw_exact": false,
+              "normalized_exact": false,
+              "anchors_complete": false
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "latest_observed_runs": [
+    "pytorch-cpu-es-final-01",
+    "pytorch-cpu-fr-final-01",
+    "pytorch-cpu-hi-final-01",
+    "pytorch-cpu-it-final-01",
+    "pytorch-cpu-pt-br-final-01",
+    "pytorch-cpu-ja-final-02",
+    "pytorch-cpu-zh-final-01",
+    "onnx-cpu-es-final-01",
+    "onnx-cpu-fr-final-02",
+    "onnx-cpu-hi-final-01",
+    "onnx-cpu-it-final-01",
+    "onnx-cpu-pt-br-final-01",
+    "onnx-cpu-ja-final-02",
+    "onnx-cpu-zh-final-02"
+  ],
+  "latest_observed_totals": {
+    "runtime_tuples": 14,
+    "runtime_passed": 14,
+    "cleanup_joined": 14,
+    "successful_phase_clips": 28,
+    "recognizer_observations": {
+      "small": {
+        "tuples": 14,
+        "clips": 28,
+        "normalized_exact": 11
+      },
+      "medium": {
+        "tuples": 9,
+        "clips": 18,
+        "normalized_exact": 6
+      }
+    },
+    "selected_observation": {
+      "policy": "Select the latest runtime by start time for each engine/language tuple; use completed medium ASR for that entire tuple when available, otherwise small. Never choose the better recognizer per clip.",
+      "tuples": [
+        {
+          "run": "pytorch-cpu-es-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "pytorch-cpu-fr-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "pytorch-cpu-hi-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "pytorch-cpu-it-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "pytorch-cpu-pt-br-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "pytorch-cpu-ja-final-02",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "pytorch-cpu-zh-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "onnx-cpu-es-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "onnx-cpu-fr-final-02",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "onnx-cpu-hi-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "onnx-cpu-it-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "onnx-cpu-pt-br-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "onnx-cpu-ja-final-02",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "onnx-cpu-zh-final-02",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        }
+      ],
+      "clips": 28,
+      "normalized_exact": 16
+    }
+  },
+  "asr_attempts": [
+    {
+      "tuple": "pytorch:fr:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-fr-final-01-startup.log",
+      "pid": 45208,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:hi:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-hi-final-01-startup.log",
+      "pid": 45230,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:pt-br:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-pt-br-final-01-startup.log",
+      "pid": 45252,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:zh:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-zh-final-01-startup.log",
+      "pid": 45270,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:hi:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/onnx-cpu-hi-final-01-startup.log",
+      "pid": 45298,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:ja:final-02",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-ja-final-02-startup.log",
+      "pid": 45319,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:fr:final-02",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/onnx-cpu-fr-final-02-startup.log",
+      "pid": 45347,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:ja:final-02",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/onnx-cpu-ja-final-02-startup.log",
+      "pid": 45373,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:zh:final-02",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/onnx-cpu-zh-final-02-startup.log",
+      "pid": 45393,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:fr:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_passed",
+      "transcripts_produced": 2,
+      "normalized_exact": 2,
+      "pid": 47782,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:hi:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 47972,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:pt-br:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_passed",
+      "transcripts_produced": 2,
+      "normalized_exact": 2,
+      "pid": 48107,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:zh:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48150,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:hi:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48206,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:ja:final-02",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48275,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:fr:final-02",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_passed",
+      "transcripts_produced": 2,
+      "normalized_exact": 2,
+      "pid": 48455,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:ja:final-02",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48590,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:zh:final-02",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48856,
+      "joined": true
+    }
+  ],
+  "claim_limits": "ASR comparison flags preserve source receipts; unmatched transcripts are not classified as pronunciation defects. Playback scenarios did not exercise cancellation or repeated Console loops."
+}

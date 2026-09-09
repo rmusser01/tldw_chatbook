@@ -37,6 +37,15 @@ _STEP_ONE_LABELS = {
     "readiness_unknown": "Finish provider setup",
 }
 CONSOLE_SETUP_STEP_THREE_DETAIL = "Composer unlocks after setup"
+# task-32140: the numbered steps above are all provider setup -- a
+# local-first user who came for notes was told the only available action
+# needed an API key. This secondary action needs no provider and routes
+# straight to Library's New note view (same destination as the
+# command-palette "new_note" quick action).
+CONSOLE_SETUP_NOTES_ACTION_LABEL = "Write a note in Library"
+CONSOLE_SETUP_NOTES_ACTION_TOOLTIP = (
+    "Opens Library's New note view. No provider needed."
+)
 _TRUE_STRINGS = {"true", "yes", "1", "on"}
 
 

@@ -1,0 +1,12 @@
+{
+  "phase": "imports_and_metadata_constructor_only",
+  "torch": "2.2.1",
+  "cuda_available": false,
+  "engine": "vits",
+  "selected_model": "vits - tts_models--en--vctk--vits",
+  "synthesizer_signature": "(tts_checkpoint: str = '', tts_config_path: str = '', tts_speakers_file: str = '', tts_languages_file: str = '', vocoder_checkpoint: str = '', vocoder_config: str = '', encoder_checkpoint: str = '', encoder_config: str = '', vc_checkpoint: str = '', vc_config: str = '', model_dir: str = '', voice_dir: str = None, use_cuda: bool = False) -> None",
+  "server_routes": 32,
+  "models_loaded": false,
+  "server_started": false,
+  "rvc_enabled": false
+}

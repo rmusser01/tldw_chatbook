@@ -1,0 +1,413 @@
+{
+  "schema_version": 1,
+  "status": "runtime_passed_content_pending",
+  "pid": 39401,
+  "started_utc": "2026-09-09T08:18:07.746058+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+      "language": "fr",
+      "content_anchors": [],
+      "started_at": 2177994.456103375,
+      "native_calls": [
+        {
+          "request_id": "speech-lab",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+          "speed_input": [
+            1.0
+          ],
+          "enter_at": 2177996.181667125,
+          "thread_id": 6196441088,
+          "exit_at": 2177997.034843916
+        }
+      ],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "request": {
+        "model_id": "kokoro",
+        "voice_id": "ff_siwis",
+        "speed": 1.0
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02/audio/speech-lab.wav",
+        "sha256": "0f1e4288c930c2d3ac981b678fd01f071425d31bd9feb49b0ebb61649992a5a7",
+        "pcm_sha256": "19626a0555518ad9b4c8e0198716af09b958ab09fe05244c8dfe949ecf4af16a",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 171008,
+        "seconds": 7.125333333333334,
+        "rms": 0.10516190296790415,
+        "peak": 0.92486572265625
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 39523,
+        "player": "afplay",
+        "started_at": 2177997.26425925,
+        "exit_code": 0,
+        "elapsed_seconds": 7.624516082927585
+      },
+      "settled_at": 2178004.888905666,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2178004.888908,
+        "threads": 3,
+        "rss_bytes": 1123041280,
+        "peak_rss_bytes": 1123057664,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-warmup",
+      "expected_text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+      "language": "fr",
+      "content_anchors": [],
+      "started_at": 2178004.929092208,
+      "native_calls": [
+        {
+          "request_id": "console-warmup",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+          "speed_input": [
+            1.0
+          ],
+          "enter_at": 2178004.952824666,
+          "thread_id": 6213267456,
+          "exit_at": 2178006.483293
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2178006.552831458
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2178013.791372625
+        }
+      ],
+      "devices": [
+        {
+          "frames": 171360,
+          "audible_frames": 170177,
+          "callbacks": 357,
+          "sample_rate": 24000,
+          "sha256": "f3808695781b2addb00c9c1c81bf77c03b0415c410755ecadd2297ca915e1609"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "4a55994d-ab66-45ef-9256-5f100d035332",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 7.189875791780651,
+        "drained": true,
+        "device_frames": 171360
+      },
+      "source_bytes": 342060,
+      "source_sha256": "0f1e4288c930c2d3ac981b678fd01f071425d31bd9feb49b0ebb61649992a5a7",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02/audio/console-warmup.wav",
+        "sha256": "0f1e4288c930c2d3ac981b678fd01f071425d31bd9feb49b0ebb61649992a5a7",
+        "pcm_sha256": "19626a0555518ad9b4c8e0198716af09b958ab09fe05244c8dfe949ecf4af16a",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 171008,
+        "seconds": 7.125333333333334,
+        "rms": 0.10516190296790415,
+        "peak": 0.92486572265625
+      },
+      "settled_at": 2178013.792212333,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2178013.792212875,
+        "threads": 3,
+        "rss_bytes": 1305706496,
+        "peak_rss_bytes": 1305739264,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    }
+  ],
+  "arguments": {
+    "engine": "onnx",
+    "device": "cpu",
+    "model": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+    "voice": "ff_siwis",
+    "voice_dir": null,
+    "voices": "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin",
+    "language": "fr",
+    "format": "wav",
+    "speed": 1.0,
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-fr.txt",
+    "cancel_text_file": null,
+    "scenarios": "playback",
+    "repeats": 1,
+    "phase_timeout": 300,
+    "cleanup_timeout": 60,
+    "run_timeout": 1800,
+    "expected_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+    "output": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02",
+    "play_audio": true,
+    "worker": true
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+  "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+  "assets": {
+    "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+    "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+  },
+  "source_revision_if_git": "1edcbb1aee9bacfd7573c53f70b22d51b27f6300",
+  "versions": {
+    "tldw_chatbook": "0.2.0",
+    "textual": "8.2.8",
+    "numpy": "2.5.3",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": "0.9.4",
+    "kokoro-onnx": "0.6.1",
+    "torch": "2.14.0",
+    "onnxruntime": "1.29.0",
+    "misaki": "0.9.4",
+    "spacy": "3.8.16",
+    "en-core-web-sm": "3.8.0"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2177994.267451333,
+    "threads": 2,
+    "rss_bytes": 226115584,
+    "peak_rss_bytes": 226115584
+  },
+  "runtime_files": {
+    "onnxruntime.capi.onnxruntime_pybind11_state": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.so",
+      "sha256": "01adaf3590b50c5f10ce59b6844b6b33cb45142b6b3fc9a2fb2094d8645e873e"
+    }
+  },
+  "backend_assets": [
+    {
+      "model": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+      "engine": "onnx"
+    }
+  ],
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation complete!",
+      "severity": "information"
+    },
+    {
+      "message": "Playback complete",
+      "severity": "information"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "4a55994d-ab66-45ef-9256-5f100d035332",
+      "error": null
+    }
+  ],
+  "memory_after_cleanup": {
+    "at": 2178013.894868958,
+    "threads": 2,
+    "rss_bytes": 1298333696,
+    "peak_rss_bytes": 1306132480,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "ended_utc": "2026-09-09T08:18:29.957267+00:00",
+  "packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02/evidence.json",
+    "original_sha256": "5939514f363e5cbc6e115e368da3dfdcec645991862cae820edfc91d1b8f075d",
+    "source_map_references": {
+      "source_hashes": {
+        "path": "../../../kokoro-english/provenance/source-hashes.json",
+        "overrides": {
+          "Agents/agent_service.py": "1e5338322ef23d89570e46460209be5195ab59039689473117e6637716f8a3f4",
+          "Agents/canvas_tool_provider.py": "8c39b2b5b4da0e68bb1df00f8a30d79d3045df32742bae47c9b8d163b39ea6d9",
+          "Canvas/authoring.py": "2609b0da3c456ac2c6b94d181eb7a53e910e04eb56c46418bff1d25469a7f702",
+          "Canvas/compilation.py": "229543a83f4c4359b8ec3b31ffb52dbfb106362250809d33cc47487ec7a25c6e",
+          "Canvas/compiler.py": "a16d31e9c1fc51625e71f1517f212337140ad6aad561c38185ee6731985502d1",
+          "Canvas/control_protocol.py": "53dc38f40a2209e8e255734dcf833d3e8941cbacbff2b914eb51990de07fa737",
+          "Canvas/gateway.py": "2a2c259984581fd2de29776788d1b60439688c669feafca6d7ccf8a397d0b8c5",
+          "Canvas/models.py": "193858addd9615b34fc1816abf3308eac467c97be66c15b6dc93d24aaf46c742",
+          "Canvas/native_authority.py": "f43113fa9330198e2771f8da57c51d6e1c3af297babb5ae31c38f0a490c9c469",
+          "Canvas/profiles.py": "20c3d3d478e3547eccb6904bc04f9b3bc0ffc2bee0918abbd7bf37e3d70e867d",
+          "Canvas/repository.py": "7315763ac48b9a75d07a0ebb6af2f91c9e26e91462193039a6c67b4fa2b543e9",
+          "Canvas/runtime_assets.py": "15fff9ac43d3ccfb1e94fe9a0277a03f5c6dc52237ffc94af8ad10481c6242e1",
+          "Canvas/service.py": "958e1b7f17a9f502d837ad1d111904b13dafcf85fbf1882495ca5ac1d2d35531",
+          "Canvas/staging.py": "ae350eccf7b2c3487e04b09976636abd63c52e0f542124d37927e4ac1f8018bf",
+          "Chat/console_agent_bridge.py": "f4f01da512f83f3888e51999ba7ccbfab38e59817d43a0703211fdb7d6e11a6c",
+          "Chat/console_canvas_controller.py": "b83a90715a7ee5b8b32cab1e4e781be444b8ff8bac857f4a795c537bd238b7a0",
+          "Chat/console_message_actions.py": "3e14471acb01729c6740e3e77e68691a961eb48aeaaeb1210becd92f6b639c38",
+          "Chat/console_runtime.py": "b2910189a6f35b31dd573dda544f37cb679e5bc097db35ddbebbf0e55220b347",
+          "Chat/console_trace_maintenance.py": "327f325b99f37461f123526776acc8be730c35a0457c736a1e38ff594c1a7688",
+          "DB/ChaChaNotes_DB.py": "198873f60eb1a9a8f94b5e8f795d7bdec740a658f5e12b24ba0406eac270470b",
+          "DB/private_sqlite.py": "cbac6a6985b7e019e937bc70316c1c7112fc39528123e532e4cb7a0f35c9b3e0",
+          "DB/private_sqlite_files.py": "27f383d59ee990c4645395538dcaa16c9ce9d85cdc6c055c8c4b2ef6f0f4ec06",
+          "DB/private_sqlite_helper.py": "448c7f38ba6e6a26df0fb8bf082933c62de98a7eb86bead2b7050888361e869a",
+          "DB/private_sqlite_helper_entry.py": "f5bee36ca8743a6769d32e9930656f698b686b9c08677ae2fcd03ab38f4ae985",
+          "DB/private_sqlite_process.py": "9202aa648cb8010cf72a1e2a9c413af931f96748227c7d83413608a3f2aec0d9",
+          "DB/private_sqlite_protocol.py": "4e903471e334e81ec524f21c77feed564fc47848198f7fa9aa7e66a5523251f7",
+          "DB/sql_identifier_core.py": "e6caf27bae6d30ae7f6bd51a770d37ce3a1d3dd131692e9e8c93c210c01d6442",
+          "DB/sql_validation.py": "127fc9c409ec709b761768632e397ccc85cc25fa2cf643b6148b1abb7e1c2d91",
+          "Library/collections_legacy_recovery.py": "a216db69a35ea826454365dc3ad052842e83f8109c1d09cd3eacfba5d8f48221",
+          "TTS/__init__.py": "495ba9bdcdb5b8a22a0ec92b8c1a9d33448860d1ec03a0d82cd32f8b2ed1eff4",
+          "TTS/backends/kokoro.py": "005551e99e56ef4dff82d66a4509f6e57b8af8e196cf3d19281313fab9a5c32d",
+          "TTS/kokoro_languages.py": "e34e4dd905a2fe82d23ed0787896dc86fffe741b84d5172702fb286f91d7a430",
+          "TTS/kokoro_pytorch.py": "fee9db433af842c6c45f57e2707cb7c27ba12e4d51c266b5f1c53b6dd774a660",
+          "TTS/profile_errors.py": "8ef24b71e3d41b61e19e0931499594642c4e7f479c0df8bfcab9c1220c453442",
+          "TTS/profile_migration_candidate.py": "4b0b9e1b0070b3955bc244d19c7b57ff2d9b725afa0c6df01b2d6f11f1dac2ba",
+          "TTS/profile_migration_namespace.py": "d4dacc3e77f67082c7307433d0626595c16bed35fceb67485a753c7f1a51bbb3",
+          "TTS/profile_migration_publication.py": "4b3bfa379c6a88b97c8129f3db48115dee97800cdeaabe68f05cf1e4155173be",
+          "TTS/profile_migration_recovery.py": "f6e5d87e2a97c96425fceef8a52784bcec6f9e75fb9ff10a43d33bb7c8a52bb4",
+          "TTS/profile_repository.py": "c0475ecd65ca8a4982f18e90d03b6588029694450453ac5d134c06c1c85721a1",
+          "TTS/profile_schema.py": "24c26f82488677a4a4b0f08e7e55954f947593219cf8a806a4c6abf1e372f71b",
+          "TTS/profile_sqlite_policy.py": "b777e76c359222c94c61668ccbebd570abc770f93afac9bdaa23a8c390a40f89",
+          "TTS/profile_sqlite_proof.py": "8e5bc8b5cc8f9b33d51cc6e4351ea0390f9dc425a0e47bb10301e8d08f10f89c",
+          "TTS/profile_validation.py": "86bb77e0a7b5a2848d88d958e6e43c675a0ad1602f595035dbd302a8af8d02ee",
+          "UI/Screens/chat_screen.py": "9a525f67dbb6b4e375d7d71099632686b8579598792910bb3efce060d35bb946",
+          "UI/stts_profile_library.py": "4d683fea0f3cf844ece764099f95572321b8644086b8ba4a555a05e65605d1bd",
+          "Web_Server/serve.py": "f9766f4e5a1603c939bb8f7b696e698231f827d401c82fe27589142e475cc8f3",
+          "app.py": "24b27d6e7e0d1e84cf7b054bbb48a55f527397cd258a3ff2963562a66109b692"
+        },
+        "remove": [],
+        "file_count": 2265,
+        "canonical_sha256": "3016049fbfce836e85ef078a20852d31af11f60e93e43271b2166192688202d7"
+      },
+      "source_hashes_after": {
+        "path": "../../../kokoro-english/provenance/source-hashes.json",
+        "overrides": {
+          "Agents/agent_service.py": "1e5338322ef23d89570e46460209be5195ab59039689473117e6637716f8a3f4",
+          "Agents/canvas_tool_provider.py": "8c39b2b5b4da0e68bb1df00f8a30d79d3045df32742bae47c9b8d163b39ea6d9",
+          "Canvas/authoring.py": "2609b0da3c456ac2c6b94d181eb7a53e910e04eb56c46418bff1d25469a7f702",
+          "Canvas/compilation.py": "229543a83f4c4359b8ec3b31ffb52dbfb106362250809d33cc47487ec7a25c6e",
+          "Canvas/compiler.py": "a16d31e9c1fc51625e71f1517f212337140ad6aad561c38185ee6731985502d1",
+          "Canvas/control_protocol.py": "53dc38f40a2209e8e255734dcf833d3e8941cbacbff2b914eb51990de07fa737",
+          "Canvas/gateway.py": "2a2c259984581fd2de29776788d1b60439688c669feafca6d7ccf8a397d0b8c5",
+          "Canvas/models.py": "193858addd9615b34fc1816abf3308eac467c97be66c15b6dc93d24aaf46c742",
+          "Canvas/native_authority.py": "f43113fa9330198e2771f8da57c51d6e1c3af297babb5ae31c38f0a490c9c469",
+          "Canvas/profiles.py": "20c3d3d478e3547eccb6904bc04f9b3bc0ffc2bee0918abbd7bf37e3d70e867d",
+          "Canvas/repository.py": "7315763ac48b9a75d07a0ebb6af2f91c9e26e91462193039a6c67b4fa2b543e9",
+          "Canvas/runtime_assets.py": "15fff9ac43d3ccfb1e94fe9a0277a03f5c6dc52237ffc94af8ad10481c6242e1",
+          "Canvas/service.py": "958e1b7f17a9f502d837ad1d111904b13dafcf85fbf1882495ca5ac1d2d35531",
+          "Canvas/staging.py": "ae350eccf7b2c3487e04b09976636abd63c52e0f542124d37927e4ac1f8018bf",
+          "Chat/console_agent_bridge.py": "f4f01da512f83f3888e51999ba7ccbfab38e59817d43a0703211fdb7d6e11a6c",
+          "Chat/console_canvas_controller.py": "b83a90715a7ee5b8b32cab1e4e781be444b8ff8bac857f4a795c537bd238b7a0",
+          "Chat/console_message_actions.py": "3e14471acb01729c6740e3e77e68691a961eb48aeaaeb1210becd92f6b639c38",
+          "Chat/console_runtime.py": "b2910189a6f35b31dd573dda544f37cb679e5bc097db35ddbebbf0e55220b347",
+          "Chat/console_trace_maintenance.py": "327f325b99f37461f123526776acc8be730c35a0457c736a1e38ff594c1a7688",
+          "DB/ChaChaNotes_DB.py": "198873f60eb1a9a8f94b5e8f795d7bdec740a658f5e12b24ba0406eac270470b",
+          "DB/private_sqlite.py": "cbac6a6985b7e019e937bc70316c1c7112fc39528123e532e4cb7a0f35c9b3e0",
+          "DB/private_sqlite_files.py": "27f383d59ee990c4645395538dcaa16c9ce9d85cdc6c055c8c4b2ef6f0f4ec06",
+          "DB/private_sqlite_helper.py": "448c7f38ba6e6a26df0fb8bf082933c62de98a7eb86bead2b7050888361e869a",
+          "DB/private_sqlite_helper_entry.py": "f5bee36ca8743a6769d32e9930656f698b686b9c08677ae2fcd03ab38f4ae985",
+          "DB/private_sqlite_process.py": "9202aa648cb8010cf72a1e2a9c413af931f96748227c7d83413608a3f2aec0d9",
+          "DB/private_sqlite_protocol.py": "4e903471e334e81ec524f21c77feed564fc47848198f7fa9aa7e66a5523251f7",
+          "DB/sql_identifier_core.py": "e6caf27bae6d30ae7f6bd51a770d37ce3a1d3dd131692e9e8c93c210c01d6442",
+          "DB/sql_validation.py": "127fc9c409ec709b761768632e397ccc85cc25fa2cf643b6148b1abb7e1c2d91",
+          "Library/collections_legacy_recovery.py": "a216db69a35ea826454365dc3ad052842e83f8109c1d09cd3eacfba5d8f48221",
+          "TTS/__init__.py": "495ba9bdcdb5b8a22a0ec92b8c1a9d33448860d1ec03a0d82cd32f8b2ed1eff4",
+          "TTS/backends/kokoro.py": "005551e99e56ef4dff82d66a4509f6e57b8af8e196cf3d19281313fab9a5c32d",
+          "TTS/kokoro_languages.py": "e34e4dd905a2fe82d23ed0787896dc86fffe741b84d5172702fb286f91d7a430",
+          "TTS/kokoro_pytorch.py": "fee9db433af842c6c45f57e2707cb7c27ba12e4d51c266b5f1c53b6dd774a660",
+          "TTS/profile_errors.py": "8ef24b71e3d41b61e19e0931499594642c4e7f479c0df8bfcab9c1220c453442",
+          "TTS/profile_migration_candidate.py": "4b0b9e1b0070b3955bc244d19c7b57ff2d9b725afa0c6df01b2d6f11f1dac2ba",
+          "TTS/profile_migration_namespace.py": "d4dacc3e77f67082c7307433d0626595c16bed35fceb67485a753c7f1a51bbb3",
+          "TTS/profile_migration_publication.py": "4b3bfa379c6a88b97c8129f3db48115dee97800cdeaabe68f05cf1e4155173be",
+          "TTS/profile_migration_recovery.py": "f6e5d87e2a97c96425fceef8a52784bcec6f9e75fb9ff10a43d33bb7c8a52bb4",
+          "TTS/profile_repository.py": "c0475ecd65ca8a4982f18e90d03b6588029694450453ac5d134c06c1c85721a1",
+          "TTS/profile_schema.py": "24c26f82488677a4a4b0f08e7e55954f947593219cf8a806a4c6abf1e372f71b",
+          "TTS/profile_sqlite_policy.py": "b777e76c359222c94c61668ccbebd570abc770f93afac9bdaa23a8c390a40f89",
+          "TTS/profile_sqlite_proof.py": "8e5bc8b5cc8f9b33d51cc6e4351ea0390f9dc425a0e47bb10301e8d08f10f89c",
+          "TTS/profile_validation.py": "86bb77e0a7b5a2848d88d958e6e43c675a0ad1602f595035dbd302a8af8d02ee",
+          "UI/Screens/chat_screen.py": "9a525f67dbb6b4e375d7d71099632686b8579598792910bb3efce060d35bb946",
+          "UI/stts_profile_library.py": "4d683fea0f3cf844ece764099f95572321b8644086b8ba4a555a05e65605d1bd",
+          "Web_Server/serve.py": "f9766f4e5a1603c939bb8f7b696e698231f827d401c82fe27589142e475cc8f3",
+          "app.py": "24b27d6e7e0d1e84cf7b054bbb48a55f527397cd258a3ff2963562a66109b692"
+        },
+        "remove": [],
+        "file_count": 2265,
+        "canonical_sha256": "3016049fbfce836e85ef078a20852d31af11f60e93e43271b2166192688202d7"
+      }
+    },
+    "transformation": "Only source_hashes/source_hashes_after are factored; all other original JSON values are retained."
+  }
+}

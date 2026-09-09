@@ -12401,6 +12401,12 @@ SmartContentTree Tree > .selected-node {
     height: auto;
     padding: 0 4 1 4;
 }
+/* task-32140 review: five buttons no longer fit one non-wrapping row at
+ * 80x24 or 120x40 (Horizontal never wraps) -- two docked rows instead. */
+.setup-summary-actions-row {
+    height: auto;
+    margin-bottom: 1;
+}
 .setup-summary-actions Button {
     margin-right: 2;
 }
@@ -13942,9 +13948,9 @@ CodingWindow {
 }
 
 .watchlists-read-mode .watchlists-region-items {
-    width: 40fr;
-    min-width: 32;
-    max-width: 40;
+    width: 50fr;
+    min-width: 42;
+    max-width: 50;
     height: 100%;
     overflow: hidden;
 }
@@ -13992,7 +13998,7 @@ CodingWindow {
 }
 
 .watchlists-has-expanded-side-pane.watchlists-read-mode .watchlists-region-items {
-    min-width: 32;
+    min-width: 42;
 }
 
 #watchlists-content-pane {

@@ -48,8 +48,19 @@ from .limits import (
     validate_opaque_identifier,
     validate_utf8_text,
 )
-from .models import CanvasBridgeRequest, CanvasRenderPlan, RenderNode
-from .runtime_assets import CanvasRuntimeAssets, load_canvas_runtime_assets
+from .models import (
+    CanvasBridgeRequest,
+    CanvasRenderPlan,
+    CanvasRenderPlanV2,
+    RenderNode,
+)
+from .profiles import (
+    ProfileSnapshot,
+    load_profile_snapshot,
+    resolve_profile,
+    runtime_assets_for,
+)
+from .runtime_assets import CanvasProfileRuntimeAssets
 
 BridgeConfirmationStatus: TypeAlias = Literal["confirmed", "cancelled", "refused"]
 CanvasGatewayEventKind: TypeAlias = Literal[
@@ -118,6 +129,9 @@ _SHELL_ASSETS: Mapping[str, tuple[str, str]] = MappingProxyType(
         "canvas_shell.css": ("text/css", "utf-8"),
         "canvas_shell.js": ("text/javascript", "utf-8"),
     }
+)
+_SHELL_BYTES = MappingProxyType(
+    {name: _STATIC_ROOT.joinpath(name).read_bytes() for name in _SHELL_ASSETS}
 )
 
 
@@ -1126,6 +1140,7 @@ class CanvasGateway:
         self,
         *,
         authority: CanvasGatewayAuthority,
+        profile_snapshot: ProfileSnapshot | None = None,
         host: str = "127.0.0.1",
         port: int = 0,
         max_request_bytes: int | None = None,
@@ -1212,7 +1227,16 @@ class CanvasGateway:
         self._sessions: dict[bytes, _BrowserSession] = {}
         self._session_ids: dict[str, bytes] = {}
         self._shell_bindings: dict[str, _ShellBinding] = {}
-        self._assets: CanvasRuntimeAssets | None = None
+        authority_snapshot = getattr(authority, "profile_snapshot", None)
+        if (
+            profile_snapshot is not None
+            and authority_snapshot is not None
+            and profile_snapshot is not authority_snapshot
+        ):
+            raise ValueError("canvas_profile_snapshot_mismatch")
+        self.profile_snapshot = (
+            profile_snapshot or authority_snapshot or load_profile_snapshot()
+        )
         self._app = web.Application(
             middlewares=[
                 self._security_headers_middleware,
@@ -1775,7 +1799,17 @@ class CanvasGateway:
             return _error_response("session_refused", 401)
         scope = session.scope
         selection_epoch = session.selection_epoch
-        projection = await _maybe_await(self._authority.describe_selection(scope))
+        try:
+            projection = await _maybe_await(self._authority.describe_selection(scope))
+        except Exception:  # Classify freshness without exposing authority errors.
+            # A child may reject the old selected read after publication has
+            # already advanced this live session. Classify that race exactly as
+            # a stale successful read; genuine/current-scope failures still close.
+            if session.selection_epoch != selection_epoch and self._session_is_current(
+                session, session.scope
+            ):
+                return _error_response("selection_changed", 409)
+            raise
         if session.selection_epoch != selection_epoch and self._session_is_current(
             session, session.scope
         ):
@@ -1864,16 +1898,27 @@ class CanvasGateway:
             self.capabilities.consume(token, expected_scope=expected)
         except CanvasCapabilityError:
             return _error_response("renderer_unavailable", 401)
-        assets = self._runtime_assets()
-        if not assets.enabled or assets.renderer_javascript is None:
+        scope, load_id = session.scope, session.current_load_id
+        source = await _maybe_await(self._authority.read_source(scope))
+        if session.current_load_id != load_id or not self._session_is_current(
+            session, scope
+        ):
+            return _error_response("renderer_unavailable", 401)
+        assets = self._profile_assets(source.runtime_profile or "canvas-v1")
+        if assets is None:
             return _error_response("runtime_unavailable", 503)
+        renderer_name = (
+            "canvas_renderer_v2.js"
+            if assets.profile_id == "canvas-v2-mermaid-1"
+            else "canvas_renderer.js"
+        )
         integrity = base64.b64encode(
             hashlib.sha384(assets.renderer_javascript).digest()
         ).decode("ascii")
         renderer_url = (
-            f"{_MOUNTED_RUNTIME_STATIC_PREFIX}/canvas_renderer.js"
+            f"{_MOUNTED_RUNTIME_STATIC_PREFIX}/{renderer_name}"
             if request.app is self._mounted_app
-            else f"{self._route_prefix(session.shell_incarnation_id)}/static/canvas_renderer.js"
+            else f"{self._route_prefix(session.shell_incarnation_id)}/static/{renderer_name}"
         )
         body = (
             '<!doctype html><html><head><meta charset="utf-8">'
@@ -1912,10 +1957,30 @@ class CanvasGateway:
         if (
             session.current_load_id != load_id
             or not self._session_is_current(session, scope)
-            or not isinstance(plan, CanvasRenderPlan)
+            or not isinstance(plan, (CanvasRenderPlan, CanvasRenderPlanV2))
         ):
             return _error_response("plan_unavailable", 503)
-        return web.json_response(_render_plan_wire(plan))
+        assets = self._profile_assets(plan.runtime_profile)
+        if assets is None:
+            return _error_response("plan_unavailable", 503)
+        payload = _render_plan_wire(plan)
+        if isinstance(plan, CanvasRenderPlanV2):
+            source = await _maybe_await(self._authority.read_source(scope))
+            if (
+                session.current_load_id != load_id
+                or not self._session_is_current(session, scope)
+                or source.runtime_profile != plan.runtime_profile
+                or sha256_utf8(source.source) != plan.source_identity.sha256
+                or hashlib.sha256(assets.manifest_bytes).hexdigest()
+                != plan.profile_manifest_sha256
+            ):
+                return _error_response("plan_unavailable", 503)
+            payload["runtime_data"] = {
+                "manifest": assets.manifest_bytes.decode("utf-8"),
+                "library": assets.library_files["mermaid-subset.json"].decode("utf-8"),
+                "source": source.source,
+            }
+        return web.json_response(payload)
 
     async def _events(self, request: web.Request) -> web.Response:
         session = self._require_session(request, allow_unavailable=True)
@@ -1929,9 +1994,16 @@ class CanvasGateway:
                 validate_opaque_identifier(after, field_name="last event ID")
             except CanvasLimitError:
                 return _error_response("invalid_event_cursor", 400)
-        events = await _maybe_await(
-            self._authority.read_events(scope, after_event_id=after)
-        )
+        try:
+            events = await _maybe_await(
+                self._authority.read_events(scope, after_event_id=after)
+            )
+        except Exception:  # Recover only an independently reconciled live selection.
+            if session.selection_epoch != selection_epoch and self._session_is_current(
+                session, session.scope
+            ):
+                return _error_response("selection_changed", 409)
+            raise
         if session.selection_epoch != selection_epoch and self._session_is_current(
             session, session.scope, allow_unavailable=True
         ):
@@ -2297,17 +2369,12 @@ class CanvasGateway:
         if shell_asset is not None:
             content_type, charset = shell_asset
             return web.Response(
-                body=_STATIC_ROOT.joinpath(name).read_bytes(),
+                body=_SHELL_BYTES[name],
                 content_type=content_type,
                 charset=charset,
             )
-        assets = self._runtime_assets()
-        inventory = {
-            "canvas_renderer.js": assets.renderer_javascript,
-            "canvas_runtime_worker.js": assets.worker_javascript,
-            "quickjs-runtime.js": assets.javascript,
-        }
-        if name not in inventory or inventory[name] is None or not assets.enabled:
+        inventory = self._runtime_inventory()
+        if name not in inventory:
             return _error_response("asset_not_found", 404)
         return web.Response(
             body=inventory[name], content_type="text/javascript", charset="utf-8"
@@ -2317,14 +2384,9 @@ class CanvasGateway:
         """Serve only integrity-verified, state-free modules to opaque renderers."""
 
         name = request.match_info.get("name", "")
-        assets = self._runtime_assets()
-        inventory = {
-            "canvas_renderer.js": assets.renderer_javascript,
-            "canvas_runtime_worker.js": assets.worker_javascript,
-            "quickjs-runtime.js": assets.javascript,
-        }
+        inventory = self._runtime_inventory()
         body = inventory.get(name)
-        if body is None or not assets.enabled:
+        if body is None:
             return _error_response("asset_not_found", 404)
         return web.Response(
             body=body,
@@ -2739,10 +2801,30 @@ class CanvasGateway:
             shell_incarnation_id=session.shell_incarnation_id,
         )
 
-    def _runtime_assets(self) -> CanvasRuntimeAssets:
-        if self._assets is None:
-            self._assets = load_canvas_runtime_assets()
-        return self._assets
+    def _profile_assets(self, profile_id: str) -> CanvasProfileRuntimeAssets | None:
+        resolved = resolve_profile(
+            self.profile_snapshot,
+            operation="load",
+            parent_profile=profile_id,
+            has_diagrams=False,
+        )
+        return (
+            runtime_assets_for(self.profile_snapshot, profile_id)
+            if resolved.executable
+            else None
+        )
+
+    def _runtime_inventory(self) -> dict[str, bytes]:
+        inventory = {}
+        for profile_id, suffix in (("canvas-v1", ""), ("canvas-v2-mermaid-1", "_v2")):
+            assets = self._profile_assets(profile_id)
+            if assets is not None:
+                inventory[f"canvas_renderer{suffix}.js"] = assets.renderer_javascript
+                inventory[f"canvas_runtime_worker{suffix}.js"] = (
+                    assets.worker_javascript
+                )
+                inventory["quickjs-runtime.js"] = assets.javascript
+        return inventory
 
 
 def _capability_scope(
@@ -2846,8 +2928,8 @@ def _bridge_preparation_wire(
     }
 
 
-def _render_plan_wire(plan: CanvasRenderPlan) -> dict[str, Any]:
-    return {
+def _render_plan_wire(plan: CanvasRenderPlan | CanvasRenderPlanV2) -> dict[str, Any]:
+    payload = {
         "runtime_profile": plan.runtime_profile,
         "source_identity": {
             "source_bytes": plan.source_identity.source_bytes,
@@ -2873,6 +2955,18 @@ def _render_plan_wire(plan: CanvasRenderPlan) -> dict[str, Any]:
             for issue in plan.compatibility_issues
         ],
     }
+    if isinstance(plan, CanvasRenderPlanV2):
+        payload["diagrams"] = [
+            {
+                "ordinal": item.ordinal,
+                "target_node_id": item.target_node_id,
+                "kind": item.kind,
+                "source": item.source,
+            }
+            for item in plan.diagrams
+        ]
+        payload["profile_manifest_sha256"] = plan.profile_manifest_sha256
+    return payload
 
 
 def _projection_wire(projection: CanvasGatewayProjection) -> dict[str, Any]:
