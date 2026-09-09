@@ -217,11 +217,8 @@ class ConsoleGoalStatus(ModalScreen[None]):
                 )
                 await asyncio.to_thread(method, goal.id)
             elif action == "resume":
-                if goal.status == "paused":
-                    await asyncio.to_thread(
-                        service.resume, goal.id, expected_revision=goal.revision
-                    )
-                self.coordinator.start(goal.id)
+                self.resume_goal(goal)
+                return
             elif action == "review":
                 checkpoint = self.selected_checkpoint()
                 if checkpoint is None:
@@ -271,6 +268,22 @@ class ConsoleGoalStatus(ModalScreen[None]):
                 else "Goal action could not be saved. Reopen this goal to inspect its current state."
             )
 
+    @work(exclusive=True, group="goal-resume")
+    async def resume_goal(self, goal) -> None:
+        try:
+            await asyncio.shield(
+                self.coordinator.resume(
+                    goal.id, expected_revision=goal.revision, app=self.app_instance
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - owner retains paused state on failure
+            if self.is_mounted:
+                self.query_one("#goal-error", Static).update(
+                    str(exc)
+                    if isinstance(exc, (ValueError, RuntimeError))
+                    else "Goal conversation could not be restored. Reopen this goal to retry."
+                )
+
 
 class ConsoleGoalHistory(ModalScreen[None]):
     """Body-free history; private data is loaded only after explicit selection."""
@@ -283,13 +296,14 @@ class ConsoleGoalHistory(ModalScreen[None]):
     ConsoleGoalHistory Button { width: 1fr; min-width: 10; }
     """
 
-    def __init__(self, rows, *, open_goal, new_goal):
+    def __init__(self, rows, *, open_goal, new_goal, older=None, newer=None, page=1):
         super().__init__()
         self.rows, self.open_goal, self.new_goal = rows, open_goal, new_goal
+        self.older, self.newer, self.page = older, newer, page
 
     def compose(self):
         with Vertical():
-            yield Static("Goal runs", markup=False)
+            yield Static(f"Goal runs · page {self.page}", markup=False)
             yield Select(
                 [(f"{r.status.replace('_', ' ')} · {r.id}", r.id) for r in self.rows],
                 prompt="Select a saved goal",
@@ -297,9 +311,17 @@ class ConsoleGoalHistory(ModalScreen[None]):
             )
             if not self.rows:
                 yield Static(
-                    "No saved goals. Start a finite goal from this workspace.",
+                    "No saved goals on this page.",
                     markup=False,
                 )
+            if self.older or self.newer:
+                with Horizontal():
+                    yield Button(
+                        "Newer", id="goal-history-newer", disabled=self.newer is None
+                    )
+                    yield Button(
+                        "Older", id="goal-history-older", disabled=self.older is None
+                    )
             with Horizontal():
                 yield Button("New goal", id="goal-history-new", variant="primary")
                 yield Button(
@@ -312,7 +334,14 @@ class ConsoleGoalHistory(ModalScreen[None]):
 
     @on(Button.Pressed)
     def pressed(self, event):
-        if event.button.id == "goal-history-new":
+        if event.button.id in {"goal-history-older", "goal-history-newer"}:
+            callback = (
+                self.older if event.button.id == "goal-history-older" else self.newer
+            )
+            if callback:
+                self.dismiss(None)
+                callback()
+        elif event.button.id == "goal-history-new":
             self.dismiss(None)
             self.new_goal()
         elif event.button.id == "goal-history-open":

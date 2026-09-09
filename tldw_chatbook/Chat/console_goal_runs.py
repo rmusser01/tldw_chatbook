@@ -355,6 +355,7 @@ class ConsoleGoalCoordinator:
         self._observers: set[Callable[[str], None]] = set()
         self._launch_task: asyncio.Task[GoalSnapshot] | None = None
         self._launch_id: str | None = None
+        self._resume_goal_id: str | None = None
         self.service._control_listener = self._control_changed
 
     def subscribe(self, callback: Callable[[str], None]) -> Callable[[], None]:
@@ -384,7 +385,7 @@ class ConsoleGoalCoordinator:
     @property
     def active_goal_id(self) -> str | None:
         """Return the goal owning active execution, approval or a bounded wait."""
-        return self._running_goal or self._dispatch_goal_id
+        return self._running_goal or self._dispatch_goal_id or self._resume_goal_id
 
     async def recover(self) -> tuple[GoalSnapshot, ...]:
         """Observe/project the one shared startup audit without admitting work."""
@@ -477,7 +478,7 @@ class ConsoleGoalCoordinator:
         if self._closed or self.controller._disposed:
             raise RuntimeError("runtime_unavailable")
         if self._launch_task is not None and not self._launch_task.done():
-            if self._launch_id == launch_id:
+            if self._resume_goal_id is None and self._launch_id == launch_id:
                 return self._launch_task
             raise ValueError("goal_setup_active")
         if self.active_goal_id is not None:
@@ -502,6 +503,65 @@ class ConsoleGoalCoordinator:
                 self.start(goal.id)
         self.notify_goal_changed(goal.id)
         return goal
+
+    def resume(
+        self, goal_id: str, *, expected_revision: int, app: Any
+    ) -> asyncio.Task[GoalSnapshot]:
+        """Hydrate and resume in the one runtime-owned activation slot."""
+        if self._closed or self.controller._disposed:
+            raise RuntimeError("runtime_unavailable")
+        if self._launch_task is not None and not self._launch_task.done():
+            if self._resume_goal_id == goal_id:
+                return self._launch_task
+            raise ValueError("goal_setup_active")
+        if self.active_goal_id is not None:
+            raise ValueError("goal_active")
+        self._event_loop = asyncio.get_running_loop()
+        self._launch_id = None
+        self._resume_goal_id = goal_id
+        self._launch_task = asyncio.create_task(
+            self._resume(goal_id, expected_revision=expected_revision, app=app)
+        )
+        self.notify_goal_changed(goal_id)
+        return self._launch_task
+
+    async def _resume(
+        self, goal_id: str, *, expected_revision: int, app: Any
+    ) -> GoalSnapshot:
+        try:
+            goal = await asyncio.to_thread(self.service.get, goal_id)
+            if goal.revision != expected_revision:
+                raise ValueError("revision_conflict")
+            if goal.status not in {"paused", "ready"}:
+                raise ValueError("resume_requires_clean_checkpoint")
+            if self._closed or self.controller._disposed:
+                return await asyncio.to_thread(self.service.get, goal_id)
+            hydration = asyncio.create_task(self.restore_session(goal_id, app=app))
+            try:
+                await asyncio.shield(hydration)
+            except asyncio.CancelledError:
+                # A cancelled view never reaches here; explicit runtime/hydration
+                # cancellation still drains the existing read before stores close.
+                await asyncio.gather(hydration, return_exceptions=True)
+                return await asyncio.to_thread(self.service.get, goal_id)
+            if self._closed or self.controller._disposed:
+                return await asyncio.to_thread(self.service.get, goal_id)
+            if goal.status == "paused":
+                goal = await asyncio.to_thread(
+                    self.service.resume, goal_id, expected_revision=expected_revision
+                )
+            else:
+                goal = await asyncio.to_thread(self.service.get, goal_id)
+            if (
+                not self._closed
+                and not self.controller._disposed
+                and goal.status == "ready"
+            ):
+                self.start(goal_id)
+            return goal
+        finally:
+            self._resume_goal_id = None
+            self.notify_goal_changed(goal_id)
 
     def start(self, goal_id: str) -> asyncio.Task[GoalSnapshot]:
         """Start one runtime-owned chain; await the task to observe its next rest state."""
@@ -626,7 +686,9 @@ class ConsoleGoalCoordinator:
     async def shutdown(self) -> None:
         self.close_admission()
         if self._launch_task is not None:
-            await asyncio.shield(self._launch_task)
+            await asyncio.shield(
+                asyncio.gather(self._launch_task, return_exceptions=True)
+            )
         if self._runner is not None:
             await asyncio.shield(self._runner)
 

@@ -54,20 +54,31 @@ class ConsoleGoalsController:
         self.run_worker = run_worker
         self.open_changes = open_changes
 
-    def open_history(self) -> None:
-        self.run_worker(self._open_history())
+    def open_history(self, offset: int = 0) -> None:
+        self.run_worker(self._open_history(offset))
 
-    async def _open_history(self) -> None:
+    async def _open_history(self, offset: int = 0) -> None:
         from tldw_chatbook.Widgets.Console.console_goal_status import ConsoleGoalHistory
 
         try:
             self.get_controller()
             coordinator = self.get_coordinator()
             await coordinator.recover()
-            rows = await asyncio.to_thread(coordinator.service.list_goals)
+            rows = await asyncio.to_thread(
+                coordinator.service.list_goals, limit=50, offset=offset
+            )
             self.push_screen(
                 ConsoleGoalHistory(
-                    rows, open_goal=self.open_goal, new_goal=self.open_setup
+                    rows,
+                    open_goal=self.open_goal,
+                    new_goal=self.open_setup,
+                    older=(lambda: self.open_history(offset + 50))
+                    if len(rows) == 50
+                    else None,
+                    newer=(lambda: self.open_history(max(0, offset - 50)))
+                    if offset
+                    else None,
+                    page=offset // 50 + 1,
                 )
             )
         except (RuntimeError, ValueError) as exc:
@@ -138,14 +149,7 @@ class ConsoleGoalsController:
                 raise ValueError(
                     "Add a ready local folder binding to this workspace in F9 Settings."
                 )
-            local, _ = controller._compose_local_provider(
-                active,
-                project_root=Path(bindings[0].locator),
-                allow_write=bindings[0].access == "rw",
-            )
             entries = list(controller._agent_bridge._registry.list_catalog())
-            if local:
-                entries.extend(local.list_catalog())
             mcp = await controller._compose_mcp_provider(active, publish_counts=False)
             mcp_refs = {}
             if mcp:
@@ -159,7 +163,35 @@ class ConsoleGoalsController:
                             )
                         )
                 entries.extend(e for e in mcp.list_catalog() if e.id in mcp_refs)
-            tool_ids = tuple(dict.fromkeys(e.id for e in entries))
+
+            async def discover_tools(binding):
+                current = await asyncio.to_thread(
+                    registry.list_runtime_bindings, workspace_id
+                )
+                row = next(
+                    (r for r in current if r.binding_id == binding.binding_id), None
+                )
+                if (
+                    row is None
+                    or row.status.value != "ready"
+                    or row.binding_kind.value != "local-filesystem"
+                    or row.locator != binding.locator
+                    or row.metadata.get("access", "ro") != binding.access
+                ):
+                    raise ValueError(
+                        "Project binding changed. Reopen goal setup to refresh it."
+                    )
+                local, _ = controller._compose_local_provider(
+                    active,
+                    project_root=Path(row.locator),
+                    allow_write=row.metadata.get("access", "ro") == "rw",
+                )
+                selected_entries = entries + (
+                    list(local.list_catalog()) if local else []
+                )
+                return tuple(dict.fromkeys(e.id for e in selected_entries))
+
+            tool_ids = await discover_tools(bindings[0])
             defaults = tuple(
                 t for t in tool_ids if t in {"local:fs_read", "local:fs_edit"}
             )
@@ -183,6 +215,13 @@ class ConsoleGoalsController:
 
             async def configure(values, skill_name, script_path, arguments, inputs):
                 selected = values["tool_scope"]["catalog_tools"]
+                available = await discover_tools(
+                    GoalBindingRef.model_validate(values["binding"])
+                )
+                if not set(selected).issubset(available):
+                    raise ValueError(
+                        "Tool availability changed. Refresh the project binding before launch."
+                    )
                 values["tool_scope"]["mcp_bindings"] = tuple(
                     mcp_refs[t].model_dump() for t in selected if t in mcp_refs
                 )
@@ -208,6 +247,7 @@ class ConsoleGoalsController:
                     start=self.start,
                     bindings=bindings,
                     tool_ids=tool_ids,
+                    discover_tools=discover_tools,
                     configure=configure,
                 ),
                 self._started,

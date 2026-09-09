@@ -240,3 +240,180 @@ async def test_selecting_older_checkpoint_clears_quality_acceptance(
             app.screen.query_one("#goal-error").render()
         )
         assert co.service.get(goal.id).status == "awaiting_result_review"
+
+
+async def restarted_goal(stores, monkeypatch):
+    """A new runtime, store and gateway over actual persisted goal history."""
+    from types import SimpleNamespace
+
+    from Tests.Chat.test_console_goal_scheduling import progress
+    from tldw_chatbook.Agents.goal_run_service import GoalRunService
+    from tldw_chatbook.Chat.chat_conversation_scope_service import (
+        ChatConversationScopeService,
+    )
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_goal_runs import ConsoleGoalCoordinator
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    goal, _, _, _, old, old_gateway, _ = build_goal_rig(
+        stores, monkeypatch, lambda **kw: progress(1)
+    )
+    old.service.checkpoint(await old.dispatch_once(goal.id))
+    old.service.pause(goal.id)
+    await old.shutdown()
+    await old_gateway.aclose()
+    calls = []
+
+    def provider(**kwargs):
+        calls.append(kwargs)
+        return progress(len(calls) + 1)
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=provider)
+    gateway.resolve_for_send = old_gateway.resolve_for_send
+    store = ConsoleChatStore(persistence=stores[1])
+    ordinary = store.create_session(workspace_id="workspace")
+    ordinary.draft = "keep ordinary draft"
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=stores[0], store=store, provider_gateway=gateway
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    co = ConsoleGoalCoordinator(controller, GoalRunService(stores[0], stores[1]))
+    controller._goal_coordinator = co
+    backend = SimpleNamespace(
+        chachanotes_db=stores[1].db,
+        app_config={},
+        chat_conversation_scope_service=ChatConversationScopeService(
+            local_service=ChatConversationService(stores[1].db), server_service=None
+        ),
+    )
+    runtime = ConsoleRuntime(backend)
+    runtime.set_chat_controller(controller)
+    runtime.set_chat_store(store)
+    runtime.set_provider_gateway(gateway)
+    await co.recover()
+    return co, co.service.get(goal.id), runtime, backend, ordinary, calls
+
+
+@pytest.mark.asyncio
+async def test_cold_restart_resume_hydrates_real_history_before_dispatch(
+    stores, monkeypatch
+):
+    co, goal, runtime, backend, ordinary, calls = await restarted_goal(
+        stores, monkeypatch
+    )
+    assert not any(s.id == goal.conversation_id for s in co.controller.store.sessions())
+    app = GoalHarness(co, goal.id)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.screen.app_instance = backend
+            await pilot.click("#goal-resume")
+            for _ in range(200):
+                if calls and co.active_goal_id is None:
+                    break
+                await pilot.pause(0.01)
+            assert calls, co.service.get(goal.id).pause_reason
+            restored = next(
+                s
+                for s in co.controller.store.sessions()
+                if s.id == goal.conversation_id
+            )
+            assert (
+                restored.id
+                == restored.persisted_conversation_id
+                == goal.conversation_id
+            )
+            assert co.controller.store.active_session_id == ordinary.id
+            assert ordinary.draft == "keep ordinary draft"
+            saved = co.service.get(goal.id)
+            assert saved.chain_id == goal.chain_id
+            assert (
+                goal.iteration_count
+                < saved.iteration_count
+                <= goal.request.policy.iterations
+            )
+            assert saved.accounting.deadline_at == goal.accounting.deadline_at
+            assert (
+                saved.accounting.used["generation"] > goal.accounting.used["generation"]
+            )
+    finally:
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["navigate", "dispose", "fail", "cancel"])
+async def test_resume_hydration_is_runtime_owned_and_closed_before_dispatch(
+    stores, monkeypatch, action
+):
+    import tldw_chatbook.Chat.console_conversation_hydration as hydration
+
+    co, goal, runtime, backend, ordinary, calls = await restarted_goal(
+        stores, monkeypatch
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    load = hydration.load_console_conversation_tree
+
+    async def held(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        if action == "fail":
+            raise ValueError("goal_conversation_missing")
+        if action == "cancel":
+            raise asyncio.CancelledError
+        return await load(*args, **kwargs)
+
+    monkeypatch.setattr(hydration, "load_console_conversation_tree", held)
+    app = GoalHarness(co, goal.id)
+    disposal = None
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.screen.app_instance = backend
+            await pilot.click("#goal-resume")
+            await asyncio.wait_for(entered.wait(), 1)
+            assert not calls
+            assert co.service.get(goal.id).status == "paused"
+            assert (
+                co.resume(goal.id, expected_revision=goal.revision, app=backend)
+                is co._launch_task
+            )
+            with pytest.raises(ValueError, match="goal_setup_active"):
+                co.launch(goal.request, "different-launch", app=backend)
+            with pytest.raises(ValueError, match="goal_setup_active"):
+                co.start(goal.id)
+            if action == "dispose":
+                disposal = asyncio.create_task(runtime.dispose())
+                await asyncio.sleep(0.03)
+                assert not disposal.done()
+            if action == "navigate":
+                await pilot.press("escape")
+                assert not isinstance(app.screen, goal_view())
+            release.set()
+            for _ in range(200):
+                if co._launch_task and co._launch_task.done() and co._runner is None:
+                    break
+                if calls and co.active_goal_id is None:
+                    break
+                await pilot.pause(0.01)
+            if disposal:
+                await disposal
+            if action == "navigate":
+                assert calls
+            else:
+                assert not calls
+                assert co.service.get(goal.id).status != "ready"
+                assert co.service.get(goal.id).accounting.used == goal.accounting.used
+            assert co.controller.store.active_session_id == ordinary.id
+            assert ordinary.draft == "keep ordinary draft"
+    finally:
+        release.set()
+        await runtime.dispose()

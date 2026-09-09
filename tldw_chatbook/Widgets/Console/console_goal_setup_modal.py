@@ -46,6 +46,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
         start: Callable[[GoalRequest, str], Awaitable[GoalSnapshot]],
         bindings=(),
         tool_ids=(),
+        discover_tools=None,
         configure=None,
     ) -> None:
         super().__init__()
@@ -54,6 +55,10 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
         self.launch_id = uuid4().hex
         self._submitted: GoalRequest | None = None
         self._busy = False
+        self.discover_tools = discover_tools
+        self._binding_version = 0
+        self._catalog_binding_id = request.binding.binding_id
+        self._refreshing_tools = False
 
     def compose(self) -> ComposeResult:
         p = self.request.policy
@@ -123,6 +128,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                         self.request.tool_scope.catalog_tools
                         + self.request.tool_scope.runtime_tools
                     ),
+                    id="goal-selected-tools",
                     markup=False,
                 )
                 yield Static(
@@ -157,6 +163,51 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                     variant="primary",
                 )
 
+    @on(Select.Changed, "#goal-binding")
+    def binding_selected(self) -> None:
+        if self.discover_tools is None or self._submitted is not None:
+            return
+        binding_id = self.query_one("#goal-binding", Select).value
+        self._binding_version += 1
+        self._refreshing_tools = True
+        self.query_one("#goal-start", Button).disabled = True
+        choices = self.query_one("#goal-tools", SelectionList)
+        choices.disabled = True
+        self.refresh_tools(binding_id, self._binding_version, tuple(choices.selected))
+
+    @work(exclusive=True, group="goal-tools")
+    async def refresh_tools(
+        self, binding_id, version: int, selected: tuple[str, ...]
+    ) -> None:
+        try:
+            binding = next(b for b in self.bindings if b.binding_id == binding_id)
+            tools = await self.discover_tools(binding)
+            if not self.is_mounted or version != self._binding_version:
+                return
+            choices = self.query_one("#goal-tools", SelectionList)
+            choices.clear_options()
+            choices.add_options([(tool, tool, tool in selected) for tool in tools])
+            self.tool_ids = tools
+            self._catalog_binding_id = binding_id
+            self.query_one("#goal-setup-error", Static).update("")
+        except Exception as exc:  # noqa: BLE001 - fail closed on changed discovery
+            if self.is_mounted and version == self._binding_version:
+                self._catalog_binding_id = None
+                self.query_one("#goal-tools", SelectionList).clear_options()
+                self.tool_ids = ()
+                self.query_one("#goal-setup-error", Static).update(
+                    str(exc)
+                    if isinstance(exc, (ValueError, RuntimeError))
+                    else "Tools could not be refreshed. Select the project again to retry."
+                )
+        finally:
+            if self.is_mounted and version == self._binding_version:
+                self._refreshing_tools = False
+                self.query_one("#goal-tools", SelectionList).disabled = self._busy
+                self.query_one("#goal-start", Button).disabled = (
+                    self._busy or self._catalog_binding_id is None
+                )
+
     def action_cancel(self) -> None:
         if not self._busy:
             self.dismiss(None)
@@ -167,7 +218,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
 
     @on(Button.Pressed, "#goal-start")
     def start_pressed(self) -> None:
-        if not self._busy:
+        if not self._busy and not self._refreshing_tools:
             self._busy = True
             self.query_one("#goal-start", Button).disabled = True
             self.launch()
@@ -176,6 +227,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
     async def launch(self) -> None:
         try:
             if self._submitted is None:
+                version = self._binding_version
                 values = self.request.model_dump()
                 values.update(
                     objective=self.query_one("#goal-objective", TextArea).text,
@@ -190,6 +242,13 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                         for b in self.bindings
                         if b.binding_id == self.query_one("#goal-binding", Select).value
                     ).model_dump()
+                    if (
+                        self.discover_tools
+                        and self._catalog_binding_id != values["binding"]["binding_id"]
+                    ):
+                        raise ValueError(
+                            "Wait for the selected project's tools to refresh."
+                        )
                     source_ids = (
                         self.query_one("#goal-sources", SelectionList).selected
                         if self.query("#goal-sources")
@@ -212,7 +271,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                         raise ValueError(
                             "Arguments and checked inputs must be JSON arrays."
                         )
-                    self._submitted = await self.configure(
+                    submitted = await self.configure(
                         values,
                         self.query_one("#goal-skill", Input).value.strip(),
                         self.query_one("#goal-script", Input).value.strip(),
@@ -220,9 +279,21 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                         tuple(inputs),
                     )
                 else:
-                    self._submitted = GoalRequest.model_validate(values)
-                self._submitted.validate_verifier_invocations()
+                    submitted = GoalRequest.model_validate(values)
+                if version != self._binding_version:
+                    raise ValueError(
+                        "Project selection changed. Review the current launch again."
+                    )
+                submitted.validate_verifier_invocations()
+                self._submitted = submitted
                 if self.configure:
+                    self.query_one("#goal-selected-tools", Static).update(
+                        "Selected tools: "
+                        + ", ".join(
+                            self._submitted.tool_scope.catalog_tools
+                            + self._submitted.tool_scope.runtime_tools
+                        )
+                    )
                     self.query_one("#goal-selected-checks", Static).update(
                         "Selected checks: "
                         + (
@@ -254,4 +325,4 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
         finally:
             self._busy = False
             if self.is_mounted:
-                self.query_one("#goal-start", Button).disabled = False
+                self.query_one("#goal-start", Button).disabled = self._refreshing_tools

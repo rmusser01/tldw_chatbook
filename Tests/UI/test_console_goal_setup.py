@@ -270,3 +270,213 @@ async def test_actual_setup_derives_immutable_authority_and_reviews_before_launc
     finally:
         await co.shutdown()
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ro_first_rw_second_binding_refresh_launches_authorized_edit(
+    stores, monkeypatch, tmp_path
+):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+
+    from textual.widgets import Select, SelectionList
+
+    import tldw_chatbook.Chat.console_chat_controller as controller_module
+    from Tests.Agents.test_goal_iteration_report import report
+    from Tests.Chat.test_console_goal_dispatch import build_goal_rig
+    from Tests.Chat.test_console_local_review_hook import ALLOW, _FakeService
+
+    def tool(name, arguments):
+        return {
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "edit",
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(arguments)},
+                }
+            ],
+        }
+
+    from tldw_chatbook.Chat.chat_conversation_scope_service import (
+        ChatConversationScopeService,
+    )
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.UI.Console_Modules.goals import ConsoleGoalsController
+    from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+
+    writable = tmp_path / "writable"
+    writable.mkdir()
+    artifact = writable / "fixture.txt"
+    artifact.write_text("invalid\n")
+    registry = stores[2]
+    registry.save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id="workspace",
+            binding_id="binding",
+            binding_kind="local-filesystem",
+            label="Read only",
+            locator=stores[3].binding.locator,
+            status="ready",
+            metadata={"access": "ro"},
+        )
+    )
+    registry.save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id="workspace",
+            binding_id="writable",
+            binding_kind="local-filesystem",
+            label="Writable",
+            locator=str(writable),
+            status="ready",
+            metadata={"access": "rw"},
+        )
+    )
+    n = 0
+
+    def provider(**kwargs):
+        nonlocal n
+        n += 1
+        message = (
+            tool(
+                "fs_edit",
+                {"path": "fixture.txt", "old_string": "invalid", "new_string": "valid"},
+            )
+            if n == 1
+            else {"content": report(summary="edited")}
+        )
+        return {
+            "choices": [{"message": message}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+
+    _, store, _, controller, co, gateway, calls = build_goal_rig(
+        stores, monkeypatch, provider
+    )
+    controller.app = SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
+    setting = controller_module.get_cli_setting
+    monkeypatch.setattr(
+        controller_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True
+            if (section, key) == ("console", "local_tools_enabled")
+            else setting(section, key, default)
+        ),
+    )
+    backend = SimpleNamespace(
+        chachanotes_db=stores[1].db,
+        app_config={},
+        chat_conversation_scope_service=ChatConversationScopeService(
+            local_service=ChatConversationService(stores[1].db), server_service=None
+        ),
+        notify=lambda *args, **kw: pytest.fail(str(args)),
+    )
+    ordinary = store.create_session(workspace_id="workspace")
+    ordinary.draft = "ordinary draft"
+    app = App()
+    ui = ConsoleGoalsController(
+        app_instance=backend,
+        get_controller=lambda: controller,
+        get_coordinator=lambda: co,
+        push_screen=app.push_screen,
+        run_worker=asyncio.create_task,
+        open_changes=lambda *args, **kw: None,
+    )
+    try:
+        async with app.run_test(size=(100, 40)) as pilot:
+            await ui._open_setup()
+            await pilot.pause()
+            modal = app.screen
+            binding = modal.query_one("#goal-binding", Select)
+            choices = modal.query_one("#goal-tools", SelectionList)
+            assert binding.value == "binding"
+            assert "local:fs_edit" not in modal.tool_ids
+            assert "local:fs_read" in choices.selected
+            binding.value = "writable"
+            await pilot.pause()
+            assert "local:fs_edit" in modal.tool_ids
+            choices.select("local:fs_edit")
+            binding.value = "binding"
+            await pilot.pause()
+            assert "local:fs_edit" not in modal.tool_ids
+            assert "local:fs_edit" not in choices.selected
+            assert "local:fs_read" in choices.selected
+            binding.value = "writable"
+            await pilot.pause()
+            choices.select("local:fs_edit")
+            choices.deselect("local:fs_read")
+            await pilot.click("#goal-start")
+            await pilot.pause()
+            assert modal._submitted.binding.binding_id == "writable"
+            summary = str(modal.query_one("#goal-selected-tools").render())
+            assert "local:fs_edit" in summary and "local:fs_read" not in summary
+            await pilot.click("#goal-start")
+            for _ in range(200):
+                if calls and co.active_goal_id is None:
+                    break
+                await pilot.pause(0.01)
+            assert artifact.read_text() == "valid\n"
+            assert (
+                ordinary.draft == "ordinary draft"
+                and store.active_session_id == ordinary.id
+            )
+            new = next(
+                g
+                for g in co.service.list_goals()
+                if co.service.get(g.id).launch_id == modal.launch_id
+            )
+            assert co.service.get(new.id).request.tool_scope.catalog_tools == (
+                "local:fs_edit",
+            )
+    finally:
+        await co.shutdown()
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_binding_discovery_ignores_late_cancelled_refresh(stores):
+    import asyncio
+
+    from textual.widgets import Select, SelectionList
+
+    req = stores[3]
+    readonly = req.binding.model_copy(update={"binding_id": "readonly", "access": "ro"})
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def discover(binding):
+        if binding.binding_id == "readonly":
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                await release.wait()
+            return ("local:fs_read",)
+        return ("local:fs_read", "local:fs_edit")
+
+    async def no_start(*args):
+        pytest.fail("Discovery cannot dispatch")
+
+    app = App()
+    async with app.run_test() as pilot:
+        modal = setup_view()(
+            req,
+            start=no_start,
+            bindings=(req.binding, readonly),
+            tool_ids=("local:fs_read", "local:fs_edit"),
+            discover_tools=discover,
+            configure=lambda *args: None,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#goal-binding", Select).value = "readonly"
+        await asyncio.wait_for(entered.wait(), 1)
+        assert modal.query_one("#goal-start").disabled
+        modal.query_one("#goal-binding", Select).value = req.binding.binding_id
+        await pilot.pause()
+        release.set()
+        await pilot.pause()
+        assert modal.tool_ids == ("local:fs_read", "local:fs_edit")
+        assert "local:fs_edit" in modal.query_one("#goal-tools", SelectionList).selected
+        assert not modal.query_one("#goal-start").disabled

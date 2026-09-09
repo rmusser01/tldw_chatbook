@@ -30,16 +30,20 @@ class GoalRunService:
         self.persistence = persistence
         self._control_listener: Callable[[GoalSnapshot], None] | None = None
 
-    def list_goals(self, *, limit: int = 50) -> tuple[GoalHistoryEntry, ...]:
-        """List at most 100 body-free recent history entries without recovery."""
+    def list_goals(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> tuple[GoalHistoryEntry, ...]:
+        """Read a bounded page of body-free history, including retained tombstones."""
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("invalid_history_limit")
+        if type(offset) is not int or not 0 <= offset < 2**63:
+            raise ValueError("invalid_history_offset")
         with self.db.connection() as conn:
             return tuple(
                 GoalHistoryEntry(**dict(row))
                 for row in conn.execute(
-                    "SELECT id,conversation_id,revision,status,pause_reason,updated_at FROM goal_runs ORDER BY updated_at DESC,id LIMIT ?",
-                    (limit,),
+                    "SELECT id,conversation_id,revision,status,pause_reason,updated_at FROM goal_runs ORDER BY updated_at DESC,id LIMIT ? OFFSET ?",
+                    (limit, offset),
                 )
             )
 

@@ -160,3 +160,65 @@ async def test_changes_control_opens_exact_saved_iteration_and_conversation(
         )
         with pytest.raises(ValueError):
             co.service.checkpoint_run_id(goal.id, "foreign")
+
+
+@pytest.mark.asyncio
+async def test_older_history_reaches_retained_goal_behind_newer_tombstones(
+    stores, monkeypatch
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from textual.app import App
+    from textual.widgets import Select
+
+    from Tests.Chat.test_console_goal_dispatch import build_goal_rig
+    from tldw_chatbook.UI.Console_Modules.goals import ConsoleGoalsController
+
+    old, _, _, controller, co, gateway, calls = build_goal_rig(stores, monkeypatch)
+    old = co.service.pause(old.id)
+    for number in range(50):
+        newer = co.service.create(old.request, launch_id=f"history-{number}")
+        co.service.pause(newer.id)
+        co.service.remove_payloads(newer.id)
+    assert old.id not in {g.id for g in co.service.list_goals()}
+    app = App()
+    ui = ConsoleGoalsController(
+        app_instance=SimpleNamespace(
+            notify=lambda *args, **kwargs: pytest.fail(str(args))
+        ),
+        get_controller=lambda: controller,
+        get_coordinator=lambda: co,
+        push_screen=app.push_screen,
+        run_worker=asyncio.create_task,
+        open_changes=lambda *args, **kw: None,
+    )
+    try:
+        async with app.run_test() as pilot:
+            ui.open_history()
+            await pilot.pause()
+            assert len(app.screen.rows) == 50
+            assert all(g.status == "removed" for g in app.screen.rows)
+            assert await pilot.click("#goal-history-older")
+            await pilot.pause()
+            assert len(app.screen.rows) == 1
+            assert app.screen.rows[0].id == old.id
+            assert await pilot.click("#goal-history-newer")
+            await pilot.pause()
+            assert len(app.screen.rows) == 50
+            assert await pilot.click("#goal-history-older")
+            await pilot.pause()
+            app.screen.query_one("#goal-history", Select).value = old.id
+            assert await pilot.click("#goal-history-open")
+            await pilot.pause()
+            assert app.screen.goal_id == old.id
+            assert await pilot.click("#goal-remove")
+            await pilot.pause()
+            removed = co.service.get(old.id)
+            assert removed.status == "removed" and removed.request is None
+            assert removed.accounting.used == old.accounting.used
+            assert removed.accounting.reserved == old.accounting.reserved
+            assert not calls
+    finally:
+        await co.shutdown()
+        await gateway.aclose()
