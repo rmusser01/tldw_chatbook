@@ -30,6 +30,10 @@ Chatbook continues to support Python >=3.11 and has a separately working ONNX pa
   otherwise obtain the official v1 configuration at pinned model revision
   `f3ff3571791e39611d31c381e3a41a3af07b4987` through the upstream artifact cache.
   Model and voice deserialization must use restricted weights-only loading.
+  Named voice packs must remain inside the configured directory after central
+  filename/path validation, including backend download and timestamp paths.
+  Asset downloads use exclusively created temporary files in the validated
+  destination directory and remove only their own partial file after failure.
 - Pass text, normalized language, the complete float32 voice pack and speed to
   the upstream pipeline. Concatenate every returned waveform segment. Do not
   resample a second time to apply speed, or synthesize replacement audio after a

@@ -141,6 +141,56 @@ def test_named_voice_uses_local_pack_and_reuses_language_pipeline(upstream):
     assert len(state.pipelines) == 1
 
 
+@pytest.mark.parametrize(
+    "escape", ["traversal", "absolute", "absolute_file", "symlink"]
+)
+def test_named_voice_cannot_read_outside_configured_directory(upstream, escape):
+    checkpoint, state = upstream
+    directory = checkpoint.parent / "voices"
+    directory.mkdir()
+    outside = checkpoint.parent / "af_outside.pt"
+    torch.save(state.voices, outside)
+    if escape == "symlink":
+        (directory / "af_link.pt").symlink_to(outside)
+        name = "af_link"
+    else:
+        name = {
+            "traversal": "../af_outside",
+            "absolute": str(outside.with_suffix("")),
+            "absolute_file": str(outside),
+        }[escape]
+    model = kokoro_pytorch.build_model(str(checkpoint))
+    with pytest.raises(ValueError):
+        kokoro_pytorch.generate(model, state.text, name, voice_dir=str(directory))
+
+
+def test_explicit_voice_load_uses_normalized_validated_path(upstream, monkeypatch):
+    checkpoint, state = upstream
+    voice_path = checkpoint.parent / "af_heart.pt"
+    alias = checkpoint.parent / "af_alias.pt"
+    alias.symlink_to(voice_path)
+    loaded_paths = []
+    original_load = torch.load
+
+    def load(path, **kwargs):
+        loaded_paths.append(path)
+        return original_load(path, **kwargs)
+
+    monkeypatch.setattr(torch, "load", load)
+    actual = kokoro_pytorch.load_voice(str(alias))
+    torch.testing.assert_close(actual, state.voices)
+    assert loaded_paths == [voice_path.resolve()]
+
+
+def test_available_voices_excludes_links_outside_configured_directory(upstream):
+    checkpoint, state = upstream
+    directory = checkpoint.parent / "voices"
+    directory.mkdir()
+    torch.save(state.voices, directory / "af_safe.pt")
+    (directory / "af_link.pt").symlink_to(checkpoint.parent / "af_heart.pt")
+    assert kokoro_pytorch.get_available_voices(str(directory)) == ["af_safe"]
+
+
 def test_pipeline_failure_after_segment_does_not_return_partial_success(upstream):
     checkpoint, state = upstream
     state.failure = RuntimeError("inference failed")
@@ -233,7 +283,7 @@ def test_mps_fourier_fallback_preserves_upstream_cpu_math():
     signal = torch.sin(torch.linspace(0, 20, 256)).unsqueeze(0)
     expected_magnitude, expected_phase = upstream_stft.transform(signal)
     expected_audio = upstream_stft.inverse(expected_magnitude, expected_phase)
-    fallback = kokoro_pytorch._CpuSTFT(upstream_stft)
+    fallback = kokoro_pytorch._CpuSTFT(upstream_stft).to("mps")
     magnitude, phase = fallback.transform(signal.to("mps"))
     actual_audio = fallback.inverse(magnitude, phase)
     assert (
@@ -374,6 +424,117 @@ def backend(tmp_path):
             "KOKORO_VOICE_BLENDS_DIR": str(tmp_path / "blends"),
         }
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route", ["download", "load", "load_fallback", "stream", "timestamps"]
+)
+@pytest.mark.parametrize("escape", ["traversal", "absolute", "symlink"])
+async def test_backend_named_voice_rejects_escape_before_loading(
+    upstream, backend, monkeypatch, route, escape
+):
+    checkpoint, state = upstream
+    directory = checkpoint.parent / "voices"
+    directory.mkdir()
+    outside = checkpoint.parent / "af_heart.pt"
+    if escape == "symlink":
+        (directory / "af_link.pt").symlink_to(outside)
+        voice = "af_link"
+    else:
+        voice = "../af_heart" if escape == "traversal" else str(outside.with_suffix(""))
+    backend.voice_dir = str(directory)
+    backend.model_loaded = True
+    backend.kokoro_model_pt = kokoro_pytorch.build_model(str(checkpoint))
+    backend._kokoro_pt_modules = {
+        "generate": kokoro_pytorch.generate,
+        "load_voice": kokoro_pytorch.load_voice,
+    }
+    loaded_paths = []
+    original_load = torch.load
+
+    def load(path, **kwargs):
+        loaded_paths.append(path)
+        return original_load(path, **kwargs)
+
+    monkeypatch.setattr(torch, "load", load)
+    with pytest.raises((ValueError, TTSOperationError)):
+        if route == "download":
+            await backend._download_voice_if_needed(voice)
+        elif route in {"load", "load_fallback"}:
+            if route == "load_fallback":
+                backend._kokoro_pt_modules = None
+            backend._load_voice_pack(voice)
+        elif route == "timestamps":
+            await backend.generate_with_timestamps(state.text, voice)
+        else:
+            request = OpenAISpeechRequest(
+                input=state.text, model="kokoro", voice=voice, response_format="pcm"
+            )
+            _ = [chunk async for chunk in backend.generate_speech_stream(request)]
+    assert loaded_paths == [], "An untrusted named voice reached tensor loading"
+
+
+@pytest.mark.asyncio
+async def test_backend_missing_voice_rejects_escape_before_download(
+    backend, monkeypatch, tmp_path
+):
+    from tldw_chatbook.TTS.backends import kokoro
+
+    downloads = []
+
+    def download(url, destination, **kwargs):
+        downloads.append(destination)
+        return destination
+
+    backend.voice_dir = str(tmp_path / "voices")
+    monkeypatch.setattr(kokoro, "_kokoro_stream_download", download)
+    with pytest.raises(ValueError):
+        await backend._download_voice_if_needed("../af_missing")
+    assert downloads == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine", ["onnx", "pytorch"])
+@pytest.mark.parametrize("timestamps", [False, True])
+@pytest.mark.parametrize(
+    "voice,language", [("hf_alpha", "hi"), ("im_nicola", "it"), ("pf_dora", "pt-br")]
+)
+async def test_backend_voice_language_is_consistent_for_all_generation_paths(
+    backend, monkeypatch, engine, timestamps, voice, language
+):
+    calls = []
+    samples = np.array([0.25, -0.25], dtype=np.float32)
+
+    async def create_stream(text, *, voice, speed, lang):
+        calls.append((voice, lang))
+        yield samples, 24000
+
+    def generate(model, text, voice_pack, *, lang, speed, voice_dir=None):
+        calls.append((voice, lang))
+        return samples, "speech"
+
+    backend.model_loaded = True
+    backend.use_onnx = engine == "onnx"
+    backend.kokoro_instance = SimpleNamespace(create_stream=create_stream)
+    backend.kokoro_model_pt = object()
+    backend._kokoro_pt_modules = {"generate": generate}
+    monkeypatch.setattr(backend, "_download_voice_if_needed", AsyncMock())
+    monkeypatch.setattr(backend, "_load_voice_pack", lambda _: torch.ones(510, 1, 256))
+    if timestamps:
+        data, timings = await backend.generate_with_timestamps("Test speech", voice)
+        assert data.startswith(b"RIFF") and timings
+    else:
+        request = OpenAISpeechRequest(
+            input="Test speech", model="kokoro", voice=voice, response_format="pcm"
+        )
+        data = b"".join(
+            [chunk async for chunk in backend.generate_speech_stream(request)]
+        )
+        np.testing.assert_array_equal(
+            np.frombuffer(data, dtype=np.int16), [8191, -8191]
+        )
+    assert calls == [(voice, language)]
 
 
 @pytest.mark.asyncio

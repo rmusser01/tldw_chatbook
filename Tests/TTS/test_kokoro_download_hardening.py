@@ -137,6 +137,39 @@ def test_download_is_atomic_final_path_appears_only_when_complete(
     assert dest.read_bytes() == b"aabbcc"
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_download_cannot_follow_a_preexisting_partial_file_symlink(
+    tmp_path, fake_requests, interrupted
+):
+    _, holder = fake_requests
+    holder["response"] = _FakeResponse(
+        [b"aa", b"bb"], raise_on_chunk=1 if interrupted else None
+    )
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"preserve this file")
+    directory = tmp_path / "voices"
+    directory.mkdir()
+    dest = directory / "af_new.pt"
+    stale_partial = directory / "af_new.pt.part"
+    stale_partial.symlink_to(outside)
+
+    def download():
+        kokoro_module._kokoro_stream_download(
+            "https://example.invalid/voice", str(dest), label="test"
+        )
+
+    if interrupted:
+        with pytest.raises(OSError):
+            download()
+    else:
+        download()
+        assert dest.read_bytes() == b"aabb"
+    assert outside.read_bytes() == b"preserve this file"
+    assert stale_partial.is_symlink()
+    expected = {stale_partial} if interrupted else {stale_partial, dest}
+    assert set(directory.iterdir()) == expected
+
+
 def test_hasher_sees_every_byte(tmp_path, fake_requests):
     """The checksum must cover the whole body, not just the first chunk.
 

@@ -52,7 +52,11 @@ from tldw_chatbook.TTS.voice_blend_paths import (
     write_private_json,
 )
 from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.Utils.path_validation import validate_path, validate_path_simple
+from tldw_chatbook.Utils.path_validation import (
+    validate_filename,
+    validate_path,
+    validate_path_simple,
+)
 from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
     verify_trusted_directory,
@@ -83,6 +87,19 @@ _KOKORO_PROGRESS_INTERVAL_SECONDS = 2.0
 # Encoded requests retain at most five minutes of 24 kHz mono float32 audio
 # (28.8 MB). Raw PCM does not require a complete-file buffer.
 KOKORO_MAX_ENCODED_AUDIO_SAMPLES = 24000 * 300
+
+# All generation paths infer the same language from official voice prefixes.
+KOKORO_VOICE_LANGUAGES = {
+    "a": "en-us",
+    "b": "en-gb",
+    "j": "ja",
+    "z": "zh",
+    "e": "es",
+    "f": "fr",
+    "h": "hi",
+    "i": "it",
+    "p": "pt-br",
+}
 
 
 def _check_audio_sample_limit(total_samples: int, max_samples: int | None) -> None:
@@ -122,7 +139,7 @@ def _kokoro_stream_download(
     Blocking by design -- callers run it via ``asyncio.to_thread`` so the event
     loop stays responsive (task-19560).
 
-    Writes to a ``.part`` sibling and ``os.replace``s it into place only after
+    Writes to an exclusively created ``.part`` sibling and replaces the target after
     the body is fully read, so an interrupted or failed download can never
     leave a truncated file that the next run's ``os.path.exists`` check treats
     as a complete model.
@@ -139,15 +156,11 @@ def _kokoro_stream_download(
     Raises:
         requests.RequestException: On any transport failure or timeout.
     """
-    parent = os.path.dirname(destination) or "."
+    target = Path(destination)
+    destination = str(validate_path(target.name, target.parent, redact_paths=True))
+    parent = os.path.dirname(destination)
     os.makedirs(parent, exist_ok=True)
-    # Qodo #4: every filesystem write in this app goes through
-    # path_validation. These destinations are internally derived (config'd
-    # model/voice dirs), not user input, but validating anyway means a
-    # future caller passing a traversal-shaped path is refused here rather
-    # than discovering the rule does not apply to downloads.
-    validate_path(destination, parent, redact_paths=True)
-    partial = destination + ".part"
+    partial = None
 
     try:
         with requests.get(
@@ -159,7 +172,14 @@ def _kokoro_stream_download(
             written = 0
             last_log = time.monotonic()
 
-            with open(partial, "wb") as handle:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix=f"{os.path.basename(destination)}.",
+                suffix=".part",
+                dir=parent,
+                delete=False,
+            ) as handle:
+                partial = handle.name
                 for chunk in response.iter_content(chunk_size=8192):
                     if not chunk:
                         continue
@@ -189,16 +209,10 @@ def _kokoro_stream_download(
         # Includes cancellation: never leave a partial file behind that the
         # next run would mistake for a finished download.
         try:
-            if os.path.exists(partial):
+            if partial is not None and os.path.exists(partial):
                 os.remove(partial)
         except OSError as cleanup_exc:
-            # No path here on purpose. `partial` is `destination + ".part"`,
-            # and two of this function's four call sites pass the user's
-            # CONFIGURED model/voice directory, so the path is user data.
-            # The two diagnostics this file lost in the same change
-            # ("Downloaded model to {self.model_path}") were removed for
-            # exactly that reason; the label identifies the download without
-            # naming where it lives.
+            # The configured directory is user data; keep it out of diagnostics.
             logger.debug(
                 f"{label}: could not remove the partial file; "
                 f"error_type={type(cleanup_exc).__name__}"
@@ -682,15 +696,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                     and len(voice_config["primary_voice"]) > 0
                 ):
                     voice_prefix = voice_config["primary_voice"][0].lower()
-                    lang_map = {
-                        "a": "en-us",  # American English
-                        "b": "en-gb",  # British English
-                        "j": "ja",  # Japanese
-                        "z": "zh",  # Chinese
-                        "e": "es",  # Spanish
-                        "f": "fr",  # French
-                    }
-                    lang = lang_map.get(voice_prefix, "en-us")
+                    lang = KOKORO_VOICE_LANGUAGES.get(voice_prefix, "en-us")
                 else:
                     lang = "en-us"  # Default to American English
 
@@ -1113,9 +1119,18 @@ class KokoroTTSBackend(LocalTTSBackend):
                 )
         await self._run_pytorch_work(self._load_pytorch_model)
 
+    def _voice_pack_path(self, voice: str) -> str:
+        """Resolve a named pack within its configured directory before any I/O."""
+        filename = f"{validate_filename(voice)}.pt"
+        return str(
+            validate_path(
+                filename, Path(self.voice_dir).expanduser(), redact_paths=True
+            )
+        )
+
     async def _download_voice_if_needed(self, voice: str):
         """Download voice pack if not present"""
-        voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
+        voice_path = self._voice_pack_path(voice)
         if not os.path.exists(voice_path):
             logger.info(f"Downloading voice pack: {voice}")
             try:
@@ -1136,13 +1151,12 @@ class KokoroTTSBackend(LocalTTSBackend):
 
     def _load_voice_pack(self, voice: str):
         """Load a voice pack for PyTorch"""
+        voice_path = self._voice_pack_path(voice)
         if self._kokoro_pt_modules and "load_voice" in self._kokoro_pt_modules:
             load_voice = self._kokoro_pt_modules["load_voice"]
-            voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
             return load_voice(voice_path, self.device)
         else:
             # Fallback to direct torch load
-            voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
             if not os.path.exists(voice_path):
                 raise FileNotFoundError(f"Voice pack not found: {voice_path}")
             return self.torch.load(voice_path, weights_only=True).to(self.device)
@@ -1181,18 +1195,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                 # Map voice prefix to espeak language codes
                 if voice and len(voice) > 0:
                     voice_prefix = voice[0].lower()
-                    lang_map = {
-                        "a": "en-us",  # American English
-                        "b": "en-gb",  # British English
-                        "j": "ja",  # Japanese
-                        "z": "zh",  # Chinese
-                        "e": "es",  # Spanish
-                        "f": "fr",  # French
-                        "h": "hi",  # Hindi
-                        "i": "it",  # Italian
-                        "p": "pt-br",  # Brazilian Portuguese
-                    }
-                    lang = lang_map.get(voice_prefix, "en-us")
+                    lang = KOKORO_VOICE_LANGUAGES.get(voice_prefix, "en-us")
                 else:
                     lang = "en-us"
 
@@ -1403,15 +1406,7 @@ class KokoroTTSBackend(LocalTTSBackend):
         # Map voice prefix to espeak language codes
         if kokoro_voice and len(kokoro_voice) > 0:
             voice_prefix = kokoro_voice[0].lower()
-            lang_map = {
-                "a": "en-us",  # American English
-                "b": "en-gb",  # British English
-                "j": "ja",  # Japanese
-                "z": "zh",  # Chinese
-                "e": "es",  # Spanish
-                "f": "fr",  # French
-            }
-            lang = lang_map.get(voice_prefix, "en-us")
+            lang = KOKORO_VOICE_LANGUAGES.get(voice_prefix, "en-us")
         else:
             lang = "en-us"
 
@@ -1490,15 +1485,7 @@ class KokoroTTSBackend(LocalTTSBackend):
         # Detect language
         if kokoro_voice and len(kokoro_voice) > 0:
             voice_prefix = kokoro_voice[0].lower()
-            lang_map = {
-                "a": "en-us",  # American English
-                "b": "en-gb",  # British English
-                "j": "ja",  # Japanese
-                "z": "zh",  # Chinese
-                "e": "es",  # Spanish
-                "f": "fr",  # French
-            }
-            lang = lang_map.get(voice_prefix, "en-us")
+            lang = KOKORO_VOICE_LANGUAGES.get(voice_prefix, "en-us")
         else:
             lang = "en-us"
 

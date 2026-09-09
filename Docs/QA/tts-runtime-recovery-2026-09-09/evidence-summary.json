@@ -2,7 +2,6 @@
   "platform": "macOS ARM64",
   "application_baseline": "565dc499210491def757bed325c4014e324dc470",
   "wheel_sha256": "f7d50fcc3772252acaa86badf764be1213a59052a30f26623b3118de71f3f583",
-  "wheel_source_matches_worktree": true,
   "runtime_requirements": [
     "Requires-Dist: kokoro-onnx; extra == \"local-tts\"",
     "Requires-Dist: kokoro<0.10,>=0.9.4; python_version < \"3.13\" and extra == \"local-tts\"",
@@ -1483,5 +1482,7 @@
     ],
     "cleanup_joined": true
   },
-  "user_config_unchanged": true
+  "user_config_unchanged": true,
+  "wheel_source_matches_qualified_revision": true,
+  "qualified_source_revision": "df254584d076eaeaf15670eca364a53a62b25d29"
 }

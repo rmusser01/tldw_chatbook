@@ -37,8 +37,8 @@ Raw transcripts remain in the evidence. No microphone capture of room sound or
 full Console shell navigation is claimed. Kokoro sink captures record the
 complete source passed to the real device, not its hardware callback samples.
 
-The fresh-wheel source hashes exactly match the final production files in this
-change. Both actual `local_tts` installations succeeded. Python 3.13 excluded
+The initial fresh-wheel source hashes match production at `df254584d0`, before
+the review follow-up below. Both actual `local_tts` installations succeeded. Python 3.13 excluded
 `kokoro`, included `audioop-lts`, passed two installed-wheel dependency-guidance
 tests, and completed real ONNX playback. Resolution alone was not treated as
 installation evidence: generic macOS-target resolution selected older native
@@ -77,6 +77,48 @@ fallback created a duplicate shared checkpoint; its absence before the run and
 exact hash/mtime were verified before removing only that task-created copy.
 
 ## Automated checks and provenance
+
+Review follow-up closes named-voice traversal, absolute-path and symlink escapes
+in both the wrapper and the actual backend download/load paths. A pre-existing
+partial-download symlink also reproduced outside-file corruption; downloads now
+use exclusively created temporary siblings and clean up only their own file.
+Streaming and timestamps now share the same voice-prefix language map in both
+engines, including Hindi, Italian, and Brazilian Portuguese. Public wrapper API
+contracts have Google-style documentation.
+
+The MPS review concern does not apply to supported Kokoro 0.9.4: `TorchSTFT` has
+no parameters or registered buffers, and its window is a plain tensor moved to
+the input device on each call. The numerical test now calls `.to("mps")` on the
+wrapper before comparing transform, phase and inverse with upstream CPU values.
+
+Windows CI exposed a deferred-focus race in an unchanged GGUF keyboard test.
+The corrected test waits for actual selector focus, overlay focus, highlight,
+and selected value while retaining real keypresses. Local observation captured
+the old navigation button still focused after `mode.focus()` returned. The
+diagnostic inventory failure was also PR-owned: removing the old NLTK/placeholder
+logs left a stale pin. Statement review found six fewer diagnostic calls, one
+fewer model-path candidate, and no new sinks; the replacement runtime log records
+only the validated compute device. The inventory was regenerated after review.
+
+The final review regression run passed 340 tests with one optional ONNX skip.
+The diagnostic guard reproduced its inventory exactly. New/replaced-file Ruff
+and all five review-modified Python files' formatting pass; the three existing
+files retain their baseline Ruff findings with none added.
+
+The final wheel was installed into the same isolated Python 3.12/3.13
+environments and replayed after all review fixes. All nine complete clips passed
+independent content checks: MPS WAV (`af_heart`), CPU MP3 (`bf_emma`, speed 1.25),
+and Python 3.13 ONNX WAV, each through Speech Lab plus two Speak replies. The
+installed Python 3.13 dependency-guidance checks also passed. Every measured
+production hash matches the reviewed source, cleanup joined, and the user's
+configuration hash is unchanged. These are additional to the 15 initial clips.
+The same transcription qualifications above apply, including the British
+`The second reply` and `completes` variants.
+
+Final wheel SHA-256:
+`d0edef43e3b9690fe036fa2a9f9291c36e7f7a8f7b705e62084ff14e8fc3e430`.
+[Review validation](review-validation.json) preserves the final source hashes,
+runtime/device observations, audio hashes and complete raw transcripts.
 
 The targeted Kokoro, registry/bridge, admission, diagnostics and architecture
 run passed 301 tests with one optional ONNX test skipped in the PyTorch-only

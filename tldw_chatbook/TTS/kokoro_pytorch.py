@@ -13,6 +13,11 @@ import torch
 
 from tldw_chatbook.TTS.adapter_types import TTSOperationError
 from tldw_chatbook.Utils.optional_deps import check_dependency
+from tldw_chatbook.Utils.path_validation import (
+    validate_filename,
+    validate_path,
+    validate_path_simple,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +44,15 @@ LANGUAGE_CODES = {
 
 
 def require_runtime() -> tuple[Any, Any]:
-    """Load the optional runtime only for a deliberate PyTorch operation."""
+    """Load the optional runtime only for a deliberate PyTorch operation.
+
+    Returns:
+        The official model and pipeline classes.
+
+    Raises:
+        TTSOperationError: The optional runtime is unavailable.
+        ImportError: An installed runtime cannot import its dependencies.
+    """
     if not check_dependency("kokoro", "kokoro_pytorch"):
         raise TTSOperationError(
             code="dependency_missing",
@@ -83,7 +96,13 @@ class KokoroModel:
         self.pipelines: dict[str, Any] = {}
 
     def load(self) -> None:
-        """Load the configured checkpoint using Kokoro's actual architecture."""
+        """Load the configured checkpoint using Kokoro's actual architecture.
+
+        Raises:
+            TTSOperationError: The optional runtime is unavailable.
+            OSError: The checkpoint or configuration cannot be read.
+            RuntimeError: The checkpoint or requested device is incompatible.
+        """
         if self.model is not None:
             return
         model_type, _ = require_runtime()
@@ -115,7 +134,21 @@ class KokoroModel:
         logger.info("Loaded official Kokoro PyTorch model on %s", self.device)
 
     def pipeline(self, language: str) -> Any:
-        """Return the pipeline for a supported language, sharing model weights."""
+        """Return the pipeline for a supported language, sharing model weights.
+
+        Args:
+            language: Kokoro language code or supported locale alias.
+
+        Returns:
+            The cached official pipeline for the normalized language.
+
+        Raises:
+            ValueError: The language is unsupported.
+            TTSOperationError: Runtime or language setup is unavailable.
+            ImportError: Other pipeline dependencies cannot be imported.
+            OSError: The checkpoint or configuration cannot be read.
+            RuntimeError: The checkpoint or requested device is incompatible.
+        """
         language = language.lower().replace("_", "-")
         language = LANGUAGE_CODES.get(language, language)
         if language not in set("abefhipjz"):
@@ -162,15 +195,42 @@ class KokoroModel:
 
 
 def build_model(model_path: str, device: str = "cpu") -> KokoroModel:
-    """Build an official Kokoro model from a local v1 checkpoint."""
+    """Build an official Kokoro model from a local v1 checkpoint.
+
+    Args:
+        model_path: Local official checkpoint path.
+        device: Torch device for neural inference, such as CPU or MPS.
+
+    Returns:
+        A loaded model wrapper with lazily initialized language pipelines.
+
+    Raises:
+        TTSOperationError: The optional runtime is unavailable.
+        OSError: The checkpoint or configuration cannot be read.
+        RuntimeError: The checkpoint or requested device is incompatible.
+    """
     model = KokoroModel(model_path, device)
     model.load()
     return model
 
 
 def load_voice(voice_path: str, device: str = "cpu") -> torch.Tensor:
-    """Load a local tensor voice pack without unrestricted pickle execution."""
-    voice_tensor = torch.load(voice_path, map_location="cpu", weights_only=True)
+    """Load a local tensor voice pack without unrestricted pickle execution.
+
+    Args:
+        voice_path: Explicit local file path, validated and normalized before use.
+        device: Torch device on which to return the voice pack.
+
+    Returns:
+        The complete voice pack as a float32 tensor on the requested device.
+
+    Raises:
+        ValueError: The path is invalid, missing, or contains no voice tensor.
+        OSError: The voice file cannot be read.
+        RuntimeError: Tensor loading or device placement fails.
+    """
+    path = validate_path_simple(Path(voice_path).expanduser(), require_exists=True)
+    voice_tensor = torch.load(path.resolve(), map_location="cpu", weights_only=True)
     if isinstance(voice_tensor, dict):
         voice_tensor = voice_tensor.get("voice", voice_tensor.get("embedding"))
     if not isinstance(voice_tensor, torch.Tensor):
@@ -179,7 +239,15 @@ def load_voice(voice_path: str, device: str = "cpu") -> torch.Tensor:
 
 
 def parse_voice_mix(voice_string: str) -> list[tuple[str, float]]:
-    """Parse weighted local voices such as ``af_bella(2)+af_sky(1)``."""
+    """Parse weighted local voices such as ``af_bella(2)+af_sky(1)``.
+
+    Args:
+        voice_string: Plus-separated names with optional integer weights.
+
+    Returns:
+        Name/weight pairs; bare nonempty names receive a weight of one.
+        Names are validated when resolving their local files.
+    """
     voices = []
     for part in voice_string.split("+"):
         part = part.strip()
@@ -195,7 +263,19 @@ def mix_voices(
     voice_tensors: list[tuple[torch.Tensor, float]],
     normalize: bool = True,
 ) -> torch.Tensor:
-    """Blend full voice packs without broadcasting into extra dimensions."""
+    """Blend full voice packs without broadcasting into extra dimensions.
+
+    Args:
+        voice_tensors: Compatible complete voice packs and their blend weights.
+        normalize: Whether to divide weights by their sum before blending.
+
+    Returns:
+        A blended tensor retaining the shape of each input voice pack.
+
+    Raises:
+        ValueError: Packs are absent or weights are invalid or total zero.
+        RuntimeError: Tensor shapes or devices are incompatible.
+    """
     if not voice_tensors:
         raise ValueError("No voice tensors provided")
     tensors, weights = zip(*voice_tensors)
@@ -236,8 +316,11 @@ def generate(
         Complete mono float32 waveform at 24 kHz and generated phonemes.
 
     Raises:
-        ValueError: Language, speed or generated audio is invalid.
+        ValueError: Language, speed, voice path, or generated audio is invalid.
+        FileNotFoundError: A named local voice pack is absent.
+        TypeError: The voice is neither a pack nor a supported name/mix.
         TTSOperationError: Runtime setup or the text's phoneme length is invalid.
+        RuntimeError: Upstream model inference fails.
     """
     if not math.isfinite(speed) or speed <= 0:
         raise ValueError("Kokoro speed must be finite and positive")
@@ -291,21 +374,39 @@ def generate(
 
 
 def _find_voice_file(voice_name: str, voice_dir: str | None = None) -> str:
+    voice_name = validate_filename(voice_name)
     directory = (
-        Path(voice_dir) if voice_dir is not None else DEFAULT_MODEL_PATH / "voices"
+        Path(voice_dir).expanduser()
+        if voice_dir is not None
+        else DEFAULT_MODEL_PATH / "voices"
     )
     for extension in (".pt", ".pth", ".ckpt"):
-        path = directory / f"{voice_name}{extension}"
+        path = validate_path(f"{voice_name}{extension}", directory, redact_paths=True)
         if path.is_file():
             return str(path)
-    if Path(voice_name).is_file():
-        return voice_name
     raise FileNotFoundError(f"Voice file not found: {voice_name}")
 
 
 def get_available_voices(voice_dir: str | None = None) -> list[str]:
-    """List the installed local PyTorch voice packs."""
+    """List the installed local PyTorch voice packs.
+
+    Args:
+        voice_dir: Voice directory, or the default local model voice directory.
+
+    Returns:
+        Sorted names of local .pt packs, excluding unsafe paths and links outside
+        the directory. A missing directory returns an empty list.
+    """
     directory = (
-        Path(voice_dir) if voice_dir is not None else DEFAULT_MODEL_PATH / "voices"
+        Path(voice_dir).expanduser()
+        if voice_dir is not None
+        else DEFAULT_MODEL_PATH / "voices"
     )
-    return sorted(path.stem for path in directory.glob("*.pt"))
+    voices = []
+    for path in directory.glob("*.pt"):
+        try:
+            _find_voice_file(path.stem, str(directory))
+        except (ValueError, FileNotFoundError):
+            continue
+        voices.append(path.stem)
+    return sorted(voices)

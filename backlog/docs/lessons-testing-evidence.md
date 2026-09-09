@@ -12644,3 +12644,15 @@ before its Select child labels were composed. Assigning Select.value at that poi
 raised NoMatches for the internal label. Settle the pilot after detecting the modal,
 then interact with its controls; the normal journey and compact controls passed
 together after that fixture correction.
+
+## Test the app route when hardening a shared helper
+
+**TASK-32111 / PR #2534, 2026-09-09.** Kokoro named-voice confinement first passed
+wrapper tests, but independent review proved that streaming and timestamps loaded
+packs through separate backend methods and still accepted an outside-directory
+path. Actual-file tests of those routes reproduced all 15 escape cases before
+fixing both download and load. The same review found a predictable `.part` symlink
+could corrupt an outside file on both successful and interrupted downloads.
+Exclusive temporary siblings fixed that second boundary; fake HTTP with real
+filesystem assertions verified content preservation and ownership-scoped cleanup.
+A helper's passing tests establish only the routes that actually call it.
