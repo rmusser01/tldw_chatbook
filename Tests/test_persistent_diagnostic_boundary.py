@@ -4,8 +4,10 @@ import ast
 import logging
 from pathlib import Path
 
+import pytest
 from loguru import logger as loguru_logger
 
+from Tests.Architecture import test_persistent_diagnostic_inventory as diagnostic_guard
 from tldw_chatbook.Logging_Config import (
     PrivateRotatingFileHandler,
     _forward_loguru_to_standard,
@@ -92,9 +94,28 @@ def _diagnostic_template(node: ast.expr) -> str | None:
     return None
 
 
-def test_persona_workspace_diagnostics_do_not_interpolate_private_values() -> None:
-    """Persistent diagnostics name the failure category, never private values."""
+def test_persona_workspace_diagnostics_do_not_interpolate_private_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Require constant templates and the reviewed metadata-only field contract.
+
+    Args:
+        monkeypatch: Scope the shared guard to these persona/workspace labels.
+    """
     root = Path(__file__).resolve().parents[1]
+    reviewed = diagnostic_guard.REVIEWED_METADATA_ONLY_DIAGNOSTICS
+    monkeypatch.setattr(
+        diagnostic_guard,
+        "REVIEWED_METADATA_ONLY_DIAGNOSTICS",
+        {
+            relative: {prefix: reviewed[relative][prefix] for prefix in prefixes}
+            for relative, prefixes in _CONSTANT_DIAGNOSTIC_PREFIXES.items()
+        },
+    )
+    # TASK-25705 permits only these exact metadata expressions, not arbitrary
+    # runtime values. The shared guard also rejects missing/duplicate calls and
+    # exception/stack capture; retain the stricter constant-template check here.
+    diagnostic_guard.test_reviewed_diagnostic_changes_are_metadata_only()
     for relative_path, prefixes in _CONSTANT_DIAGNOSTIC_PREFIXES.items():
         tree = ast.parse((root / relative_path).read_text(encoding="utf-8"))
         matched: set[str] = set()
@@ -110,9 +131,6 @@ def test_persona_workspace_diagnostics_do_not_interpolate_private_values() -> No
                 matched.add(prefix)
                 assert isinstance(node.args[0], ast.Constant), (
                     f"{relative_path}: {prefix!r} must use a constant message"
-                )
-                assert len(node.args) == 1, (
-                    f"{relative_path}: {prefix!r} must not format runtime values"
                 )
         assert matched == set(prefixes), (
             f"{relative_path}: expected diagnostics were renamed or removed"
