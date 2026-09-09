@@ -49,6 +49,16 @@ def resolve_default_location(location: Union[str, Path]) -> Union[str, Path]:
     "." reaching ``DirectoryNavigation`` unchanged (it means "the actual
     process cwd" there, e.g. a ``monkeypatch.chdir(tmp_path)`` fixture) --
     resolving "." at the shared base broke those.
+
+    Args:
+        location: The caller's requested starting location, ``str`` or
+            ``Path``. Only the bare current-directory spelling (``"."``,
+            the ``__init__`` default) is special-cased.
+
+    Returns:
+        ``Path.home()`` when ``location`` is exactly ``"."``; otherwise
+        ``location`` unchanged, same type and value as passed in (a
+        non-default string stays a string, a ``Path`` stays a ``Path``).
     """
     return Path.home() if Path(location) == Path(".") else location
 
@@ -67,10 +77,14 @@ def resolve_typed_directory(value: str, current: Path) -> Union[Path, str]:
     caught-exception width differed between them.
 
     Args:
-        value: The raw field text. Trimmed of surrounding whitespace here;
-            callers that need to first decide whether a non-empty value
-            should even count as "typed" (e.g. it merely echoes a just-
-            clicked file's name) do that before calling this.
+        value: The raw field text, used exactly as typed -- leading and
+            trailing spaces are significant and valid in POSIX folder
+            names (Qodo review round 4), so only a *whitespace-only* value
+            is treated as "nothing typed"; a genuinely padded name is kept
+            intact for comparison and path construction. Callers that need
+            to first decide whether a non-empty value should even count as
+            "typed" (e.g. it merely echoes a just-clicked file's name) do
+            that before calling this.
         current: The directory currently being browsed -- the fallback for
             an empty/unchanged value, and the base a relative typed value
             resolves against.
@@ -79,8 +93,7 @@ def resolve_typed_directory(value: str, current: Path) -> Union[Path, str]:
         The resolved absolute ``Path`` when it names an existing directory,
         or an error string ready for ``_set_error`` when it does not.
     """
-    value = value.strip()
-    if not value or value == str(current):
+    if not value.strip() or value == str(current):
         # Unchanged from what's being browsed: return the exact object,
         # not a re-resolved reconstruction (macOS "/tmp" -> "/private/tmp"
         # would otherwise change the result of a plain, no-typing Select).
