@@ -29,6 +29,10 @@ from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
 )
 
 
+# User-required click-target width, deliberately independent of the resolver.
+EXPECTED_PANE_GRIP_WIDTH = 5
+
+
 PROFILES = {
     name: profile
     for name, profile in vars(screen_constants).items()
@@ -53,9 +57,11 @@ async def test_reader_keeps_usable_panes_and_five_cell_click_targets(profile, wi
         assert shell.work.region.width >= profile.work_min_width
         assert sum(child.region.width for child in shell.children) == width
         for grip in (shell.library_grip, shell.items_grip):
-            assert grip.region.width == 5
+            assert grip.region.width == EXPECTED_PANE_GRIP_WIDTH
             # The outer column must be clickable, not just the arrow's cell.
-            await pilot.click(grip, offset=(4, grip.region.height // 2))
+            await pilot.click(
+                grip, offset=(EXPECTED_PANE_GRIP_WIDTH - 1, grip.region.height // 2)
+            )
         assert app.toggles == ["library", "items"]
 
 
@@ -86,14 +92,20 @@ async def test_real_media_reader_preserves_visible_list_after_opening_item(
         assert shell.work.region.width >= MEDIA_READER_LAYOUT_PROFILE.work_min_width
         if width >= 120:
             assert shell.library.display
-        assert shell.library_grip.region.width == shell.items_grip.region.width == 5
+        assert (
+            shell.library_grip.region.width
+            == shell.items_grip.region.width
+            == EXPECTED_PANE_GRIP_WIDTH
+        )
         for pane, grip in (
             ("library", shell.library_grip),
             ("items", shell.items_grip),
         ):
             if not getattr(shell, pane).display:
                 continue
-            await pilot.click(grip, offset=(4, grip.region.height // 2))
+            await pilot.click(
+                grip, offset=(EXPECTED_PANE_GRIP_WIDTH - 1, grip.region.height // 2)
+            )
             await _wait_for_condition(
                 pilot,
                 lambda: not getattr(shell, pane).display,
