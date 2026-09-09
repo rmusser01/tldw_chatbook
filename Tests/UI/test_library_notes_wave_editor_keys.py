@@ -354,6 +354,51 @@ async def test_back_button_notifies_on_a_non_validation_veto_kind():
         )
 
 
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (
+            "VALIDATION_VETO",
+            "Can't leave yet — fix the title or press Discard new note.",
+        ),
+        (
+            "FAILED",
+            "Can't leave yet — the save failed; press Save to retry or Discard.",
+        ),
+        (
+            "CONFLICTED",
+            "Can't leave yet — this note changed elsewhere; "
+            "choose Overwrite or Reload.",
+        ),
+        (
+            "BLOCKED",
+            "Can't leave yet — another action is already in progress; "
+            "wait for it to finish.",
+        ),
+        (
+            "STALE",
+            "Can't leave yet — the note changed while saving; try again.",
+        ),
+    ],
+)
+def test_exit_veto_message_covers_every_non_permitted_outcome_kind(kind, expected):
+    """PR #2547 review (Qodo finding 2): the two UI tests above exercise
+    only VALIDATION_VETO and CONFLICTED through the full editor; FAILED,
+    BLOCKED, and STALE had no direct assertion, so their copy could drift
+    silently. Direct unit coverage for every outcome the shared exit seam
+    (``_exit_library_note_editor_guarded``) can actually pass in.
+    """
+    from tldw_chatbook.Library.library_notes_session import NoteFlushOutcomeKind
+    from tldw_chatbook.UI.Screens.library_screen import (
+        _library_note_editor_exit_veto_message,
+    )
+
+    assert (
+        _library_note_editor_exit_veto_message(getattr(NoteFlushOutcomeKind, kind))
+        == expected
+    )
+
+
 @pytest.mark.asyncio
 async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
     """AC#2: a blank note must not claim 'Saved' before anything is typed."""
