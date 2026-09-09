@@ -3,10 +3,10 @@ id: TASK-32121
 title: >-
   Library Notes Folder files: an abandoned folder scan blocks every later folder
   change for the rest of the session
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-08 21:39'
-updated_date: '2026-09-09 05:49'
+updated_date: '2026-09-09 06:35'
 labels:
   - library
   - notes
@@ -44,3 +44,25 @@ PROVEN live x3 on a clean sequence: a small folder links in under 2 s; picking t
 5. Progress + Keep waiting / Choose another after the patience window; one Cancel control in the busy row.
 6. Live-verify on the power profile; docs stamp.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause (proven live x3): `_change_root_with_deadline` cancelled only the asyncio task, while `set_root` ran `service.scan` in `asyncio.to_thread` under `operation_lock=self._service_lock`. `scan` is `@_serialized`, so the abandoned thread held that lock for the whole home directory and every later `set_root` queued behind it.
+
+Approach -- fix at the shared seam, not the one path:
+- `FileNotesService.scan(*, should_cancel, on_progress)` + new `ScanCancelled`. The cancel check runs between directories in `_walk_candidates` (the only place an `os.walk` can be stopped) and between files in the load loop; raising unwinds the `@_serialized` `with`, releasing the lock. `reconcile()` unchanged by default.
+- One `threading.Event` per root change, set by `_abandon_root_change_task` -- the seam the deadline, Cancel, Escape, the back cue and the navigation flush already share.
+- `_scan_for_root` acquires the service lock with a bounded wait, so a scan parked in one uninterruptible syscall (dead network mount) makes the NEXT change report the timeout copy instead of hanging silently.
+- The timeout reason now owns the FOLDER ROW until the next attempt (`_report_root_change_reason` -> `_root_action_reason`). It used to be written only to the action-status line at the bottom of the editor pane while the row reverted to the kept folder -- why 0.5 s live sampling never caught it.
+- Slow scans report `Changing folder… · 1,240 entries so far` (patience timer is now `set_interval`) and offer Keep waiting (one extra budget; `_change_root_with_deadline` loops on `asyncio.wait`) and Choose another (abandon + reopen the picker).
+- AC5: the shared `StructuralWait` line's trailing `· Cancel` sat beside the actual Cancel button -- two controls with the same label in one busy row. This surface renders its own line instead; `StructuralWait` is untouched, so export/skill-import keep their copy.
+
+Trade-off: the busy line does NOT repeat the two button labels the brief suggested -- measured, the row leaves the status 46 cells at 120 columns and that line elides to 'Changing folder… · sti...ting · Choose another'.
+
+Tests: `Tests/UI/test_library_crit8_waits.py` gains a `_LockHoldingScan` fixture that holds the lock exactly like `@_serialized` (the older fake replaced the decorated method and never did, which is why this survived crit8) plus five tests; `Tests/Notes/test_file_notes_service.py` gains cancel/lock-release and progress tests. Seven existing scan fakes now take `**kwargs`.
+
+Live (power profile, 235x52): home directory timed out with the copy painted and held, then the vault linked in ~3 s -- the sequence that used to wedge. Captures in SCRATCH/notes-crit/wave/file-notes/caps/04-08.
+
+Files: tldw_chatbook/Notes/file_notes_service.py, tldw_chatbook/Widgets/Library/library_file_notes_workspace.py, Tests/UI/test_library_crit8_waits.py, Tests/Notes/test_file_notes_service.py, Docs/User_Guide/library/file-notes.md.
+<!-- SECTION:NOTES:END -->
