@@ -795,12 +795,13 @@ Escape's return to the list live at 100x30).*
 ## Related settings & docs
 
 - Appearance settings remember the preferred Library/Items pane states.
-  Automatic Library-rail width follows 3:13, bounded to 24–34 cells. When
+  Automatic Library-rail width follows 3:13 plus five cells, bounded to 29–39
+  cells when space allows. When
   explicitly enabled, custom widths remain Library 24–48 and Items 32–72;
   ordinary layouts may temporarily compress the rail to preserve 40 content
   cells, while these adaptive readers may collapse or prioritize panes.
   **Reset layout** restores both panes open, automatic width, a dormant
-  31-cell Library preference, and 40-cell Items preferences. Below 64 columns,
+  36-cell Library preference, and 50-cell Items preferences. Below 64 columns,
   ordinary Library routes switch between full-width rail and canvas stages via
   **‹ Library** (or **< Library** with ASCII glyphs). Responsive changes never
   overwrite saved preferences.

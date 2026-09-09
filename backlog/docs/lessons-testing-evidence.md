@@ -13039,3 +13039,18 @@ explicit limitation. Preserve startup controls and raw stacks before interpretin
 scenario timeouts, and distinguish a working alternative toolchain from a fix to
 the original runtime. [The receipts](../../Docs/QA/tts-macos-burndown-2026-09-09/native/sanitizer/linux-qualified-02/README.md)
 retain both failures and the passing alternative.
+
+
+## A bounded boot census cannot require a queued background worker
+
+**PR #2550, 2026-09-09.** Two Linux Perf Guard runs failed because the
+one-second post-ready census required the ChaChaNotes FTS backfill to start.
+TASK-22215 queues it behind two actor-pack workers with a concurrency cap of
+one, so their completion time determines its admission. The same base commit
+had a passing run; the Library width change did not alter the worker policy.
+Keep staggered workers in the allowed set, but use immediate workers for the
+required-presence check. The policy regression now asserts that the required
+set contains no staggered members; admission/completion tests cover the queue.
+The mounted policy check also needed splash disabled in its isolated on-disk
+config: its six-second wait expired during the seven-second splash, and the
+factory snapshot alone does not control the compose-time configuration read.
