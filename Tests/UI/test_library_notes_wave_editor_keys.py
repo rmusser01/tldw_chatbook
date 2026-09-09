@@ -312,3 +312,48 @@ async def test_bare_n_also_opens_create_from_inside_notes():
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
 
 
+# --- task-32139: one back-cue wording, sized by compact ---------------------
+
+
+@pytest.mark.asyncio
+async def test_back_cue_reads_the_same_in_edit_and_info_at_wide_sizes():
+    """AC#1: Edit's "‹ Notes" and Info's "‹ Note" must read identically."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        edit_back = screen.query_one("#library-note-back", Button)
+        assert str(edit_back.label) == "‹ Notes"
+
+        screen.query_one("#library-note-context", Button).press()
+        await pilot.pause()
+        info_back = screen.query_one("#library-note-context-back", Button)
+        assert str(info_back.label) == str(edit_back.label), (
+            f"Edit said {str(edit_back.label)!r}, Info said "
+            f"{str(info_back.label)!r} for the identical Back action"
+        )
+
+
+@pytest.mark.asyncio
+async def test_back_cue_reads_back_to_list_when_compact():
+    """AC#1/guide: the compact editor must read '‹ Back to list', not
+    '‹ Notes' -- task-32139's 60x24 evidence."""
+    host = _build_notes_host()
+    async with host.run_test(size=(60, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+
+        assert screen._notes_state.compact, "This size must measure compact"
+        edit_back = screen.query_one("#library-note-back", Button)
+        assert str(edit_back.label) == "‹ Back to list", edit_back.label
+
+

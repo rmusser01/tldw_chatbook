@@ -1264,15 +1264,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # of rendering the delimiter block as note content.
         from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 
+        # task-32139: Edit/Preview said "‹ Notes", Info said "‹ Note" (two
+        # wordings for the identical Back action, live-caught at 235x52),
+        # and BOTH said "‹ Notes" on a compact terminal where the guide
+        # documents "‹ Back to list" (60x24). One label now, sized by
+        # ``self.compact`` like the guide's own compact-vs-wide split.
+        back_label = "‹ Back to list" if self.compact else "‹ Notes"
         with Horizontal(id="library-note-heading"):
             yield Button(
-                "‹ Notes",
+                back_label,
                 id="library-note-back",
                 classes="library-canvas-action",
                 compact=True,
             )
             yield Button(
-                "‹ Note",
+                back_label,
                 id="library-note-context-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1775,10 +1781,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         self.apply_compact_presentation(state.compact)
         self.set_class(state.validation, "library-note-validation")
-        self.query_one("#library-note-back").display = (
-            not show_context and not bulk_read_only
-        )
-        self.query_one("#library-note-context-back").display = show_context
+        # task-32139: one Back label, sized by compact -- see the matching
+        # compose-time comment above.
+        back_label = "‹ Back to list" if state.compact else "‹ Notes"
+        back_button = self.query_one("#library-note-back", Button)
+        if str(back_button.label) != back_label:
+            back_button.label = back_label
+        back_button.display = not show_context and not bulk_read_only
+        context_back_button = self.query_one("#library-note-context-back", Button)
+        if str(context_back_button.label) != back_label:
+            context_back_button.label = back_label
+        context_back_button.display = show_context
         self.query_one("#library-note-editor-title").display = show_editor
         self.query_one("#library-note-preview-title").display = show_preview
         self.query_one("#library-note-context-title").display = show_context
