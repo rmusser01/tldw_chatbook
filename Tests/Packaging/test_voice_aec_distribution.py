@@ -1227,7 +1227,6 @@ def test_pull_request_workflow_covers_every_supported_wheel_and_never_publishes(
     for required in (
         "cibuildwheel",
         "CIBW_TEST_COMMAND",
-        "{project}/tests/test_binding.py",
         "auditwheel",
         "delvewheel",
         "delocate",
@@ -1251,7 +1250,13 @@ def test_pull_request_workflow_covers_every_supported_wheel_and_never_publishes(
     cibw_test_command = workflow.partition("CIBW_TEST_COMMAND:")[2].partition(
         "CIBW_REPAIR_WHEEL_COMMAND_LINUX:"
     )[0]
-    assert "{project}/tests/test_binding.py" in cibw_test_command
+    test_paths = re.findall(r"\{project\}/[^\s]+\.py", cibw_test_command)
+    assert test_paths == [
+        "{project}/native/voice_aec/tests/test_binding.py",
+        "{project}/Tests/Packaging/test_voice_aec_installed_wheel.py",
+    ]
+    for path in test_paths:
+        assert (REPO_ROOT / path.removeprefix("{project}/")).is_file()
     assert (
         "test_delayed_echo_exposes_refined_fresh_per_instance_delay_evidence"
         in cibw_test_command

@@ -67,9 +67,9 @@ jobs:
       # outside the checkout, before running the binding and echo-corpus smoke.
       CIBW_TEST_COMMAND: >-
         python -m pytest -q
-        {project}/tests/test_binding.py
+        {project}/native/voice_aec/tests/test_binding.py
         -k "processor_accepts_one or repeated_echo_reference or metrics_are_finite or test_delayed_echo_exposes_refined_fresh_per_instance_delay_evidence"
-        && python {project}/../../Tests/Packaging/test_voice_aec_installed_wheel.py
+        && python {project}/Tests/Packaging/test_voice_aec_installed_wheel.py
       CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
         auditwheel repair -w {dest_dir} {wheel}
       CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-

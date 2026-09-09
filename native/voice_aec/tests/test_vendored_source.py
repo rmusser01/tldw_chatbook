@@ -20,7 +20,8 @@ MANIFEST_PATH = VENDOR_ROOT / "FILES.sha256"
 PRISTINE_MANIFEST_PATH = VENDOR_ROOT / "PRISTINE_FILES.sha256"
 PATCHES_PATH = VENDOR_ROOT / "PATCHES.md"
 PATCH_NAME = "0001-expose-delay-health-evidence.patch"
-PATCH_PATH = PACKAGE_ROOT / "patches" / PATCH_NAME
+CLOCKDRIFT_PATCH_NAME = "0002-include-stddef-for-clockdrift-detector.patch"
+CLOCKDRIFT_HEADER = "modules/audio_processing/aec3/clockdrift_detector.h"
 COMPILER_DEFINES_PATH = VENDOR_ROOT / "COMPILER_DEFINES.cmake"
 NOTICES_PATH = PACKAGE_ROOT / "THIRD_PARTY_NOTICES.md"
 TOOL_PATH = PACKAGE_ROOT / "tools" / "vendor_webrtc_aec.py"
@@ -75,8 +76,8 @@ DEFINES = {
 }
 
 
-def _load_tool():
-    spec = importlib.util.spec_from_file_location("vendor_webrtc_aec", TOOL_PATH)
+def _load_tool(path: Path = TOOL_PATH):
+    spec = importlib.util.spec_from_file_location("vendor_webrtc_aec", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -606,23 +607,42 @@ def test_every_quoted_include_resolves_inside_vendor_tree() -> None:
     assert not missing, sorted(missing)
 
 
-def test_patch_series_declares_one_hash_verified_integration_patch() -> None:
-    assert PATCH_PATH.is_file()
-    patch_digest = _sha256(PATCH_PATH)
-    contents = PATCHES_PATH.read_text(encoding="utf-8")
-    expected = (
-        f"# WebRTC AEC3 patch series\n\n1. `{PATCH_NAME}` - SHA-256 `{patch_digest}`\n"
+def test_patch_series_declares_two_hash_verified_patches() -> None:
+    tool = _load_tool()
+    assert tool.PATCHES == (
+        (
+            PATCH_NAME,
+            "94f2a8dad384194c8b3ffb63695287ae7a046e1136b4357b9b3d048579ad3a1c",
+        ),
+        (
+            CLOCKDRIFT_PATCH_NAME,
+            "f3bbfe1b2f7d54030fba05fefefbcc181706975c09aa43c9aeb83ca96379ca6e",
+        ),
     )
+    expected = "# WebRTC AEC3 patch series\n\n"
+    for number, (name, digest) in enumerate(tool.PATCHES, 1):
+        assert _sha256(PACKAGE_ROOT / "patches" / name) == digest
+        expected += f"{number}. `{name}` - SHA-256 `{digest}`\n"
 
-    assert contents == expected
-    assert _load_tool().PATCH_SERIES == expected
+    assert PATCHES_PATH.read_text(encoding="utf-8") == expected
+    assert tool.PATCH_SERIES == expected
 
 
-def test_declared_patch_has_no_git_whitespace_errors(tmp_path: Path) -> None:
+@pytest.mark.parametrize("patch_name", [PATCH_NAME, CLOCKDRIFT_PATCH_NAME])
+def test_declared_patch_has_no_git_whitespace_errors(
+    tmp_path: Path, patch_name: str
+) -> None:
     empty = tmp_path / "empty"
     empty.write_bytes(b"")
     result = subprocess.run(
-        ["git", "diff", "--no-index", "--check", str(empty), str(PATCH_PATH)],
+        [
+            "git",
+            "diff",
+            "--no-index",
+            "--check",
+            str(empty),
+            str(PACKAGE_ROOT / "patches" / patch_name),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -636,37 +656,31 @@ def test_declared_patch_has_no_git_whitespace_errors(tmp_path: Path) -> None:
 def test_vendor_recipe_reapplies_declared_patch_to_exact_unpatched_tree(
     tmp_path: Path,
 ) -> None:
-    assert PATCH_PATH.is_file()
     copied = tmp_path / "webrtc"
     shutil.copytree(VENDOR_ROOT, copied)
-    subprocess.run(
-        ["git", "apply", "--reverse", str(PATCH_PATH)],
-        cwd=copied,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
     tool = _load_tool()
+    pristine = tool._pristine_manifest_entries(copied)
+    for name, digest in reversed(tool.PATCHES):
+        tool._git_apply(copied, tool._verified_patch_path(name, digest), "--reverse")
+    assert all(_sha256(copied / path) == digest for path, digest in pristine.items())
 
     tool.apply_patch_series(copied)
 
-    for relative_path in (
-        "api/audio/echo_control.h",
-        "modules/audio_processing/aec3/block_processor.cc",
-    ):
+    for relative_path in pristine:
         assert (copied / relative_path).read_bytes() == (
             VENDOR_ROOT / relative_path
         ).read_bytes()
 
 
+@pytest.mark.parametrize("patch_name", [PATCH_NAME, CLOCKDRIFT_PATCH_NAME])
 def test_vendor_verifier_rejects_rehashed_tree_without_declared_patch(
     tmp_path: Path,
+    patch_name: str,
 ) -> None:
-    assert PATCH_PATH.is_file()
     copied = tmp_path / "webrtc"
     shutil.copytree(VENDOR_ROOT, copied)
     subprocess.run(
-        ["git", "apply", "--reverse", str(PATCH_PATH)],
+        ["git", "apply", "--reverse", str(PACKAGE_ROOT / "patches" / patch_name)],
         cwd=copied,
         check=True,
         capture_output=True,
@@ -677,6 +691,74 @@ def test_vendor_verifier_rejects_rehashed_tree_without_declared_patch(
 
     with pytest.raises(ValueError, match="declared patch"):
         tool.verify_vendor_tree(copied)
+
+
+def test_clockdrift_header_directly_includes_global_size_t_definition() -> None:
+    assert b"#include <stddef.h>\n" in (VENDOR_ROOT / CLOCKDRIFT_HEADER).read_bytes()
+    _load_tool().verify_vendor_tree(VENDOR_ROOT)
+
+
+@pytest.mark.parametrize("patch_name", [PATCH_NAME, CLOCKDRIFT_PATCH_NAME])
+def test_vendor_verifier_rejects_changed_patch_bytes(
+    tmp_path: Path, patch_name: str
+) -> None:
+    shutil.copytree(PACKAGE_ROOT / "patches", tmp_path / "patches")
+    (tmp_path / "tools").mkdir()
+    copied_tool = tmp_path / "tools" / TOOL_PATH.name
+    shutil.copyfile(TOOL_PATH, copied_tool)
+    patch = tmp_path / "patches" / patch_name
+    patch.write_bytes(patch.read_bytes().replace(b"\n", b"\r\n"))
+
+    with pytest.raises(ValueError, match="declared patch SHA-256 mismatch"):
+        _load_tool(copied_tool).verify_vendor_tree(VENDOR_ROOT)
+
+
+def test_autocrlf_checkout_preserves_full_vendor_and_external_legal_bytes(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    package = repository / "native" / "voice_aec"
+    package.mkdir(parents=True)
+    for directory in ("vendor", "patches", "tools"):
+        shutil.copytree(PACKAGE_ROOT / directory, package / directory)
+    for name in (".gitattributes", "PYBIND11_LICENSE.txt", "THIRD_PARTY_NOTICES.md"):
+        shutil.copyfile(PACKAGE_ROOT / name, package / name)
+    (repository / "unprotected.txt").write_bytes(b"CRLF control\nsecond line\n")
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    for args in (
+        ("init", "--quiet"),
+        ("-c", "core.autocrlf=false", "add", "."),
+        (
+            "-c",
+            "core.autocrlf=true",
+            "checkout-index",
+            "--all",
+            f"--prefix={checkout.as_posix()}/",
+        ),
+    ):
+        subprocess.run(
+            ["git", "-c", "gc.auto=0", *args],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    assert (
+        checkout / "unprotected.txt"
+    ).read_bytes() == b"CRLF control\r\nsecond line\r\n"
+    checked_package = checkout / "native" / "voice_aec"
+    tool = _load_tool(checked_package / "tools" / TOOL_PATH.name)
+    assert tool.PACKAGE_ROOT == checked_package
+    tool.verify_vendor_tree(checked_package / "vendor" / "webrtc")
+    for name in ("PYBIND11_LICENSE.txt", "THIRD_PARTY_NOTICES.md"):
+        assert (checked_package / name).read_bytes() == (
+            PACKAGE_ROOT / name
+        ).read_bytes()
+    assert _sha256(checked_package / "PYBIND11_LICENSE.txt") == (
+        "83965b843b98f670d3a85bd041ed4b372c8ec50d7b4a5995a83ac697ba675dcb"
+    )
 
 
 def test_pristine_manifest_is_independently_anchored_and_complete() -> None:

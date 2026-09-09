@@ -230,10 +230,12 @@ link closure contains 315 files and introduces no additional external dependency
 Abseil is copied from WebRTC's exact Chromium `src/third_party` DEPS pin
 `ac875ae5393d0516243cfd5d078cd4b098388f6b`. Both upstream revisions are recorded in
 package provenance. The imported source initially has no patches. Integration testing
-requires one narrowly declared patch that carries AEC3's existing per-instance delay
+requires a narrowly declared first patch that carries AEC3's existing per-instance delay
 estimate availability, coarse/refined quality, freshness, and clock-drift evidence
-through the public metrics seam. The patch and its SHA-256 are checked in, applied by
-the deterministic vendoring recipe, and covered by the source manifest; the pinned
+through the public metrics seam. A second patch adds `<stddef.h>` directly to the
+clock-drift header for its global `size_t`. Both patches and their SHA-256 hashes are
+checked in, applied by the deterministic vendoring recipe, and covered by the source
+manifest; the 315-file pristine closure and pinned
 upstream commit and tree remain the provenance root.
 
 AEC health states are `warming`, `healthy`, and `degraded`. Health uses residual echo,

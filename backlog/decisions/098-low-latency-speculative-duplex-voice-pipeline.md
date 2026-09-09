@@ -91,10 +91,13 @@ file-descriptor protection with a small session-owned spawn worker.
    closure is 315 files. Abseil is sourced from the exact Chromium `src/third_party`
    DEPS pin
    `ac875ae5393d0516243cfd5d078cd4b098388f6b`. Both revisions are provenance-checked,
-   The imported upstream patch series begins empty. A single declared integration
+   The imported upstream patch series begins empty. The first declared integration
    patch carries AEC3's existing per-instance categorical delay quality, freshness,
    and clock-drift evidence through the metrics seam; its bytes and hash are tracked by
-   the deterministic vendoring manifest. No synthetic probabilistic confidence is
+   the deterministic vendoring manifest. A second pinned patch adds the direct
+   `<stddef.h>` include required by the clock-drift header's global `size_t`;
+   it preserves the same upstream revision and 315-file pristine closure.
+   No synthetic probabilistic confidence is
    treated as native evidence.
 
 3. **Put one closed acoustic-safety decision before speech admission.** Post-AEC frames

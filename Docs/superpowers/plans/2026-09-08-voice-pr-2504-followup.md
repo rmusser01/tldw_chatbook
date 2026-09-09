@@ -12,6 +12,7 @@ Reason: Behavior-preserving integration, targeted admission/boot defects, and de
 
 - Work only in `.worktrees/speculative-duplex-voice-dev`, branch `codex/speculative-duplex-voice-dev`. Preserve main and the original feature worktree, including all unrelated edits.
 - Published PR head is `47de10b893f4be42cdef7931e3ddecef33c6c539`; prior integrated dev is `37bf45fb6232a1d4fb50fdba8f3c19c856ae7664`; fetched dev is `7e81ed55db66ace04cb3dd1f8feb6d40a21f6f48`.
+- Dev subsequently advanced to `565dc499210491def757bed325c4014e324dc470`. The reviewed commits were cleanly rebased onto it at `8b928e2c40ea74fbe53995969f3dd503bfb05ed5`; the resulting tree exactly matches the reviewed work plus the eight upstream TTS/setup paths. Four focused fake-adapter/version tests passed. Both pre-rebase checkpoints remain backed up locally.
 - Keep a local backup of the published head. Rebase the exact reviewed net tree, including load-bearing merge resolutions; do not drop features by replaying only non-merge commits. Preserve every newer dev feature, schema migration, trace guard, privacy rule and TTS contract.
 - Keep 700 ms default silence, incremental STT, same-turn interruption, distinct post-playback turns, sequential cancellable TTS, and fail-closed AEC. Do not relax any timing, capacity, custody, safety or resource limit.
 - Packaged platform qualification and build identity bytes remain unchanged and unqualified. No release bypass, release publishing, or companion version change.
@@ -50,6 +51,8 @@ Reason: Behavior-preserving integration, targeted admission/boot defects, and de
 3. Prefer lazy creation of the initially empty voice preview on first relevant use, preserving projection ordering and cleanup. Do not move definitions into a hot module solely to evade the module counter. Investigate actual widget lifecycle before choosing the smallest correct seam.
 4. Replace a blind fixed 1-second wait in the startup worker anti-vacuity test with bounded condition waiting for the same required worker if its timing defect remains after rebase. Do not delete/weaken its assertion or lengthen a blind sleep.
 5. Verify boot guard plus focused first-voice activation, actual factory/fake-child, preview and synchronous custody behavior with no hardware/providers. Commit only explicit changed paths; report RED/GREEN, exact startup module count and warnings in `task-3-report.md`.
+
+The constructor audit also required lazy creation behind the existing gateway registry property and an existing-owner-only read in `app.py::_confirm_and_quit`. First creation during pending session close inherits the exact existing close fence before returning; unused close/quit never constructs an owner, and existing permits remain mandatory. Task 3 review approved these preservation details. Final reported census is 972/973 with all nine voice modules absent; all 20 distinct Perf Guard nodes passed across the documented failure-resuming runs, with focused first-use and close/quit coverage.
 
 ## Task 4: Correct hosted native wheel portability and paths
 

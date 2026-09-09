@@ -123,9 +123,16 @@ PRISTINE_MANIFEST_SHA256 = (
 )
 PATCH_NAME = "0001-expose-delay-health-evidence.patch"
 PATCH_SHA256 = "94f2a8dad384194c8b3ffb63695287ae7a046e1136b4357b9b3d048579ad3a1c"
-PATCHES = ((PATCH_NAME, PATCH_SHA256),)
-PATCH_SERIES = (
-    f"# WebRTC AEC3 patch series\n\n1. `{PATCH_NAME}` - SHA-256 `{PATCH_SHA256}`\n"
+PATCHES = (
+    (PATCH_NAME, PATCH_SHA256),
+    (
+        "0002-include-stddef-for-clockdrift-detector.patch",
+        "f3bbfe1b2f7d54030fba05fefefbcc181706975c09aa43c9aeb83ca96379ca6e",
+    ),
+)
+PATCH_SERIES = "# WebRTC AEC3 patch series\n\n" + "".join(
+    f"{number}. `{name}` - SHA-256 `{digest}`\n"
+    for number, (name, digest) in enumerate(PATCHES, 1)
 )
 NOTICE_GENERATION_VERSION = 2
 COMPILE_CLOSURE_FILE_COUNT = 315

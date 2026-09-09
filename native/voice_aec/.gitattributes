@@ -1,1 +1,4 @@
-vendor/webrtc/** -whitespace
+vendor/webrtc/** text eol=lf -whitespace
+patches/*.patch text eol=lf
+PYBIND11_LICENSE.txt text eol=lf
+THIRD_PARTY_NOTICES.md text eol=lf

@@ -38,6 +38,7 @@ Tests/Audio/test_voice_process_types.py
 Tests/Chat/test_chat_persistence_service.py
 Tests/Chat/test_console_chat_store_atomic_promotion.py
 Tests/Chat/test_console_exchange_capture.py
+Tests/Chat/test_console_runtime_lazy_voice.py
 Tests/Chat/test_console_runtime_lifetime.py
 Tests/Chat/test_console_runtime_shutdown.py
 Tests/Chat/test_console_settings_defaults.py
@@ -73,7 +74,7 @@ Tests/Chat/test_console_voice_worker_integration.py
 Tests/Chat/test_voice_phrase_sequencer.py
 Tests/DB/test_chachanotes_v56_semantic_trace_migration.py
 Tests/DB/test_chachanotes_v57_semantic_mutation_guard_migration.py
-Tests/DB/test_chachanotes_v69_voice_trace_provenance_migration.py
+Tests/DB/test_chachanotes_v70_voice_trace_provenance_migration.py
 Tests/DB/test_console_voice_trace_grants_gc.py
 Tests/Packaging/test_installed_distribution.py
 Tests/Packaging/test_physical_voice_runner.py
