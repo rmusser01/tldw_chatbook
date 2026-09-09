@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+
 from loguru import logger
 
 
@@ -220,6 +221,12 @@ class ConsoleRowActionsController:
         """Run the chosen workspace command against the captured row.
 
         Dispatched by handler-name convention (ADR-097 lazy-import rule).
+
+        Args:
+            action_id: Supported command: activate, new-chat, show-files,
+                rename, rag-scope, or archive.
+            target: Captured row with workspace_id and files_available;
+                the latter preserves the Show files availability snapshot.
         """
         from tldw_chatbook.Chat.console_workspace_actions import (
             ACTION_ACTIVATE,
@@ -415,13 +422,21 @@ class ConsoleRowActionsController:
 
         import aiofiles
 
-        from tldw_chatbook.Utils.path_validation import validate_path_simple
+        from tldw_chatbook.Utils.path_validation import (
+            validate_path,
+            validate_path_simple,
+        )
 
         # expanduser FIRST: validate_path_simple rejects unresolved '~'
         # components, and the expansion is exactly what a user means by it.
         candidate = Path(path_text).expanduser()
         try:
-            target_path = validate_path_simple(candidate, require_exists=False)
+            candidate = validate_path_simple(candidate, require_exists=False)
+            # The user selects the parent; canonicalize within it, preserving
+            # explicit hidden destinations and rejecting a final symlink escape.
+            target_path = validate_path(
+                candidate.name, candidate.parent, redact_paths=True, allow_hidden=True
+            )
         except Exception as exc:
             self._notify(f"Invalid path: {exc}", severity="error")
             return
