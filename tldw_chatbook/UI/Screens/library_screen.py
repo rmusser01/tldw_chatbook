@@ -25447,6 +25447,7 @@ class LibraryScreen(BaseAppScreen):
         async def import_callback(selected_path: Path | None) -> None:
             if selected_path is None:
                 return
+            self._persist_library_note_import_location(selected_path)
             try:
                 self._library_note_import_controller.accept_selected_path(
                     selected_path,
@@ -25460,8 +25461,48 @@ class LibraryScreen(BaseAppScreen):
             FileOpen(
                 title="Import once (files or one folder)",
                 offer_select_folder=True,
+                location=self._library_note_import_browse_location(),
             ),
             import_callback,
+        )
+
+    def _library_note_import_browse_location(self) -> str:
+        """Return where Import once's picker should open (task-32174 AC#1).
+
+        Mirrors ``_library_ingest_browse_location``: prefer the directory a
+        prior Import once selection came from, else home. Keyed
+        independently (``library.notes_import``) from the ingest browser and
+        from the other two Notes pickers -- each context remembers its own
+        last-used directory.
+        """
+        remembered = get_cli_setting("library.notes_import", "last_directory", None)
+        if remembered:
+            try:
+                candidate = Path(str(remembered)).expanduser()
+                if candidate.is_dir():
+                    return str(candidate)
+            except OSError:
+                pass
+        return str(Path.home())
+
+    @work(thread=True)
+    def _persist_library_note_import_location(self, selected_path: Path) -> None:
+        """Dispatch ``_remember_library_note_import_location`` off the loop."""
+        try:
+            self._remember_library_note_import_location(selected_path)
+        except Exception:
+            logger.error("Failed to persist Library note import browse location")
+
+    def _remember_library_note_import_location(self, selected_path: Path) -> None:
+        """Persist the directory an Import once selection came from."""
+        try:
+            directory = (
+                selected_path if selected_path.is_dir() else selected_path.parent
+            )
+        except OSError:
+            return
+        save_setting_to_cli_config(
+            "library.notes_import", "last_directory", str(directory)
         )
 
     @on(Button.Pressed, '#library-notes-add-from-files')

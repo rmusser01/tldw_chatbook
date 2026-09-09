@@ -491,3 +491,11 @@ review round 2: **Keep waiting** also extends a change queued behind an
 earlier folder's scan, and the "finished before it could be stopped" outcome
 is painted on the folder line rather than only in the editor's status line.
 `[notes] sync_directory` must be an absolute path to be offered.)*
+
+*Verified against fix/library-notes-r-pickers — 2026-09-09 (task-32174: the
+"Choose File Notes Folder" picker opens on the current folder when one is
+linked; otherwise it now opens on the folder last picked through it,
+falling back to home when none has been picked yet, stored as
+`[file_notes] browse` in `config.toml`. Independent of Import once's and
+Keep a folder synced's own last-used directories, see
+[Database notes](notes.md).)*

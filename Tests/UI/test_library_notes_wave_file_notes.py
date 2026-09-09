@@ -9,6 +9,8 @@ explain the mode before it asks for a folder.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.widgets import Button, Static
 
@@ -17,10 +19,12 @@ from textual.widgets import Button, Static
 import Tests.UI._optional_module_stubs  # noqa: F401
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module
 from Tests.UI.test_library_file_notes_workspace import (
+    _WorkspaceHarness,
     _production_workspace_context,
     _static_text,
     _wait_until,
 )
+from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     FOLDER_FILES_EMPTY_COPY,
@@ -205,5 +209,73 @@ async def test_an_abandoned_scan_cannot_overwrite_a_newer_changes_count(
             7, generation=workspace._root_generation
         )
         assert workspace._root_scan_entries == 7
+    await workspace.shutdown()
+    replica.close()
+
+
+# --- task-32174 (last-used picker start directory) -------------------------
+#
+# Folder files already opens at the current root when one is set; the gap
+# was no root chosen yet (or an offline one) -- it fell straight to home
+# instead of the last directory actually browsed. Keyed independently
+# (``file_notes.browse``) from Import once and Keep a folder synced.
+
+
+@pytest.mark.asyncio
+async def test_folder_files_picker_opens_at_last_browsed_directory_without_a_root(
+    tmp_path, monkeypatch
+) -> None:
+    """task-32174 AC#3: no root set yet -> the last-browsed directory wins."""
+    remembered = tmp_path / "remembered"
+    remembered.mkdir()
+
+    monkeypatch.setattr(
+        workspace_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            str(remembered) if (section, key) == ("file_notes", "browse")
+            else default
+        ),
+    )
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await pilot.pause()
+        assert workspace._file_notes_browse_location() == remembered
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_picker_falls_back_to_home_without_a_remembered_directory(
+    monkeypatch,
+) -> None:
+    """AC#3: falls back to home when nothing has been browsed yet."""
+    monkeypatch.setattr(workspace_module, "get_cli_setting", lambda *a, **k: None)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await pilot.pause()
+        assert workspace._file_notes_browse_location() == Path.home()
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_remembers_the_picked_root(tmp_path) -> None:
+    """AC#3: picking a root becomes the next open's start directory."""
+    picked = tmp_path / "vault"
+    picked.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await pilot.pause()
+        workspace._root_selected(picked)
+        await _wait_until(
+            pilot,
+            lambda: real_get_cli_setting("file_notes", "browse", None)
+            == str(picked),
+            "the picked root was never remembered as the browse directory",
+        )
     await workspace.shutdown()
     replica.close()

@@ -517,6 +517,7 @@ from textual.widgets import Button, Input, Static, TextArea
 
 from ...DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...config import get_cli_setting, save_setting_to_cli_config
 from ...Library.library_export_scope import ExportScope
 from ...Library.library_note_import_state import (
     LibraryNoteImportSnapshot,
@@ -4509,14 +4510,53 @@ class LibraryNotesController:
         async def selected(path: Path | None) -> None:
             if path is None or not path.is_dir():
                 return
+            self._persist_library_notes_sync_location(path)
             controller = self._library_notes_sync_controller
             controller.set_setup("folder", str(path))
             if not controller.snapshot.setup.display_name:
                 controller.set_setup("display_name", path.name)
 
         self.app.push_screen(
-            FileOpen(title="Choose a folder to keep synced", offer_select_folder=True),
+            FileOpen(
+                title="Choose a folder to keep synced",
+                offer_select_folder=True,
+                location=self._library_notes_sync_browse_location(),
+            ),
             selected,
+        )
+
+    def _library_notes_sync_browse_location(self) -> str:
+        """Return where "Keep a folder synced" should open (task-32174 AC#2).
+
+        Keyed independently (``library.notes_sync``) from Import once and
+        the ingest browser -- each picker context remembers its own
+        last-used directory.
+        """
+        remembered = get_cli_setting("library.notes_sync", "last_directory", None)
+        if remembered:
+            try:
+                candidate = Path(str(remembered)).expanduser()
+                if candidate.is_dir():
+                    return str(candidate)
+            except OSError:
+                pass
+        return str(Path.home())
+
+    def _persist_library_notes_sync_location(self, selected_path: Path) -> None:
+        """Off the event loop: remember the picked sync-folder directory."""
+
+        def _persist() -> None:
+            try:
+                self._remember_library_notes_sync_location(selected_path)
+            except Exception:
+                logger.error("Failed to persist Library notes sync browse location")
+
+        self.run_worker(_persist, thread=True)
+
+    def _remember_library_notes_sync_location(self, selected_path: Path) -> None:
+        """Persist the directory a "Keep a folder synced" pick came from."""
+        save_setting_to_cli_config(
+            "library.notes_sync", "last_directory", str(selected_path)
         )
     @on(LibraryNotesAddFromFilesCanvas.CheckRequested)
     async def handle_library_notes_lasting_check(

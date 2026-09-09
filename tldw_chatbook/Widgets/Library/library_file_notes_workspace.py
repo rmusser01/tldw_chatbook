@@ -30,6 +30,7 @@ from tldw_chatbook.config import (
     apply_settings_mutation_to_cli_config,
     get_cli_setting,
     get_user_data_dir,
+    save_setting_to_cli_config,
 )
 from tldw_chatbook.Library.library_structural_wait import (
     STRUCTURAL_WAIT_PATIENCE_SECONDS,
@@ -6185,16 +6186,34 @@ class LibraryFileNotesWorkspace(Vertical):
         await self._open_root_picker()
 
     async def _open_root_picker(self) -> None:
-        """Open the folder picker on the current root, or on home."""
+        """Open the folder picker on the current root, else the last
+        browsed directory, else home."""
         location = (
             self._root
             if self._root is not None and self._root_offline is False
-            else Path.home()
+            else self._file_notes_browse_location()
         )
         await self.app.push_screen(
             SelectDirectory(location, title="Choose File Notes Folder"),
             callback=self._root_selected,
         )
+
+    def _file_notes_browse_location(self) -> Path:
+        """Return where Folder files should open with no root set (task-32174 AC#3).
+
+        Keyed independently (``file_notes.browse``) from Import once and
+        "Keep a folder synced" -- each picker context remembers its own
+        last-used directory.
+        """
+        remembered = get_cli_setting("file_notes", "browse", None)
+        if remembered:
+            try:
+                candidate = Path(str(remembered)).expanduser()
+                if candidate.is_dir():
+                    return candidate
+            except OSError:
+                pass
+        return Path.home()
 
     @on(Button.Pressed, "#file-notes-use-sync-folder")
     def _use_configured_sync_folder(self, event: Button.Pressed) -> None:
@@ -6239,12 +6258,24 @@ class LibraryFileNotesWorkspace(Vertical):
     def _root_selected(self, path: Path | None) -> None:
         if path is None or not self._active:
             return
+        self._persist_file_notes_browse_location(path)
         self.run_worker(
             self._change_root_with_deadline(path),
             name="file-notes-root-change",
             group="file-notes-root-change",
             exclusive=True,
         )
+
+    def _persist_file_notes_browse_location(self, path: Path) -> None:
+        """Off the event loop: remember the picked Folder files directory."""
+
+        def _persist() -> None:
+            try:
+                save_setting_to_cli_config("file_notes", "browse", str(path))
+            except Exception:
+                pass
+
+        self.run_worker(_persist, thread=True)
 
     async def _change_root_with_deadline(self, path: Path) -> None:
         """Run one folder change under a deadline the user can cut short.
