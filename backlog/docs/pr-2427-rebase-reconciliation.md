@@ -1564,3 +1564,21 @@ shell at `/private/tmp/pr2427-wave9-shell-native.l37Yp9/pytest.log`. Its native
 report is `native.jsonl` in the same directory; require final exit_code0 and
 empty sqlite_paths. Runtime source is frozen until these finish. Final-head
 Qodo review and GitHub checks remain mandatory before a normal merge.
+
+The complete affected owner/UI cohort finished **530 passed, 3 warnings in
+445.47 seconds**. Qodo completed its fresh review of
+`bf1f70cf0c6f153ef9163189385982cca568744d` at 2026-09-09 02:31 UTC with **0 bugs,
+0 rule violations and 0 skill insights** (canonical review comment5560973127;
+exact-head completion comment5594878752). The 851-case native run is still in
+progress; no final cleanup or merge claim is made. Newer dev changes must be
+integrated only after the frozen-source run completes, followed by affected-file
+verification and review of any resulting runtime changes.
+
+The final frozen-source Library run finished **851 passed, 10 warnings in
+1371.47 seconds**, with native final `exit_code: 0` and `sqlite_paths: []` in
+`/private/tmp/pr2427-wave9-shell-native.l37Yp9/native.jsonl`. This qualifies the
+published runtime at `bf1f70cf0c`; its Qodo review is also complete and all 13
+review threads are resolved. Fresh fetch finds dev `80f29a9a1dcd9307662714233c65605e4c517b11`,
+containing 51 changed files since the prior base, including Library loaders,
+handoff, recovery copy, Media polish and their tests. Integrate and qualify
+that increment next; do not reuse this source qualification for changed runtime.
