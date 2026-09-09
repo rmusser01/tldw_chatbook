@@ -2141,12 +2141,17 @@ class LibraryFileNotesWorkspace(Vertical):
             self._poll_timer,
             self._autosave_timer,
             self._git_refresh_timer,
+            # task-32121: the folder-change patience repaint repeats now,
+            # and only the wait settling stops it -- which a scan parked in
+            # an uninterruptible syscall never does (review round 2).
+            self._structural_wait_timer,
         ):
             if timer is not None:
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
         self._git_refresh_timer = None
+        self._structural_wait_timer = None
         self._poll_worker = None
         self._save_worker = None
         self._git_status_worker = None
@@ -2166,12 +2171,17 @@ class LibraryFileNotesWorkspace(Vertical):
             self._poll_timer,
             self._autosave_timer,
             self._git_refresh_timer,
+            # task-32121: the folder-change patience repaint repeats now,
+            # and only the wait settling stops it -- which a scan parked in
+            # an uninterruptible syscall never does (review round 2).
+            self._structural_wait_timer,
         ):
             if timer is not None:
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
         self._git_refresh_timer = None
+        self._structural_wait_timer = None
         save_task = self._save_task
         if save_task is not None and not save_task.done():
             try:
@@ -6251,7 +6261,11 @@ class LibraryFileNotesWorkspace(Vertical):
             # ROOT_CHANGE_LANDED_COPY). Both branches settle only once the
             # task is done, so ``self._root`` is now final either way.
             if self._root != previous_root:
-                self._set_action_status(ROOT_CHANGE_LANDED_COPY)
+                # Through the reason channel, not just the action status:
+                # the cancel receipt already owns the folder row, and
+                # leaving it there tells the user the previous folder was
+                # kept while the new one is linked (review round 2).
+                self._report_root_change_reason(ROOT_CHANGE_LANDED_COPY)
         finally:
             self._end_structural_wait(wait)
 
