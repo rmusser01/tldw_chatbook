@@ -304,8 +304,8 @@ async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
 ):
     """The whole of plan Task 5's first two bullets, through production.
 
-    Console is left via the REAL navigation API (`NavigateToScreen` + the
-    real "Leave Console?" dialog) with a wake turn parked in flight. Navigation
+    Console is left via the REAL navigation API (`NavigateToScreen`)
+    with a wake turn parked in flight. Navigation
     now retains the Console, so explicitly uninstall that exact suspended
     screen through Textual's real teardown path before arming the headless
     risk-tagged round from a plain worker thread.
