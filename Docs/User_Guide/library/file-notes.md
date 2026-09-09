@@ -82,7 +82,10 @@ While a folder change runs, the folder line reads `Changing folder…`. If it
 is still going after about three seconds it becomes `Changing folder… ·
 still working · Cancel`, and after 30 seconds it gives up on its own with
 "Folder change timed out · previous folder kept. Try again or choose a
-different folder." Either way the previously linked folder is untouched.
+different folder." Either way the previously linked folder is untouched —
+unless the change had already finished saving when you cancelled, in which
+case the status says "Folder change finished before it could be stopped ·
+now linked to the new folder." and the new folder is the one in use.
 
 ### Edit and Manage
 

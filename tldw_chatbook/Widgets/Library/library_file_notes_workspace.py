@@ -261,6 +261,15 @@ ROOT_CHANGE_TIMEOUT_COPY = (
     "Folder change timed out · previous folder kept. "
     "Try again or choose a different folder."
 )
+#: Root persistence past its atomic file replacement is deliberately
+#: unstoppable: refusing to publish there would leave the on-disk config
+#: pointing at a folder the UI never adopted. When a cancel or the deadline
+#: loses that race, the receipt -- not the commit -- is what has to stay
+#: honest.
+ROOT_CHANGE_LANDED_COPY = (
+    "Folder change finished before it could be stopped · now linked to the "
+    "new folder."
+)
 FILE_TREE_BATCH_SIZE = 100
 
 
@@ -5918,6 +5927,7 @@ class LibraryFileNotesWorkspace(Vertical):
         status line, and always leaves the previously linked folder in
         place when it does not complete.
         """
+        previous_root = self._root
         change = asyncio.ensure_future(self.set_root(path))
         wait = self._begin_structural_wait("Changing folder", change)
         try:
@@ -5927,10 +5937,21 @@ class LibraryFileNotesWorkspace(Vertical):
             # ``finally`` only clears the transition once it unwinds -- release
             # the canvas now, on the same seam an explicit Cancel uses.
             self._abandon_root_change_task(change)
-            self._abandon_root_change(wait, ROOT_CHANGE_TIMEOUT_COPY)
+            self._abandon_root_change(
+                wait,
+                ROOT_CHANGE_TIMEOUT_COPY
+                if self._root == previous_root
+                else ROOT_CHANGE_LANDED_COPY,
+            )
         except asyncio.CancelledError:
             if not wait.cancelled:
                 raise
+            # The cancel receipt was written the moment Cancel was pressed;
+            # the commit may have crossed it since (see
+            # ROOT_CHANGE_LANDED_COPY). Both branches settle only once the
+            # task is done, so ``self._root`` is now final either way.
+            if self._root != previous_root:
+                self._set_action_status(ROOT_CHANGE_LANDED_COPY)
         finally:
             self._end_structural_wait(wait)
 

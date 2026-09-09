@@ -56,7 +56,18 @@ class StructuralWait:
         now: float,
         patience_seconds: float = STRUCTURAL_WAIT_PATIENCE_SECONDS,
     ) -> bool:
-        """Whether this wait has outlived its patience window at ``now``."""
+        """Whether this wait has outlived its patience window at ``now``.
+
+        Args:
+            now: Current ``time.monotonic()`` reading, on the same clock as
+                ``started_at``.
+            patience_seconds: How long the wait stays quiet before it
+                reports that it is still working.
+
+        Returns:
+            True once ``now`` is at least ``patience_seconds`` past
+            ``started_at``.
+        """
         return now - self.started_at >= patience_seconds
 
     def with_patience_suffix(

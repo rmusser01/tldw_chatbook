@@ -18,9 +18,11 @@ import pytest
 import Tests.UI._optional_module_stubs  # noqa: F401
 from textual.widgets import Button
 
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notes.file_notes_service import FileNotesService
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+    ROOT_CHANGE_LANDED_COPY,
     LibraryFileNotesWorkspace,
 )
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module
@@ -485,3 +487,71 @@ async def test_folder_change_that_never_lands_times_out_and_keeps_the_folder(
         assert not workspace._root_transitioning
     await workspace.shutdown()
     replica.close()
+
+
+@pytest.mark.asyncio
+async def test_cancel_that_loses_to_the_commit_reports_the_folder_that_landed(
+    tmp_path, monkeypatch
+) -> None:
+    """A commit crossing the cancel must not claim the previous folder was kept.
+
+    Root persistence past its atomic file replacement is deliberately
+    unstoppable -- refusing to publish there would leave the on-disk config
+    pointing at a folder the UI never adopted. So the cancel receipt, not
+    the commit, is what has to stay honest (PR #2524 review).
+    """
+    old_root = tmp_path / "linked"
+    old_root.mkdir()
+    (old_root / "old.md").write_text("old note", encoding="utf-8")
+    new_root = tmp_path / "next"
+    new_root.mkdir()
+    (new_root / "new.md").write_text("new note", encoding="utf-8")
+
+    persistence_started = threading.Event()
+    release_persistence = threading.Event()
+
+    def persist_mutation(section_values):
+        persistence_started.set()
+        assert release_persistence.wait(timeout=20)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        workspace_module,
+        "apply_settings_mutation_to_cli_config",
+        persist_mutation,
+    )
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
+    try:
+        async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: workspace.initialized,
+                "the workspace never scanned its linked folder",
+            )
+            workspace._root_selected(new_root)
+            await _wait_until(
+                pilot,
+                persistence_started.is_set,
+                "the folder change never reached config persistence",
+            )
+            assert workspace.cancel_structural_wait()
+            release_persistence.set()
+            await _wait_until(
+                pilot,
+                lambda: workspace.root == new_root.resolve(),
+                "the shielded commit never landed",
+            )
+            await _wait_until(
+                pilot,
+                lambda: workspace._structural_wait is None,
+                "the cancelled wait never settled",
+            )
+            assert (
+                _static_text(workspace, "#file-notes-action-status")
+                == ROOT_CHANGE_LANDED_COPY
+            )
+    finally:
+        release_persistence.set()
+        await workspace.shutdown()
+        replica.close()
