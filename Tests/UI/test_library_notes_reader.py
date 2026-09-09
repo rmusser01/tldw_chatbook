@@ -135,6 +135,8 @@ async def test_database_notes_capability_inventory_and_modes(
                 "#library-notes-export",
             ):
                 assert screen.query_one(selector)
+            assert screen.query_one("#library-notes-sort", Button).disabled is False
+            assert not screen.query("#library-notes-sort-choices")
             assert not screen.query("#library-notes-delete-selected")
             filter_input = screen.query_one("#library-notes-filter", Input)
             filter_input.value = "alpha"

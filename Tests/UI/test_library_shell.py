@@ -5832,9 +5832,9 @@ def test_library_production_width_matrix_normalizes_persisted_custom_widths(
         "neutral_items_width",
     ),
     (
-        (235, 231, (False, True), 56),
-        (170, 166, (False, True), 56),
-        (120, 116, (False, True), 56),
+        (235, 231, (False, True), 64),
+        (170, 166, (False, True), 64),
+        (120, 116, (False, True), 58),
         (100, 100, (False, False), 0),
         (80, 80, (False, False), 0),
         (60, 60, (False, False), 0),
@@ -6137,11 +6137,11 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
             screen._sync_library_notes_reader_layout_from_shell()
             retry.assert_not_called()
         phases = (
-            (170, (False, True, 0, 56, 100)),
-            (149, (False, True, 0, 56, 79)),
-            (153, (False, True, 0, 56, 83)),
-            (154, (False, True, 0, 56, 84)),
-            (120, (False, True, 0, 56, 50)),
+            (170, (False, True, 0, 64, 92)),
+            (149, (False, True, 0, 64, 71)),
+            (153, (False, True, 0, 64, 75)),
+            (154, (False, True, 0, 64, 76)),
+            (120, (False, True, 0, 58, 48)),
             # Notes reserves 10 grip cells, 50 Items cells, and 48 Work cells.
             (108, (False, True, 0, 50, 48)),
             (107, (False, False, 0, 0, 97)),
@@ -6155,9 +6155,9 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
             (108, (False, False, 0, 0, 98)),
             (111, (False, False, 0, 0, 101)),
             (112, (False, True, 0, 54, 48)),
-            (153, (False, True, 0, 56, 83)),
-            (154, (False, True, 0, 56, 84)),
-            (170, (False, True, 0, 56, 100)),
+            (153, (False, True, 0, 64, 75)),
+            (154, (False, True, 0, 64, 76)),
+            (170, (False, True, 0, 64, 92)),
         )
         with monkeypatch.context() as resize_patches:
             probes = _task6_install_resize_probes(
@@ -6839,13 +6839,13 @@ async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
             for banned in ("Conversa...", "Flash...", "Collect..."):
                 assert banned not in first_line, (row.id, first_line)
 
-        # ...and the count survives on the longest-titled row. The bounded
-        # fractional rail deliberately uses the semantic short title at this
-        # terminal width rather than widening the entire sidebar.
+        # ...and the count survives on the longest-titled row. The widened
+        # default rail fits its full title; semantic short titles are only
+        # used when the full title and count cannot fit.
         conv = screen.query_one("#library-row-browse-conversations", Button)
         conv_line = conv.label.plain.split("\n")[0]
         assert conv_line.endswith("(2)"), f"count clipped: {conv_line!r}"
-        assert "Chats" in conv_line, f"semantic short title missing: {conv_line!r}"
+        assert conv_line.strip() == "Conversations (2)"
         assert "..." not in conv_line and "…" not in conv_line, (
             f"title fits outright -- no ellipsis allowed: {conv_line!r}"
         )
@@ -19206,6 +19206,7 @@ async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
             "#library-notes-sort",
             "#library-notes-select-toggle",
         )
+        assert screen.query_one("#library-notes-sort", Button).disabled is False
         transfer_selectors = (
             "#library-notes-add-from-files",
             "#library-notes-export",
@@ -32485,7 +32486,10 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context(
     ]
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=notes)
-    host = LibraryProductionCSSHarness(app)
+    screen = LibraryScreen(app)
+    # Restore the persisted title preference before the pager's first load.
+    screen.restore_state({"library_notes_sort": "title"})
+    host = LibraryProductionCSSHarness(app, screen=screen)
 
     async with host.run_test(size=(170, 24)) as pilot:
         screen = _active_library_screen(host)
@@ -32494,13 +32498,15 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context(
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
 
-        # This used to press #library-notes-sort ("title") for a
-        # deterministic row order. It no longer needs to: since task-32172
-        # the Sort value IS the tree's ORDER BY, applied by the pager, and
-        # the row picked below comes out of the settled filter window
-        # anyway. Sort itself is composed here (task-32172 put it back on
-        # the folder tree) and enabled while no filter is applied.
+        assert screen._notes_state.sort == "title"
         assert screen.query_one("#library-notes-sort", Button).disabled is False
+        await _wait_for_selector(screen, pilot, "#library-notes-row-19")
+        projection = screen._build_library_notes_tree_projection()
+        assert projection is not None
+        assert [row.note_id for row in projection.rows if row.kind == "note"] == [
+            f"n-{index:02d}" for index in range(20)
+        ]
+        await pilot.pause()
         notes_filter = screen.query_one("#library-notes-filter", Input)
         unfiltered_list = screen.query_one("#library-notes-list")
         notes_filter.value = "scope"
@@ -32542,6 +32548,9 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context(
         )
         assert len(screen._notes_state.filter_records) == 20
         assert len(screen.query(".library-notes-row")) == 20
+        assert [row.note_id for row in screen.query(".library-notes-row")] == [
+            f"n-{index:02d}" for index in range(20)
+        ]
 
         rail = screen.query_one("#library-rail")
         notes_list = screen.query_one("#library-notes-list")
@@ -34792,6 +34801,14 @@ async def test_library_note_keyboard_capability_matrix(
             # Tests/UI/test_library_notes_wave_list.py
             # ::test_sort_is_operable_by_keyboard_on_the_flat_list.
             await _task10_open_notes_navigator(screen, pilot)
+            # Pin the real paged projection before and after keyboard filtering.
+            await _wait_for_selector(screen, pilot, "#library-notes-row-1")
+            projection = screen._build_library_notes_tree_projection()
+            assert projection is not None
+            assert [row.note_id for row in projection.rows if row.kind == "note"] == [
+                "n-1", "n-2"
+            ]
+            assert screen._notes_state.sort == "newest"
             filter_input = await _task10_focus_with_keyboard(
                 screen, pilot, "#library-notes-filter"
             )
@@ -34802,6 +34819,20 @@ async def test_library_note_keyboard_capability_matrix(
                 message="Keyboard filter submit never reached search_notes.",
             )
             assert filter_input.value == "retro"
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._notes_state.filter_records is not None,
+                message="Keyboard filter result did not settle.",
+            )
+            projection = screen._build_library_notes_tree_projection()
+            assert projection is not None
+            assert [row.note_id for row in projection.rows if row.kind == "note"] == [
+                "n-1"
+            ]
+            assert screen._notes_state.sort == "newest"
+            assert screen._notes_state.sort_choices_visible is False
+            assert screen.query_one("#library-notes-sort", Button).disabled is True
+            assert not screen.query("#library-notes-sort-choices")
             return
 
         if capability == "create_discard":
