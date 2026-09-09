@@ -1456,6 +1456,17 @@ async def test_same_identity_version_refresh_fences_old_loaded_revision() -> Non
     app = _build_test_app()
     records = _conversation_records()[:1]
     _seed_conversations(app, records)
+    # (task-32056) The header action is now ALSO gated on workspace
+    # eligibility, so link this row into the active workspace -- otherwise
+    # the button stays disabled for a reason unrelated to the version fence
+    # this test is about.
+    registry = app.workspace_registry_service
+    registry.link_membership(
+        registry.ensure_default_workspace().workspace_id,
+        item_type="conversation",
+        item_id=str(records[0]["id"]),
+        title=str(records[0]["title"]),
+    )
     service = _GatedVersionConversationService(5)
     screen = _active_conversations_screen(app)
     host = LibraryHarness(app, screen=screen)

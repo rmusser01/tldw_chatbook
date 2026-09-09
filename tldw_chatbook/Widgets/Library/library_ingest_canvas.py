@@ -586,7 +586,7 @@ class LibraryIngestQueuePanel(Vertical):
                 or row.can_dismiss
                 or row.can_cancel
                 or row.can_force_stop
-                or bool(row.error_detail)
+                or row.can_show_details
                 or bool(stt_actions)
             )
             if has_actions:
@@ -660,7 +660,7 @@ class LibraryIngestQueuePanel(Vertical):
                             ),
                             compact=True,
                         )
-                    if row.error_detail:
+                    if row.can_show_details:
                         yield Button(
                             "Hide details"
                             if row.details_expanded

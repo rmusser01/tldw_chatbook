@@ -147,6 +147,7 @@ class LibraryConversationReaderController:
         notes_focus_intent_generation_accessor: Callable[[], int],
         selected_row_id_accessor: Callable[[], str],
         selected_conversation_id_accessor: Callable[[], str],
+        library_conversation_workspace_block: Callable[[], tuple[str, bool, str]],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -210,6 +211,11 @@ class LibraryConversationReaderController:
                 writing). Read-only here: every write site in
                 ``library_screen.py`` falls outside this cluster's 21
                 methods.
+            library_conversation_workspace_block: ``LibraryScreen.
+                _library_conversation_workspace_block`` -- ``(reason,
+                link_resolves_it, detail)`` for the open conversation's
+                workspace refusal, or ``("", False, "")`` when it can be
+                staged (task-32056).
             selected_conversation_id_accessor: Reads ``LibraryScreen.
                 _selected_conversation_id`` -- a per-source "currently
                 selected" field parallel to ``_media_state.selected_media_id``/
@@ -233,6 +239,13 @@ class LibraryConversationReaderController:
         )
         self._selected_row_id_accessor = selected_row_id_accessor
         self._selected_conversation_id_accessor = selected_conversation_id_accessor
+        # (task-32056) ``LibraryScreen._library_conversation_workspace_block``
+        # -- the workspace-registry read behind the reader's inline refusal.
+        # Bound like every other cross-cluster dependency: the depth-state
+        # cache it consults is shell-wide, not reader-owned.
+        self._library_conversation_workspace_block = (
+            library_conversation_workspace_block
+        )
 
     # -- framework services: live-read properties, never snapshotted -----
 
@@ -366,6 +379,13 @@ class LibraryConversationReaderController:
             metadata["_list_status"] = self._library_lookup_error
         if not self._library_conversation_reader_layout.items_open:
             metadata["_list_summary"] = self._conversation_reader_list_summary()
+        # (task-32056) Recomputed on every sync so the inline workspace
+        # refusal clears the moment "Link to workspace" lands.
+        (
+            metadata["_workspace_block"],
+            metadata["_workspace_block_linkable"],
+            metadata["_workspace_block_detail"],
+        ) = self._library_conversation_workspace_block()
         reader.sync_state(
             self._library_conversation_reader_state,
             loaded_metadata=metadata,
