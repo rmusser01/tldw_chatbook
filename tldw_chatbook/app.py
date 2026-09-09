@@ -7428,13 +7428,22 @@ class TldwCli(
             library_config["rail_state"] = rail_state
         if "lifecycle" in rail_state:
             return
+        # One name for the value both the in-memory state and the file get:
         # "unknown" is LibraryLifecycle.UNKNOWN.value, spelled out rather than
         # imported: pulling the Library package in here would put its modules
         # on every boot for one string (see the module-census ratchet).
-        rail_state["lifecycle"] = "unknown"
+        lifecycle = "unknown"
+        rail_state["lifecycle"] = lifecycle
         try:
-            save_setting_to_cli_config("library.rail_state", "lifecycle", "unknown")
+            # `save_setting_to_cli_config` REPORTS a write failure rather than
+            # raising it, and an unstamped profile reads back as `expanded` on
+            # the next launch -- so the return value is the failure signal.
+            saved = save_setting_to_cli_config(
+                "library.rail_state", "lifecycle", lifecycle
+            )
         except Exception:
+            saved = False
+        if not saved:
             # A profile whose config cannot be written still gets the correct
             # in-memory lifecycle for this run; boot must not fail over it.
             logger.warning(
