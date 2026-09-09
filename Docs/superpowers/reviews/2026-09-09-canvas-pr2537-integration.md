@@ -1,6 +1,7 @@
 # Canvas PR #2537: latest-dev integration
 
-Status: verification and Qodo follow-up in progress. Not a merge approval.
+Status: implementation and review qualified. Final documentation-head CI and
+normal protected PR merge remain; no merge is claimed here.
 
 ## Scope and identity
 
@@ -107,9 +108,43 @@ The updated local preflight separately passed all **7** checks, actual exit 0
 (`final-preflight.log`). No inventory, generated-asset or startup guard was
 weakened to obtain those results.
 
-## Pending merge gates
+## Qodo and independent review closeout
 
-- Final Qodo-fix test/static evidence and scoped independent re-review.
-- Complete derived-artifact preflight and Backlog task hygiene.
-- Exact-lease push, latest-head Qodo dispositions and required hosted CI.
-- Merge only the verified head with normal branch protection enforced.
+Fix commit: `27cf82559a26d9ceb0425d32fbb54609006c9664`. The independent
+scoped re-review passed with no Critical, Important or Minor findings. Final
+authoring coverage (including admitted, revoked and unknown profiles through a
+real run coordinator) passed all **4** tests; final scoped Ruff and formatting
+checks passed for all **7** changed Python files. The agent's final combined
+focused selection also passed **46** tests. The only changes after the large
+Canvas gate were test coverage, formatter reflow and the public docstring.
+
+Qodo's exact-head review reports zero bugs. All five threads received evidence
+replies and were resolved:
+
+- [3965119518: retained-profile guidance](https://github.com/rmusser01/tldw_chatbook/pull/2537#discussion_r3965480373).
+- [3965119495: public helper documentation](https://github.com/rmusser01/tldw_chatbook/pull/2537#discussion_r3965479487).
+- [3965119500: immutable JavaScript ABI disposition](https://github.com/rmusser01/tldw_chatbook/pull/2537#discussion_r3965479478).
+- [3965119508: required Mermaid reproduction](https://github.com/rmusser01/tldw_chatbook/pull/2537#discussion_r3965479537).
+- [3965119485: direct helper-unit coverage](https://github.com/rmusser01/tldw_chatbook/pull/2537#discussion_r3965479508).
+
+The residual helper item in Qodo's summary cited only old integration tests and
+overlooked the new unit file. Independent review verified that coverage directly.
+The casing-only request was technically declined under ADR-124: both qualified
+worker/renderer pairs use the same JavaScript ABI; changing those bytes requires
+a new profile, not an in-place style edit. No runtime bytes changed.
+
+## Hosted CI and final publication
+
+[Required Derived Artifacts run 34320576418](https://github.com/rmusser01/tldw_chatbook/actions/runs/34320576418)
+passed on exact code head `27cf82559a26d9ceb0425d32fbb54609006c9664`. Both
+**PR Fast Lane** and **Derived artifacts reproduce from their sources** succeeded.
+The six locally semaphore-blocked process cases remained enabled in the hosted
+Fast Lane. CSS, Backlog ID, UI latency and all six GGUF platform evidence jobs
+also passed. CodeRabbit skipped actual review; its success status is not claimed
+as review approval.
+
+TASK-32161's implementation/review acceptance is complete. This documentation
+closeout changes no product or test behavior. Its published head must still
+receive current-head required checks before the user-authorized normal merge;
+no stale green result or admin bypass is permitted. The actual merge result is
+recorded on the PR and in the retained SDD progress ledger when it occurs.

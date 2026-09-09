@@ -1,11 +1,11 @@
 ---
 id: TASK-32161
 title: Address Canvas V2 PR review and integration gaps
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 06:07'
-updated_date: '2026-09-09 06:42'
+updated_date: '2026-09-09 06:59'
 labels:
   - canvas
   - review
@@ -33,7 +33,7 @@ allocation maximum 32159 and alongside the SQLite collision correction TASK-3216
 - [x] #1 Production run-bound Canvas tools deliver exact-profile Mermaid and source-only authoring guidance without broadening run or browser authority.
 - [x] #2 Required CI verifies the hash-pinned Mermaid generated artifacts and fails on missing inputs or drift.
 - [x] #3 Private SQLite helper source identity, pipe deadlines, dispatch and cleanup have focused behavior coverage in addition to existing real-process coverage.
-- [ ] #4 Every Qodo finding has an evidenced fix or technical disposition and targeted integration checks and independent review cover the rebased changes.
+- [x] #4 Every Qodo finding has an evidenced fix or technical disposition and targeted integration checks and independent review cover the rebased changes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,5 +45,5 @@ ADR required: no new ADR. ADR paths: backlog/decisions/124-canvas-mermaid-subset
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the exact retained-profile seam for production CanvasRunCoordinator, complete authoring API docs, focused private-helper unit coverage, and a required pinned-input Mermaid rebuild checker with local preflight parity. Existing immutable JavaScript names are retained with an ADR-124 technical disposition. README now matches the approved Python 3.12 application floor. ADRs 124 and 125 apply; no new ADR. Root rebase qualification: 1387 Canvas passes (2 optional browser skips), 721 SQLite passes (2 Windows-only skips), all 7 preflight checks and real public-input reproduction pass. All 3 upstream-owner failures and 6 local SemLock allocation failures reproduce on immutable dev; no budgets/tests/host state were weakened. Independent scoped review, remote evidence replies, current-head hosted CI and merge remain pending. Full evidence: Docs/superpowers/reviews/2026-09-09-canvas-pr2537-integration.md.
+Implemented the retained-profile production coordinator seam, complete public authoring docs, direct private-helper unit tests, and required hash-pinned Mermaid reproduction with local preflight parity. Preserved immutable JavaScript ABI under ADR-124 and corrected the Python 3.12 README floor. ADRs124/125 apply; no new ADR. Independent scoped review passed with no findings; all five Qodo threads have evidence replies and are resolved. Qodo exact-head review reports zero bugs. Code head27cf82559a passed required hosted Derived Artifacts run34320576418 including Fast Lane, covering the six locally semaphore-blocked process tests on a healthy runner. Local qualification:1387Canvas passes/2optionalbrowser skips,721SQLite passes/2Windows skips,all7preflightchecks,real public-input6-outputrebuild,final4authoring passes and scoped Ruff/format pass. Three unchanged upstream-owner failures and local SemLock limitations remain documented, not hidden. Implementation/review acceptance is complete; final documentation-head CI and the user-authorized PR merge remain integration steps tracked on PR2537 and in the SDD ledger. Evidence:Docs/superpowers/reviews/2026-09-09-canvas-pr2537-integration.md.
 <!-- SECTION:NOTES:END -->
