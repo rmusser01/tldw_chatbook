@@ -32,6 +32,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
+from tldw_chatbook.Widgets.Library.library_rail import LibraryRailSearchInput
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
     library_row_button,
@@ -718,7 +719,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         yield database_purpose
         with Horizontal(id="library-notes-filter-row"):
             yield Static("Filter", id="library-notes-filter-label", markup=False)
-            yield Input(
+            # task-32131: a plain ``Input`` here let a SECOND "/" -- pressed
+            # while the filter already had focus -- insert a literal slash
+            # (Screen.on_key's "/" handling bails as soon as an Input owns
+            # focus, so it never gets a chance to redirect). Reuse the rail
+            # search box's fix (task-1584) instead of re-solving it: "/"
+            # re-arms (select-all) rather than typing when already focused.
+            yield LibraryRailSearchInput(
                 placeholder="Filter notes… (Enter)",
                 id="library-notes-filter",
                 value=self.filter_value,
