@@ -1,0 +1,49 @@
+{
+  "base": "a36fc6133c69f77b8b14596a59918de34261f8ef",
+  "head": "1edcbb1aee9bacfd7573c53f70b22d51b27f6300",
+  "reviewed_files_sha256": {
+    "tldw_chatbook/TTS/backends/alltalk.py": "22145b1f5f1677c702fe7107bb57085d0430398560f94f4fc013bf0db6e212fa",
+    "tldw_chatbook/TTS/backends/higgs.py": "17140350923971f27fee1e72dc52aa8a1524ec6ca604446fac9d29e3f2abd352",
+    "tldw_chatbook/TTS/legacy_catalogs.py": "566382d3cdde9675ba9f10ff84540c56da26c396df7f4099eec5664f8ebe7ce1",
+    "tldw_chatbook/UI/Speech/speech_playground_model.py": "e8a25ccb43c862fed90a935b0f5822ecbc084d9d72f5eb91bbef8eb931e8ad54",
+    "tldw_chatbook/UI/Speech/speech_playground_pane.py": "76daddbbc43b0e3d1be0ad9e9367ae9f0581e30dba361dee234507bd79e5252d",
+    "tldw_chatbook/UI/Speech/speech_settings_mixin.py": "2750f2abe5df76ca8d74ff7dd784447b141d1f651021397096f828cfe7d83cd8",
+    "tldw_chatbook/UI/Speech/speech_settings_model.py": "f4ae57e78c1e88aa01f0d99f922be3dbf6fab16f712d1cfe7cc1693e341aa4b1",
+    "Tests/TTS/test_local_provider_contracts.py": "30a14a26dad99f9eb2d3e3d61108ac65ad04cacbdadb77e578a12e28df7a4661",
+    "Tests/TTS/test_legacy_bridge.py": "b343e44509c338bbbe9e40a5394a1e0955fa6d66fefe294717612e69b0c1f4d2",
+    "Tests/UI/test_speech_kokoro_defaults.py": "bf0a320a5280cc6f728e43d6326899ef417851bfb48aa6e9ccf8a3645bf338c0"
+  },
+  "provider_contracts": [
+    {
+      "provider": "alltalk",
+      "revision": "f16117e95b540e9bbbd8247b49ca6c6b1350b172",
+      "path": "/private/tmp/tts-macos-burndown/alltalk/source/tts_server.py",
+      "sha256": "69a3ceebd3d3737ee7fb1ca0bbea498f37b040568f9d13112b65c34b1d1b2788",
+      "working_file_matches_pin": true
+    },
+    {
+      "provider": "higgs",
+      "revision": "05a145bb490501b534563bf51bf2f7aa2326b271",
+      "path": "/private/tmp/tts-macos-burndown/higgs/source/boson_multimodal/serve/serve_engine.py",
+      "sha256": "712c594ae1cbb9aafede4d99a54920287764afc77ae4aba32d4430d0c19e0885",
+      "working_file_matches_pin": true
+    }
+  ],
+  "fake_tests": {
+    "passed": 36,
+    "seconds": 9.51,
+    "warning": "Inherited pydub audioop deprecation on Python 3.12",
+    "log": "/private/tmp/tts-macos-burndown/provider-review-targeted-tests.log",
+    "exit_code": 0
+  },
+  "stale_test": {
+    "node": "Tests/UI/test_speech_playground_pane_lifecycle.py::test_legacy_provider_defaults_and_labels_are_preserved[alltalk-alltalk-AllTalk TTS-female_01.wav-Female 01]",
+    "observed": "alloy",
+    "expected": "female_01.wav",
+    "line": 3814,
+    "failed": 1,
+    "deselected": 5,
+    "seconds": 2.83,
+    "exit_code": 1
+  }
+}

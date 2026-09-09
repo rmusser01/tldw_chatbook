@@ -23,7 +23,7 @@ def test_load_settings_exposes_library_defaults(tmp_path, monkeypatch):
     }
     assert settings["library"]["media_reader"] == {
         "items_open": True,
-        "items_width": 40,
+        "items_width": 50,
         "library_open": True,
         "custom_widths_enabled": False,
         "library_width": LIBRARY_REFERENCE_WIDTH,
@@ -35,17 +35,17 @@ def test_load_settings_exposes_library_defaults(tmp_path, monkeypatch):
     ):
         assert settings["library"][section] == {
             "items_open": True,
-            "items_width": 40,
+            "items_width": 50,
         }
     assert settings["library"]["notes_reader"] == {
         "items_open": True,
-        "items_width": 40,
+        "items_width": 50,
         "files_tree_open": True,
-        "files_tree_width": 40,
+        "files_tree_width": 50,
     }
 
 
-def test_shipped_template_keeps_shared_reader_empty_and_legacy_reference_at_31():
+def test_shipped_template_keeps_shared_reader_empty_and_legacy_reference_at_36():
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
 
     assert template["library"]["reader"] == {}
@@ -387,7 +387,7 @@ future_key = "keep"
         "items_open": True,
         "items_width": 52,
         "files_tree_open": True,
-        "files_tree_width": 40,
+        "files_tree_width": 50,
     }
     assert library["prompts_reader"] == {"items_open": False, "items_width": 60}
     assert library["skills_reader"] == {
@@ -421,7 +421,7 @@ files_tree_width = 500
         "items_open": False,
         "items_width": 68,
         "files_tree_open": True,
-        "files_tree_width": 40,
+        "files_tree_width": 50,
     }
 
 
@@ -451,7 +451,7 @@ items_width = true
         "items_open": True,
         "custom_widths_enabled": "no",
         "library_width": "wide",
-        "items_width": 40,
+        "items_width": 50,
     }
 
     assert config_module.load_settings(force_reload=True)["library"]["reader"] == {

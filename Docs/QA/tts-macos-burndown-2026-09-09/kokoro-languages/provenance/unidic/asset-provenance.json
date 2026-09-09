@@ -1,0 +1,242 @@
+{
+  "status": "asset_ready_venv_installation_deferred",
+  "prepared_utc": "2026-09-09T07:46:03.166095+00:00",
+  "version": "3.1.0+2021-08-31",
+  "source_url": "https://cotonoha-dic.s3-ap-northeast-1.amazonaws.com/unidic-3.1.0.zip",
+  "source_metadata_commit": "31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b",
+  "source_metadata_url": "https://raw.githubusercontent.com/polm/unidic-py/31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b/dicts.json",
+  "source_files": {
+    "upstream-commit.json": {
+      "bytes": 6530,
+      "sha256": "c3e50a88ab6197993823b0aefcf2ac7d53468052f91ece67287c20bbf5429318"
+    },
+    "upstream-dicts.json": {
+      "bytes": 936,
+      "sha256": "1756944d84f05991a2a4dc2e2349a0fb1eff176a3f37be7a0a2c5f7537b8c6ef"
+    },
+    "upstream-README.md": {
+      "bytes": 8544,
+      "sha256": "c72b73a35766f51c0347cecaa20467f09edc8f2e5aeaada2a3b43cab11efa542"
+    },
+    "upstream-LICENSE.unidic": {
+      "bytes": 1515,
+      "sha256": "d2cfdec25d7acb59b7aee2c9b36fd52470773cee58a2c340c179f435ab053bf2"
+    }
+  },
+  "archive": {
+    "path": "/private/tmp/tts-macos-burndown/languages/unidic-3.1.0+2021-08-31/unidic-3.1.0.zip",
+    "bytes": 525943040,
+    "sha256": "638718c4c63625ab300de4c92c67925d54c0e9e3830009eaa992f29819d59c43",
+    "s3_version_id": "s1n.ag7lT3TyclL14vs8oJI7AMtkO.GQ",
+    "etag": "2a6b618247cacd507cd28e9c9d1254fe-32"
+  },
+  "archive_files": {
+    "unk.def": {
+      "bytes": 1977,
+      "sha256": "4b40b5158f6bab29d3c0d3fd871055538241c7103406ba8e89e7d741ccf22dbc",
+      "zip_crc32": "0d1a1add"
+    },
+    "right-id.def": {
+      "bytes": 1767025,
+      "sha256": "2ec747f614eb3e8a6378f42bfbc877dfeb37fe8a331f70d9f50e0c096d4b182d",
+      "zip_crc32": "39dafa5b"
+    },
+    "rewrite.def": {
+      "bytes": 5076,
+      "sha256": "0ff0d86c7640997258ecce5468916f9eff3f2c5e5be5d43d372c0e62828deefe",
+      "zip_crc32": "6428f319"
+    },
+    "dicrc": {
+      "bytes": 1785,
+      "sha256": "9b7bd3dbfdb381a078375cdcccb1e69f60256d510a5c84a3e343ae20f98dc2ce",
+      "zip_crc32": "f7d9c0fb"
+    },
+    "sys.dic": {
+      "bytes": 243373840,
+      "sha256": "f019f95838242cd614953a25201ad0b623b9c1cbca90de2507df4510db1b192c",
+      "zip_crc32": "1ca83bd1"
+    },
+    "char.bin": {
+      "bytes": 262496,
+      "sha256": "dd31396563d8924645b80fd3c9aa7b13ca089d7748f25553a1d6bc3f9b511ae8",
+      "zip_crc32": "83e9a35d"
+    },
+    "model.bin": {
+      "bytes": 83718788,
+      "sha256": "409efa3e3de09d8822a3443d4f97c7fda77c4f8fc991f7abc064f685e346b1c9",
+      "zip_crc32": "4ffb97a6"
+    },
+    "left-id.def": {
+      "bytes": 1556924,
+      "sha256": "6e7fb23dda28ef49db733b56bc9217c39536df6ee5aa8c33d720e3d711a6baa6",
+      "zip_crc32": "d1555133"
+    },
+    "README": {
+      "bytes": 4490,
+      "sha256": "8b9c0e67caf2b1e838d63dca5a2b7ff34fa8faafe461e942ca1469f90f126e9a",
+      "zip_crc32": "bf17bccb"
+    },
+    "licenses/COPYING": {
+      "bytes": 210,
+      "sha256": "d44b49398a72590a675e55f8f7a7dbf57bb5b71a9e20ba250f09c0cc5986bef1",
+      "zip_crc32": "d6de2300"
+    },
+    "licenses/AUTHORS": {
+      "bytes": 22,
+      "sha256": "a05bfdd3a9db36d9c64495f4a3d1824d05b95fbb4fc6dc07c660e91bc191c481",
+      "zip_crc32": "5627ca37"
+    },
+    "licenses/BSD": {
+      "bytes": 1515,
+      "sha256": "770a75de30705439084f869dbcb0bc4ebcffcb7c7124c0d74f5083170318a9bb",
+      "zip_crc32": "13f54197"
+    },
+    "licenses/LGPL": {
+      "bytes": 26428,
+      "sha256": "512d2d21b6b3384ba64781abb0208a1b87740bc31e2df48e2b206ddb7e4d5779",
+      "zip_crc32": "67e378ea"
+    },
+    "licenses/GPL": {
+      "bytes": 17991,
+      "sha256": "a137434196f5e39d8836de895866fcfea074ad1b28243174ca1c4a585a1229b0",
+      "zip_crc32": "f3c5362f"
+    },
+    "feature.def": {
+      "bytes": 8715,
+      "sha256": "b50a047e6caa8a7e4158fa736728e8de46cf009bbe575b239c33312e8b30cd14",
+      "zip_crc32": "372f94fd"
+    },
+    "matrix.bin": {
+      "bytes": 480905780,
+      "sha256": "dd9ee6bc6bb137298cc88673e9c2143ddcf0808805c81becdd2ae5d08a869f90",
+      "zip_crc32": "85e67b46"
+    },
+    "char.def": {
+      "bytes": 4292,
+      "sha256": "0790db12ab4f4d742b39b1737b9cce2a00c92220139a5bea9f0e8874898726e5",
+      "zip_crc32": "0b1a4c42"
+    },
+    "unk.dic": {
+      "bytes": 5481,
+      "sha256": "a8e1067721cfd5cd7d4a17ddb53c77fb07f77fa20143b4589d7934c88f67d7e8",
+      "zip_crc32": "b3c05899"
+    }
+  },
+  "dictionary_directory": "/private/tmp/tts-macos-burndown/languages/unidic-3.1.0+2021-08-31/dicdir",
+  "dictionary_files": {
+    "README": {
+      "bytes": 4490,
+      "sha256": "8b9c0e67caf2b1e838d63dca5a2b7ff34fa8faafe461e942ca1469f90f126e9a"
+    },
+    "char.bin": {
+      "bytes": 262496,
+      "sha256": "dd31396563d8924645b80fd3c9aa7b13ca089d7748f25553a1d6bc3f9b511ae8"
+    },
+    "char.def": {
+      "bytes": 4292,
+      "sha256": "0790db12ab4f4d742b39b1737b9cce2a00c92220139a5bea9f0e8874898726e5"
+    },
+    "dicrc": {
+      "bytes": 1785,
+      "sha256": "9b7bd3dbfdb381a078375cdcccb1e69f60256d510a5c84a3e343ae20f98dc2ce"
+    },
+    "feature.def": {
+      "bytes": 8715,
+      "sha256": "b50a047e6caa8a7e4158fa736728e8de46cf009bbe575b239c33312e8b30cd14"
+    },
+    "left-id.def": {
+      "bytes": 1556924,
+      "sha256": "6e7fb23dda28ef49db733b56bc9217c39536df6ee5aa8c33d720e3d711a6baa6"
+    },
+    "licenses/AUTHORS": {
+      "bytes": 22,
+      "sha256": "a05bfdd3a9db36d9c64495f4a3d1824d05b95fbb4fc6dc07c660e91bc191c481"
+    },
+    "licenses/BSD": {
+      "bytes": 1515,
+      "sha256": "770a75de30705439084f869dbcb0bc4ebcffcb7c7124c0d74f5083170318a9bb"
+    },
+    "licenses/COPYING": {
+      "bytes": 210,
+      "sha256": "d44b49398a72590a675e55f8f7a7dbf57bb5b71a9e20ba250f09c0cc5986bef1"
+    },
+    "licenses/GPL": {
+      "bytes": 17991,
+      "sha256": "a137434196f5e39d8836de895866fcfea074ad1b28243174ca1c4a585a1229b0"
+    },
+    "licenses/LGPL": {
+      "bytes": 26428,
+      "sha256": "512d2d21b6b3384ba64781abb0208a1b87740bc31e2df48e2b206ddb7e4d5779"
+    },
+    "matrix.bin": {
+      "bytes": 480905780,
+      "sha256": "dd9ee6bc6bb137298cc88673e9c2143ddcf0808805c81becdd2ae5d08a869f90"
+    },
+    "mecabrc": {
+      "bytes": 23,
+      "sha256": "8a9eb27c98dce111d8544fa8fcaaf387efc5e345efe991918363c2a5d1b7ffbc"
+    },
+    "model.bin": {
+      "bytes": 83718788,
+      "sha256": "409efa3e3de09d8822a3443d4f97c7fda77c4f8fc991f7abc064f685e346b1c9"
+    },
+    "rewrite.def": {
+      "bytes": 5076,
+      "sha256": "0ff0d86c7640997258ecce5468916f9eff3f2c5e5be5d43d372c0e62828deefe"
+    },
+    "right-id.def": {
+      "bytes": 1767025,
+      "sha256": "2ec747f614eb3e8a6378f42bfbc877dfeb37fe8a331f70d9f50e0c096d4b182d"
+    },
+    "sys.dic": {
+      "bytes": 243373840,
+      "sha256": "f019f95838242cd614953a25201ad0b623b9c1cbca90de2507df4510db1b192c"
+    },
+    "unk.def": {
+      "bytes": 1977,
+      "sha256": "4b40b5158f6bab29d3c0d3fd871055538241c7103406ba8e89e7d741ccf22dbc"
+    },
+    "unk.dic": {
+      "bytes": 5481,
+      "sha256": "a8e1067721cfd5cd7d4a17ddb53c77fb07f77fa20143b4589d7934c88f67d7e8"
+    },
+    "version": {
+      "bytes": 23,
+      "sha256": "3240727150c25bace5f1c7e8df0208da3d01ba67121aed0ff689c0724a83d44a"
+    }
+  },
+  "dictionary_bytes": 811662881,
+  "license_files": [
+    "licenses/AUTHORS",
+    "licenses/BSD",
+    "licenses/COPYING",
+    "licenses/GPL",
+    "licenses/LGPL"
+  ],
+  "preparation_transforms": {
+    "archive_root_renamed": "unidic -> task-local dicdir",
+    "generated_files": {
+      "version": "unidic-3.1.0+2021-08-31",
+      "mecabrc": "# This is a dummy file."
+    },
+    "method": "Exact version and dummy mecabrc contents from installed unidic 1.1.0 download_and_clean; no dictionary-file removal."
+  },
+  "inspected_package_hashes_unchanged": true,
+  "package_files_after": {
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/unidic/download.py": "7a15072dce1fd9d269ba89eacb43e44ed7d5a56d690e274bfd0169d62281adbe",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/unidic/unidic.py": "7a696488884baa212a0494ba2adbec22da59eedb35be1ce74e48221338ab8c4d",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/unidic/__init__.py": "8a3e798489319de7f732b8f635fe980c2d0317739ed93828c90995d083da5e9e",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/unidic-1.1.0.dist-info/METADATA": "f23b888cf2a21757bdcbf4352e9839845678c5435e4903fcd7a1a2f71c92d6fa",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/misaki/ja.py": "5870e02433629475e95eaa0b023ac4948a9335e3dafbda0b6641156516c03c22",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/misaki/cutlet.py": "7695fc7d853ae4e99679dff4ca0c8404d4804a6fb1059a9d6ad02baeabc4d4de",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/fugashi/fugashi.cpython-312-darwin.so": "1df40b1149d09dcab9948b8561139d00e7f54679dddf100985eda4f45e381aba"
+  },
+  "target_venv_dicdir": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/unidic/dicdir",
+  "target_venv_dicdir_still_absent": true,
+  "downloader_pid": 25515,
+  "downloader_pid_absent": true,
+  "inference_executed": false,
+  "tokenizer_initialized": false,
+  "package_or_source_changes": false,
+  "global_configuration_changes": false
+}

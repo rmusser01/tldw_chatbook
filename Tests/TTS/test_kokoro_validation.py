@@ -3,12 +3,14 @@ Validation tests for Kokoro TTS backend.
 Tests ONNX/PyTorch backends, streaming, voice mixing, and new features.
 """
 
-import pytest
-import pytest_asyncio
 import time
 from unittest.mock import Mock, patch
-import numpy as np
 
+import numpy as np
+import pytest
+import pytest_asyncio
+
+from tldw_chatbook.TTS.adapter_types import TTSOperationError
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.backends.kokoro import KokoroTTSBackend, map_voice_to_kokoro
 
@@ -338,12 +340,12 @@ class TestKokoroValidation:
             response_format="mp3",
         )
 
-        chunks = []
-        async for chunk in backend_onnx.generate_speech_stream(request):
-            chunks.append(chunk)
-
-        # Should recover and continue
-        assert len(chunks) > 0
+        with pytest.raises(TTSOperationError) as caught:
+            _ = [chunk async for chunk in backend_onnx.generate_speech_stream(request)]
+        assert caught.value.code == "generation_failed" and caught.value.retryable
+        # Retry must contain only the complete audio, never the prior error text.
+        chunks = [chunk async for chunk in backend_onnx.generate_speech_stream(request)]
+        assert chunks == [b"converted_chunk"]
 
 
 @pytest.mark.asyncio

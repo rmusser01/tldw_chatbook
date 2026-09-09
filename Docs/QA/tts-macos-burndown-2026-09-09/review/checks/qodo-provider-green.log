@@ -1,0 +1,30 @@
+....................F.............F..................................... [ 80%]
+..................                                                       [100%]
+=================================== FAILURES ===================================
+______________ test_shipped_alltalk_default_is_an_endpoint_alias _______________
+Tests/TTS/test_local_provider_contracts.py:250: in test_shipped_alltalk_default_is_an_endpoint_alias
+    assert config['app_tts']['ALLTALK_TTS_VOICE_DEFAULT'] == 'alloy'
+           ^^^^^^^^^^^^^^^^^
+E   KeyError: 'app_tts'
+______ test_settings_default_picker_accepts_all_official_language_voices _______
+Tests/UI/test_speech_kokoro_defaults.py:137: in test_settings_default_picker_accepts_all_official_language_voices
+    assert list(tmp_path.iterdir()) == []
+E   AssertionError: assert [PosixPath('/...0/test_data')] == []
+E     
+E     Left contains one more item: PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35775/test_settings_default_picker_a0/test_data')
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:05:03.471 | INFO     | tldw_chatbook.UI.Speech.speech_settings_mixin:_update_default_voice_options:522 - Setting up Kokoro voices for provider: kokoro
+=============================== warnings summary ===============================
+../../../../../../../private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14
+  /private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/TTS/test_local_provider_contracts.py::test_shipped_alltalk_default_is_an_endpoint_alias
+FAILED Tests/UI/test_speech_kokoro_defaults.py::test_settings_default_picker_accepts_all_official_language_voices
+2 failed, 88 passed, 1 warning in 6.21s

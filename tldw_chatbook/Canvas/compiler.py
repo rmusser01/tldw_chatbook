@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any, NoReturn
@@ -24,11 +25,15 @@ from .limits import (
 )
 from .models import (
     CanvasCompatibilityIssue,
+    CanvasCompiledPlan,
+    CanvasDiagram,
     CanvasRenderPlan,
+    CanvasRenderPlanV2,
     CanvasSourceIdentity,
     RenderAsset,
     RenderNode,
 )
+from .profiles import ProfileSnapshot, resolve_profile, runtime_assets_for
 
 _HTML_NAMESPACE = "http://www.w3.org/1999/xhtml"
 _SVG_NAMESPACE = "http://www.w3.org/2000/svg"
@@ -672,13 +677,19 @@ class _SourceLocator:
 
 
 def compile_canvas_document(
-    source: str, *, limits: CanvasLimits | None = None
-) -> CanvasRenderPlan:
-    """Compile exact HTML source into a validated, immutable Canvas V1 plan.
+    source: str,
+    *,
+    limits: CanvasLimits | None = None,
+    runtime_profile: str = "canvas-v1",
+    snapshot: ProfileSnapshot | None = None,
+) -> CanvasCompiledPlan:
+    """Compile exact HTML into a validated immutable plan for the selected profile.
 
     Args:
         source: The exact complete HTML source (or a deterministically wrapped fragment).
         limits: Optional lower test/qualification ceilings for the compiler boundary.
+        runtime_profile: Exact profile; defaults to the unchanged V1 contract.
+        snapshot: Retained verified process snapshot, required for V2 compilation.
 
     Returns:
         A closed render plan containing no browser markup or resolvable asset URL.
@@ -686,6 +697,20 @@ def compile_canvas_document(
     Raises:
         CanvasCompileError: If any part of the document is malformed or unsupported.
     """
+    return _compile_document(
+        source, limits=limits, runtime_profile=runtime_profile, snapshot=snapshot
+    )
+
+
+def _compile_document(
+    source: str,
+    *,
+    limits: CanvasLimits | None = None,
+    runtime_profile: str = "canvas-v1",
+    snapshot: ProfileSnapshot | None = None,
+    operation: str | None = None,
+    parent_profile: str | None = None,
+) -> CanvasCompiledPlan:
     active_limits = limits or CanvasLimits()
     try:
         validate_utf8_text(
@@ -730,6 +755,61 @@ def compile_canvas_document(
     if parse_issues:
         raise CanvasCompileError(tuple(parse_issues))
 
+    elements = list(document.iter())
+    has_diagrams = any("data-canvas-diagram" in element.attrib for element in elements)
+    if operation is not None:
+        if snapshot is None:
+            _fail(
+                "runtime-profile",
+                "A verified runtime snapshot is required.",
+                "document",
+            )
+        selected = resolve_profile(
+            snapshot,
+            operation=operation,
+            parent_profile=parent_profile,
+            has_diagrams=has_diagrams,
+        )
+        if not selected.executable:
+            _fail(
+                "runtime-profile",
+                "The exact runtime profile is unavailable.",
+                "document",
+            )
+        runtime_profile = selected.profile_id
+    manifest_sha256 = None
+    library_bytes = 0
+    if runtime_profile not in ("canvas-v1", "canvas-v2-mermaid-1"):
+        _fail(
+            "runtime-profile",
+            "The requested runtime profile is unsupported.",
+            "document",
+        )
+    if runtime_profile != "canvas-v1":
+        record = (
+            next(
+                (row for row in snapshot.profiles if row.profile_id == runtime_profile),
+                None,
+            )
+            if snapshot
+            else None
+        )
+        retained = runtime_assets_for(snapshot, runtime_profile) if snapshot else None
+        if (
+            record is None
+            or not record.executable
+            or retained is None
+            or hashlib.sha256(retained.manifest_bytes).hexdigest()
+            != record.manifest_sha256
+        ):
+            _fail(
+                "runtime-profile",
+                "The exact verified runtime profile is required.",
+                "document",
+            )
+        manifest_sha256 = record.manifest_sha256
+        library_bytes = retained.manifest["mermaid_candidate"]["source_bytes"]
+
     locator = _SourceLocator(source)
     element_locations: dict[int, str] = {}
     element_info: dict[int, tuple[str, str]] = {}
@@ -739,7 +819,6 @@ def compile_canvas_document(
     source_ids: set[str] = set()
     css_rule_count = 0
 
-    elements = list(document.iter())
     for element in elements:
         if not isinstance(element.tag, str):
             continue
@@ -748,6 +827,23 @@ def compile_canvas_document(
         element_locations[id(element)] = location
         element_info[id(element)] = (namespace, tag)
         _validate_element(namespace, tag, location)
+
+        if (
+            manifest_sha256 is not None
+            and "data-canvas-diagram" in element.attrib
+            and (
+                namespace != _HTML_NAMESPACE
+                or tag != "pre"
+                or element.attrib["data-canvas-diagram"] != "mermaid"
+                or len(element)
+                or not (element.text or "").strip()
+            )
+        ):
+            _fail(
+                "diagram-declaration",
+                "Diagrams require a nonempty text-only Mermaid pre.",
+                location,
+            )
 
         if namespace == _HTML_NAMESPACE and tag == "script":
             scripts.append(_extract_script(element, location))
@@ -791,7 +887,9 @@ def compile_canvas_document(
 
     try:
         validate_utf8_text_parts(
-            scripts, limit=active_limits.script_bytes, field_name="script"
+            scripts,
+            limit=active_limits.script_bytes - library_bytes,
+            field_name="script",
         )
     except CanvasLimitError:
         _fail("script-limit", "Scripts exceed the Canvas V1 byte limit.", "document")
@@ -848,6 +946,32 @@ def compile_canvas_document(
     )
     try:
         identity = CanvasSourceIdentity.from_source(source)
+        if manifest_sha256 is not None:
+            declarations = []
+            stack = [root]
+            while stack:
+                node = stack.pop()
+                if "data-canvas-diagram" in dict(node.attributes):
+                    declarations.append(
+                        CanvasDiagram(
+                            len(declarations),
+                            node.node_id,
+                            "mermaid",
+                            "".join(child.text or "" for child in node.children),
+                        )
+                    )
+                stack.extend(reversed(node.children))
+            return CanvasRenderPlanV2(
+                runtime_profile=runtime_profile,
+                source_identity=identity,
+                root=root,
+                profile_manifest_sha256=manifest_sha256,
+                assets=tuple(assets),
+                css_rules=tuple(css_rules),
+                scripts=tuple(scripts),
+                compatibility_issues=compatibility_issues,
+                diagrams=tuple(declarations),
+            )
         return CanvasRenderPlan(
             runtime_profile="canvas-v1",
             source_identity=identity,

@@ -1,0 +1,29 @@
+{
+  "command": [
+    "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+    "-u",
+    "/private/tmp/tts-macos-burndown/native/native_shutdown_worker.py",
+    "--device",
+    "cpu",
+    "--port",
+    "18951",
+    "--expected-revision",
+    "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+    "--run-root",
+    "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01",
+    "--phase-timeout",
+    "180",
+    "--shutdown-timeout",
+    "120",
+    "--play-audio"
+  ],
+  "started_utc": "2026-09-09T06:34:04.281034+00:00",
+  "run_timeout_seconds": 480,
+  "output": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01",
+  "forced_signals": [],
+  "worker_pid": 83728,
+  "worker_exit": 0,
+  "remaining_group_members": [],
+  "ended_utc": "2026-09-09T06:34:35.260129+00:00",
+  "status": "passed"
+}

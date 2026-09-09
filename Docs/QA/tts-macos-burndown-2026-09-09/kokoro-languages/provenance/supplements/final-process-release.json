@@ -1,0 +1,50 @@
+{
+  "at": 1788942498.342031,
+  "sources": [
+    "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-02/evidence.json",
+    "/private/tmp/tts-macos-burndown/harness/onnx-cpu-fr-final-02/evidence.json",
+    "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-02/evidence.json",
+    "/private/tmp/tts-macos-burndown/harness/onnx-cpu-zh-final-02/evidence.json",
+    "/private/tmp/tts-macos-burndown/languages/medium-review-final-01.json",
+    "/private/tmp/tts-macos-burndown/languages/medium-review-final-02.json"
+  ],
+  "pids": [
+    38797,
+    38832,
+    39401,
+    39523,
+    39820,
+    40092,
+    43377,
+    43781,
+    45208,
+    45230,
+    45252,
+    45270,
+    45298,
+    45319,
+    45347,
+    45373,
+    45393,
+    47782,
+    47972,
+    48107,
+    48150,
+    48206,
+    48275,
+    48455,
+    48590,
+    48856
+  ],
+  "command": [
+    "ps",
+    "-p",
+    "38797,38832,39401,39523,39820,40092,43377,43781,45208,45230,45252,45270,45298,45319,45347,45373,45393,47782,47972,48107,48150,48206,48275,48455,48590,48856",
+    "-o",
+    "pid=,ppid=,command="
+  ],
+  "exit_code": 1,
+  "stdout": "",
+  "stderr": "",
+  "all_absent": true
+}

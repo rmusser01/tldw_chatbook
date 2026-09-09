@@ -1,0 +1,17 @@
+{
+  "scope": "device enumeration only; no stream/model",
+  "library": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.dylib",
+  "default_device": [
+    -1,
+    -1
+  ],
+  "host_apis": [
+    {
+      "name": "Core Audio",
+      "devices": [],
+      "default_input_device": -1,
+      "default_output_device": -1
+    }
+  ],
+  "devices": []
+}

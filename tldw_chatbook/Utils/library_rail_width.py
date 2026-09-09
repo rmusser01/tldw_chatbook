@@ -10,9 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-LIBRARY_REFERENCE_WIDTH = 31
+LIBRARY_REFERENCE_WIDTH = 36
 LIBRARY_MIN_WIDTH = 24
-LIBRARY_DEFAULT_MAX_WIDTH = 34
+LIBRARY_DEFAULT_MIN_WIDTH = 29
+LIBRARY_DEFAULT_MAX_WIDTH = 39
 LIBRARY_CUSTOM_MAX_WIDTH = 48
 LIBRARY_CANVAS_MIN_WIDTH = 40
 LIBRARY_EMERGENCY_WIDTH = LIBRARY_MIN_WIDTH + LIBRARY_CANVAS_MIN_WIDTH
@@ -42,20 +43,22 @@ def _require_positive_content_width(content_width: int) -> None:
 
 
 def project_default_library_width(content_width: int) -> int:
-    """Project the bounded 3:13 default rail width from available content.
+    """Project the bounded 3:13 rail width with five extra cells.
 
     Args:
         content_width: Positive available Library shell width in terminal cells.
 
     Returns:
-        The 3:13 projection clamped to the default 24–34 cell range.
+        The 3:13 projection plus five cells, clamped to 29–39 cells.
 
     Raises:
         ValueError: If ``content_width`` is not a positive integer, including bool.
     """
     _require_positive_content_width(content_width)
-    fractional_width = (3 * content_width + 8) // 16
-    return min(max(fractional_width, LIBRARY_MIN_WIDTH), LIBRARY_DEFAULT_MAX_WIDTH)
+    fractional_width = (3 * content_width + 8) // 16 + 5
+    return min(
+        max(fractional_width, LIBRARY_DEFAULT_MIN_WIDTH), LIBRARY_DEFAULT_MAX_WIDTH
+    )
 
 
 def ordinary_emergency_required(content_width: int) -> bool:
@@ -123,8 +126,12 @@ def resolve_ordinary_rail_contract(
             f"{LIBRARY_EMERGENCY_WIDTH}."
         )
     if not custom_widths_enabled:
+        effective_width = min(
+            project_default_library_width(content_width),
+            content_width - LIBRARY_CANVAS_MIN_WIDTH,
+        )
         return OrdinaryRailStyleContract(
-            True, "3fr", LIBRARY_MIN_WIDTH, LIBRARY_DEFAULT_MAX_WIDTH
+            True, effective_width, effective_width, effective_width
         )
 
     effective_width = max(

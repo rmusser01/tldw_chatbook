@@ -1,0 +1,27 @@
+{
+  "command": [
+    "docker",
+    "build",
+    "--pull=false",
+    "--progress=plain",
+    "--iidfile",
+    "/private/tmp/tts-macos-burndown/native/sanitizer-toolchain/build-02/image-id.txt",
+    "--tag",
+    "tldw-task32164-sanitizer-arm64:20260909073358",
+    "/private/tmp/tts-macos-burndown/native/sanitizer-toolchain"
+  ],
+  "tag": "tldw-task32164-sanitizer-arm64:20260909073358",
+  "parent_image": "sha256:c758cd09229cf4e17bb799063d5213f784b37d74ea8e2e312c9b438ac3fec08b",
+  "dockerfile_sha256": "ec67709636ead1d08e63f42c864fcf9c0390e8db052d8a8359b87ec92f83cc0f",
+  "started_utc": "2026-09-09T07:33:58.647806+00:00",
+  "deadline_seconds": 360,
+  "parent_tag_verified_id": "sha256:c758cd09229cf4e17bb799063d5213f784b37d74ea8e2e312c9b438ac3fec08b",
+  "owned_docker_client_pid": 22480,
+  "exit_code": 0,
+  "elapsed_seconds": 24.391811208999997,
+  "owned_client_joined": true,
+  "image_id": "sha256:596934820d0c869610526649be433cefcdce0b9b4abdbd8040fc6b2894b83bcd",
+  "image_inspect_exit": 0,
+  "status": "built",
+  "ended_utc": "2026-09-09T07:34:23.139730+00:00"
+}

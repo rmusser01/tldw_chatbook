@@ -182,15 +182,52 @@ EXPECTED_VOICES = {
         "af_sarah",
         "af_sky",
         "am_adam",
+        "am_echo",
+        "am_eric",
+        "am_fenrir",
+        "am_liam",
         "am_michael",
+        "am_onyx",
+        "am_puck",
+        "am_santa",
+        "bf_alice",
         "bf_emma",
         "bf_isabella",
+        "bf_lily",
+        "bm_daniel",
+        "bm_fable",
         "bm_george",
         "bm_lewis",
+        "ef_dora",
+        "em_alex",
+        "em_santa",
+        "ff_siwis",
+        "hf_alpha",
+        "hf_beta",
+        "hm_omega",
+        "hm_psi",
+        "if_sara",
+        "im_nicola",
+        "jf_alpha",
+        "jf_gongitsune",
+        "jf_nezumi",
+        "jf_tebukuro",
+        "jm_kumo",
+        "pf_dora",
+        "pm_alex",
+        "pm_santa",
+        "zf_xiaobei",
+        "zf_xiaoni",
+        "zf_xiaoxiao",
+        "zf_xiaoyi",
+        "zm_yunjian",
+        "zm_yunxi",
+        "zm_yunxia",
+        "zm_yunyang",
     ),
     "chatterbox": ("default",),
     "higgs": ("default",),
-    "alltalk": ("female_01.wav", "male_01.wav"),
+    "alltalk": ("alloy", "echo", "fable", "nova", "onyx", "shimmer"),
 }
 EXPECTED_OPTIONS = {
     "openai": (),
@@ -1094,6 +1131,44 @@ async def test_provider_hosts_copy_config_and_close_materialized_managers_once()
         await adapter.close()
         await adapter.close()
     assert all(manager.close_calls == 1 for manager in managers.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "saved,explicit,route,expected",
+    [
+        (False, None, "onnx", "pytorch"),
+        (True, None, "onnx", "onnx"),
+        (False, True, "onnx", "onnx"),
+        (True, False, "onnx", "pytorch"),
+        (True, None, "pytorch", "pytorch"),
+        (False, True, "pytorch", "onnx"),
+    ],
+)
+async def test_kokoro_inherits_applied_engine_unless_request_selects_one(
+    saved,
+    explicit,
+    route,
+    expected,
+) -> None:
+    manager = FakeLegacyManager(FakeLegacyBackend())
+    config = {"app_tts": {"KOKORO_USE_ONNX": saved}}
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config=config,
+        manager_factory=lambda _: manager,
+    )
+    # The host must use the applied immutable snapshot, not later caller edits.
+    config["app_tts"]["KOKORO_USE_ONNX"] = not saved
+    request = speech_request()
+    if explicit is not None:
+        request.extra_params = {"use_onnx": explicit}
+    assert (
+        await collect(host.generate(f"local_kokoro_default_{route}", request, None))
+        == b"audio"
+    )
+    assert manager.backend_ids == [f"local_kokoro_default_{expected}"]
+    await host.close()
 
 
 @pytest.mark.asyncio

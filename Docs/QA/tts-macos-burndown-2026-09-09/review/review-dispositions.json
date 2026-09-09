@@ -1,0 +1,80 @@
+[
+  {
+    "comment_id": 3966529273,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529273",
+    "finding": "Audio references can escape the selected run",
+    "disposition": "Central path policy plus descriptor-relative no-follow regular-file opens bind ASR to a verified stream under the canonical evidence directory. Negative controls cover traversal, absolute outsiders, links, nonregular files and a post-admission file swap."
+  },
+  {
+    "comment_id": 3966529280,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529280",
+    "finding": "Malformed evidence can fail unpredictably",
+    "disposition": "Strict consumed Pydantic fields validate phase IDs/outcomes, hashes, text and audio. Duplicate IDs and unknown outcomes cannot silently shrink the successful-clip denominator; invalid input exits consistently before ASR."
+  },
+  {
+    "comment_id": 3966529287,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529287",
+    "finding": "Runner omits central path validation",
+    "disposition": "Runner CLI assets and output use the shared path policy, file/directory checks and a new-output admission gate; dangling output links are rejected."
+  },
+  {
+    "comment_id": 3966529296,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529296",
+    "finding": "Missing optional ASR dependency guidance",
+    "disposition": "Recognizer lookup uses the project dependency helper before model construction, under a temporary private profile. Tests verify guidance, environment restoration and profile removal; five real audited runs reject access to the user profile."
+  },
+  {
+    "comment_id": 3966529305,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529305",
+    "finding": "AllTalk list_voices return contract",
+    "disposition": "Added Google-style Returns documentation describing endpoint aliases."
+  },
+  {
+    "comment_id": 3966529310,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529310",
+    "finding": "Japanese dictionary error contract",
+    "disposition": "Added a complete typed, documented public helper contract."
+  },
+  {
+    "comment_id": 3966529315,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529315",
+    "finding": "Verifier public helper documentation",
+    "disposition": "Added public Args/Returns/Raises contracts; retained inert imports/help."
+  },
+  {
+    "comment_id": 3966529322,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529322",
+    "finding": "Runner public helper documentation",
+    "disposition": "Added public Args/Returns/Raises contracts; retained inert imports/help."
+  },
+  {
+    "comment_id": 3966529326,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529326",
+    "finding": "Verifier argv type",
+    "disposition": "Typed the public CLI entry point using Sequence[str] | None."
+  },
+  {
+    "comment_id": 3966529332,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529332",
+    "finding": "Runner helper types",
+    "disposition": "Typed CLI arguments, observation callbacks and context-manager return contracts."
+  },
+  {
+    "comment_id": 3966529340,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529340",
+    "finding": "Concurrent cached language frontends",
+    "disposition": "A backend-owned lock serializes construction and invocation inside retained workers. Twelve deterministic concurrency/Stop/close negative controls failed before the fix; queued stopped calls skip G2P and close joins active work before cache clearing."
+  },
+  {
+    "comment_id": 3966529344,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529344",
+    "finding": "Historical AllTalk default versus explicit voices",
+    "disposition": "Shipped defaults now use alloy. The adapter maps only inherited ALLTALK_TTS_VOICE_DEFAULT=female_01.wav to alloy. The historical Studio sentinel remains female_01.wav so untouched saved configuration inherits without an exact override or write. Store-to-effective-resolution tests verify that path and preservation of changed narrator.wav; request-level tests preserve all explicit voice IDs. The stale review assertion that the historical sentinel is migrated as a changed value is contradicted by the migration comparison and tests. No supported native-filename-to-alias identity mapping exists for the pinned alias endpoint, so explicit selections are not silently remapped."
+  },
+  {
+    "comment_id": 3966529349,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2545#discussion_r3966529349",
+    "finding": "Settings omits official non-English voices",
+    "disposition": "The active Settings picker uses the shared official Kokoro catalog. Mounted tests select representative voices across all nine languages without writing blend configuration."
+  }
+]

@@ -9,6 +9,7 @@ from uuid import UUID
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
+from .compilation import PreparedCanvasDocument, prepare_canvas_document
 from .limits import (
     MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES,
     CanvasLimitError,
@@ -17,6 +18,7 @@ from .limits import (
 )
 from .models import (
     CanvasCompatibilityIssue,
+    CanvasCompiledPlan,
     CanvasConflictResult,
     CanvasCreateResult,
     CanvasListItem,
@@ -24,10 +26,10 @@ from .models import (
     CanvasOrigin,
     CanvasQuotaUsage,
     CanvasReadResult,
-    CanvasRenderPlan,
     CanvasRevisionInfo,
     CanvasScope,
 )
+from .profiles import ProfileSnapshot, load_profile_snapshot
 from .repository import (
     CanvasNotFoundError,
     CanvasQuotaError,
@@ -41,7 +43,7 @@ from .repository import (
 
 def compile_canvas_document(
     source: str, *, limits: CanvasLimits | None = None
-) -> CanvasRenderPlan:
+) -> CanvasCompiledPlan:
     """Compile on first use while preserving this module's injection seam."""
 
     from .compiler import compile_canvas_document as compile_source
@@ -79,13 +81,15 @@ class CanvasService:
         db: CharactersRAGDB,
         *,
         repository: CanvasRepository | None = None,
-        compiler: Callable[[str], CanvasRenderPlan] | None = None,
+        compiler: Callable[[str], CanvasCompiledPlan] | None = None,
+        profile_snapshot: ProfileSnapshot | None = None,
     ) -> None:
         if not isinstance(db, CharactersRAGDB):
             raise TypeError("db must be a CharactersRAGDB")
         self._db = db
         self._repository = repository or CanvasRepository(db)
-        self._compiler = compiler or compile_canvas_document
+        self._compiler = compiler
+        self.profile_snapshot = profile_snapshot or load_profile_snapshot()
 
     def list_canvases(self, scope: CanvasScope) -> tuple[CanvasListItem, ...]:
         """Return one source-free reachable head per Canvas."""
@@ -266,7 +270,8 @@ class CanvasService:
         source: str,
         origin_message_id: str | None = None,
         origin_turn_id: str | None = None,
-        _prepared_plan: CanvasRenderPlan | None = None,
+        _prepared_plan: CanvasCompiledPlan | None = None,
+        _preparation: PreparedCanvasDocument | None = None,
     ) -> CanvasCreateResult:
         """Durably import a user-selected transcript HTML block."""
 
@@ -278,6 +283,7 @@ class CanvasService:
             origin_message_id=origin_message_id,
             origin_turn_id=origin_turn_id,
             _prepared_plan=_prepared_plan,
+            _preparation=_preparation,
         )
 
     def _create_canvas(
@@ -289,7 +295,8 @@ class CanvasService:
         actor_kind: str,
         origin_message_id: str | None = None,
         origin_turn_id: str | None = None,
-        _prepared_plan: CanvasRenderPlan | None = None,
+        _prepared_plan: CanvasCompiledPlan | None = None,
+        _preparation: PreparedCanvasDocument | None = None,
     ) -> CanvasCreateResult:
         verified = self._validate_scope(scope, require_active_path=True)
         origin_message_id = origin_message_id or scope.active_message_ids[-1]
@@ -301,14 +308,14 @@ class CanvasService:
         origin_path = scope.active_message_ids[
             : verified.path_positions[origin_message_id] + 1
         ]
-        plan = self._compile(source, _prepared_plan)
+        plan = self._compile(source, _prepared_plan, preparation=_preparation)
         repository_error: CanvasServiceError | None = None
         try:
             created = self._repository.create_canvas(
                 scope.conversation_id,
                 title=title,
                 source=source,
-                runtime_profile="canvas-v1",
+                runtime_profile=plan.runtime_profile,
                 actor_kind=actor_kind,
                 origin_message_id=origin_message_id,
                 origin_turn_id=origin_turn_id,
@@ -355,7 +362,8 @@ class CanvasService:
         source: str,
         origin_message_id: str | None = None,
         origin_turn_id: str | None = None,
-        _prepared_plan: CanvasRenderPlan | None = None,
+        _prepared_plan: CanvasCompiledPlan | None = None,
+        _preparation: PreparedCanvasDocument | None = None,
     ) -> CanvasMutationResult | CanvasConflictResult:
         """Append a replacement imported explicitly by the user."""
 
@@ -368,6 +376,7 @@ class CanvasService:
             origin_message_id=origin_message_id,
             origin_turn_id=origin_turn_id,
             _prepared_plan=_prepared_plan,
+            _preparation=_preparation,
         )
 
     def _update_canvas(
@@ -380,7 +389,8 @@ class CanvasService:
         actor_kind: str,
         origin_message_id: str | None = None,
         origin_turn_id: str | None = None,
-        _prepared_plan: CanvasRenderPlan | None = None,
+        _prepared_plan: CanvasCompiledPlan | None = None,
+        _preparation: PreparedCanvasDocument | None = None,
     ) -> CanvasMutationResult | CanvasConflictResult:
         verified = self._validate_scope(scope, require_active_path=True)
         origin_message_id = origin_message_id or scope.active_message_ids[-1]
@@ -401,7 +411,12 @@ class CanvasService:
         if expected_parent_revision_id != base.revision_id:
             return self._conflict(base)
 
-        plan = self._compile(source, _prepared_plan)
+        plan = self._compile(
+            source,
+            _prepared_plan,
+            parent_profile=base.runtime_profile,
+            preparation=_preparation,
+        )
         repository_error: CanvasServiceError | None = None
         try:
             revision = self._repository.append_revision(
@@ -410,7 +425,7 @@ class CanvasService:
                 parent_revision_id=base.revision_id,
                 title=base.title,
                 source=source,
-                runtime_profile=base.runtime_profile,
+                runtime_profile=plan.runtime_profile,
                 actor_kind=actor_kind,
                 origin_message_id=origin_message_id,
                 origin_turn_id=origin_turn_id,
@@ -582,20 +597,59 @@ class CanvasService:
             return selected
         return default
 
+    def _prepare(
+        self, source: str, *, parent_profile: str | None = None
+    ) -> PreparedCanvasDocument:
+        from .compiler import CanvasCompileError
+
+        failure_issues: tuple[CanvasCompatibilityIssue, ...] = ()
+        try:
+            plan = (
+                self._compiler(source)
+                if self._compiler is not None
+                else prepare_canvas_document(
+                    source,
+                    operation="create" if parent_profile is None else "update",
+                    parent_profile=parent_profile,
+                    snapshot=self.profile_snapshot,
+                )
+            )
+            return PreparedCanvasDocument.capture(
+                plan,
+                source,
+                parent_profile=parent_profile,
+                snapshot=self.profile_snapshot,
+            )
+        except CanvasCompileError as exc:
+            failure_issues = exc.issues
+        except Exception:  # noqa: BLE001 - compiler dependency errors may contain source
+            failure_issues = ()
+        # Raise outside the exception handler so even __context__ is source-free.
+        raise CanvasServiceError("document_incompatible", issues=failure_issues)
+
     def _compile(
-        self, source: str, prepared_plan: CanvasRenderPlan | None = None
-    ) -> CanvasRenderPlan:
+        self,
+        source: str,
+        prepared_plan: CanvasCompiledPlan | None = None,
+        *,
+        parent_profile: str | None = None,
+        preparation: PreparedCanvasDocument | None = None,
+    ) -> CanvasCompiledPlan:
         from .compiler import CanvasCompileError
 
         failure_issues: tuple[CanvasCompatibilityIssue, ...] | None = None
         try:
-            plan = self._compiler(source) if prepared_plan is None else prepared_plan
-            if not isinstance(plan, CanvasRenderPlan):
-                raise CanvasLimitError("compiler returned an invalid render plan")
-            if plan.runtime_profile != "canvas-v1":
-                raise CanvasLimitError("unsupported Canvas runtime profile")
-            plan.source_identity.verify_source(source)
-            return plan
+            prepared = preparation or self._prepare(
+                source, parent_profile=parent_profile
+            )
+            return prepared.validate(
+                source,
+                parent_profile=parent_profile,
+                snapshot=self.profile_snapshot,
+                offered=prepared_plan,
+            )
+        except CanvasServiceError:
+            raise
         except CanvasCompileError as exc:
             failure_issues = exc.issues
         except (CanvasLimitError, TypeError):

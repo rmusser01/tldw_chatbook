@@ -611,6 +611,23 @@ def test_presentation_projection_is_frozen_path_safe_and_redacted() -> None:
         assert secret not in rendered
 
 
+def test_folder_selection_projection_keeps_the_absolute_path_not_just_the_name() -> (
+    None
+):
+    """task-32122 Step 3: the confirmation copy needs the full path, not
+
+    ``Path.name`` -- a basename-only projection is how "1 folder selected:
+    notes-review" hid which of two same-named folders was actually picked.
+    """
+    folder = _PRIVATE_ROOT / "notes-review-vault"
+    state = select_folder(initial_note_import_snapshot(), folder)
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.selection_kind == "folder"
+    assert projected.selected_names == (str(folder),)
+
+
 def test_review_projection_exposes_relative_source_membership_and_bounded_effects() -> (
     None
 ):

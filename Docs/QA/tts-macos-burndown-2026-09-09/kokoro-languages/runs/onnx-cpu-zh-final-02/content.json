@@ -1,0 +1,94 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-zh-final-02/evidence.json",
+  "evidence_sha256": "48f499d3e3ced72fce6933f71783914d9f37ca588a0c7c026e623999d5b5b685",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 2,
+  "clips": [
+    {
+      "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+      "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+      "anchors": [
+        "银色的指南针",
+        "安静的果园",
+        "金色的日出"
+      ],
+      "anchor_positions": [
+        -1,
+        -1,
+        27
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "speech-lab",
+      "audio_sha256": "9c41b30fb009a350cf4c493cab688db5fe14d43d1788675aa39ce6663de97cac",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.72,
+          "text": "銀色的指南針開啟這段回答"
+        },
+        {
+          "start": 2.72,
+          "end": 5.12,
+          "text": "中間是一座安靜的果園"
+        },
+        {
+          "start": 5.12,
+          "end": 8.0,
+          "text": "這段回答以金色的日出結束"
+        }
+      ],
+      "detected_language": "zh"
+    },
+    {
+      "transcript": "銀色的指南針開啟這段回答 中間是一座安靜的果園 這段回答以金色的日出結束",
+      "expected_text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+      "anchors": [
+        "银色的指南针",
+        "安静的果园",
+        "金色的日出"
+      ],
+      "anchor_positions": [
+        -1,
+        -1,
+        27
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "console-warmup",
+      "audio_sha256": "9c41b30fb009a350cf4c493cab688db5fe14d43d1788675aa39ce6663de97cac",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.72,
+          "text": "銀色的指南針開啟這段回答"
+        },
+        {
+          "start": 2.72,
+          "end": 5.12,
+          "text": "中間是一座安靜的果園"
+        },
+        {
+          "start": 5.12,
+          "end": 8.0,
+          "text": "這段回答以金色的日出結束"
+        }
+      ],
+      "detected_language": "zh"
+    }
+  ],
+  "status": "content_review_required"
+}

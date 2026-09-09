@@ -220,7 +220,7 @@ async def test_bulk_delete_confirm_copy_wraps_in_the_real_items_pane_floor() -> 
             screen, pilot, "#library-media-bulk-delete-confirm-copy"
         )
 
-        shell = screen.query_one("#library-media-reader-shell")
+        shell = screen.query_one("#library-browse-reader-shell")
         canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
         assert shell.items.region.width == ITEMS_MIN_WIDTH
         assert canvas.region.right <= shell.items.region.right
@@ -481,7 +481,7 @@ async def test_media_below_64_returns_to_its_list_after_a_library_round_trip() -
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one(
-                "#library-media-reader-shell"
+                "#library-browse-reader-shell"
             ).effective_layout.library_open,
             message="'‹ Library' did not bring the rail back.",
         )
@@ -492,12 +492,12 @@ async def test_media_below_64_returns_to_its_list_after_a_library_round_trip() -
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one(
-                "#library-media-reader-shell"
+                "#library-browse-reader-shell"
             ).effective_layout.items_open
             and screen.query_one("#library-media-rail-return", Button).display,
             message=lambda: (
                 "The second visit did not return to the Items list: "
-                f"{screen.query_one('#library-media-reader-shell').effective_layout!r}"
+                f"{screen.query_one('#library-browse-reader-shell').effective_layout!r}"
             ),
         )
         await _wait_for_condition(
@@ -533,24 +533,24 @@ async def test_media_grip_priority_survives_a_library_round_trip_at_ordinary_wid
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
 
-        library_grip = screen.query_one("#library-media-library-grip", Button)
+        library_grip = screen.query_one("#library-browse-library-grip", Button)
         library_grip.focus()
         await pilot.press("enter")
         await _wait_for_condition(
             pilot,
             lambda: (
                 screen.query_one(
-                    "#library-media-reader-shell"
+                    "#library-browse-reader-shell"
                 ).effective_layout.library_open
                 and not screen.query_one(
-                    "#library-media-reader-shell"
+                    "#library-browse-reader-shell"
                 ).effective_layout.items_open
             ),
             message="The Library grip did not become the explicit priority.",
         )
         assert (
             screen.query_one(
-                "#library-media-reader-shell"
+                "#library-browse-reader-shell"
             ).effective_layout.priority_pane
             == "library"
         )
@@ -577,7 +577,7 @@ async def test_media_grip_priority_survives_a_library_round_trip_at_ordinary_wid
             await pilot.pause(0.02)
 
         layout = screen.query_one(
-            "#library-media-reader-shell"
+            "#library-browse-reader-shell"
         ).effective_layout
         assert layout.library_open is True
         assert layout.items_open is False
@@ -710,7 +710,7 @@ async def test_media_below_64_columns_shows_the_items_list_and_a_way_back() -> N
             message="The Items list never painted at 60 columns.",
         )
 
-        shell = screen.query_one("#library-media-reader-shell")
+        shell = screen.query_one("#library-browse-reader-shell")
         assert shell.effective_layout.items_open is True
         assert shell.effective_layout.library_open is False
 
@@ -723,7 +723,7 @@ async def test_media_below_64_columns_shows_the_items_list_and_a_way_back() -> N
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one(
-                "#library-media-reader-shell"
+                "#library-browse-reader-shell"
             ).effective_layout.library_open,
             message="'‹ Library' did not bring the rail back.",
         )
@@ -734,7 +734,7 @@ async def test_media_below_64_columns_shows_the_items_list_and_a_way_back() -> N
         # 60x24 it did not: the collapse recomposes the Items pane, and a
         # control whose visibility was only patched by the layout sync came
         # back mounted-but-hidden.
-        screen.query_one("#library-media-library-grip", Button).press()
+        screen.query_one("#library-browse-library-grip", Button).press()
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one(
