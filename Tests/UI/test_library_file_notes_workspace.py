@@ -1051,13 +1051,13 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_until(
             pilot,
-            lambda: bool(screen.query("#library-notes-row-0")),
+            lambda: bool(screen.query(".library-notes-row")),
             "Database Notes did not mount",
         )
         database_list = screen.query_one("#library-notes-canvas")
         database_list.scroll_to(y=3, animate=False, force=True, immediate=True)
         database_scroll = int(database_list.scroll_y)
-        screen.query_one("#library-notes-row-0", Button).press()
+        screen.query_one(".library-notes-row", Button).press()
         await _wait_until(
             pilot,
             lambda: bool(screen.query("#library-note-body")),
@@ -1494,10 +1494,10 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_until(
             pilot,
-            lambda: bool(screen.query("#library-notes-row-0")),
+            lambda: bool(screen.query(".library-notes-row")),
             "Database Notes did not mount",
         )
-        screen.query_one("#library-notes-row-0", Button).press()
+        screen.query_one(".library-notes-row", Button).press()
         await _wait_until(
             pilot,
             lambda: bool(screen.query("#library-note-body")),
@@ -2632,8 +2632,8 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
     async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
         await _wait_for_library_shell(screen, pilot)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0", Button).press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         database_editor = await _wait_for_selector(screen, pilot, "#library-note-body")
         await _wait_for_condition(
             pilot,
@@ -3686,15 +3686,13 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
             lambda: len(screen.query(".library-notes-row")) >= 20,
             "Database Notes did not render the browse rows.",
         )
-        screen.query_one("#library-notes-sort", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: bool(screen.query("#library-notes-sort-title")),
-            "Notes sort choices did not open.",
-        )
-        screen.query_one("#library-notes-sort-title", Button).press()
-        await pilot.pause()
-
+        # task-32175: this used to press #library-notes-sort ("title") to
+        # get a deterministic row order -- Sort is a flat-list-only
+        # control (task-32128), and this screen's seeded Agent_Lessons
+        # folder means it always composes the folder tree, where Sort
+        # never mounts. The tree's own order is already title-based (its
+        # row order is the repository's paging contract), so the row pick
+        # below is deterministic without pressing anything.
         row = list(screen.query(".library-notes-row"))[18]
         note_id = str(row.note_id)
         notes_list = screen.query_one("#library-notes-list")
@@ -3739,7 +3737,6 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         )
         await pilot.pause()
 
-        assert screen._notes_state.sort == "title"
         assert (
             int(screen.query_one("#library-notes-list").scroll_y) == before_list_scroll
         )

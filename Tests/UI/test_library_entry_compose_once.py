@@ -595,7 +595,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
-        focus = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        focus = await _wait_for_selector(screen, pilot, ".library-notes-row")
         focus.focus()
         await pilot.pause()
         assert screen.focused is not None
@@ -671,7 +671,7 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
         screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
-        row = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
         row.focus()
         await pilot.pause()
 
