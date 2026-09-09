@@ -29,7 +29,7 @@ Two mechanisms in one file:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from textual.containers import Horizontal, Vertical
@@ -55,6 +55,7 @@ from .screen_constants import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Library.library_shell_state import LibraryShellState
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 #: The two canvases residency owns. A child of ``#library-canvas`` with one
@@ -223,7 +224,7 @@ async def _adopt_library_browse_canvas(
     screen: "LibraryScreen",
     canvas_host: Vertical,
     route: str,
-) -> Widget | None:
+) -> Widget:
     """Show the destination canvas, keeping the other route's resident.
 
     Mechanism C: a canvas already in the host is repainted in place through
@@ -232,14 +233,14 @@ async def _adopt_library_browse_canvas(
     that is neither is removed.
 
     Returns:
-        The destination child, or ``None`` when it could not be produced.
+        The destination child: the resident canvas, or the one just mounted.
     """
     list_canvas_id = _ROUTE_LIST_CANVAS_ID[route]
     resident = next(
         (child for child in canvas_host.children if child.id == list_canvas_id),
         None,
     )
-    destination: Widget | None = resident
+    destination: Widget = resident
     if resident is None:
         destination = _build_library_browse_list_child(screen, route)
         # Only the two list canvases are resident; a loading/error child
@@ -269,7 +270,7 @@ async def _adopt_library_browse_canvas(
 
 
 async def swap_library_browse_route(
-    screen: "LibraryScreen", shell: Any
+    screen: "LibraryScreen", shell: "LibraryShellState"
 ) -> bool:
     """Move the Library to a browse route without rebuilding the screen.
 
@@ -335,9 +336,7 @@ async def swap_library_browse_route(
             if route == LIBRARY_BROWSE_ROUTE_MEDIA
             else screen._notes_state.reader_layout
         )
-    destination = await _adopt_library_browse_canvas(screen, canvas_host, route)
-    if destination is None:
-        return False
+    await _adopt_library_browse_canvas(screen, canvas_host, route)
     screen._apply_library_notes_stage_visibility()
     screen._apply_library_notes_footer_context()
     screen._hide_library_adaptive_reader_rail_collapse()

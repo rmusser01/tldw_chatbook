@@ -923,3 +923,14 @@ including the receipt string above. Added the Analysis tab's
 description (AC#5) — it was previously undocumented. Verified in
 real-screen tests for the choice row's painted text and its scope-change
 invalidation.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-08 (Library
+phase C, task 2: switching the rail between **Browse Media** and **Browse
+Notes** no longer rebuilds the whole Library screen — the rail, navigation
+bar, footer and both browse canvases stay put and are shown or hidden
+instead. **No on-screen copy, control, or layout changes**; this page is
+re-stamped rather than edited because the switch is now cheaper, not
+different. Measured: the whole-screen rebuild is gone and per-switch widget
+churn more than halves (179 -> 81 mounts on a switch back into Media). The
+switch's *perceived* pause is unchanged so far — what remains of it is the
+canvas repaint, tracked separately.)*

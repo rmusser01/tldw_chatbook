@@ -163,3 +163,46 @@ async def test_suspend_and_resume_keep_the_resident_set_and_its_selection() -> N
         assert screen.query_one("#library-notes-canvas").display
         assert not screen.query_one("#library-media-canvas").display
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+
+
+@pytest.mark.asyncio
+async def test_route_marker_class_tracks_the_selection_across_switches() -> None:
+    """The marker classes are a state projection, so pin them to the state.
+
+    Phase C replaced ~35 "is this shell mounted?" route probes with
+    ``.library-media-route`` / ``.library-notes-route`` on the ONE resident
+    browse shell. That trade is only safe while the marker and
+    ``_library_selected_row_id`` cannot disagree, and ``apply_route`` is the
+    single writer that keeps them together -- on the compose path AND on the
+    resident switch path. This walks both paths (first entry into each route
+    is a recompose; the switches after it are not) and checks the pair after
+    every one.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _settle(pilot, passes=30)
+        if screen.query("#library-rail-explore-all"):
+            screen.query_one("#library-rail-explore-all", Button).press()
+            await _settle(pilot, passes=30)
+
+        for row_id in (
+            LIBRARY_ROW_BROWSE_MEDIA,
+            LIBRARY_ROW_BROWSE_NOTES,
+            LIBRARY_ROW_BROWSE_MEDIA,
+            LIBRARY_ROW_BROWSE_NOTES,
+        ):
+            await _press_rail_row(screen, pilot, row_id)
+            shell = screen.query_one("#library-browse-reader-shell")
+            media_selected = row_id == LIBRARY_ROW_BROWSE_MEDIA
+            assert screen._library_selected_row_id == row_id
+            assert shell.has_class("library-media-route") is media_selected
+            assert shell.has_class("library-notes-route") is not media_selected
+            assert bool(screen.query(".library-media-route")) is media_selected
+            assert bool(screen.query(".library-notes-route")) is not media_selected
