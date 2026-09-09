@@ -35,27 +35,30 @@ from Tests.UI.test_console_native_chat_flow import (
     StaticConversationTreeService,
     _configure_native_ready_console,
 )
-from tldw_chatbook.Chat.console_conversation_hydration import (
-    apply_resume_settings_overrides,
-    console_messages_from_conversation_tree,
-    hydrate_console_session,
-    load_console_conversation_tree,
-)
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    apply_resume_settings_overrides,
+    console_messages_from_conversation_tree,
+    hydrate_console_generation_settings,
+    hydrate_console_session,
+    load_console_conversation_tree,
+    prepare_console_session_data,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     default_console_session_settings,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-
 CONVERSATION_ID = "conv-fixture"
 
 
-def test_resume_restores_the_complete_versioned_console_settings_snapshot() -> None:
+def test_legacy_resume_wrapper_preserves_base_settings_and_restores_row_owners() -> (
+    None
+):
     base = ConsoleSessionSettings(provider="base", model="base-model")
     persisted = ConsoleSessionSettings(
         provider="openai",
@@ -96,12 +99,12 @@ def test_resume_restores_the_complete_versioned_console_settings_snapshot() -> N
         },
     )
 
-    assert restored == ConsoleSessionSettings(
-        **{
-            **persisted.__dict__,
-            "system_prompt": "Canonical row prompt",
-            "pinned_prefill": "Canonical prefill",
-        }
+    # ADR-095: legacy complete snapshots are not the canonical generation owner.
+    # This compatibility helper only applies the row-owned prompt and prefill.
+    assert restored == replace(
+        base,
+        system_prompt="Canonical row prompt",
+        pinned_prefill="Canonical prefill",
     )
 
 
@@ -342,7 +345,10 @@ def _message_shape(store, session_id):
 
 
 @pytest.mark.asyncio
-async def test_production_hydration_restores_before_first_cursor(tmp_path) -> None:
+@pytest.mark.parametrize("preload", [False, True])
+async def test_production_hydration_restores_before_first_cursor(
+    tmp_path, preload
+) -> None:
     app = _fixture_app(tmp_path)
     assert (
         app.chachanotes_db.set_conversation_active_cursor(
@@ -354,12 +360,20 @@ async def test_production_hydration_restores_before_first_cursor(tmp_path) -> No
     )
     store = app.console_runtime.ensure_chat_store()
 
+    prepared = (
+        await prepare_console_session_data(
+            app=app, store=store, conversation_id=CONVERSATION_ID, tree=FIXTURE_TREE
+        )
+        if preload
+        else None
+    )
     session = await hydrate_console_session(
         app=app,
         store=store,
         conversation_id=CONVERSATION_ID,
         tree=FIXTURE_TREE,
         settings=default_console_session_settings(app.app_config),
+        prepared_data=prepared,
     )
 
     assert store.active_path_message_ids(session.id) == []
@@ -839,8 +853,9 @@ async def test_canonical_hydration_makes_persisted_generic_console_forkable(tmp_
         settings=default_console_session_settings(app.app_config),
     )
 
-    assert resumed.assistant_kind is None
-    assert resumed.assistant_id is None
+    # Explicit None is the current plain Console identity (ADR-139).
+    assert resumed.assistant_kind == "generic"
+    assert resumed.assistant_id == "console"
     assert resumed.assistant_authority_id is None
     assert resumed.persona_memory_mode is None
     resumed_message = next(
@@ -853,7 +868,7 @@ async def test_canonical_hydration_makes_persisted_generic_console_forkable(tmp_
 
 
 @pytest.mark.asyncio
-async def test_settings_replacement_refreshes_the_durable_resume_snapshot(tmp_path):
+async def test_canonical_settings_apply_refreshes_the_durable_resume_snapshot(tmp_path):
     app = _fixture_app(tmp_path)
     service = ChatPersistenceService(app.chachanotes_db)
     source_store = ConsoleChatStore(persistence=service)
@@ -894,13 +909,21 @@ async def test_settings_replacement_refreshes_the_durable_resume_snapshot(tmp_pa
         pinned_prefill="Stale snapshot prefill",
         source="user",
     )
-    source_store.replace_session_settings(source.id, latest)
+    from Tests.Chat.test_console_settings_apply_store import _submission
+
+    submission = _submission(
+        source_store, source.id, submission_id="resume-settings", model="gpt-test"
+    )
+    submission = replace(submission, draft=replace(submission.draft, settings=latest))
+    commit = source_store.commit_console_settings_live(submission)
+    outcome = await source_store.persist_console_settings_commit_serialized(commit)
+    assert not outcome.failed_components
 
     persisted = app.chachanotes_db.get_conversation_by_id(conversation_id)
     persisted_metadata = json.loads(persisted["metadata"])
     assert persisted_metadata["unrelated_owner"] == {"keep": True}
-    assert persisted_metadata["console_session_settings"]["provider"] == "openai"
-    assert persisted_metadata["console_session_settings"]["temperature"] == 0.22
+    assert persisted_metadata["console_generation_settings"]["provider"] == "openai"
+    assert persisted_metadata["console_generation_settings"]["temperature"] == 0.22
 
     tree = ChatConversationService(app.chachanotes_db).get_conversation_tree(
         conversation_id
@@ -911,10 +934,9 @@ async def test_settings_replacement_refreshes_the_durable_resume_snapshot(tmp_pa
         store=resumed_store,
         conversation_id=conversation_id,
         tree=tree,
-        settings=apply_resume_settings_overrides(
-            default_console_session_settings(app.app_config),
-            tree["conversation"],
-        ),
+        settings=hydrate_console_generation_settings(
+            app.app_config, tree["conversation"]
+        ).settings,
     )
 
     assert resumed.settings is not None
@@ -986,3 +1008,41 @@ async def test_first_persist_and_canonical_hydration_round_trip_persona_memory_m
     assert resumed.assistant_id == "persona-1"
     assert resumed.assistant_authority_id is None
     assert resumed.persona_memory_mode == "read_write"
+
+
+@pytest.mark.asyncio
+async def test_memory_database_preload_keeps_its_own_connection():
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(":memory:", "memory-hydration")
+    try:
+        service = ChatConversationService(db)
+        target = service.create_conversation(
+            title="Memory", runtime_backend="local", scope_type="global"
+        )
+        db.add_message(
+            {
+                "conversation_id": target,
+                "sender": "user",
+                "role": "user",
+                "content": "Memory input",
+            }
+        )
+        tree = service.get_conversation_tree(target)
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        app = SimpleNamespace(chachanotes_db=db)
+        prepared = await prepare_console_session_data(
+            app=app, store=store, conversation_id=target, tree=tree
+        )
+        session = await hydrate_console_session(
+            app=app,
+            store=store,
+            conversation_id=target,
+            tree=tree,
+            settings=None,
+            prepared_data=prepared,
+        )
+        assert store.messages_for_session(session.id)[0].content == "Memory input"
+        assert db.get_conversation_by_id(target)["title"] == "Memory"
+    finally:
+        db.close_connection()

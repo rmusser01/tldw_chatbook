@@ -1,33 +1,31 @@
-"""Workspace default persona applies to NEW sessions only (Task 9).
+"""Workspace Persona defaults apply at creation and preserve durable identity.
 
-Tested at the two isolable layers (a full ChatScreen harness is
-impractical here -- `_create_native_console_session_from_active_context`
-needs a live Textual screen):
-1. ``ConsoleSessionController._workspace_default_for_new_session`` -- the
-   workspace -> ``(assistant_id, label, prompt, memory_mode)`` resolver,
-   invoked unbound against a stub host.
-2. The controller/store seam -- ``new_session`` assistant kwargs forwarded
-   into ``store.create_session`` plus the settings replace the session.py
-   injection performs.
+These tests cover shared resolution, controller/store creation, SQLite
+persistence, and provider setup recovery. Native mounted creation and workspace
+details controls are covered in Tests/UI/test_workspace_persona_creation.py.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
+from tldw_chatbook.Chat.console_assistant_defaults import (
+    build_persona_agent_system_prompt,
+)
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleWorkspaceContext,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     default_console_session_settings,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.UI.Console_Modules.session import (
     ConsoleSessionController,
-    build_persona_agent_system_prompt,
 )
 from tldw_chatbook.Workspaces.models import (
     DEFAULT_WORKSPACE_ID,
@@ -141,6 +139,178 @@ def _host(workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID, *, workspace=None, persona=P
 
 def _resolve_workspace_default(host):
     return ConsoleSessionController._workspace_default_for_new_session(host)
+
+
+def _creation_store():
+    from tldw_chatbook.Chat.console_assistant_defaults import (
+        resolve_new_console_assistant,
+    )
+
+    target = _workspace(
+        "target",
+        defaults=WorkspaceAssistantDefaults(
+            assistant_id=PERSONA["id"], persona_memory_mode="read_write"
+        ),
+    )
+    app = StubApp(
+        StubRegistry({"target": target}), StubPersonas({PERSONA["id"]: PERSONA})
+    )
+    app.app_config = {}
+    return ConsoleChatStore(
+        workspace_context=ConsoleWorkspaceContext(active_workspace_id="elsewhere"),
+        assistant_defaults_provider=lambda workspace_id, settings: (
+            resolve_new_console_assistant(app, workspace_id, settings)
+        ),
+    ), app
+
+
+@pytest.mark.parametrize("surface", ["create", "ensure", "controller", "temporary"])
+def test_creation_seams_resolve_target_workspace_once_and_preserve_memory(surface):
+    """Bootstrap/new/temporary creation must not miss or borrow workspace identity."""
+    store, app = _creation_store()
+    settings = default_console_session_settings({}, "llama_cpp")
+    if surface == "create":
+        session = store.create_session(workspace_id="target", settings=settings)
+    elif surface == "ensure":
+        session = store.ensure_session(workspace_id="target", settings=settings)
+    else:
+        store.workspace_context = ConsoleWorkspaceContext(active_workspace_id="target")
+        session = _controller(store).new_session(
+            settings=settings, ephemeral=surface == "temporary"
+        )
+    assert session.workspace_id == "target"
+    assert session.assistant_kind == "persona"
+    assert session.assistant_id == PERSONA["id"]
+    assert (
+        session.persona_memory_mode
+        == session.settings.persona_memory_mode
+        == "read_write"
+    )
+    assert "literary companion" in session.settings.system_prompt
+    app.workspace_registry_service = StubRegistry({})
+    assert store.ensure_session().assistant_id == PERSONA["id"]
+
+
+@pytest.mark.parametrize(
+    "kind,assistant_id",
+    [(None, None), ("generic", "console"), ("persona", "chosen"), ("character", "12")],
+)
+def test_explicit_identity_bypasses_workspace_inheritance(kind, assistant_id):
+    """An explicit plain, copied/restored, Persona or Character choice wins."""
+    store, _app = _creation_store()
+    session = store.create_session(
+        workspace_id="target",
+        settings=default_console_session_settings({}, "llama_cpp"),
+        assistant_kind=kind,
+        assistant_id=assistant_id,
+    )
+    assert session.assistant_kind == (kind or "generic")
+    assert session.assistant_id == (assistant_id or "console")
+    assert session.settings.system_prompt is None
+
+
+def test_unavailable_default_keeps_plain_identity_and_exposes_reason():
+    store, app = _creation_store()
+    app.local_character_persona_service = StubPersonas({})
+    session = store.create_session(workspace_id="target")
+    assert session.assistant_kind == "generic"
+    assert session.assistant_id == "console"
+    assert "unavailable" in session.assistant_default_notice.lower()
+    assert "persona_deleted" in session.assistant_default_notice
+
+
+def test_created_persona_identity_persists_reopens_and_survives_workspace_move(
+    tmp_path,
+):
+    """The durable identity and fork source keep memory mode after a workspace change."""
+    from Tests.Workspaces.test_agent_provisioning import build
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "chat.db", "creation-test")
+    try:
+        registry, _permissions = build(tmp_path)
+        registry.create_workspace(workspace_id="target", name="Target")
+        registry.create_workspace(workspace_id="moved", name="Moved")
+        persistence = ChatPersistenceService(db, workspace_registry=registry)
+        store, _app = _creation_store()
+        store.persistence = persistence
+        session = store.create_session(workspace_id="target")
+        conversation_id = store.persist_session_if_needed(session.id)
+        record = db.get_conversation_by_id(conversation_id)
+        assert record["assistant_kind"] == "persona"
+        assert record["assistant_id"] == PERSONA["id"]
+        assert record["persona_memory_mode"] == "read_write"
+        service = ChatConversationService(db)
+        assert service.update_conversation_metadata(
+            conversation_id,
+            {"scope_type": "workspace", "workspace_id": "moved"},
+            record["version"],
+        )
+        moved = db.get_conversation_by_id(conversation_id)
+        restored = store.restore_persisted_session(
+            title="Moved",
+            workspace_id=moved["workspace_id"],
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+            settings=session.settings,
+            assistant_kind=moved["assistant_kind"],
+            assistant_id=moved["assistant_id"],
+            persona_memory_mode=moved["persona_memory_mode"],
+        )
+        assert restored.workspace_id == "moved"
+        assert restored.assistant_id == PERSONA["id"]
+        assert (
+            restored.persona_memory_mode
+            == restored.settings.persona_memory_mode
+            == "read_write"
+        )
+        fork = store._fork_configuration_snapshot(restored)
+        assert fork.assistant_id == PERSONA["id"]
+        assert fork.persona_memory_mode == "read_write"
+    finally:
+        db.close_connection()
+
+
+def test_provider_setup_recovery_keeps_created_persona_prompt(monkeypatch):
+    """Refreshing unused provider defaults must not erase the assigned Persona."""
+    from types import SimpleNamespace
+
+    import tldw_chatbook.UI.Console_Modules.session as session_module
+
+    store, _app = _creation_store()
+    session = store.create_session(
+        workspace_id="target",
+        settings=ConsoleSessionSettings(provider="openai"),
+        canonical_settings_baseline=ConsoleSessionSettings(provider="openai"),
+    )
+    before = session.settings
+    host = SimpleNamespace(
+        _console_new_chat_default_generation=lambda: 0,
+        _provider_readiness_app_config=dict,
+        _CONSOLE_REFRESHABLE_BLOCKED_LABELS={"missing-key"},
+        _notify_stale_default_provider_swap=lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        session_module,
+        "build_console_settings_readiness",
+        lambda value, **_kwargs: SimpleNamespace(
+            native_send_supported=value.provider == "llama_cpp", label="missing-key"
+        ),
+    )
+    monkeypatch.setattr(
+        session_module,
+        "blank_console_session_settings",
+        lambda _config: ConsoleSessionSettings(provider="llama_cpp"),
+    )
+    after = ConsoleSessionController._maybe_refresh_stale_default_console_settings(
+        host, store, session
+    )
+    assert after.provider == "llama_cpp"
+    assert after.system_prompt == before.system_prompt
+    assert after.character_label == "Lit Agent"
+    assert after.persona_memory_mode == session.persona_memory_mode == "read_write"
 
 
 # -- Layer 1: the workspace-default resolver --------------------------------
@@ -402,6 +572,8 @@ def test_new_tab_re_resolves_workspace_persona_on_published_defaults():
         "assistant_kind": "persona",
         "assistant_id": "local-persona-1",
         "assistant_label": "Lit Agent",
+        "persona_memory_mode": "read_only",
+        "assistant_default_notice": "",
     }
 
 

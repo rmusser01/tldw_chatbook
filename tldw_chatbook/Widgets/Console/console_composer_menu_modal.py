@@ -29,6 +29,7 @@ ACTION_GENERATE_CAPTION = "generate-caption"
 #: whose only behavior is a "not implemented yet" toast erodes trust in every
 #: other entry. Re-add the action id here when the feature lands.
 ACTION_IMPERSONATE = "impersonate"
+ACTION_BUDDY = "buddy"
 #: Moved here from the composer action row. These two strings are also the
 #: ids of the buttons they replaced, so the screen's existing
 #: `@on(Button.Pressed, "#console-<id>")` handlers stay the one
@@ -160,6 +161,11 @@ def build_composer_menu_entries(
             ACTION_IMPERSONATE,
             "Impersonate",
             "Draft your next reply with the current model",
+        ),
+        ComposerMenuEntry(
+            ACTION_BUDDY,
+            "Buddy…",
+            "Manage Buddy artwork, follow target, and Persona",
         ),
     )
     if not ephemeral:

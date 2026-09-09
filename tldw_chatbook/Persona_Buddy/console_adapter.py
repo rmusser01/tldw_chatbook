@@ -119,11 +119,14 @@ class PersonaBuddyConsoleAdapter:
         self._lock = RLock()
         self._clock = time.monotonic
         self._disposed = False
+        self._scope_sessions: frozenset[str] | None = None
+        self._scope_conversations: frozenset[str] | None = None
         self._tokens: dict[tuple[str, str], PersonaBuddyLeaseToken] = {}
         self._run_generation: dict[str, int] = {}
         self._run_owners: dict[str, str] = {}
         self._approval_owners: dict[tuple[str, str], str] = {}
         self._tool_owners: dict[tuple[str, int], str] = {}
+        self._tool_sessions: dict[tuple[str, int], str | None] = {}
         self._wake_owners: dict[tuple[str, str], str] = {}
         self._voice_owners: dict[tuple[str, int], str] = {}
         self._voice_generation: dict[str, int] = {}
@@ -138,6 +141,101 @@ class PersonaBuddyConsoleAdapter:
                 self._controller = controller
             elif self._controller is not controller:
                 raise RuntimeError("persona_buddy_console_controller_replacement")
+
+    def set_scope(
+        self, *, session_ids: frozenset[str], conversation_ids: frozenset[str]
+    ) -> bool:
+        """Replace permitted owners, retiring leases from the previous scope.
+
+        Returns whether scope changed. Callers replay current trusted state only
+        after a change; repeated reconciliation does not restart animations.
+        """
+        if not isinstance(session_ids, frozenset) or not isinstance(
+            conversation_ids, frozenset
+        ):
+            raise TypeError("buddy_scope_invalid")
+        if any(
+            type(value) is not str or not value
+            for value in session_ids | conversation_ids
+        ):
+            raise ValueError("buddy_scope_invalid")
+        with self._lock:
+            if self._disposed:
+                return False
+            if (session_ids, conversation_ids) == (
+                self._scope_sessions,
+                self._scope_conversations,
+            ):
+                return False
+            # Scope affects presentation, not accepted run identity. Keep leases
+            # for retained members, and keep the run ledger so a reattached
+            # projection accepts that run's original terminal callback.
+            retained = {
+                ("console-run", owner)
+                for session, owner in self._run_owners.items()
+                if session in session_ids
+            }
+            retained.update(
+                ("approval", owner)
+                for (session, _), owner in self._approval_owners.items()
+                if session in session_ids
+            )
+            retained.update(
+                ("tool", owner)
+                for key, owner in self._tool_owners.items()
+                if self._tool_sessions.get(key) in session_ids
+            )
+            retained.update(
+                ("wake", owner)
+                for (conversation, _), owner in self._wake_owners.items()
+                if conversation in conversation_ids
+            )
+            retained.update(
+                ("voice", owner)
+                for (session, _), owner in self._voice_owners.items()
+                if session in session_ids
+            )
+            for key, token in tuple(self._tokens.items()):
+                if key not in retained:
+                    if self._controller is not None:
+                        self._controller.release_state(token=token)
+                    self._tokens.pop(key, None)
+            self._approval_owners = {
+                key: owner
+                for key, owner in self._approval_owners.items()
+                if key[0] in session_ids
+            }
+            self._tool_owners = {
+                key: owner
+                for key, owner in self._tool_owners.items()
+                if ("tool", owner) in retained
+            }
+            self._tool_sessions = {
+                key: session
+                for key, session in self._tool_sessions.items()
+                if key in self._tool_owners
+            }
+            self._wake_owners = {
+                key: owner
+                for key, owner in self._wake_owners.items()
+                if key[0] in conversation_ids
+            }
+            self._voice_owners = {
+                key: owner
+                for key, owner in self._voice_owners.items()
+                if key[0] in session_ids
+            }
+            self._voice_generation = {
+                session: generation
+                for session, generation in self._voice_generation.items()
+                if session in session_ids
+            }
+            self._scope_sessions = session_ids
+            self._scope_conversations = conversation_ids
+            return True
+
+    def _session_allowed(self, session_id: str | None) -> bool:
+        return self._scope_sessions is None or session_id in self._scope_sessions
 
     @staticmethod
     def _owner(kind: str, *parts: object) -> str:
@@ -189,16 +287,21 @@ class PersonaBuddyConsoleAdapter:
         )
 
     def run_state(
-        self, session_id: str, status: object, *, run_owner: str | None = None
+        self,
+        session_id: str,
+        status: object,
+        *,
+        run_owner: str | None = None,
+        replay: bool = False,
     ) -> str | None:
-        """Map one per-session run state, replacing on a new validation."""
+        """Map run state; scope replay preserves an already accepted owner."""
 
         normalized = str(getattr(status, "value", status)).strip().lower()
         with self._lock:
             if self._disposed or self._controller is None:
                 return None
             owner = self._run_owners.get(session_id)
-            if normalized == "validating":
+            if normalized == "validating" and not (replay and owner is not None):
                 if owner is not None:
                     self._release("console-run", owner)
                 generation = self._run_generation.get(session_id, 0) + 1
@@ -220,7 +323,7 @@ class PersonaBuddyConsoleAdapter:
                     self._run_owners.pop(session_id, None)
                 return None
             state = _RUN_STATES.get(normalized)
-            if state is None or owner is None:
+            if state is None or owner is None or not self._session_allowed(session_id):
                 return owner
             self.publish(
                 BuddyLifecycleEvent(
@@ -238,7 +341,11 @@ class PersonaBuddyConsoleAdapter:
 
         key = (session_id, round_id)
         with self._lock:
-            if self._disposed or self._controller is None:
+            if (
+                self._disposed
+                or self._controller is None
+                or not self._session_allowed(session_id)
+            ):
                 return None
             owner = self._approval_owners.get(key)
             if not pending:
@@ -258,14 +365,21 @@ class PersonaBuddyConsoleAdapter:
             )
             return owner
 
-    def tool_step(self, run_id: str, sequence: int, kind: str) -> str | None:
+    def tool_step(
+        self, run_id: str, sequence: int, kind: str, *, session_id: str | None = None
+    ) -> str | None:
         """Pair a tool-call start with its exact result or run cleanup."""
 
         key = (run_id, sequence)
         with self._lock:
-            if self._disposed or self._controller is None:
+            if (
+                self._disposed
+                or self._controller is None
+                or not self._session_allowed(session_id)
+            ):
                 return None
             if kind == _TOOL_START:
+                self._tool_sessions[key] = session_id
                 owner = self._tool_owners.get(key)
                 if owner is None:
                     owner = self._owner("tool", run_id, sequence)
@@ -280,6 +394,7 @@ class PersonaBuddyConsoleAdapter:
                 return owner
             if kind in _TOOL_RELEASE:
                 owner = self._tool_owners.pop(key, None)
+                self._tool_sessions.pop(key, None)
                 if owner is not None:
                     self._release("tool", owner)
                 return None
@@ -295,13 +410,21 @@ class PersonaBuddyConsoleAdapter:
                 if key[0] == run_id:
                     self._release("tool", owner)
                     self._tool_owners.pop(key, None)
+                    self._tool_sessions.pop(key, None)
 
     def wake(self, conversation_id: str, run_id: str, *, active: bool) -> str | None:
         """Mirror one pending or delivering fleet-wake membership."""
 
         key = (conversation_id, run_id)
         with self._lock:
-            if self._disposed or self._controller is None:
+            if (
+                self._disposed
+                or self._controller is None
+                or (
+                    self._scope_conversations is not None
+                    and conversation_id not in self._scope_conversations
+                )
+            ):
                 return None
             owner = self._wake_owners.get(key)
             if not active:
@@ -337,7 +460,11 @@ class PersonaBuddyConsoleAdapter:
 
         key = (session_id, generation)
         with self._lock:
-            if self._disposed or self._controller is None:
+            if (
+                self._disposed
+                or self._controller is None
+                or not self._session_allowed(session_id)
+            ):
                 return None
             current_generation = self._voice_generation.get(session_id)
             if current_generation is not None and generation < current_generation:
@@ -435,6 +562,7 @@ class PersonaBuddyConsoleAdapter:
         self._run_owners.clear()
         self._approval_owners.clear()
         self._tool_owners.clear()
+        self._tool_sessions.clear()
         self._wake_owners.clear()
         self._voice_owners.clear()
         self._voice_generation.clear()

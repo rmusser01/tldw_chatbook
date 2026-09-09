@@ -27,9 +27,10 @@ from .assets import (
 from .repository import (
     PersonaVisualIdentity,
     PersonaVisualRepository,
+    _source_context_json,
+    _visual_owner_id,
 )
 from .validation import validate_persona_visual_manifest
-
 
 _ERROR_PREFIX = "persona_visual_"
 _READ_CHUNK_BYTES = 64 * 1024
@@ -80,7 +81,7 @@ class PersonaVisualPublicationAssetSource:
 class PersonaVisualPublicationSnapshot:
     """One complete immutable publication request; it is not an editable model."""
 
-    persona_id: str
+    persona_id: str | None
     persona_revision: int
     title: str
     manifest_json: str
@@ -89,6 +90,8 @@ class PersonaVisualPublicationSnapshot:
     description: str = ""
     source_kind: str = "manual"
     source_context: tuple[tuple[str, str], ...] = ()
+    buddy_id: str | None = None
+    buddy_revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,6 +345,8 @@ def publish_persona_visual(
             if snapshot.expected_identity is None:
                 graph = repository.activate_new_pack(
                     persona_id=snapshot.persona_id,
+                    buddy_id=snapshot.buddy_id,
+                    buddy_revision=snapshot.buddy_revision,
                     title=snapshot.title,
                     description=snapshot.description,
                     source_kind=snapshot.source_kind,
@@ -355,6 +360,9 @@ def publish_persona_visual(
             else:
                 graph = repository.publish_version(
                     persona_id=snapshot.persona_id,
+                    buddy_id=snapshot.buddy_id,
+                    buddy_revision=snapshot.buddy_revision,
+                    source_context=context or None,
                     manifest=manifest,
                     manifest_storage_relpath=manifest_storage,
                     assets=asset_rows,
@@ -525,11 +533,15 @@ def _validate_snapshot(
     try:
         if type(snapshot) is not PersonaVisualPublicationSnapshot:
             raise ValueError
+        _visual_owner_id(snapshot.persona_id, snapshot.buddy_id)
+        if snapshot.buddy_id is not None and (
+            type(snapshot.buddy_revision) is not int
+            or snapshot.buddy_revision < 1
+            or snapshot.persona_revision != 0
+        ):
+            raise ValueError
         if (
-            type(snapshot.persona_id) is not str
-            or not snapshot.persona_id
-            or len(snapshot.persona_id) > 200
-            or type(snapshot.persona_revision) is not int
+            type(snapshot.persona_revision) is not int
             or snapshot.persona_revision < 0
             or type(snapshot.title) is not str
             or not snapshot.title
@@ -548,7 +560,7 @@ def _validate_snapshot(
         ):
             raise ValueError
         for value in (
-            snapshot.persona_id,
+            _visual_owner_id(snapshot.persona_id, snapshot.buddy_id),
             snapshot.title,
             snapshot.description,
             snapshot.manifest_json,
@@ -575,26 +587,10 @@ def _validate_snapshot(
             if type(item) is not tuple or len(item) != 2:
                 raise ValueError
             key, value = item
-            if (
-                type(key) is not str
-                or key not in _SOURCE_CONTEXT_KEYS
-                or key in context
-                or type(value) is not str
-                or not value
-                or len(value) > 256
-            ):
-                raise ValueError
-            value.encode("utf-8")
-            stripped = value.strip()
-            if (
-                "/" in value
-                or "\\" in value
-                or any(ord(character) < 32 for character in value)
-                or stripped in {".", ".."}
-                or stripped.startswith(("{", "[", "~"))
-            ):
+            if type(key) is not str or key in context or type(value) is not str:
                 raise ValueError
             context[key] = value
+        _source_context_json(context)
         sources: list[tuple[str, PersonaVisualAssetMetadata]] = []
         metadata_items: list[PersonaVisualAssetMetadata] = []
         source_keys: set[str] = set()
@@ -636,7 +632,11 @@ def _preflight_identity(
 ):
     expected = snapshot.expected_identity
     try:
-        current = repository.get_active_persona_pack(snapshot.persona_id)
+        current = (
+            repository.get_active_buddy_pack(snapshot.buddy_id)
+            if snapshot.buddy_id is not None
+            else repository.get_active_persona_pack(snapshot.persona_id)
+        )
     except ValueError:
         raise PersonaVisualPublicationError(
             "persona_visual_identity_changed"
@@ -660,6 +660,8 @@ def _preflight_identity(
         or current.identity != expected
         or expected.persona_id != snapshot.persona_id
         or expected.persona_revision != snapshot.persona_revision
+        or expected.buddy_id != snapshot.buddy_id
+        or expected.buddy_revision != snapshot.buddy_revision
     ):
         raise PersonaVisualPublicationError("persona_visual_identity_changed")
     return current

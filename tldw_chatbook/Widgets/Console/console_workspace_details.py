@@ -5,16 +5,18 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.message import Message
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceStatusPair,
 )
-from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
-
+from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 
 _AUTHORITY_LABELS = {
     "local registry ready": "local",
@@ -31,6 +33,18 @@ _AUTHORITY_LABELS = {
 
 class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
     """Render workspace plumbing status, readiness, and handoff rows."""
+
+    class DefaultPersonaRequested(Message):
+        """Open default controls for this explicit workspace, without activating it."""
+
+        def __init__(self, workspace_id: str) -> None:
+            super().__init__()
+            self.workspace_id = workspace_id
+
+    @on(Button.Pressed, "#console-workspace-default-persona")
+    def _edit_default_persona(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.DefaultPersonaRequested(self.state.workspace_id))
 
     def __init__(self, state: ConsoleWorkspaceContextState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -145,6 +159,15 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
         """Render workspace status, readiness, runtime, and handoff rows."""
 
         collapse_server_features = self._server_features_unconfigured()
+
+        if self.state.workspace_id and self.state.workspace_id != DEFAULT_WORKSPACE_ID:
+            yield Button(
+                "Default Persona…", id="console-workspace-default-persona", compact=True
+            )
+            yield self._static(
+                "Applies to future new conversations.",
+                id="console-workspace-default-persona-scope",
+            )
 
         yield from self._status_pair(
             self._friendly_status_label(self.state.authority_label),

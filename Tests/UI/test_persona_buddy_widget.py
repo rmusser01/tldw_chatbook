@@ -390,6 +390,7 @@ async def test_resting_buddy_contains_pet_and_icons_without_default_words():
             "persona-buddy-frame",
             "persona-buddy-collapse",
             "persona-buddy-close",
+            "persona-buddy-settings",
         ]
         for removed_id in (
             "persona-buddy-header",
@@ -1197,7 +1198,7 @@ async def test_keyboard_move_resize_reset_collapse_close_exact_bindings():
         await _wait_until(lambda: not controller.preferences.open)
 
         keys = {binding.key for binding in PersonaBuddyWidget.BINDINGS}
-        assert keys == {"h", "j", "k", "l", "H", "J", "K", "L", "0", "c", "x"}
+        assert keys == {"h", "j", "k", "l", "H", "J", "K", "L", "0", "c", "x", "m", "enter"}
         assert not any(key.startswith("ctrl+") for key in keys)
 
 

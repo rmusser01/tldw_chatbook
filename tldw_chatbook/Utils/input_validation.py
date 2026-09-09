@@ -755,6 +755,28 @@ def validate_bounded_integer(value: object, *, minimum: int, maximum: int) -> in
     return number
 
 
+class BuddyManagementInput(BaseModel):
+    """Bound raw Buddy form values before resolving selected application identities."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    enabled: bool
+    artwork: str = Field(max_length=256)
+    archive: str = Field(max_length=4096)
+    target: str = Field(max_length=512)
+    persona: str = Field(max_length=256)
+    motion: Literal["dynamic", "static"]
+    speak_responses: bool
+    width: int
+    height: int
+
+    @field_validator("width", "height", mode="before")
+    @classmethod
+    def _dimensions(cls, value: object, info: ValidationInfo) -> int:
+        minimum, maximum = (8, 120) if info.field_name == "width" else (4, 60)
+        return validate_bounded_integer(value, minimum=minimum, maximum=maximum)
+
+
 def validate_port(port: Union[str, int]) -> bool:
     """Validate port number."""
     log_counter("input_validation_port_attempt")

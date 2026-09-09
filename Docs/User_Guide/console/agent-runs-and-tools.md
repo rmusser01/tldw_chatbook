@@ -52,8 +52,8 @@ a one-time banner spells it out:
 
 The number is your configured cap (default 3). Sending past the cap is
 refused with a message like "2 agents already running (…). Wait for one to
-finish or interrupt it." Runs live only while Console stays open — see
-[Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
+finish or interrupt it." Runs continue when you switch screens — see
+[Console runs continue during navigation](../index.md#console-runs-continue-during-navigation).
 
 **In the reply row itself** — while the turn works, the unfinished
 `Assistant` row shows a live activity line in place of its (empty) text, so
@@ -201,7 +201,8 @@ Region     Which regions? (pick any)
 - By default the question waits as long as it takes. To make an unanswered
   question expire instead, set `ask_user_timeout_seconds` under `[console]`
   in your config; the card then shows *Auto-continues in m:ss* and the run
-  carries on without an answer when it reaches zero.
+  carries on without an answer when it reaches zero. The clock advances only
+  while the question can be answered in the visible conversation.
 - A question for a tab you are not looking at lights that tab's badge and
   shows a toast; visit the tab to answer it. Stopping the run clears the card.
 - Every answered round leaves one line per question in the transcript, so
@@ -252,6 +253,9 @@ pending card; nothing else does. If you'd rather have undecided calls
 auto-denied on a clock, set `[mcp] approval_timeout_seconds` in
 `config.toml` (seconds; `0`, the default, waits indefinitely — the skill
 install and run-script confirm cards follow the same rule).
+Finite clocks pause while no supported view can answer the card, including hidden
+Console, another conversation, or an earlier card of the same kind. A visible
+Buddy interaction card can keep its own decision answerable.
 
 Some short local database mutations have a definitive-after-start contract.
 Before approval, Stop still withdraws the request. After you approve and the
@@ -1175,12 +1179,11 @@ on whatever screen you're on ("Agent in “…” needs approval to use a tool.
 Open Console to review — nothing runs until you answer."), the session
 picks up its usual approval badge, and the round waits for you rather
 than expiring. The tool does not run until you answer it. Nothing
-auto-approves: navigating away from Console again denies the request (the
-same rule as any card you leave unanswered), and so does quitting the
-app. If you have set a positive `[mcp] approval_timeout_seconds`, it
-still expires the request on schedule — being away does not buy the
-request extra time. The shipped default is `0`, which means no deadline:
-the request waits for you.
+auto-approves: navigating away again keeps the request pending. Explicit Stop,
+closing the owning conversation, or quitting the app withdraws it. A positive
+`[mcp] approval_timeout_seconds` counts only time when that conversation's card
+is answerable in Console or a supported Buddy card; hidden time does not consume the budget.
+The shipped default is `0`, which means no deadline: the request waits for you.
 
 **The card is rendered and answerable the first time you open Console —
 no session switch needed.** (Fixed as task-17500, 2026-08-17.) As first
@@ -1735,21 +1738,13 @@ briefing content remains Console-only.
   it takes that session's fleet with it: every live sub-agent, survivors
   included, is cancelled as part of the close (a survivor would otherwise
   outlive its own conversation, with no row left to cancel it from).
-- Leaving the Console screen is different: after the "Leave Console?" confirm,
-  every in-flight **turn** is cancelled and every pending or parked approval is
-  denied — never approved. One thing survives the leave: a background
-  sub-agent that already outlived its turn **keeps running** — its result
-  lands durably, you get the completion toast + `◈` marker wherever you
-  are, and the staged wake is claimed when Console next mounts (see
-  [auto-wake](#when-a-background-sub-agent-finishes--auto-wake)). The next
-  Console mount reports both fates honestly: "N agent runs were cancelled
-  when you left Console." and/or "… sub-agents kept running in the
-  background when you left Console — you'll be notified as they finish."
-  The warning also counts queued sessions and unsent
-  prompts. Staying leaves the queue and manager focus untouched; leaving
-  clears process-memory queues. Closing one tab uses the same count-aware
-  warning for that tab, and quitting the app reports the whole fleet. Details in
-  [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
+- Leaving Console or opening a modal keeps accepted turns, queued prompts,
+  sub-agents and pending decisions alive. Hidden decisions notify once and remain
+  available on return. A configured decision timeout pauses while the owning card
+  cannot be answered. A dirty queue-manager edit must be saved or cancelled first.
+  Closing one session and quitting the app retain their count-aware warnings and
+  cancellation boundaries. See
+  [Console runs continue during navigation](../index.md#console-runs-continue-during-navigation).
 
 ### Agent run budget — how long and how expensive one reply may get
 
@@ -1926,7 +1921,7 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
-- [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped)
+- [Console runs continue during navigation](../index.md#console-runs-continue-during-navigation)
   — what leaving Console does to runs and approvals.
 - [Console](../console.md) — the screen itself.
 - [Context & RAG](context-and-rag.md#project-instructions) — status states,
@@ -2032,7 +2027,10 @@ the honest-limits bullet corrected @ HEAD — 2026-08-14 (task-16300,
 documentation-only for this page: navigating away from Console under an
 open dialog used to leave the old Console screen resident and running,
 and the bullet had described that leak as intended behavior. Navigation
-now unmounts the outgoing screen, so leaving Console stages. Pinned by
+then unmounted the outgoing screen, so leaving Console staged. TASK-31520
+subsequently introduced deliberate screen reuse; TASK-32078 verifies that
+streams, queues and decisions now continue during ordinary navigation. The
+earlier unmount behavior was pinned by
 `Tests/UI/test_screen_residency.py`; the live off-view evidence above is
 unaffected — it was gathered with a palette covering an open Console and
 a different session tab active, not by navigating away.) The "Change

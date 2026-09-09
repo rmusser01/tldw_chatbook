@@ -11816,3 +11816,13 @@ ConsoleExchangeExportDialog {
 #exchange-export-path {
     height: 3;
 }
+
+/* Buddy transcripts scroll the complete decision card. A 1fr batch body
+   inside the auto-height card collapses and clips its controls at 60x20. */
+BuddyConversationModal #approval-batch-body {
+    height: auto;
+}
+BuddyConversationModal .approval-row-decision {
+    width: 1fr;
+    min-width: 10;
+}

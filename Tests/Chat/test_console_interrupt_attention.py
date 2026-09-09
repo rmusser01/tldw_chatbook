@@ -60,6 +60,15 @@ def test_a_round_raised_while_console_is_visible_badges_but_does_not_ring():
     assert app.bells == 0 and getattr(app, CONSOLE_ATTENTION_ATTR) == 2
 
 
+def test_retained_hidden_console_rings_without_detaching_its_view():
+    app = _App()
+    controller = _controller(app, attached=True, pending=1)
+    controller.on_console_view_visibility_changed(False)
+    controller.on_pending_rounds_changed(1, "question", True)
+    assert app.bells == 1 and getattr(app, CONSOLE_ATTENTION_ATTR) == 1
+    assert controller.set_pending_approval is not None
+
+
 def _config_bell(monkeypatch, value):
     import tldw_chatbook.Chat.console_chat_controller as ccc
 

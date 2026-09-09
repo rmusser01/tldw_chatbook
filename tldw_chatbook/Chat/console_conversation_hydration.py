@@ -33,8 +33,9 @@ only app members read are `chat_conversation_scope_service` and
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 from loguru import logger
@@ -445,6 +446,99 @@ def hydrate_console_generation_settings(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleConversationHydrationData:
+    """Unpublished bulk read results for one exact persisted conversation."""
+
+    conversation_id: str
+    nodes: tuple[ConsoleChatMessage, ...] = field(repr=False)
+    active_leaf_id: str | None
+    active_leaf_before_id: str | None
+    continuation_rows: list[dict[str, Any]] | None = field(repr=False)
+    generation_rows: dict[str, Any] | None = field(repr=False)
+
+
+async def prepare_console_session_data(
+    *, app: Any, store: Any, conversation_id: str, tree: Mapping[str, Any]
+) -> ConsoleConversationHydrationData:
+    """Read size-dependent hydration data off-loop without publishing a session.
+
+    Args:
+        app: Profile owner supplying the message/attachment database.
+        store: Store supplying the persistence reader, never mutated here.
+        conversation_id: Exact durable conversation being restored.
+        tree: Previously loaded full conversation tree.
+
+    Returns:
+        Detached nodes, cursor and optional bulk persistence metadata. The caller
+        must revalidate authority after awaiting this read and before publication.
+    """
+    db = getattr(app, "chachanotes_db", None)
+    persistence = store.persistence
+    persistence_db = getattr(persistence, "db", None)
+    databases = tuple(
+        {
+            id(value): value for value in (db, persistence_db) if value is not None
+        }.values()
+    )
+    # A :memory: DB is connection-local; retain its existing inline behavior.
+    threaded = not any(
+        getattr(database, "is_memory_db", False) for database in databases
+    )
+
+    def read() -> ConsoleConversationHydrationData:
+        try:
+            nodes = console_messages_from_conversation_tree(tree, db=db)
+            cursor_reader = getattr(db, "get_conversation_active_cursor", None)
+            if callable(cursor_reader):
+                leaf, before = cursor_reader(conversation_id)
+            else:
+                leaf = getattr(db, "get_conversation_active_leaf", lambda _: None)(
+                    conversation_id
+                )
+                before = None
+            continuation_rows = None
+            getter = getattr(persistence_db, "get_messages_for_conversation", None)
+            if callable(getter):
+                try:
+                    continuation_rows = getter(conversation_id, limit=100_000)
+                except Exception:  # noqa: BLE001 - publication retains continuation quarantine
+                    logger.warning("Console continuation restore was unavailable.")
+            ids = {
+                node.persisted_message_id for node in nodes if node.persisted_message_id
+            }
+            ids.update(
+                str(row["id"])
+                for row in continuation_rows or ()
+                if row.get("id") is not None
+            )
+            generation_rows = None
+            getter = getattr(persistence, "get_generation_metadata_for_messages", None)
+            if ids and callable(getter):
+                try:
+                    generation_rows = getter(sorted(ids))
+                except Exception:  # noqa: BLE001 - optional sidecars retain existing fallback
+                    logger.warning(
+                        "Console resume generation-metadata batch fetch failed."
+                    )
+            return ConsoleConversationHydrationData(
+                conversation_id,
+                tuple(nodes),
+                leaf,
+                before,
+                continuation_rows,
+                generation_rows,
+            )
+        finally:
+            if threaded:
+                for database in databases:
+                    close = getattr(database, "close_connection", None)
+                    if callable(close):
+                        close()
+
+    return await asyncio.to_thread(read) if threaded else read()
+
+
 async def hydrate_console_session(
     *,
     app: Any,
@@ -459,6 +553,7 @@ async def hydrate_console_session(
     target_scope_type: str | None = None,
     target_workspace_id: str | None = None,
     activate: bool = True,
+    prepared_data: ConsoleConversationHydrationData | None = None,
 ) -> Any:
     """Create a Console session from a persisted tree.
 
@@ -484,6 +579,8 @@ async def hydrate_console_session(
             conversation carries none.
         activate: Whether to activate the hydrated session after its policy
             state has been restored.
+        prepared_data: Optional off-loop bulk reads for this exact conversation;
+            callers must revalidate their binding before supplying them.
 
     Returns:
         The newly created `ConsoleChatSession`, activated when ``activate``
@@ -521,15 +618,24 @@ async def hydrate_console_session(
     # branches (not just the latest) is what makes off-path siblings
     # navigable (swipe) right after resume.
     db = getattr(app, "chachanotes_db", None)
-    all_nodes = console_messages_from_conversation_tree(tree, db=db)
-    cursor_reader = getattr(db, "get_conversation_active_cursor", None)
-    if callable(cursor_reader):
-        active_leaf_id, active_leaf_before_id = cursor_reader(target)
+    if prepared_data is not None:
+        if prepared_data.conversation_id != target:
+            raise ValueError("Conversation hydration identity changed")
+        all_nodes = list(prepared_data.nodes)
+        active_leaf_id, active_leaf_before_id = (
+            prepared_data.active_leaf_id,
+            prepared_data.active_leaf_before_id,
+        )
     else:
-        active_leaf_id = getattr(
-            db, "get_conversation_active_leaf", lambda _target: None
-        )(target)
-        active_leaf_before_id = None
+        all_nodes = console_messages_from_conversation_tree(tree, db=db)
+        cursor_reader = getattr(db, "get_conversation_active_cursor", None)
+        if callable(cursor_reader):
+            active_leaf_id, active_leaf_before_id = cursor_reader(target)
+        else:
+            active_leaf_id = getattr(
+                db, "get_conversation_active_leaf", lambda _target: None
+            )(target)
+            active_leaf_before_id = None
     raw_runtime_backend = conversation.get("runtime_backend")
     if type(raw_runtime_backend) is str:
         runtime_backend = raw_runtime_backend
@@ -593,6 +699,7 @@ async def hydrate_console_session(
         character_name=character_name,
         user_display_name_override=roleplay_context.user_name_override,
         character_system_template=roleplay_context.character_system_template,
+        **({"prepared_data": prepared_data} if prepared_data is not None else {}),
         activate=False,
     )
     try:

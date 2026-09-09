@@ -876,6 +876,70 @@ class TTSEventHandler:
             playback_lifecycle=event.playback_lifecycle,
         )
 
+    async def speak_guarded_utterance(
+        self,
+        text: str,
+        *,
+        assistant_kind: str | None,
+        character_ref: CharacterRef | None,
+        expected_destination_fingerprint: str,
+        validator: Callable[[], bool],
+    ) -> bool:
+        """Speak app-owned, named Buddy text through existing TTS authority.
+
+        The caller validates the exact source/binding and supplies previously
+        confirmed destination authority. Completion means playback terminated,
+        not merely that synthesis produced an artifact. Cancellation stops only
+        this request's generation/stream/file owner; it never sends a bare Stop.
+        """
+        if not is_console_speech_destination(expected_destination_fingerprint):
+            raise ValueError("A confirmed speech destination is required.")
+        finished: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        played = False
+
+        def report(state: str) -> None:
+            nonlocal played
+            if state == "playing":
+                played = True
+            elif state in {"stopped", "failed"} and not finished.done():
+                finished.set_result(played and state == "stopped")
+
+        owner = TTSPlaybackLifecycle(
+            message_id=f"buddy-{uuid4().hex}", request_id=1,
+            validator=validator, callback=report,
+        )
+        try:
+            if not owner.is_current():
+                return False
+            resolution = await self._resolve_speech_request_identity(
+                text=text, assistant_kind=assistant_kind, character_ref=character_ref,
+            )
+            if not owner.is_current():
+                return False
+            prepared = await self._prepare_tts_text(
+                text, owner.message_id, playback_lifecycle=owner,
+            )
+            if prepared is None or not owner.is_current():
+                return False
+
+            def generation_finished(ok: bool) -> None:
+                if ok is not True:
+                    owner.report_terminal("failed")
+
+            await self._admit_tts_generation(
+                text=prepared, message_id=owner.message_id, voice=None,
+                resolution=resolution, outcome_callback=generation_finished,
+                expected_destination_fingerprint=expected_destination_fingerprint,
+                playback_lifecycle=owner,
+            )
+            if not owner.is_current() and not finished.done():
+                return False
+            return await finished
+        finally:
+            await self.handle_tts_playback(TTSPlaybackEvent(
+                action="stop", message_id=owner.message_id, playback_lifecycle=owner,
+            ))
+
     async def speak_utterance(
         self,
         text: str,
@@ -1703,6 +1767,8 @@ class TTSEventHandler:
             admitted_provider_id: str,
             admitted_endpoint: str,
         ) -> bool:
+            if playback_lifecycle is not None and not playback_lifecycle.is_current():
+                return False
             if expected_destination_fingerprint is None:
                 return True
             try:
@@ -1717,7 +1783,7 @@ class TTSEventHandler:
 
         admission_authorizer = (
             authorize_destination
-            if expected_destination_fingerprint is not None
+            if expected_destination_fingerprint is not None or playback_lifecycle is not None
             else None
         )
 

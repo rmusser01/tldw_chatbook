@@ -4205,10 +4205,27 @@ class ConsoleWorkspaceController:
         self.push_screen(
             WorkspaceCreateModal(
                 registry_service=registry_service,
+                persona_service=getattr(self.app_instance, "local_character_persona_service", None),
                 description="Local workspace created from Console.",
             ),
             self._handle_workspace_create_result,
         )
+
+    def _open_workspace_persona_default(self, workspace_id: str) -> None:
+        """Edit future defaults for the requested workspace without changing sessions."""
+        from ...Widgets.workspace_persona_default import WorkspacePersonaDefaultModal
+
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None or not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
+            return
+        record = registry.get_workspace(workspace_id)
+        if record is None or record.archived:
+            self.app_instance.notify("This workspace is unavailable.", severity="warning")
+            return
+        self.push_screen(WorkspacePersonaDefaultModal(
+            registry, getattr(self.app_instance, "local_character_persona_service", None),
+            workspace_id,
+        ))
 
     def _handle_workspace_create_result(
         self, result: WorkspaceCreateResult | None

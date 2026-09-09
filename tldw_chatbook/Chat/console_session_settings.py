@@ -2368,3 +2368,14 @@ def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
         "draft": "unsaved draft",
     }.get(readiness.credential_source, "present")
     return f"Credential: {source} (not verified)"
+
+
+@dataclass(frozen=True)
+class ConsoleAssistantStartup:
+    """Resolved settings and identity for one new conversation."""
+
+    settings: ConsoleSessionSettings
+    assistant_kind: str = "generic"
+    assistant_id: str = "console"
+    persona_memory_mode: str | None = None
+    notice: str = ""

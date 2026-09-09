@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Static
 
@@ -23,6 +24,10 @@ from tldw_chatbook.Skills_Interop.project_skills_discovery import (
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Utils.input_validation import sanitize_string
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.workspace_persona_default import (
+    WorkspacePersonaPicker,
+    WorkspacePersonaSelection,
+)
 from tldw_chatbook.Workspaces.registry_service import (
     LocalWorkspaceRegistryService,
     WorkspaceRegistryServiceError,
@@ -120,6 +125,7 @@ class WorkspaceCreateModal(
         self,
         *,
         registry_service: LocalWorkspaceRegistryService,
+        persona_service: Any = None,
         description: str = "Created from the workspace setup dialog.",
     ) -> None:
         """Build the dialog against a registry, with per-surface provenance.
@@ -133,6 +139,8 @@ class WorkspaceCreateModal(
         """
         super().__init__()
         self._registry = registry_service
+        self._personas = persona_service
+        self._persona_selection = WorkspacePersonaSelection()
         #: Provenance stored on the created ``WorkspaceRecord`` (TASK-17962):
         #: each surface (Console/Settings/Library) passes its own wording so
         #: a workspace's origin is still visible after creation -- restoring
@@ -197,7 +205,7 @@ class WorkspaceCreateModal(
             if workspace_created
             else self._offer_profile_interview_value
         )
-        with Vertical(id="workspace-create-modal"):
+        with VerticalScroll(id="workspace-create-modal"):
             yield Static("New Workspace", classes="console-modal-header")
             yield Static(
                 _WORKSPACE_EXPLAINER, id="workspace-create-explainer", markup=False
@@ -207,6 +215,12 @@ class WorkspaceCreateModal(
                 id="workspace-create-name",
                 placeholder="Workspace name",
                 compact=True,
+            )
+            yield WorkspacePersonaPicker(
+                self._personas,
+                selection=self._persona_selection,
+                allow_auto=True,
+                disabled=workspace_created,
             )
             with Horizontal(id="workspace-create-folder-row"):
                 yield Input(
@@ -330,6 +344,7 @@ class WorkspaceCreateModal(
         (and an unchecked "make active" box back to checked).
         """
         self._name_value = self.query_one("#workspace-create-name", Input).value
+        self._persona_selection = self.query_one(WorkspacePersonaPicker).selection()
         self._folder_path_value = self.query_one(
             "#workspace-create-folder-path", Input
         ).value
@@ -535,13 +550,15 @@ class WorkspaceCreateModal(
         # this try so a raise resets _committed instead of permanently
         # locking the Create button for the rest of the session.
         try:
+            assistant_kwargs = self.query_one(WorkspacePersonaPicker).creation_kwargs()
             workspace_id, generated_name = next_local_workspace_identity(self._registry)
             self._registry.create_workspace(
                 workspace_id=workspace_id,
                 name=name or generated_name,
                 description=self._description,
+                **assistant_kwargs,
             )
-        except WorkspaceRegistryServiceError as exc:
+        except (ValueError, WorkspaceRegistryServiceError) as exc:
             # Nothing was committed -- let the user fix the name/folder and
             # retry rather than permanently locking the dialog.
             self._committed = False

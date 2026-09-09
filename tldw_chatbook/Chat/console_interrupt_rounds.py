@@ -36,8 +36,10 @@ from __future__ import annotations
 
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from contextlib import nullcontext
+from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
@@ -174,6 +176,27 @@ def unpark_round_payload(
         store.pop(round_id, None)
 
 
+@dataclass
+class _DecisionClock:
+    """Volatile answerable-time budget; never included in a card payload."""
+
+    remaining: float
+    updated_at: float
+    payload: dict[str, Any]
+    answerable: bool = False
+    requires_head: bool = True
+
+    def update(self, now: float, answerable: bool) -> None:
+        if self.answerable:
+            self.remaining = max(0.0, self.remaining - (now - self.updated_at))
+        self.updated_at = now
+        self.answerable = answerable
+        self.payload["timeout_seconds"] = self.remaining
+        self.payload["deadline_monotonic"] = (
+            now + self.remaining if answerable else None
+        )
+
+
 class InterruptRoundHost:
     """Own the registries, payload maps, and FIFO-head render contract."""
 
@@ -193,6 +216,105 @@ class InterruptRoundHost:
         self.payloads: dict[str, dict[str, dict[str, Any]]] = {
             kind: {} for kind in KIND_SETTER_ATTRS
         }
+        # None preserves the setter-based contract for non-Textual callers.
+        # A reused screen explicitly reports suspend/resume, including modals.
+        self.view_visible: bool | None = None
+        self._decision_views: dict[object, tuple[str, frozenset[str]]] = {}
+        self._retained_decision_targets: dict[
+            str, tuple[weakref.ReferenceType[Any], int, bool]
+        ] = {}
+
+    def retain_decision_target(self, session_id: str) -> None:
+        """An explicit Buddy opener makes this exact session's cards recoverable."""
+        session = next(
+            (row for row in self._seams.store.sessions() if row.id == session_id), None
+        )
+        if session is not None:
+            with self.lock:
+                self._retained_decision_targets[session_id] = (
+                    weakref.ref(session),
+                    session.conversation_binding_revision,
+                    session.ephemeral,
+                )
+
+    def has_retained_decision_target(self, session_id: str | None) -> bool:
+        """Wake-only, closed, replaced or repurposed slots gain no Buddy capability."""
+        with self.lock:
+            retained = self._retained_decision_targets.get(session_id)
+        if retained is None:
+            return False
+        reference, revision, ephemeral = retained
+        session = reference()
+        return bool(
+            session is not None
+            and session.runtime_backend == "local"
+            and session.conversation_binding_revision == revision
+            and session.ephemeral == ephemeral
+            and any(row is session for row in self._seams.store.sessions())
+        )
+
+    def set_decision_view(
+        self,
+        owner: object,
+        session_id: str | None,
+        *,
+        kinds: tuple[str, ...] = tuple(KIND_SETTER_ATTRS),
+    ) -> None:
+        """Claim/release a visible exact-session decision projection, such as Buddy."""
+        with self.lock:
+            if session_id is None:
+                self._decision_views.pop(owner, None)
+            else:
+                self._decision_views[owner] = (session_id, frozenset(kinds))
+        self.refresh_decision_clocks()
+
+    def set_view_visible(self, visible: bool) -> None:
+        """Account for the old visibility interval before changing clock activity."""
+        self.view_visible = visible
+        self.refresh_decision_clocks()
+        if not visible:
+            self.announce_hidden_decisions()
+
+    def refresh_decision_clocks(self) -> None:
+        """Charge only a visible session's FIFO head, across every decision kind."""
+        with self.lock:
+            active_session_id = self._active_session_id()
+            now = time.monotonic()
+            for kind, states in self.registries.items():
+                for state in states.values():
+                    clock = state.get("decision_clock")
+                    if not isinstance(clock, _DecisionClock):
+                        continue
+                    session_id = state.get("session_id")
+                    head = head_payload_locked(self.payloads[kind], session_id)
+                    answerable = (
+                        (
+                            self.view_visible is not False
+                            and self._setter(kind) is not None
+                            and (not session_id or session_id == active_session_id)
+                        )
+                        or any(
+                            session_id == target and kind in kinds
+                            for target, kinds in self._decision_views.values()
+                        )
+                    ) and (not clock.requires_head or head is clock.payload)
+                    clock.update(now, answerable)
+
+    def announce_hidden_decisions(self) -> None:
+        """Notify once per live round, including one hidden after it was mounted."""
+        announce = getattr(self._seams, "announce_hidden_decision", None)
+        if not callable(announce):
+            return
+        with self.lock:
+            pending = []
+            for kind, states in self.registries.items():
+                for state in states.values():
+                    if state.get("attention_announced") or state.get("revoked"):
+                        continue
+                    state["attention_announced"] = True
+                    pending.append((state.get("session_id", ""), kind))
+        for session_id, kind in pending:
+            announce(session_id, kind)
 
     # -- setter / app access (always late-bound) -----------------------
 
@@ -211,9 +333,7 @@ class InterruptRoundHost:
         """Retain ``payload``; return whether it is now its session's head."""
         return park_round_payload(self.lock, self.payloads[kind], round_id, payload)
 
-    def head_round_payload(
-        self, kind: str, session_id: str
-    ) -> dict[str, Any] | None:
+    def head_round_payload(self, kind: str, session_id: str) -> dict[str, Any] | None:
         """The payload whose card ``session_id`` should show (remaining-time snapshot)."""
         return head_round_payload(self.lock, self.payloads[kind], session_id)
 
@@ -266,6 +386,7 @@ class InterruptRoundHost:
                 target = self._active_session_id()
             elif target != self._active_session_id():
                 return
+            self.refresh_decision_clocks()
             payload = self.head_round_payload(kind, target)
             setter(payload)
             hook = after if after is not None else self.after_remount.get(kind)
@@ -430,14 +551,15 @@ class InterruptRoundHost:
                 or None for the legacy no-session shape.
             owning_session_id: The session whose head is re-derived at
                 teardown.
-            deadline: ``time.monotonic()`` deadline, or None to wait
-                indefinitely.
+            deadline: Initial ``time.monotonic()`` deadline, or None to wait
+                indefinitely. Finite budgets advance only while the owning
+                session's FIFO head can be answered on the visible Console.
             is_parked: True when the round belongs to a non-viewed session.
             announce_detached: Detached-view announcer; returns True when
                 it announced instead of mounting.
             human_wait_run_id: Run id for ``use_human_input_wait``, or None.
             on_cancelled: Runs once when the session cancel fires mid-wait.
-            on_timeout: Runs once when ``deadline`` passes.
+            on_timeout: Runs once when the answerable-time budget is exhausted.
             check_revoked: Whether a ``revoked`` stamp wins over "decided".
             on_teardown: Returns True to keep the payload parked.
             before_wait: Runs once inside the wait mark before polling.
@@ -458,6 +580,17 @@ class InterruptRoundHost:
             if on_outcome is not None:
                 on_outcome("revoked")
             return "revoked"
+        clock = None
+        if deadline is not None:
+            now = time.monotonic()
+            clock = _DecisionClock(
+                max(0.0, float(payload.get("timeout_seconds", deadline - now))),
+                now,
+                payload,
+                requires_head=session_id is not None,
+            )
+            with self.lock:
+                state["decision_clock"] = clock
         is_head = True
         if session_id is not None:
             add = getattr(self._seams, "add_pending_round", None)
@@ -468,7 +601,10 @@ class InterruptRoundHost:
             app = getattr(self._seams, "app", None)
             park_toast = getattr(self._seams, "park_pending_approval", None)
             if announce_detached is not None and announce_detached():
-                pass  # announced app-wide instead of mounting: no view can show it
+                with self.lock:
+                    state["attention_announced"] = True
+            elif self.view_visible is False:
+                self.announce_hidden_decisions()
             elif is_parked:
                 if app is not None and park_toast is not None:
                     app.call_from_thread(park_toast, session_id)
@@ -476,13 +612,13 @@ class InterruptRoundHost:
                 setter = self._setter(kind)
                 if app is not None and setter is not None:
                     app.call_from_thread(setter, payload)
+            self.refresh_decision_clocks()
             # A sweep can revoke and pop the round between registration and
             # here; a round that is no longer registered never announces
             # itself (no bell for a dead round, no zero-total "raised").
             with self.lock:
-                still_live = (
-                    self.registries[kind].get(round_id) is state
-                    and not bool(state.get("revoked"))
+                still_live = self.registries[kind].get(round_id) is state and not bool(
+                    state.get("revoked")
                 )
             if still_live:
                 self._note_pending(kind, raised=True)
@@ -509,7 +645,8 @@ class InterruptRoundHost:
                             on_cancelled()
                         outcome = "cancelled"
                         break
-                    if deadline is not None and time.monotonic() >= deadline:
+                    self.refresh_decision_clocks()
+                    if clock is not None and clock.remaining <= 0:
                         if on_timeout is not None:
                             on_timeout()
                         outcome = "timeout"
