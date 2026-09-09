@@ -491,6 +491,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         use_console = self.query_one("#library-prompt-insert-console", Button)
         use_console.display = clean_saved
         use_console.disabled = busy
+        # task-32074 (fix round 2): keep the row's own display in lockstep
+        # with its one control -- see the matching compose-time assignment.
+        self.query_one("#library-prompt-header-actions").display = clean_saved
         more = self.query_one("#library-prompt-more-actions", Button)
         more.display = clean_saved
         more.disabled = busy
@@ -1034,18 +1037,30 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
 
     def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
         """Render the controller-derived Prompt pager without recalculation."""
+        # task-32067: Media's one-page rule (task-28016 + task-31237), applied
+        # here -- "Page 1 of 1", the boundary reasons and the two dead
+        # "○ Previous ○ Next" forms all say the same nothing under a list that
+        # fits one page. The range stays; everything returns with a page 2.
         with Vertical(id="library-prompts-pager"):
-            copy = " · ".join(part for part in (pager.range_copy, pager.page_copy) if part)
+            parts = (
+                (pager.range_copy,)
+                if pager.single_page
+                else (pager.range_copy, pager.page_copy)
+            )
             yield Static(
-                copy,
+                " · ".join(part for part in parts if part),
                 id="library-prompts-page-label",
                 markup=False,
             )
-            reasons = tuple(
-                dict.fromkeys(
-                    reason
-                    for reason in (pager.previous_reason, pager.next_reason)
-                    if reason
+            reasons = (
+                ()
+                if pager.single_page
+                else tuple(
+                    dict.fromkeys(
+                        reason
+                        for reason in (pager.previous_reason, pager.next_reason)
+                        if reason
+                    )
                 )
             )
             yield Static(
@@ -1054,6 +1069,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 classes="destination-purpose",
                 markup=False,
             )
+            if pager.single_page and not pager.retry_visible:
+                return
             previous_disabled = pager.previous_disabled or self.mutation_in_flight
             next_disabled = pager.next_disabled or self.mutation_in_flight
             toolbar = Horizontal(classes="ds-toolbar")
@@ -1304,6 +1321,45 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         compact=True,
                         disabled=self.mutation_in_flight,
                     )
+                # task-32074: the prompt's primary outbound action, in the
+                # header directly under the mode tabs -- the same place the
+                # Media Reader keeps its own "Use in Console" (its action row
+                # sits beside the Read/Analysis/Highlights/Info row, not in
+                # it). At the bottom of the editor (row 49 of 52 live) it was
+                # below every field and the whole history region.
+                #
+                # Fix round 1: its OWN row, not a fourth control inside
+                # ``#library-prompt-mode-controls``. That row is a bare
+                # Horizontal with no overflow rule, and the prompts work pane
+                # floors at 48 cells: measured, a fourth ~16-cell control
+                # starts at column 48 and lands entirely outside a 44-cell
+                # canvas. Same ruling as task-30043 on the media canvas, where
+                # a fourth action got its own row for exactly this reason.
+                header_actions = Horizontal(
+                    id="library-prompt-header-actions", classes="ds-toolbar"
+                )
+                header_actions.styles.height = "auto"
+                with header_actions:
+                    use_console = Button(
+                        "Use in Console",
+                        id="library-prompt-insert-console",
+                        classes="library-canvas-action console-action-primary",
+                        compact=True,
+                        disabled=item_locked,
+                    )
+                    use_console.display = (
+                        not self.conflict
+                        and editor_state.prompt_id is not None
+                        and not self.dirty
+                    )
+                    yield use_console
+                # task-32074 (fix round 2): the row itself carries
+                # ``ds-toolbar`` (min-height 1, a raised background), so with
+                # the button hidden -- every dirty edit, every new prompt,
+                # the conflict state -- it still painted a bare full-width
+                # strip under the mode tabs. Only ONE control lives in this
+                # row today, so its display always follows the button's.
+                header_actions.display = use_console.display
                 yield Static(
                     self.basic_unavailable_reason,
                     id="library-prompt-mode-reason",
@@ -1565,15 +1621,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 )
                 save.display = not self.conflict and (is_new or self.dirty)
                 yield save
-                use_console = Button(
-                    "Use in Console",
-                    id="library-prompt-insert-console",
-                    classes="library-canvas-action console-action-primary",
-                    compact=True,
-                    disabled=item_locked,
-                )
-                use_console.display = not self.conflict and not is_new and not self.dirty
-                yield use_console
+                # task-32074: "Use in Console" moved up into
+                # ``#library-prompt-mode-controls`` -- see the header above.
                 more = Button(
                     "More actions",
                     id="library-prompt-more-actions",

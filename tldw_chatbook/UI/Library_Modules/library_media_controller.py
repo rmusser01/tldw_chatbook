@@ -3300,16 +3300,22 @@ class LibraryMediaController:
             )
         except (NoMatches, QueryError):
             return False
+        focused = self.focused
+        items_focused = focused is not None and (
+            focused is shell.items or shell.items in focused.ancestors
+        )
+        if items_focused:
+            # task-32060: standing ON the list is the list surface, whatever
+            # the Reader's exit says. The exit check below used to run first,
+            # so in every layout with a real exit (100x30: Library collapsed,
+            # Items beside the Reader) "s" was inert from a focused row and
+            # the footer dropped its chip -- critique #8, forcing the mouse.
+            return True
         if self._library_media_reader_exit_available(shell.effective_layout):
             # Not the three-pane shell: this Reader has a real exit, and
             # "list" is reachable again through it.
             return False
-        if not require_focus:
-            return True
-        focused = self.focused
-        return focused is not None and (
-            focused is shell.items or shell.items in focused.ancestors
-        )
+        return not require_focus
 
     @on(Button.Pressed, "#library-media-edit")
     def handle_library_media_edit(self, event: Button.Pressed) -> None:

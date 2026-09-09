@@ -96,6 +96,14 @@ the accepted import's current state or actual result. A forced repeat submit
 is refused with `An import is already in progress.` The result stays available
 until you choose **Cancel**, open **Review…**, or begin a new import draft.
 
+If the import is still running after about three seconds, the line becomes
+`Inspecting/importing… · still working · Cancel` and a **Cancel** button
+appears under it. Pressing it stops the wait and leaves
+"Import cancelled · check the skills list before retrying." — the import
+itself runs on a worker thread that cannot be interrupted, so it may still
+have landed, which is why the receipt says to check rather than promising
+nothing happened.
+
 Chatbook inspects a folder or archive before importing it:
 
 - A package with one installable skill proceeds to import and trust review.
@@ -423,3 +431,7 @@ Library-wide "Chunking Lab | Try selected text" header strip, which paints
 on this canvas too, was undocumented everywhere; it is described once on
 the [Library overview](../library.md) and cross-referenced here. No other
 claim on this page changed.)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a skill
+import that outlives the patience window offers Cancel and never blocks
+leaving the screen).*

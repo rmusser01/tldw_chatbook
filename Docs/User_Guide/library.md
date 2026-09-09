@@ -438,6 +438,12 @@ returning from its item) focuses the list's first row, so ↑/↓/Enter work
 immediately without tabbing to find it. Escape then reads the surface
 you're on:
 
+- **While a long operation is running** (a Folder files folder change, a
+  skill import, an export bundle write) — Escape, the back cue and Ctrl+Q
+  all still work. A wait that outlives about three seconds says so in its
+  own status line ("… · still working · Cancel") and offers a **Cancel**
+  beside it; what a wait can refuse is a *second* write of the same kind,
+  never your way out.
 - **In any search or filter box** — the rail's **Search Library…** box, a
   canvas's own filter, the Search / RAG query box — Escape hands focus to
   the first control on the canvas, so the next key you press is a canvas
@@ -750,3 +756,7 @@ columns it still paints beside the rail; only the below-64-column
 single-stage layout drops it (task-32066);
 (3) the **Chunking Lab / Try selected text** strip under the header, which
 paints on every Library canvas, was undocumented (task-32064).)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: Library's
+structural waits report "still working · Cancel" past three seconds and never
+gate Escape, the back cue, the palette or Quit).*
