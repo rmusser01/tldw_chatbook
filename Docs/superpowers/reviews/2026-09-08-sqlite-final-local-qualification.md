@@ -283,3 +283,16 @@ unqualified. An available CI-only3.12.10 pin is proposed but not yet authorized
 or applied. The [attempt report](2026-09-08-sqlite-macos-concurrency-evidence.md)
 preserves exact commit/job/log diagnosis and limits. No local host change or
 broader qualification replay occurred; task In Progress, V2 disabled.
+
+## Subsequent fresh macOS concurrency success
+
+After the user approved a CI-only3.12.10 pin, reviewed fix `90e60aea42` produced
+[run34294412119](https://github.com/rmusser01/tldw_chatbook/actions/runs/34294412119):
+**11 exact cases passed in11.61s**, no skips/errors/failures or pytest warnings.
+The allocation/acquisition/disposal control passed on macOS15.7.9 ARM64,
+Python3.12.10 and SQLite3.49.1. Root independently verified the downloaded JUnit
+identities and fixed metadata/control; the [attempt report](2026-09-08-sqlite-macos-concurrency-evidence.md)
+preserves run/job/SHA/artifact identity, raw-evidence retention and CI warnings.
+This satisfies Task14/AC15 only. It does not qualify the unchanged local Mac or
+Python3.12.11, erase the first setup failure, or waive remaining platform,
+optional or static gates. TASK-31942 remains In Progress; Canvas V2 is disabled.

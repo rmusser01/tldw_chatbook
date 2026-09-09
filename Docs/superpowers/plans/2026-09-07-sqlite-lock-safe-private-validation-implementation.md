@@ -1495,7 +1495,7 @@ no new runtime, permission, dependency or release-policy boundary.
 - One push-triggered job, restricted to the dedicated branch
   `codex/task-31942-macos-concurrency-evidence`. No pull-request, default-branch,
   schedule or broad-suite trigger. No modification of other workflows.
-- Runner `macos-15` (GitHub-hosted ARM64), Python `3.12.11`, job timeout30min.
+- Runner `macos-15` (GitHub-hosted ARM64), Python `3.12.10`, job timeout30min.
   Read-only `contents: read`, no secrets or write token, checkout exact
   `github.sha` with persisted credentials disabled. No canceling others' runs.
 - Install the checkout with existing `python -m pip install -e ".[dev]"`
@@ -1565,6 +1565,30 @@ that pin amendment and a fresh exact-commit run await approval under the CI-fix
 workflow. No pin change/retry has occurred. AC15 stays unchecked and Task14's
 product qualification remains incomplete. Evidence:
 Docs/superpowers/reviews/2026-09-08-sqlite-macos-concurrency-evidence.md.
+
+Task14 fix round1 approved: the user answered yes to changing only the CI pin
+to3.12.10 and rerunning. This supersedes only the original3.12.11 pin and permits
+a non-force fast-forward push of the reviewed fix to the existing dedicated
+branch. FIX_BASE `752a9ebd5f0f6be2b6573b33112a46421205aeab`. No new ADR; ADR125
+unchanged. First amend the existing pin expectation and observe its failure,
+then change the single workflow value and run only the existing15CI-contract
+tests plus scoped static checks. Append fix evidence to the existing report;
+root owns commits, fix-only review, exact-SHA push/run and evidence inspection.
+No new installer, test framework, production/local runtime change, action-version
+update, local control/product test, main/dev mutation, PR/rebase/merge or broader
+qualification replay. A new run must pass the same control/exact11JUnit gates;
+record its actual Python/SQLite/macOS/architecture without claiming3.12.11 parity.
+
+Task14 completed with fix `90e60aea42`, scoped fix-only review approved, and
+root committed15contract passes0.61s/no warnings. New exact push-run34294412119/
+job102287782445 passed in54s; isolatedlockcontrol successful, exact11productcases
+passed11.61s with no skips/failures/errors/pytestwarnings. Root independently
+validated downloaded JUnit identities, fixed metadata and complete4fileartifact.
+RuntimePython3.12.10/SQLite3.49.1/macOS15.7.9/ARM64; artifact10082585312 preserved
+in retained SDD archive with hashes. Existing action/Node deprecation warnings
+remain disclosed. AC15 checked; originalfinalACs/platform/optional/static gates
+and V2disabled status remain unchanged. No localprobe/install/productrun or
+main/dev/PR/rebase/merge action. Historicalfailedsetup evidence remains intact.
 
 ## Spec coverage and handoff
 

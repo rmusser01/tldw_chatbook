@@ -667,3 +667,24 @@ or rerun. See the [full attempt evidence](../superpowers/reviews/2026-09-08-sqli
 
 No local host/dependency change, local semaphore probe, broad run or release-gate
 waiver. Original final ACs and AC15 remain unchecked; task In Progress, V2 off.
+
+## Fresh macOS concurrency qualification passed — 2026-09-08
+
+The user-approved CI-only Python3.12.10 amendment in `90e60aea42` changes just
+the workflow pin and existing expectation. Test-first RED/GREEN and independent
+fix-only review passed; root committed15contract tests pass in0.61s with no
+warnings, and scoped Ruff/format/whitespace checks pass.
+
+[Run34294412119](https://github.com/rmusser01/tldw_chatbook/actions/runs/34294412119)
+on that exact commit passed: **11 product cases in11.61s, zero skips, failures,
+errors, or pytest warnings**. The isolated lock allocation/acquisition/disposal
+control passed. Runtime: **Python3.12.10 / SQLite3.49.1 / macOS15.7.9 / ARM64**.
+Root independently checked all exact JUnit identities, complete four-file
+artifact, metadata and control; raw bytes/hashes remain in the retained SDD
+archive. Existing Node/action deprecation warnings are disclosed separately.
+
+See the [full evidence](../superpowers/reviews/2026-09-08-sqlite-macos-concurrency-evidence.md).
+Task14/AC15 are satisfied for this fresh runner. Earlier failed setup evidence
+is preserved; no local host/Python changes, broad rerun, main/dev update or
+PR/merge occurred. Other platform/optional/static gates remain open, original
+final ACs remain unchecked, TASK-31942 stays In Progress and Canvas V2 disabled.

@@ -108,6 +108,85 @@ change product requirements, but would qualify 3.12.10 rather than reproduce
 the local 3.12.11 build. Following the CI-fix skill's approval gate, that change
 and a new exact-commit run await user approval. AC15 remains unchecked.
 
+## Approved setup correction: CI-only Python3.12.10
+
+The user subsequently approved the proposed pin change and rerun. Task14's
+current plan/brief now specifies3.12.10; the unavailable3.12.11 first attempt
+above remains historical evidence. The bounded fix changed only the workflow
+Python value and its existing contract expectation. No new installer or
+action-version upgrade was included. Independent fix-only review and committed
+focused verification preceded the exact-SHA fast-forward push to the existing
+evidence branch.
+
+Fix commit: `90e60aea42910096a5d59f5c03b7f3eee749f00d`, exactly two substitutions.
+The amended existing expectation failed against the old pin (1 failure0.16s),
+then passed after the workflow change (1 pass0.12s). Implementer covering file:
+15passed0.78s. Root independently verified the covering file before and after
+commit: **15 passed in0.61s**, exit0 with no warnings for each run. Ruff,
+formatter and whitespace checks pass. No local lock/product probe was run.
+
+Independent fix-only review found the unavailable-build issue **addressed**,
+with no new Critical/Important breakage or other findings in the fix. Its two
+execution limitations are resolved by the exact remote evidence below; local
+`actionlint` remains unavailable and no result is claimed for it.
+
+## Remote attempt 2: all eleven exact cases pass
+
+- [Run34294412119, attempt1](https://github.com/rmusser01/tldw_chatbook/actions/runs/34294412119),
+  triggered by the new push, not a blind retry of the failed run.
+- [Job102287782445](https://github.com/rmusser01/tldw_chatbook/actions/runs/34294412119/job/102287782445),
+  conclusion **success**, all steps successful; duration54s.
+- SHA `90e60aea42910096a5d59f5c03b7f3eee749f00d`; branch
+  `codex/task-31942-macos-concurrency-evidence`.
+- Runner `GitHub Actions 1000450693`, image `macos-15-arm64`, image version
+  `20260829.0321.1`; job ran `2026-09-09T00:18:10Z`–`00:19:04Z`.
+- Runtime metadata: **Python3.12.10, SQLite3.49.1, macOS15.7.9, arm64**.
+
+The isolated stdlib spawn-Lock control reported:
+
+```json
+{"acquired": true, "allocated": true, "owned_cleanup": "finalizer_completed", "probe": "stdlib_spawn_lock"}
+```
+
+The single serial product invocation completed with **11 passed in11.61s**, no
+pytest warnings, and no skip/failure/error. JUnit records11cases in11.605s with
+zero errors, failures, and skips. Every parameter ID in the three-group table
+above appears exactly once. The in-job validator reported exact11passing cases.
+
+Root downloaded only the exact run's named artifact to
+`/private/tmp/task-31942-macos-evidence.YJFavY`. Independent local XML analysis
+checked the complete testcase identity multiset, one suite, exact11count, no
+outcome children, and zero aggregate errors/failures/skips. It also checked the
+four-file artifact allowlist, exact commit/Python/architecture metadata and all
+control fields. The analysis exited0; the full pytest log and relevant exact-job
+setup/control/test/validation/upload log lines corroborate those results. No
+Chatbook import, semaphore allocation or product test occurred locally.
+
+[Artifact10082585312](https://github.com/rmusser01/tldw_chatbook/actions/runs/34294412119/artifacts/10082585312)
+is1390bytes; the API and upload log agree on zip SHA256
+`49d5a41e78faa8b1a8590bce9ba0178d26b6f4df1ac20182198b1d5300fb0ce0`.
+GitHub reports expiry `2026-12-08T00:18:02Z`. Exact downloaded file bytes and
+their SHA256 hashes are also preserved as base64 in the retained SDD archive
+`task-14-run-34294412119-artifact.json`, so evidence does not depend solely on
+the remote retention window or the temporary download directory.
+
+| Downloaded file | Bytes | SHA256 |
+| --- | --- | --- |
+| `task-31942-junit.xml` | 1900 | `1c22d50452d6dd68eb1792e1f5fd0a7eb1c3a402029f4ee72396fbfad419c589` |
+| `task-31942-lock-control.json` | 108 | `1e3b43da18c08b573e21bd6c621a1c96b9b9e1e711ac77b74db9cfd1de426766` |
+| `task-31942-metadata.txt` | 117 | `ce063abf9d74f28fdf88c02b2fabec54aadb4e3f5f500977c9a7ec4602a11eb7` |
+| `task-31942-pytest.log` | 446 | `7e97c8966f3996f8b9453a9ed9f9a70dc2c2ce5ac9a1e40702021030eb352662` |
+
+The CI service output is not warning-free: the existing action versions emit
+Node20-to24 migration, `punycode`, and `url.parse()` deprecation warnings.
+Those are retained as tooling limitations, not hidden or fixed by this pin-only
+change. The pytest result itself emitted no warnings.
+
+This closes Task14's fresh-runner concurrency qualification and AC15. It does
+not establish results for local Python3.12.11, the unchanged exhausted Mac,
+other platforms, optional cases, or the aggregate static gate. No additional
+run was triggered after collecting this successful attempt.
+
 ## Qualification limits
 
 No result from this job qualifies the unchanged local Mac, historical skipped
