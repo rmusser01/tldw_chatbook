@@ -99,22 +99,10 @@ editor's own Back control returns to its list.
   The folder tree is ordered by title, which is the order the database pages
   notes in, so it carries no sort control; the sort control belongs to the
   flat list shown before any folder tree has loaded.
-  flat list shown when no folder tree is loaded.
-
-  *Verified against fix/library-uat-31796-31797 — 2026-09-06 (task-31796: the
-  list row no longer keeps the pre-rename "Untitled" title until a filter
-  re-query).*
 
   In a narrow list pane the toolbar's action groups stack one action per
   line rather than running off the pane edge, so every action stays
   pressable.
-
-  *Verified against fix/library-notes-list — 2026-09-09 (task-32127: the list
-  no longer sits at 38 columns beside an empty work area, and its action
-  groups stack rather than clip in a narrow pane; task-32137: rows
-  carry an age and same-folder duplicate titles name their folder;
-  task-32128: the tree's title order is the database's, so Sort is not
-  offered there).*
 - **Note work area** — opens when you click a note. **Edit** shows the title
   and body, **Preview** renders the Markdown, and **Info** holds keywords,
   dates, version details, copy/export actions, and Delete. Save status and
@@ -863,7 +851,8 @@ task-32135: review rows are one line each, grouped, with per-group **Skip all**
 / **Create all**.)*
 
 *Verified against fix/library-notes-list — 2026-09-09 (task-32127: the list
-no longer sits at 38 columns beside an empty work area; task-32137: rows
+no longer sits at 38 columns beside an empty work area, and its action
+groups stack rather than clip in a narrow pane; task-32137: rows
 carry an age, and same-folder duplicate titles name their folder;
 task-32128: the tree's title order is the database's, so Sort is not
 offered there; task-32123: the delete receipt's Undo/Dismiss actions are no

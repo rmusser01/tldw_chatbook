@@ -12650,6 +12650,7 @@ because the contract that resource enforces is now untested. The replacement
 fixture (`_LockHoldingScan` in `Tests/UI/test_library_crit8_waits.py`) fails on
 the unfixed code and passes on the fixed code; the older one could not tell the
 two apart.
+
 ## A widget id that becomes conditional must be reconciled across all of Tests/
 
 **task-32128, Library ▸ Notes critique wave, 2026-09-09.** The wave gated
