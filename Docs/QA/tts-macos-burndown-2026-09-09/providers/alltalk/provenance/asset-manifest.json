@@ -1,0 +1,25 @@
+{
+  "source_url": "https://github.com/coqui-ai/TTS/releases/download/v0.6.1_models/tts_models--en--vctk--vits.zip",
+  "release": "v0.6.1_models",
+  "archive_path": "/private/tmp/tts-macos-burndown/alltalk/assets/tts_models--en--vctk--vits.zip",
+  "archive_bytes": 147691678,
+  "archive_sha256": "ad753e5200614907627495b6177a08d755df1dbbde30eb6e31264caa2a3f3eaa",
+  "upstream_digest_available": false,
+  "files": [
+    {
+      "path": "/private/tmp/tts-macos-burndown/alltalk/source/models/vits/tts_models--en--vctk--vits/config.json",
+      "bytes": 12012,
+      "sha256": "b0ec9a22153002cb5fdadb270f6c1363460c720560c13a356d018f24a7f6cca6"
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/alltalk/source/models/vits/tts_models--en--vctk--vits/model_file.pth",
+      "bytes": 159111821,
+      "sha256": "cbec6b420abcc677fe4a357994ee68f8f3b6fa84502e7accad42b11a79f6ad0d"
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/alltalk/source/models/vits/tts_models--en--vctk--vits/speaker_ids.json",
+      "bytes": 1745,
+      "sha256": "da4a2ecf091625a5e061e8e87c5e6032cc26f40ea7fa1981085a830a924d2887"
+    }
+  ]
+}

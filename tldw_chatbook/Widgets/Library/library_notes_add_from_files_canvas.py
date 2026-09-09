@@ -28,6 +28,7 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     NotesSyncConflictChoice,
 )
 from tldw_chatbook.Notes.notes_sync_models import validate_notes_sync_opaque_id
+from tldw_chatbook.Utils.Utils import elide_path_middle
 
 
 _CHOICE_SLUGS = {
@@ -352,7 +353,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             )
             yield Static("Folder", markup=False)
             yield Static(
-                setup.folder or "No folder selected",
+                elide_path_middle(setup.folder) if setup.folder
+                else "No folder selected",
                 id="notes-sync-folder-summary",
                 classes="destination-purpose",
                 markup=False,
@@ -990,7 +992,9 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             folder = self.query("#notes-sync-folder-summary")
             if folder:
                 folder.first(Static).update(
-                    snapshot.setup.folder or "No folder selected"
+                    elide_path_middle(snapshot.setup.folder)
+                    if snapshot.setup.folder
+                    else "No folder selected"
                 )
             server = self.query("#notes-sync-server-disabled-reason")
             if server:

@@ -1,0 +1,5 @@
+onnxruntime cpuid_info warning: Unknown CPU vendor. cpuinfo_vendor value: 0
+PHASE linux-warmup
+PHASE linux-cancel
+PHASE linux-successor
+LAUNCH_RECORD /private/tmp/tts-macos-burndown/linux/linux-onnx-live-20260909-02-launch.json

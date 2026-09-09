@@ -1663,6 +1663,9 @@ class TTSEventHandler:
         owner.cancel_as_success = superseded
         if not task.cancel():
             return False
+        # The replacing admission may be cancelled while joining cleanup, so
+        # acknowledge this exact owner when its task finishes regardless.
+        task.add_done_callback(lambda _done: owner.lifecycle.report_terminal("stopped"))
         await asyncio.gather(task, return_exceptions=True)
         if self._console_generation_owner is owner:
             self._console_generation_owner = None
@@ -3297,6 +3300,38 @@ class TTSEventHandler:
         if isinstance(error, TTSRegistryClosedError):
             return "The TTS service is unavailable"
         if isinstance(error, TTSOperationError):
+            if (
+                error.code == "dependency_missing"
+                and error.recovery_action == "install_kokoro_language_extras"
+            ):
+                return (
+                    "Kokoro language dependencies are missing; install 'misaki[ja]' "
+                    "for Japanese or 'misaki[zh]' for Chinese in the TTS environment"
+                )
+            if (
+                error.code == "dependency_missing"
+                and error.recovery_action == "install_kokoro_pytorch"
+            ):
+                return (
+                    "Kokoro PyTorch needs 'tldw_chatbook[local_tts]' on Python "
+                    "3.11 or 3.12; select ONNX on Python 3.13+"
+                )
+            if (
+                error.code == "configuration_invalid"
+                and error.recovery_action == "install_kokoro_language"
+            ):
+                return (
+                    "Kokoro language setup failed; for English, run "
+                    "'python -m spacy download en_core_web_sm' in the TTS environment"
+                )
+            if (
+                error.code == "request_invalid"
+                and error.recovery_action == "split_kokoro_text"
+            ):
+                return (
+                    "Kokoro non-English speech is limited to 510 phonemes per "
+                    "segment; split long text with newlines"
+                )
             if (
                 error.code == "request_invalid"
                 and error.recovery_action == "shorten_text"

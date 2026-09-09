@@ -1,0 +1,303 @@
+"""Phase-C residency hazards: the three rulings the design record required.
+
+``Tests/UI/test_library_phase_c_switch_residency.py`` pins the WIN (no
+whole-screen recompose per rail-mode switch). This file pins the three
+hazards that win creates, each named in
+``Docs/superpowers/specs/2026-09-01-library-screen-decomposition-design.md``
+("Design record — phase C, media"):
+
+1. **A hidden widget still receives and dispatches events** (verified Textual
+   8.2.8 behaviour #3): ``Button.press()`` checks the BUTTON's own ``disabled``
+   and ``display``, neither of which an ancestor's ``display = False`` touches,
+   so a resident-but-unselected canvas would happily open the media viewer
+   while the user is looking at Notes.
+2. **``_sync_library_canvas`` off-route stops raising** (the TASK-32089
+   ruling): before residency the dispatcher's ``query_one`` raised
+   ``NoMatches`` and the blanket ``except`` converted it into a whole-screen
+   recompose. With the canvas resident the query SUCCEEDS and the sync
+   silently repaints an invisible canvas.
+3. **TASK-31521 screen reuse composes with residency**: suspend/resume must
+   not disturb the resident set or which member of it is showing.
+"""
+from __future__ import annotations
+
+import pytest
+from textual.widgets import Button
+
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_library_shell import (
+    LIBRARY_TEST_SIZE,
+    LibraryHarness,
+    _active_library_screen,
+    _seed_conversations,
+    _two_conversations,
+    _two_media_items,
+    _wait_for_library_shell,
+)
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_NOTES,
+)
+from tldw_chatbook.UI.Library_Modules.canvas_sync import (
+    _library_resident_canvas_awaits_display,
+    _sync_library_canvas,
+)
+
+
+async def _settle(pilot, passes: int = 40, delay: float = 0.01) -> None:
+    for _ in range(passes):
+        await pilot.pause(delay)
+
+
+async def _press_rail_row(screen, pilot, row_id: str) -> None:
+    screen.query_one(f"#library-row-{row_id}", Button).press()
+    await _settle(pilot)
+
+
+async def _enter_media_then_notes(host, pilot):
+    """Leave the Library on Notes with the Media canvas resident and hidden."""
+    screen = _active_library_screen(host)
+    await _wait_for_library_shell(screen, pilot)
+    await _settle(pilot, passes=30)
+    if screen.query("#library-rail-explore-all"):
+        screen.query_one("#library-rail-explore-all", Button).press()
+        await _settle(pilot, passes=30)
+    await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_MEDIA)
+    await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_NOTES)
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_hidden_resident_media_canvas_does_not_process_row_presses() -> None:
+    """A row press inside the off-route resident canvas must not navigate.
+
+    The exact shape the design record's Textual finding #3 predicted: the row
+    Button is neither disabled nor ``display: none`` itself -- only its canvas
+    ancestor is -- so ``press()`` fires and, ungated, reaches
+    ``handle_library_media_row`` and opens the media viewer underneath a user
+    who is reading Notes.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _enter_media_then_notes(host, pilot)
+
+        media_canvas = screen.query_one("#library-media-canvas")
+        assert not media_canvas.display, (
+            "precondition: the media canvas must be resident and hidden"
+        )
+        rows = media_canvas.query(".library-media-row")
+        assert rows, "precondition: the resident canvas still holds its rows"
+
+        rows.first(Button).press()
+        await _settle(pilot)
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen._media_state.view == "list", (
+            "an off-route row press opened the media viewer"
+        )
+        assert screen.query_one("#library-notes-canvas").display, (
+            "the Notes canvas stopped showing after an off-route media press"
+        )
+
+
+@pytest.mark.asyncio
+async def test_off_route_media_sync_is_refused_rather_than_repainting() -> None:
+    """TASK-32089: the dispatcher refuses a canvas its route does not own.
+
+    This pins the COMPOSED refusal, not the route-ownership guard
+    (``_library_canvas_kind_owns_route``) in isolation. Here the off-route
+    media canvas is ALSO hidden, so since task 2.5 the display half
+    (``_library_resident_canvas_awaits_display``, checked in the media branch)
+    refuses first: deleting the ownership guard alone still returns False and
+    reds nothing. The isolating pin for the ownership guard is
+    ``test_ownership_guard_alone_refuses_a_displayed_off_route_sync`` below,
+    which reconstructs the one window -- off-route but still displayed -- that
+    only the ownership guard covers.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _enter_media_then_notes(host, pilot)
+
+        media_canvas = screen.query_one("#library-media-canvas")
+        before = [id(child) for child in media_canvas.children]
+
+        assert _sync_library_canvas(screen, "media") is False
+        await _settle(pilot, passes=10)
+
+        assert [id(child) for child in media_canvas.children] == before, (
+            "the off-route sync rebuilt the hidden canvas's children"
+        )
+        # And the refusal must NOT be the old whole-screen fallback in
+        # disguise: the resident set is untouched.
+        assert screen.query("#library-notes-canvas")
+        assert screen.query_one("#library-notes-canvas").display
+
+
+@pytest.mark.asyncio
+async def test_ownership_guard_alone_refuses_a_displayed_off_route_sync() -> None:
+    """I1 isolating pin: the one refusal only ``_library_canvas_kind_owns_route``
+    covers.
+
+    ``test_off_route_media_sync_is_refused_rather_than_repainting`` above cannot
+    isolate the route-ownership guard: its off-route media canvas is also
+    hidden, so the display half refuses first. This reconstructs the
+    outgoing-displayed window the ownership guard alone catches -- a resident
+    canvas that is off-route (the route owns Notes) yet still DISPLAYED, as the
+    outgoing canvas is for the tens of ms before the swap hides it. With
+    ``display`` True the display half returns False, so the ownership guard is
+    the only refusal left.
+
+    Mutation check: make ``_library_canvas_kind_owns_route`` ``return True`` and
+    THIS pin reds -- the sync proceeds and rebuilds the displayed canvas's
+    children -- while the hidden-canvas pin above stays green.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _enter_media_then_notes(host, pilot)
+
+        media_canvas = screen.query_one("#library-media-canvas")
+        # Force the outgoing-displayed window: off-route (the route owns Notes)
+        # but still shown, so the display half cannot be what refuses.
+        media_canvas.display = True
+        assert not _library_resident_canvas_awaits_display(media_canvas), (
+            "precondition: a displayed canvas must not trip the display half"
+        )
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES, (
+            "precondition: the route must own Notes, not the media canvas"
+        )
+
+        before = [id(child) for child in media_canvas.children]
+        assert _sync_library_canvas(screen, "media") is False
+        await _settle(pilot, passes=10)
+
+        assert [id(child) for child in media_canvas.children] == before, (
+            "the off-route sync rebuilt the displayed canvas's children"
+        )
+
+
+@pytest.mark.asyncio
+async def test_suspend_and_resume_keep_the_resident_set_and_its_selection() -> None:
+    """TASK-31521 composition: screen reuse does not disturb residency."""
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _enter_media_then_notes(host, pilot)
+        canvas_host = screen.query_one("#library-canvas")
+        before = tuple(child.id for child in canvas_host.children)
+        assert "library-media-canvas" in before
+        assert "library-notes-canvas" in before
+
+        screen.on_screen_suspend()
+        await _settle(pilot, passes=5)
+        assert screen._library_screen_suspended is True
+        assert tuple(child.id for child in canvas_host.children) == before
+
+        screen.on_screen_resume()
+        await _settle(pilot, passes=20)
+
+        assert screen._library_screen_suspended is False
+        assert tuple(child.id for child in canvas_host.children) == before
+        assert screen.query_one("#library-notes-canvas").display
+        assert not screen.query_one("#library-media-canvas").display
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+
+
+@pytest.mark.asyncio
+async def test_route_marker_class_tracks_the_selection_across_switches() -> None:
+    """The marker classes are a state projection, so pin them to the state.
+
+    Phase C replaced ~35 "is this shell mounted?" route probes with
+    ``.library-media-route`` / ``.library-notes-route`` on the ONE resident
+    browse shell. That trade is only safe while the marker and
+    ``_library_selected_row_id`` cannot disagree, and ``apply_route`` is the
+    single writer that keeps them together -- on the compose path AND on the
+    resident switch path. This walks both paths (first entry into each route
+    is a recompose; the switches after it are not) and checks the pair after
+    every one.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _settle(pilot, passes=30)
+        if screen.query("#library-rail-explore-all"):
+            screen.query_one("#library-rail-explore-all", Button).press()
+            await _settle(pilot, passes=30)
+
+        for row_id in (
+            LIBRARY_ROW_BROWSE_MEDIA,
+            LIBRARY_ROW_BROWSE_NOTES,
+            LIBRARY_ROW_BROWSE_MEDIA,
+            LIBRARY_ROW_BROWSE_NOTES,
+        ):
+            await _press_rail_row(screen, pilot, row_id)
+            shell = screen.query_one("#library-browse-reader-shell")
+            media_selected = row_id == LIBRARY_ROW_BROWSE_MEDIA
+            assert screen._library_selected_row_id == row_id
+            assert shell.has_class("library-media-route") is media_selected
+            assert shell.has_class("library-notes-route") is not media_selected
+            assert bool(screen.query(".library-media-route")) is media_selected
+            assert bool(screen.query(".library-notes-route")) is not media_selected
+
+
+@pytest.mark.asyncio
+async def test_on_route_sync_is_not_refused_by_the_ownership_guard() -> None:
+    """The guard must refuse OFF-route syncs only -- pin both directions.
+
+    ``test_off_route_media_sync_is_refused_rather_than_repainting`` pins the
+    refusal. Nothing pinned the other direction, and the guard fails CLOSED:
+    ``_library_canvas_kind_owns_route`` refuses whenever the selected row is
+    not in the kind's owner set, so a row id that the map does not list would
+    silently stop the route's OWN canvas from ever repainting -- a dead canvas
+    rather than a loud error. That is exact today (every one of the
+    dispatcher's media/notes call sites runs with the matching row selected),
+    but "exact today" is precisely the kind of thing a test should hold still.
+
+    Mutation-verified: widening the guard to refuse the resident kinds
+    unconditionally leaves the off-route test green and reds this one.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _enter_media_then_notes(host, pilot)
+
+        # On Notes: the Notes canvas is the one the route owns.
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert _sync_library_canvas(screen, "notes", allow_screen_fallback=False) is True
+        await _settle(pilot, passes=10)
+        assert screen.query_one("#library-notes-canvas").display
+
+        # And symmetrically on Media, so the pin is not notes-shaped.
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_MEDIA)
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert _sync_library_canvas(screen, "media", allow_screen_fallback=False) is True
+        await _settle(pilot, passes=10)
+        assert screen.query_one("#library-media-canvas").display

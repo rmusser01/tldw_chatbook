@@ -1,0 +1,192 @@
+{
+  "task": "TASK-32165",
+  "qualified_boundary": "Production StreamingPcmSink drain, live Stop and successor drain",
+  "result": "6/6 corrected controls passed",
+  "final_run": "runs/controls-02/evidence.json",
+  "started_utc": "2026-09-09T07:54:20.690239+00:00",
+  "ended_utc": "2026-09-09T07:54:40.383746+00:00",
+  "worker_pid": 28566,
+  "worker_exit_code": 0,
+  "worker_seconds": 20.555730125,
+  "owned_child_joined": true,
+  "actual_library": {
+    "sounddevice_requested_name": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.dylib",
+    "dladdr_loaded_path": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.19.8.dylib",
+    "sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+    "portaudio_version": [
+      1246976,
+      "PortAudio V19.7.0-devel, revision unknown"
+    ]
+  },
+  "source_commit": "1240f06f0227ae3d0b4967f41012221c3d7cb6cf",
+  "application_source_hashes": {
+    "tldw_chatbook/Audio/streaming_sink.py": "e8015d3521eb46a236fbf472abda8b4b32ce76482a045f18ca08b75b45650365",
+    "tldw_chatbook/Audio/__init__.py": "15b0839936a8e9702419c6b60f036c66db867da3f8a0901c215e282ffd5dd5ae",
+    "tldw_chatbook/Utils/optional_deps.py": "fd240308eff63f8cc6611b0275bb3feb9d3c1565ff33ed1bacf83da54b8e7d03",
+    "tldw_chatbook/config.py": "3711d7a4ad92abc2dedc8c06fc1b9cfdee1b21c910d2e2494b1e6fcb0d900784",
+    "tldw_chatbook/Utils/paths.py": "bd4d83b4f65d0882ed4c030beb972c71879c7fcf0e88bcd152dafe683ce4b0ec"
+  },
+  "application_source_unchanged": true,
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "versions": {
+    "sounddevice": "0.5.6",
+    "numpy": "1.26.4"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "profile_isolation": {
+    "paths": {
+      "config": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/config/config.toml",
+      "data": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/data/portaudio_controls",
+      "chachanotes_db": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/db/chachanotes.db",
+      "tts_profiles_db": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/data/portaudio_controls/tldw_chatbook_tts_profiles.db",
+      "chat_dictionaries": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/data/portaudio_controls/chat_dicts",
+      "prompts_db": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/db/prompts.db",
+      "media_db": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/private/db/media.db"
+    },
+    "config_sha256": "768758cc23d9b45502502d50df7bd690a3a0ae4868673271553f15c0809ad203",
+    "forbidden_imports": [],
+    "default_profile_audit_guard": "active through worker exit",
+    "denied_accesses": []
+  },
+  "phases": [
+    {
+      "id": "1-drain-first",
+      "mode": "drain",
+      "status": "passed",
+      "device_frames": 117120,
+      "source_frames": 117120,
+      "source_pcm_sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659",
+      "callback_pcm_sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659",
+      "source_found_in_callback_pcm": true,
+      "stop_seconds": null,
+      "queued_seconds_at_stop": null,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "drained"
+    },
+    {
+      "id": "1-stop-second",
+      "mode": "stop",
+      "status": "passed",
+      "device_frames": 12480,
+      "source_frames": 293760,
+      "source_pcm_sha256": "5dab2440fc4ca22d08e9c1836b33e3ce487d73590b4d9514171175ffc243d63e",
+      "callback_pcm_sha256": "94fc3308b891d4827264ae6f8212ea20d1cd79e710b75b24236e5a3900ac4da8",
+      "source_found_in_callback_pcm": false,
+      "stop_seconds": 0.11679129069671035,
+      "queued_seconds_at_stop": 11.72,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "stopped"
+    },
+    {
+      "id": "1-successor-drain-second",
+      "mode": "drain",
+      "status": "passed",
+      "device_frames": 97920,
+      "source_frames": 97920,
+      "source_pcm_sha256": "f5c1831290c1e8a76df973fd3b3b4d68ca87180668121c48420ee3e7f4d93b46",
+      "callback_pcm_sha256": "f5c1831290c1e8a76df973fd3b3b4d68ca87180668121c48420ee3e7f4d93b46",
+      "source_found_in_callback_pcm": true,
+      "stop_seconds": null,
+      "queued_seconds_at_stop": null,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "drained"
+    },
+    {
+      "id": "2-drain-first",
+      "mode": "drain",
+      "status": "passed",
+      "device_frames": 117120,
+      "source_frames": 117120,
+      "source_pcm_sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659",
+      "callback_pcm_sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659",
+      "source_found_in_callback_pcm": true,
+      "stop_seconds": null,
+      "queued_seconds_at_stop": null,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "drained"
+    },
+    {
+      "id": "2-stop-second",
+      "mode": "stop",
+      "status": "passed",
+      "device_frames": 12480,
+      "source_frames": 293760,
+      "source_pcm_sha256": "5dab2440fc4ca22d08e9c1836b33e3ce487d73590b4d9514171175ffc243d63e",
+      "callback_pcm_sha256": "94fc3308b891d4827264ae6f8212ea20d1cd79e710b75b24236e5a3900ac4da8",
+      "source_found_in_callback_pcm": false,
+      "stop_seconds": 0.11100945807993412,
+      "queued_seconds_at_stop": 11.72,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "stopped"
+    },
+    {
+      "id": "2-successor-drain-second",
+      "mode": "drain",
+      "status": "passed",
+      "device_frames": 97920,
+      "source_frames": 97920,
+      "source_pcm_sha256": "f5c1831290c1e8a76df973fd3b3b4d68ca87180668121c48420ee3e7f4d93b46",
+      "callback_pcm_sha256": "f5c1831290c1e8a76df973fd3b3b4d68ca87180668121c48420ee3e7f4d93b46",
+      "source_found_in_callback_pcm": true,
+      "stop_seconds": null,
+      "queued_seconds_at_stop": null,
+      "resources": {
+        "stream_reference": 0,
+        "notify_thread": 0,
+        "notify_queue": 0,
+        "live_registry": 0,
+        "open_streams": 0
+      },
+      "terminal_reason": "drained"
+    }
+  ],
+  "models_initialized": 0,
+  "scope_limitations": [
+    "Six finite saved-WAV controls; no model inference, long stress run or broad race/leak exclusion.",
+    "Physical output callback bytes are observed; no acoustic loopback or subjective listening claim.",
+    "Initial controls-01 passed sink checks but imported the default user profile and is isolation-limited.",
+    "Full repaired-library Higgs model cancellation, successor and content qualification is separate and was pending when this controls package was curated.",
+    "Candidate PR was open/unmerged at the recorded check; no shipped runtime or default library was changed."
+  ]
+}

@@ -811,7 +811,15 @@ def project_library_note_import_snapshot(
     )
     return LibraryNoteImportSnapshot(
         phase=state.phase.value,
-        selected_names=tuple(path.name for path in state.selected_paths),
+        # A folder pick keeps its full absolute path (task-32122 Step 3):
+        # "1 folder selected: notes-review" hid which of two same-named
+        # folders was actually chosen. File picks stay basenames -- the
+        # files list already shows several side by side, where full paths
+        # would overflow every reasonable pane width.
+        selected_names=tuple(
+            str(path) if state.selection_is_folder else path.name
+            for path in state.selected_paths
+        ),
         selection_kind=selection_kind,
         destination=state.destination_input,
         destination_error=state.destination_error,

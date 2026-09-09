@@ -1,0 +1,86 @@
+[
+  {
+    "language": "es",
+    "asr_language": "es",
+    "voice": "ef_dora",
+    "text": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-es.txt",
+    "anchors": [
+      "brújula plateada",
+      "huerto tranquilo",
+      "amanecer dorado"
+    ]
+  },
+  {
+    "language": "fr",
+    "asr_language": "fr",
+    "voice": "ff_siwis",
+    "text": "La boussole argentée ouvre cette réponse. Au milieu se trouve un verger paisible. La réponse se termine par une aube dorée.",
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-fr.txt",
+    "anchors": [
+      "boussole argentée",
+      "verger paisible",
+      "aube dorée"
+    ]
+  },
+  {
+    "language": "hi",
+    "asr_language": "hi",
+    "voice": "hf_alpha",
+    "text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-hi.txt",
+    "anchors": [
+      "चाँदी",
+      "शांत बगीचा",
+      "सुनहरी सुबह"
+    ]
+  },
+  {
+    "language": "it",
+    "asr_language": "it",
+    "voice": "if_sara",
+    "text": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo. La risposta termina con un alba dorata.",
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-it.txt",
+    "anchors": [
+      "bussola argentata",
+      "frutteto tranquillo",
+      "alba dorata"
+    ]
+  },
+  {
+    "language": "pt-br",
+    "asr_language": "pt",
+    "voice": "pf_dora",
+    "text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-pt-br.txt",
+    "anchors": [
+      "bússola prateada",
+      "pomar tranquilo",
+      "amanhecer dourado"
+    ]
+  },
+  {
+    "language": "ja",
+    "asr_language": "ja",
+    "voice": "jf_alpha",
+    "text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-ja.txt",
+    "anchors": [
+      "銀色のコンパス",
+      "静かな果樹園",
+      "朝焼け"
+    ]
+  },
+  {
+    "language": "zh",
+    "asr_language": "zh",
+    "voice": "zf_xiaobei",
+    "text": "银色的指南针开启这段回答。中间是一座安静的果园。这段回答以金色的日出结束。",
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-zh.txt",
+    "anchors": [
+      "银色的指南针",
+      "安静的果园",
+      "金色的日出"
+    ]
+  }
+]

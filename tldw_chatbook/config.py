@@ -3701,36 +3701,36 @@ library_open = true
 items_open = true
 custom_widths_enabled = false
 # Compatibility fallback for fresh profiles; matches LIBRARY_REFERENCE_WIDTH.
-library_width = 31
-items_width = 40
+library_width = 36
+items_width = 50
 
 [library.collections_reader]
 # Environment overrides use TLDW_LIBRARY_COLLECTIONS_READER_<KEY>.
 items_open = true
-items_width = 40
+items_width = 50
 
 [library.conversations_reader]
 # Environment overrides use TLDW_LIBRARY_CONVERSATIONS_READER_<KEY>.
 items_open = true
-items_width = 40
+items_width = 50
 
 [library.notes_reader]
 # Items environment overrides use TLDW_LIBRARY_NOTES_READER_ITEMS_<KEY>.
 # Folder-tree overrides use TLDW_LIBRARY_NOTES_READER_FILES_TREE_<KEY>.
 items_open = true
-items_width = 40
+items_width = 50
 files_tree_open = true
-files_tree_width = 40
+files_tree_width = 50
 
 [library.prompts_reader]
 # Environment overrides use TLDW_LIBRARY_PROMPTS_READER_<KEY>.
 items_open = true
-items_width = 40
+items_width = 50
 
 [library.skills_reader]
 # Environment overrides use TLDW_LIBRARY_SKILLS_READER_<KEY>.
 items_open = true
-items_width = 40
+items_width = 50
 
 # Per-type ingestion options are persisted here by the Library ingest canvas.
 [library.ingest_options]

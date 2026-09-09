@@ -34,7 +34,9 @@ async def test_disabled_served_child_starts_without_canvas_control_secret() -> N
 
     await service.start(100, 40)
 
-    assert service.environment == {"COLUMNS": "100", "ROWS": "40"}
+    assert service.environment == {
+        "COLUMNS": "100", "ROWS": "40", "CHATBOOK_SERVED_CHILD": "1"
+    }
     await service.stop()
 
 
