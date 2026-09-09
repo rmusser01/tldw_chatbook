@@ -5868,3 +5868,18 @@ When a new owner introduces earlier native reads, prove the injected operation i
 the intended resource. Keep process-wide admission reads outside a resource-specific
 counter or mutation barrier; do not loosen native capability or confinement checks
 to make an accidentally triggered fixture pass.
+
+## Probe independent native admission after uncertain aggregate lease close (TASK-31993)
+
+**Incident.** Phase14e's outer backup retained its uncertain operation after a real
+allocation lease closed and its wrapper raised, but cleanup continued releasing the
+independent outer hold. The local pause correctly refused while an independent
+native maintainer entered. Stopping lease retirement at that first uncertainty kept
+the independent native hold and made the exact observer refuse. The controller then
+found the same loop shape in standalone candidate cleanup; its exact native probe
+also entered despite the retained uncertain job.
+
+A retained Python job and local pause refusal do not prove native exclusion. After
+an uncertain subordinate lease retirement, test an independent maintainer against
+the actual authority and scope. Retire only known private test startup fixtures to
+isolate that observation; never clear the uncertain owner to make a probe pass.

@@ -50,7 +50,6 @@ CONNECTION_BACKUP_OWNER_IDS = (
     "db.chachanotes.backup",
     "db.media.backup",
     "db.prompts.backup",
-    "tts.profile_recovery",
 )
 COPY_BACKUP_OWNER_IDS = (
     "recovery.files.tts",
@@ -78,6 +77,7 @@ COPY_BACKUP_OWNER_IDS = (
 )
 OPEN_CONNECTION_BACKUP_OWNER_IDS = (
     "tts.profile_backup",
+    "tts.profile_recovery",
     "tts.profile_migration_backup",
 )
 RESTORE_BACKUP_OWNER_IDS = (

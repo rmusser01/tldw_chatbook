@@ -761,7 +761,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/profile_repository.py | _BackupNativeState.fsync_file | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | connect_private_sqlite | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_create_recovery_backup | backup_connection_to_private | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_create_recovery_backup | backup_open_connections_to_private | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_create_recovery_backup | connect_private_sqlite | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_create_recovery_backup | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_exact_schema_version | connect_private_sqlite | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_online_backup | backup_open_connections_to_private | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_publish_migrated_store | connect_private_sqlite | 2 | unsupported | tts |
@@ -2650,3 +2652,34 @@ BASE. Real ordinary/capture copies cover all three suffixes; actual replacement 
 retires, while a successful retry after an unknown allocation cannot erase that
 older uncertainty. Privacy, no-follow, generation/absence retries and source identity
 checks remain unchanged. No new capture/source/descendant permission is introduced.
+
+### Task10 phase14e continuation — outer snapshot and delegated journal
+
+Both ordinary backup and recovery backup retain `_BackupNativeState` through actual
+snapshot validation, parent/temp/fsync descriptors, native destination and uncertain
+allocation/close outcomes. Recovery now explicitly opens its registered
+`tts.profile_recovery` destination and calls the existing checked open-connections
+helper. Its exact source-close failure/exclusive-lease handoff remains intact and is
+not full current-wrapper/ProfileStoreLease retirement qualification.
+
+The existing ordinary progress/completion path observes the exact native journal;
+observed replacement prevents native close, and only SQLite retires its own normal
+journal. Independent private native maintainers distinguish completed cleanup from
+retained uncertain resources. Test-child startup retirement is explicit diagnostic
+fixture cleanup, never production startup release. Exact source census updates add
+only recovery's actual parent open and explicit destination/checked-helper sites;
+all TTS classifications remain unsupported pending the complete source/runtime graph.
+
+Current wrapper/dual SQLite/FD/sidecars, primary/residual profile locks, actual BLOB
+read/write, migration candidates/rollback/tombstones/journals, restore rebind/quarantine,
+materializers/bundle sessions, dirty UI/service/consumer/artifact and all voice/backend/
+model/audio/process/app/headless/startup routes remain mandatory Task10. Inherited
+three SemLock, two shared-voice path census, exact pet AST and combined-order debts
+are unchanged; diagnostic drift remains Task26. No all-owner capability promotion.
+
+The existing candidate job is associated with its outer record before native effects.
+Standalone candidate cleanup also stops releasing later actual leases after its first
+uncertain lease-close result; independent native admission verifies the retained hold.
+Only an explicit per-call refusal at the original SQLite admission boundary clears
+that current pending target attempt. Same-code errors after native allocation remain
+unknown; standalone kwargs, factory contracts and capture/source scopes are unchanged.

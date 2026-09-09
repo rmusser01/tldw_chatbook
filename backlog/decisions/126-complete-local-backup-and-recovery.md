@@ -614,3 +614,60 @@ BASE. Real ordinary/capture copies cover all three suffixes; actual replacement 
 retires, while a successful retry after an unknown allocation cannot erase that
 older uncertainty. Privacy, no-follow, generation/absence retries and source identity
 checks remain unchanged. No new capture/source/descendant permission is introduced.
+
+### Task10 phase14e — outer snapshot and native journal ownership (rulings89–91)
+
+Use the existing concrete `_BackupNativeState` for both ordinary public backup and
+pre-restore recovery backup. Associate nested snapshot validation uncertainty with
+that exact outer pathname before cleanup. The existing SQLite admission registry
+continues to retain native readers; this adds no second connection registry or
+capture authority. Each ordinary allocation is admitted before marking its pending
+outcome. Returned native descriptors and exact path/parent identities are recorded
+immediately; genuinely unreturned allocations retain the actual outer lease and
+unknown state. No error class, subsequent success or cancelled caller proves native
+retirement.
+
+The recovery caller explicitly owns its `tts.profile_recovery` destination and uses
+`backup_open_connections_to_private` with the existing literal policy. Hidden helper
+close warnings can no longer let this caller report a successful restore. Keep the
+original source-close failure handoff to the repository's exclusive profile lease;
+its exact wrapper and lock retry behavior remains mandatory phase14f work.
+
+Observe the exact temporary `-journal` during the existing ordinary native progress
+and completion boundaries, and recheck it before native close. First observed native
+identity is preserved; observed replacement refuses close before SQLite can remove a
+foreign pathname. Native SQLite retires its own journal normally. No manual residual
+sidecar deletion or permission for directory descendants is introduced. Callback
+errors retain the original body/control-flow signal together with namespace errors;
+existing migration authority quarantine retains its public unavailable contract.
+This is cooperative coordination, not atomic hostile-process substitution detection
+before the first observation or inside a native primitive.
+
+Publication/receipt and durability remain distinct from positive resource retirement.
+Partial/uncertain outcomes retain exact outer ownership after unrelated success,
+caller cancellation and terminal repository close. Ordinary completed refusals must
+still retire positively. Exact current wrapper/dual native handles/ProfileStoreLease,
+BLOBs, migration/restore/rebind/quarantine, materialization/bundles, dirty UI/service,
+voice/model/audio/process and app/headless/startup aggregation remain Task10; no
+Complete/replacement/responder capability or acceptance criterion is promoted.
+
+Ruling92 associates the newly created existing `_CandidateValidationJob` with the
+actual outer record through private `_outer_job` before first admission/callback or
+native effect. Cleanup consults that exact job's uncertainty; standalone validation
+and positively completed refusals keep their ordinary behavior. This is ownership
+association only, with no registry scan or new source/IO/capture permission.
+
+Ruling93 adds one private per-call `_SQLiteAdmissionOutcome`, consumed and removed
+at the original SQLite admission boundary before preflight/constructor/factory
+entry. Only refusal at that concrete boundary can clear the current outer pending
+connection attempt. An identical sanitized error raised by a substituted connector
+after opening a native handle remains unknown. Memory, foreign-source, descriptor,
+capture and custom-factory branches retain their original behavior; factories never
+receive this record. Older uncertainty cannot be cleared by a later successful call.
+
+Ruling94 stops the existing standalone candidate lease-retirement loop immediately
+when its existing error recorder marks uncertainty. A real close-then-wrapper-error
+previously left the candidate job locally retained while releasing every native
+hold. Keep the remaining actual leases, original error and ordinary positive release;
+no retry, registry or interface is added. Outer association is additional protection,
+not a substitute for standalone native exclusion.

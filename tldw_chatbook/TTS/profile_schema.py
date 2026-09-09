@@ -19,8 +19,11 @@ import tempfile
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from tldw_chatbook.TTS.profile_repository import _BackupNativeState
 
 from tldw_chatbook.DB.private_sqlite import (
     connect_private_sqlite,
@@ -2268,6 +2271,8 @@ class _CandidateValidationJob:
         if not self.uncertain:
             for lease in self.leases:
                 attempt(lease.close)
+                if self.uncertain:
+                    break
         if self.attempt is not None:
             self.attempt.close()
         if not self.uncertain:
@@ -2281,11 +2286,14 @@ def validate_profile_candidate(
     path: Path,
     *,
     check_deadline: Callable[[], None] | None = None,
+    _outer_job: _BackupNativeState | None = None,
 ) -> None:
     """Validate a disposable private copy, retaining uncertain native cleanup."""
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
     job = _CandidateValidationJob(path)
+    if _outer_job is not None:
+        _outer_job.candidate_job = job
     body_error: BaseException | None = None
     try:
         job.admit(path if isinstance(path, Path) else None)

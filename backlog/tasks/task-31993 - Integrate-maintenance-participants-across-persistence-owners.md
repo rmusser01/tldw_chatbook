@@ -120,6 +120,17 @@ ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct maintenance source/native lifetime integration under rulings82–84; no capture policy or scope expansion, no Complete/startup promotion.
 
+### Phase14e implementation plan — outer TTS snapshot and delegated journal lifetime
+
+1. Establish real public backup/restore snapshot-close, outer unreturned allocation and native journal substitution REDs; obtain controller ownership ruling before production.
+2. Reuse concrete outer backup state for exact ordinary backup/recovery resources; associate nested validation uncertainty, record unresolved allocations, preserve original errors and native close-once retention without a new connection registry.
+3. Qualify exact native destination journal creation/identity/retirement, abort observed substitution without manual sidecar deletion or callback authority expansion.
+4. Verify targeted public/native/cancellation/result settlement and ordinary reference round trips, affected source census/static checks and self-review.
+5. Update scoped ADR126/inventory/notes, commit and identical dual reports; retain Task31993 In Progress, all AC unchecked and exact remaining Task10 native/runtime obligations.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct approved native ownership integration, preserving ADR028/040/051/023; controller ruling governs any bounded association change.
+
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -856,3 +867,37 @@ preserves every RED/BASE/fixture distinction, exact commands/logs and native lim
 ADR126 rulings82–88; no source/capture/namespace permission expansion. All mandatory
 remaining Task10 native/routes and inherited debts stay open, with In Progress and
 all3 AC unchecked. WholeTask10 independent review remains controller-owned.
+
+### Phase14e — outer snapshot, delegated journal and candidate native continuation
+
+Ordinary backup and recovery backup now retain their exact outer resource record
+through additional snapshot/candidate readers, uncertain allocations and native close.
+The recovery caller owns its registered destination explicitly using the existing
+checked helper. Exact observed native journals are protected at ordinary progress,
+completion and close boundaries. Candidate source uncertainty associates with its
+actual outer record before effects; standalone lease cleanup stops at first uncertain
+retirement. Known pre-resource SQLite admission refusal can retire that current
+attempt, while same-code provider errors after native allocation remain unknown.
+
+Actual REDs cover reader/source close, unreturned allocations, foreign journal
+retirement, hidden recovery destination close, nested refusal availability regression,
+callback precedence and independent native exclusion after lease-close errors.
+Immutable BASE comparison separates the introduced refusal regression from fixture
+seam corrections. Final targeted runs: 62 native/predecessor cases passed; after final
+candidate correction, 45 outer/candidate cases passed, then 4 precise standalone
+close-before/after and positive observer cases passed. Eight public roundtrip/source
+checks and seven exact census checks passed. Shared run: 13 passed with one standalone
+kwargs compatibility failure, corrected in production and explicitly passing in the
+8-case final run. Counts overlap; no full suite. Fatal Ruff, scoped format and
+whitespace checks pass. Existing requests and AST warnings remain.
+
+ADR required: yes (reuse existing). ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct bounded rulings89–94; no new registry, capture/source/descendant or
+callback permission. Source-close/exclusive ProfileStoreLease handoff is preserved;
+full current-wrapper/lease retry remains phase14f. Mandatory current/migration/BLOB/
+restore/rebind/quarantine/materializer/bundle/dirty UI/service/voice/model/audio/process/
+app/headless/startup ownership and inherited debts remain Task10. No Complete,
+replacement, responder or startup promotion; In Progress and all3 AC unchecked.
+Self-review only; controller owns wholeTask10 production review. Full identical dual
+phase14e report records exact commands/logs, RED versus fixture corrections, native
+limits and final commit/clean-status addendum.

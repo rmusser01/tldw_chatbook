@@ -1235,22 +1235,43 @@ def _classify_target(
     )
 
 
+@dataclass
+class _SQLiteAdmissionOutcome:
+    """Per-call proof of admission refusal before source/native preflight."""
+
+    admission_refused: bool = False
+
+
 def _with_storage_admission(function):
     @functools.wraps(function)
     def admitted(owner_id, database, **kwargs):
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
+        outcome = kwargs.pop("_admission_outcome", None)
+        if outcome is not None and type(outcome) is not _SQLiteAdmissionOutcome:
+            raise TypeError("invalid_private_admission_outcome")
         policy = _validated_owner_policy(owner_id)
-        if kwargs.get("_verified_descriptor_fd") is not None or os.fspath(database) == ":memory:" or (
-            kwargs.get("read_only", False) and policy.foreign_read_only_source
+        if (
+            kwargs.get("_verified_descriptor_fd") is not None
+            or os.fspath(database) == ":memory:"
+            or (kwargs.get("read_only", False) and policy.foreign_read_only_source)
         ):
             return function(owner_id, database, **kwargs)
-        from tldw_chatbook.Backup_Recovery.storage_admission import _acquire_capture_storage
-        lease = _acquire_capture_storage(
-            Path(database), owner_id=owner_id,
-            read_only=kwargs.get("read_only", False),
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _acquire_capture_storage,
         )
+
+        try:
+            lease = _acquire_capture_storage(
+                Path(database),
+                owner_id=owner_id,
+                read_only=kwargs.get("read_only", False),
+            )
+        except BaseException:
+            if outcome is not None:
+                outcome.admission_refused = True
+            raise
         factory = kwargs.get("factory", sqlite3.Connection)
         if lease is not None and factory is not sqlite3.Connection:
             # Custom __new__/__init__ may retain a native handle then raise before
@@ -1259,12 +1280,21 @@ def _with_storage_admission(function):
             lease.close()
             raise RecoveryRequired("capture_factory_not_qualified")
         if lease is None:
-            lease = acquire_storage(Path(database))
+            try:
+                lease = acquire_storage(Path(database))
+            except BaseException:
+                # The underlying resource/preflight function was never entered.
+                # Constructor/preflight/connector errors below remain unknown.
+                if outcome is not None:
+                    outcome.admission_refused = True
+                raise
             lease._attach_sqlite(policy, Path(database))
         allocation_started = False
         constructing = True
         try:
-            if not isinstance(factory, type) or not issubclass(factory, sqlite3.Connection):
+            if not isinstance(factory, type) or not issubclass(
+                factory, sqlite3.Connection
+            ):
                 raise RecoveryRequired("connection_factory_not_qualified")
 
             class AdmittedConnection(factory):
@@ -1290,13 +1320,17 @@ def _with_storage_admission(function):
                         raise
                     if not constructing:
                         lease.close()
-                        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+                        from tldw_chatbook.Backup_Recovery import (
+                            storage_admission as storage,
+                        )
 
                         with storage._changed:
                             _ordinary_connections.pop(self, None)
                             participant = getattr(lease, "resource_participant", None)
                             if participant is not None:
-                                from tldw_chatbook.Backup_Recovery.participants import _retired_core_connections
+                                from tldw_chatbook.Backup_Recovery.participants import (
+                                    _retired_core_connections,
+                                )
 
                                 _retired_core_connections.add(self)
                                 participant.connections.pop(self, None)
@@ -1317,7 +1351,9 @@ def _with_storage_admission(function):
             constructing = False
             if getattr(connection, "_admission_close_attempted", False):
                 connection._admission_close_attempted = False
-            if type(connection) is AdmittedConnection and hasattr(lease, "resource_policy"):
+            if type(connection) is AdmittedConnection and hasattr(
+                lease, "resource_policy"
+            ):
                 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
                 with storage._lock:
@@ -1335,6 +1371,7 @@ def _with_storage_admission(function):
             else:
                 lease.close()
             raise
+
     return admitted
 
 

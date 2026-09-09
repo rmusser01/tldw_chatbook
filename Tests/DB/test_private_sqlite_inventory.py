@@ -639,7 +639,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 74)
+        for number in range(1, 75)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 37)
@@ -1075,8 +1075,8 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
 
     assert Counter(row["operation"] for row in backup_rows) == Counter(
         {
-            "backup_connection_to_private": 4,
-            "backup_open_connections_to_private": 1,
+            "backup_connection_to_private": 3,
+            "backup_open_connections_to_private": 2,
             "backup_profile_migration_boundary": 1,
             "copy_private_sqlite": 27,
             "migrate_profile_store_to_candidate": 1,
@@ -1146,7 +1146,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             (
                 "tldw_chatbook/TTS/profile_repository",
                 "TTSProfileRepository._worker_create_recovery_backup",
-                "backup_connection_to_private",
+                "backup_open_connections_to_private",
             ): 1,
             (
                 "tldw_chatbook/TTS/profile_migration_candidate",
