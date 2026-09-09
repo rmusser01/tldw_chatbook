@@ -15,6 +15,9 @@ from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
 )
+from tldw_chatbook.Notes.note_import_plan_models import (
+    NON_IMPORTABLE_CLASSIFICATIONS,
+)
 from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
@@ -34,7 +37,12 @@ _CLASSIFICATION_LABELS = {
 
 # Classifications that carry no payload: their row states the reason instead
 # of an effect, and their group offers no Create all (task-32130/32135).
-_NON_IMPORTABLE = frozenset({"unsupported", "skipped", "empty", "failed"})
+# Derived from the planner's own set (task-32176): the same four names were
+# spelled out by hand here, in the plan model and in the parser's issue
+# contract, which is three places to forget when a classification is added.
+_NON_IMPORTABLE = frozenset(
+    classification.value for classification in NON_IMPORTABLE_CLASSIFICATIONS
+)
 
 
 def _choice_label(*, selected: bool, text: str) -> str:
@@ -625,8 +633,10 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                     markup=False,
                 )
                 # task-32135: settling 71 rows one at a time is not review.
+                # task-32176: the action settles the rendered page, and the
+                # group heading counts that page, so the label says so.
                 yield Button(
-                    "Skip all",
+                    "Skip all on this page",
                     id=f"note-import-group-{classification}-skip",
                     name=f"{classification}:skip",
                     classes=(
@@ -637,7 +647,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 )
                 if classification not in _NON_IMPORTABLE:
                     yield Button(
-                        "Create all",
+                        "Create all on this page",
                         id=f"note-import-group-{classification}-create",
                         name=f"{classification}:create_new",
                         classes=(

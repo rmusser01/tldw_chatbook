@@ -1269,11 +1269,17 @@ class NoteImportExecutor:
             )
             return
 
-        if len(membership_effects) != len(item.memberships):
+        # task-32176: only an approved membership has a durable effect row
+        # (note_import_receipts records one per membership when, and only when,
+        # item.add_membership is set). An Update existing that leaves folder
+        # placement alone still carries the memberships the parser proposed, so
+        # comparing against those aborted the whole run with no receipt.
+        authorized_memberships = item.memberships if item.add_membership else ()
+        if len(membership_effects) != len(authorized_memberships):
             raise ImportReceiptTransitionError(
                 "Membership receipt authority does not match the approved plan."
             )
-        memberships = tuple(zip(item.memberships, membership_effects, strict=True))
+        memberships = tuple(zip(authorized_memberships, membership_effects, strict=True))
         memberships_by_payload: dict[
             int, list[tuple[ProposedFolderMembership, ImportEffectRecord]]
         ] = {}

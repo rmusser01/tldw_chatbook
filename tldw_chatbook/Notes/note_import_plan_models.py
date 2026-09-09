@@ -36,7 +36,7 @@ class ImportClassification(str, Enum):
     FAILED = "failed"
 
 
-_NON_IMPORTABLE_CLASSIFICATIONS = frozenset(
+NON_IMPORTABLE_CLASSIFICATIONS = frozenset(
     {
         ImportClassification.UNSUPPORTED,
         ImportClassification.SKIPPED,
@@ -544,7 +544,7 @@ class ImportPreviewItem:
             raise ValueError("selected_action must be present in allowed_actions.")
         if self.default_action is not _DEFAULT_ACTIONS[self.classification]:
             raise ValueError("default_action does not match the classification.")
-        importable = self.classification not in _NON_IMPORTABLE_CLASSIFICATIONS
+        importable = self.classification not in NON_IMPORTABLE_CLASSIFICATIONS
         if importable and not payloads:
             raise ValueError("Importable items require at least one payload.")
 
@@ -584,7 +584,7 @@ class ImportPreviewItem:
         allowed_actions: tuple[ImportAction, ...],
     ) -> None:
         """Reject classification, match, and action combinations that cannot run."""
-        if self.classification in _NON_IMPORTABLE_CLASSIFICATIONS:
+        if self.classification in NON_IMPORTABLE_CLASSIFICATIONS:
             if allowed_actions != (ImportAction.SKIP,):
                 raise ValueError(
                     "Unsupported, skipped, empty and failed items must only allow Skip."

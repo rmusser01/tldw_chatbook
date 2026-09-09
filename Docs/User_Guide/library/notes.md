@@ -517,8 +517,10 @@ Choose **Check selection** to build a read-only review. Each source is one
 line — path · what will happen · where it lands — with its **Skip** and
 **Create new** controls beside the path. Rows are grouped by outcome (**New**,
 **Unchanged repeat**, **Changed repeat**, **Uncertain match**, **Unsupported**,
-**Skipped**, **Empty**, **Failed**) and each group header carries **Skip all**
-and, where the group can create notes, **Create all** for the rows it counts.
+**Skipped**, **Empty**, **Failed**) and each group header carries **Skip all
+on this page** and, where the group can create notes, **Create all on this
+page** — both act on exactly the rows that page's heading counts, so a later
+page keeps its own choices.
 An empty or whitespace-only file is reported as "Empty file — nothing to
 import." and an application configuration file (a JSON or YAML document with no
 note body) as "Not a note file (app configuration)." A well-formed document
@@ -526,12 +528,18 @@ that simply holds no note — an empty JSON array, a CSV with only headers —
 reads "This source does not contain any notes." None of these is a failure. A
 document that mixes note records with other records is still a failure ("This
 source could not be parsed as notes."), so a damaged export is never presented
-as harmless configuration. A structured source states how many notes it will
+as harmless configuration — and the reason names the record that failed
+("Record 2 of 3 has no note content.", or "Row 3 could not be read as a note."
+for a CSV), so a 200-note export does not have to be bisected by hand. The
+whole file is refused, not partly imported: fix the named record and import
+again. A structured source states how many notes it will
 create, so a two-row CSV reads "create 2 new notes". You can still skip an
 item, create a new note, or, when an existing match is authorized, update its
 content and/or add its folder placement; **Confirm this match**, **Replace note
 content** and **Add folder placement** sit on their own line under the row, so
-they stay reachable in a narrow pane. Uncertain matches must be confirmed. If
+they stay reachable in a narrow pane. **Update existing** works on an unchanged
+repeat too — it replaces the note's content and leaves its folder placement
+alone. Uncertain matches must be confirmed. If
 the imported top-level folder already exists, choose whether to use it, create
 a unique sibling, or enter another name.
 
@@ -920,3 +928,9 @@ the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
 Obsidian vault detection is stated as POSIX-only, since the Windows
 discovery adapter never reports a vault (task-32178).)*
+
+*Verified against fix/library-notes-r-import — 2026-09-09 (task-32176: the
+group bulk actions say **Skip all on this page** / **Create all on this page**;
+a structured source that fails names the record or row that failed; and
+**Update existing** on an unchanged repeat now updates the note instead of
+aborting the run with no receipt.)*

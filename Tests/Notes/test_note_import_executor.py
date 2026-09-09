@@ -160,7 +160,11 @@ def _execution_item(
             ImportAction.CREATE_NEW,
             ImportAction.UPDATE_EXISTING,
         )
-        default_action = ImportAction.CREATE_NEW
+        default_action = (
+            ImportAction.SKIP
+            if resolved_classification is ImportClassification.UNCHANGED_REPEAT
+            else ImportAction.CREATE_NEW
+        )
     return ImportPreviewItem(
         item_id=item_id,
         source=ImportSource(
@@ -4364,3 +4368,44 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         ).fetchone()[0]
         == 1
     )
+
+
+def test_update_existing_on_an_unchanged_repeat_updates_without_new_placement(
+    real_executor,
+) -> None:
+    """task-32176: the review lets an unchanged repeat be switched to Update
+    existing, which leaves folder placement alone. The plan still carries the
+    membership the parser proposed, but the receipt ledger only records a
+    membership effect when the plan approved one, so treating every proposed
+    membership as authorized aborted the whole run with no receipt."""
+    executor, target, receipts, _service, _folders, _db = real_executor
+    existing = target.create_note(
+        note_id="unchanged-repeat-update",
+        payload=_payload(content="Same body"),
+    )
+    item = _execution_item(
+        item_id="unchanged-repeat-update",
+        payloads=(_payload(content="Same body"),),
+        action=ImportAction.UPDATE_EXISTING,
+        classification=ImportClassification.UNCHANGED_REPEAT,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        replace_content=True,
+        add_membership=False,
+    )
+    approved = _approved_execution_plan(item)
+
+    receipt = executor.execute(approved)
+
+    assert (receipt.state, receipt.updated, receipt.failed) == (
+        ImportSessionState.COMPLETED,
+        1,
+        0,
+    )
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.items[0].outcome is ImportItemOutcome.UPDATED
+    assert durable.membership_effects == ()
