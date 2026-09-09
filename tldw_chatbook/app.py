@@ -16141,7 +16141,26 @@ class TldwCli(
                 return
             screen_context = {LIBRARY_NAV_CONTEXT_INGEST: True}
         else:
-            return
+            from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                EXIT_ROUTE_LIBRARY_NOTES,
+            )
+
+            if exit_route != EXIT_ROUTE_LIBRARY_NOTES:
+                return
+            # task-32140: the wizard's "Write your first note" exit -- a
+            # local-first user without a provider still gets a concrete
+            # first action. Not a real tab id; rewritten to TAB_LIBRARY
+            # below (same sentinel-then-rewrite shape as the ingest exit
+            # above), since two different Library destinations both need
+            # to travel as one wizard exit_route.
+            if completed is not True:
+                return
+            if exit_context is not None and (
+                type(exit_context) is not dict or exit_context
+            ):
+                return
+            exit_route = TAB_LIBRARY
+            screen_context = {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True}
 
         # Dismissing a rerun over Console already uncovers that same mounted
         # Console. Replacing it here would interrupt first-chat rollback and

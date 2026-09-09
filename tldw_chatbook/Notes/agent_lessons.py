@@ -18,6 +18,9 @@ from typing import Any, Literal
 
 AGENT_LESSONS_FOLDER = "Agent_Lessons"
 AGENT_LESSON_KEYWORD = "agent-lesson"
+#: task-32126: a first-time user's first question on seeing this seeded
+#: folder is what it is and whether they made it -- one line answers both.
+AGENT_LESSONS_FOLDER_GLOSS = "where Console agents file reusable lessons"
 
 REQUIRED_SECTIONS = (
     "Applicability",
@@ -737,6 +740,7 @@ def _looks_like_placeholder(value: str) -> bool:
 __all__ = [
     "AGENT_LESSON_KEYWORD",
     "AGENT_LESSONS_FOLDER",
+    "AGENT_LESSONS_FOLDER_GLOSS",
     "CREDENTIAL_REFUSAL_CODE",
     "INVALID_FORMAT_CODE",
     "NO_FAILED_ATTEMPTS",

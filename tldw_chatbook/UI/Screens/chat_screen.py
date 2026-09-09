@@ -488,8 +488,10 @@ from ...Constants import (
     CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
     CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET,
     CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+    TAB_LIBRARY,
     TAB_SETTINGS,
     TAB_WATCHLISTS_COLLECTIONS,
     WATCHLISTS_NAV_CONTEXT_BRIEFING_ID,
@@ -656,6 +658,7 @@ from ...Widgets.Console.console_model_popover import (
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
+    CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION,
 )
 from ...Widgets.destination_rail import (
     DestinationRailSectionHeader,
@@ -4643,6 +4646,15 @@ class ChatScreen(BaseAppScreen):
             await self._open_console_provider_recovery()
         elif action_id == CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION:
             self._apply_detected_local_server()
+        elif action_id == CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION:
+            # task-32140: the "Get started" card's needs-no-provider action
+            # -- same destination as the command-palette "new_note" quick
+            # action.
+            self.post_message(
+                NavigateToScreen(
+                    TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True}
+                )
+            )
 
     async def action_show_workbench_help(self) -> None:
         """Open contextual help for visible Console Workbench actions."""
