@@ -411,8 +411,10 @@ The active conversation's independent Assistant policy is the authority:
 Blocked advertises and dispatches no built-in Library tool; Allowed selects
 one mutually exclusive provider surface for the next agent generation.
 
-- **Direct** exposes the **15 direct Library tools** for bounded list, count,
-  get, and lexical-search operations.
+- **Direct** exposes all **21 descriptor-backed Library tools**: 15 bounded
+  list/count/get/lexical-search tools, five chunk-tool descriptors, and the
+  note-save descriptor. Writing tools remain subject to their named policy
+  actions and the security boundaries above.
 - **RAG** exposes exactly one tool, **`search_library_rag`**, scoped to Notes,
   Media, and Conversations and dependent on an available populated index.
 
