@@ -1582,3 +1582,64 @@ review threads are resolved. Fresh fetch finds dev `80f29a9a1dcd9307662714233c65
 containing 51 changed files since the prior base, including Library loaders,
 handoff, recovery copy, Media polish and their tests. Integrate and qualify
 that increment next; do not reuse this source qualification for changed runtime.
+
+### Wave ten: dev80f29 integration and bounded forwarding cleanup (2026-09-09 UTC)
+
+Rebase completed at `2c7e99f60c` onto `80f29a9a1dcd9307662714233c65605e4c517b11`.
+The prior checkpoint remains recoverable through
+`codex/pr2427-before-wave10-rebase-20260908`. Conflict resolution retains the
+new conversation-workspace callback in the existing assembly helper and the
+Media deep-link Reader-width restoration after the reviewed surface-settlement
+and supersession fence. The new diagnostic is a fixed-label workspace-link
+warning with exception capture, permitted by ADR-029's 2026-09-08 application
+log-readability amendment. Its statement was explicitly reviewed; the rebuilt
+inventory already matches exactly (600 owners, 7668 TASK-494 calls), so no
+blind regeneration or logging-policy change was needed.
+
+Step 70 reproduced Screen growth to 32193 lines / 1238 methods. It preserves
+all nine incoming methods and removes nine existing two-line forwarders:
+Media row-owner adoption, presentation epoch, successful-focus eligibility,
+settlement deadline, Trash post-paint focus, page-control focus, filter request;
+Notes role target and work-first preferences. Their concrete Screen/test callers
+now use the existing controller owners. Both shared `canvas_sync` receiver
+methods remain intact: it accepts Screen OR controller, so direct controller
+member access there would have broken that contract. The existing guard sets
+retain controller-callable proof and gain explicit Screen-absence coverage.
+
+Historical documentation was shortened without changing executable bodies.
+Normalized AST comparison proves the exact nine removals/caller retargets are
+the only runtime delta from the rebased head; all five edited controller/wiring
+modules are executable-AST identical. Final measured Screen is 31853 lines /
+1229 methods against unchanged 31868 / 1229 caps. Reader/ingest/media/notes/
+prompts/wiring measure 908/2713/4645/5269/4978/338 lines, all within original caps.
+
+Fresh evidence:
+
+- Initial guard RED: 1 failed / 44 passed; extended owner RED: 7 failed /
+  67 passed (five line caps and two newly extended absence controls).
+- Complete six-file owner/size GREEN: **97 passed, 2 warnings, 2.04 seconds**,
+  `/private/tmp/pr2427-wave10-owner-green.log`.
+- Startup/import/CSS budget files: **8 passed, 5 warnings, 15.79 seconds**,
+  `/private/tmp/pr2427-wave10-boot.log`.
+- All six derived-artifact preflight checks passed:
+  `/private/tmp/pr2427-wave10-preflight.log`.
+- AST proof: `/private/tmp/pr2427-wave10-ast-proof.log`. F821 and diff-check
+  pass. Ruff comparison finds no new findings; existing counts remain Screen
+  47, ingest controller 6, Media controller 7. Other edited Python files are
+  Ruff-clean (`/private/tmp/pr2427-wave10-lint-baseline.log`).
+
+Complete incoming/affected UI verification is running (1427 collected cases)
+in `/private/tmp/pr2427-wave10-incoming.log`. The separate native 851-case
+Library run is running in `/private/tmp/pr2427-wave10-shell-native.lxPpFD/`;
+require final exit code zero and empty SQLite paths, not intermediate snapshots.
+The expanded controller/diagnostic cohort finished **183 passed, 8 warnings in
+174.10 seconds** (`/private/tmp/pr2427-wave10-diagnostic-guards.log`). The two
+UI/native runs are not yet final-pass claims. Runtime source stays frozen
+while qualification runs.
+
+A subsequent read-only remote check observed newer dev `8aa2211f2b78fcb35c9d1d3db6e15d5f1978da0a`
+(PR #2524, structural-wait cancellation/deadlines; 16 changed files). Integrate
+that accepted increment after the active run completes, then qualify its actual
+affected files and any overlap. Fresh final-head Qodo review and normal merge
+checks remain mandatory. No cap increase, repository-wide sweep, unrelated
+environment change, or further user approval is pending.

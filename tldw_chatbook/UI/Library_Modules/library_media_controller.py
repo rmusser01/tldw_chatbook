@@ -4212,47 +4212,17 @@ class LibraryMediaController:
         return f"#{widget_id}"
 
     def _restore_library_media_focus(self, previous: str | None) -> None:
-        """Put focus back where a media recompose found it (task-31567 AC#1).
-
-        Textual re-picks focus when the widget holding it is recomposed
-        away, and the adaptive reader shell's two pane grips are the first
-        focusable widgets in it -- so EVERY media recompose that did not
-        name its own focus target landed the user on a grip, where Space
-        collapses a pane (wave 4 PR B) and the reading position is gone.
-        Measured before this seam, at 235x52 and 100x30 alike: a Reader
-        recompose from the content or the Find input landed on
-        ``library-browse-items-grip``; a receipt repaint or leaving select
-        mode from a row landed on ``library-browse-library-grip``.
-
-        An explicit target always WINS -- this only acts when nothing else
-        claimed focus:
-
-        * the two one-shot focus CHANNELS (task-31631's armed list-entry
-          request and task-31269's Find token) are checked directly,
-          because both land their focus in a LATER callback and would
-          otherwise be disarmed by a foreign ``set_focus`` here;
-        * any other explicit follow-up (PR E's ``focus_identity`` through
-          ``_complete_library_media_mutation``, a ``then=`` focus callback)
-          has already focused a real widget by the time this runs, which
-          the "focus is not a grip" check below detects generically.
-
-        Three choke points reach here, covering every media recompose: the
-        ``kind == "media"`` branch of ``_sync_library_canvas`` and
-        ``_sync_library_media_viewer_state`` (both canvas-scoped, via
-        ``queue_after_recompose``), and -- for any WHOLE-screen
-        ``refresh(recompose=True)`` -- ``restore_focus_after_recompose``,
-        the shared ``BaseAppScreen`` seam this screen overrides (task-31946
-        moved that hop off ``LibraryScreen.refresh`` itself). The last was
-        added in the Qodo round: background workers and
-        ``_sync_library_canvas``'s own failure fallback both take that bare
-        path -- the fallback after CLEARING the follow-up it had queued --
-        and left focus at ``None``.
+        """Restore captured Media focus when no explicit target has claimed it.
+        Without this, Reader recomposes land on pane grips and Space collapses a pane.
+        List-entry and Find channels take precedence because their deferred focus
+        would be revoked by a foreign focus change. Other explicit landings are
+        recognized by already-focused non-grip widgets.
+        Canvas/viewer syncs call this after their own recomposes; whole-screen
+        fallbacks reach it through restore_focus_after_recompose, including when
+        targeted sync discarded its follow-up.
 
         Args:
-            previous: Identity captured by
-                ``_capture_library_media_focus_identity`` before the
-                recompose, or ``None`` to leave focus alone.
-        """
+            previous: Pre-recompose focus identity, or None to leave focus alone."""
         if previous is None:
             return
         if self._library_pending_list_entry_focus or (

@@ -12884,7 +12884,7 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         assert str(screen.query_one("#library-media-title", Static).renderable) == (
             "Media (2)"
         )
-        screen._focus_library_media_page_control("#library-media-next")
+        screen._media_controller._focus_library_media_page_control("#library-media-next")
         assert getattr(screen.focused, "id", None) == "library-media-type-filter"
 
 
@@ -32910,7 +32910,7 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
 
             after = screen._capture_library_notes_focus_identity()
             assert after.semantic_role == semantic_role
-            assert screen.focused is screen._library_notes_role_target(before)
+            assert screen.focused is screen._notes_controller._library_notes_role_target(before)
             assert after.scroll_offset == before.scroll_offset, semantic_role
 
         rail_row = screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}")
@@ -35868,7 +35868,7 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
 
-        screen._request_library_media_filter("no-such-media-anywhere")
+        screen._media_controller._request_library_media_filter("no-such-media-anywhere")
         await _wait_for_condition(
             pilot,
             lambda: not screen.query(".library-media-row")

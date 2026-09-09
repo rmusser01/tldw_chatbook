@@ -4908,8 +4908,6 @@ class LibraryScreen(BaseAppScreen):
     def _commit_library_note_widgets_before_recompose(self) -> None:
         return self._notes_controller._commit_library_note_widgets_before_recompose()
 
-    def _library_notes_role_target(self, identity: LibraryNotesFocusIdentity) -> Widget | None:
-        return self._notes_controller._library_notes_role_target(identity)
 
     def _restore_library_notes_focus_identity(self, identity: LibraryNotesFocusIdentity, guard: _LibraryNotesRestoreGuard | None=None) -> bool:
         return self._notes_controller._restore_library_notes_focus_identity(identity, guard)
@@ -5422,11 +5420,7 @@ class LibraryScreen(BaseAppScreen):
             return None
         return shell, items_host, owner
 
-    def _adopt_library_media_row_owner(self, owner: LibraryMediaRowScroll) -> bool:
-        return self._media_controller._adopt_library_media_row_owner(owner)
 
-    def _advance_library_media_presentation_epoch(self, owner: LibraryMediaRowScroll | None, *, rearm: bool=True) -> None:
-        return self._media_controller._advance_library_media_presentation_epoch(owner, rearm=rearm)
 
     def _library_media_return_candidate(
         self,
@@ -5453,8 +5447,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_live_focus_is_allowed(self, focus_anchor: Widget | None, stable_id: str, target: Widget | None=None) -> bool:
         return self._media_controller._library_media_live_focus_is_allowed(focus_anchor, stable_id, target)
 
-    def _library_media_successful_focus_is_allowed(self, receipt: _LibraryMediaReturnReceipt, stable_id: str) -> bool:
-        return self._media_controller._library_media_successful_focus_is_allowed(receipt, stable_id)
 
     def _library_media_focus_target_matches_receipt(
         self,
@@ -5529,7 +5521,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.return_settlement = None
             return None
         shell, items_host, owner = tree
-        self._adopt_library_media_row_owner(owner)
+        self._media_controller._adopt_library_media_row_owner(owner)
         if (
             receipt.final_focus_policy == "row"
             and not self._library_media_exact_return_candidate(receipt)
@@ -5607,7 +5599,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.last_successful_settlement = None
         self._media_state.last_settlement_attempt = None
         self._media_state.last_settlement_outcome = None
-        self._bind_library_media_settlement_deadline(request.request_id)
+        self._media_controller._bind_library_media_settlement_deadline(request.request_id)
         latest = owner.latest_geometry
         if (
             consume_latest_geometry
@@ -5617,8 +5609,6 @@ class LibraryScreen(BaseAppScreen):
             self._settle_library_media_return_from_geometry(request, owner, latest)
         return self._media_state.return_settlement
 
-    def _bind_library_media_settlement_deadline(self, request_id: int) -> None:
-        return self._media_controller._bind_library_media_settlement_deadline(request_id)
 
     def _settle_library_media_return_from_geometry(self, request: _LibraryMediaReturnSettlement, owner: LibraryMediaRowScroll, geometry: LibraryMediaRowGeometry) -> bool:
         return self._media_controller._settle_library_media_return_from_geometry(request, owner, geometry)
@@ -6033,8 +6023,6 @@ class LibraryScreen(BaseAppScreen):
     def _dispatch_library_notes_work_session(self, event: NotesWorkSessionEvent, *, reader_width: int | None=None, sync_layout: bool=True) -> bool:
         return self._notes_controller._dispatch_library_notes_work_session(event, reader_width=reader_width, sync_layout=sync_layout)
 
-    def _library_notes_work_first_preferences(self, preferences: AdaptiveReaderLayoutPreferences) -> AdaptiveReaderLayoutPreferences:
-        return self._notes_controller._library_notes_work_first_preferences(preferences)
 
     def _set_library_notes_source(self, source: Literal['database', 'files']) -> bool:
         return self._notes_controller._set_library_notes_source(source)
@@ -6090,7 +6078,7 @@ class LibraryScreen(BaseAppScreen):
                 # priority inherited from Navigator when Edit/Create opens;
                 # an explicit grip activation still supplies priority above.
                 previous = dataclasses.replace(previous, priority_pane=None)
-        preferences = self._library_notes_work_first_preferences(
+        preferences = self._notes_controller._library_notes_work_first_preferences(
             self._notes_state.reader_preferences
         )
         layout = resolve_adaptive_reader_layout(
@@ -6839,7 +6827,7 @@ class LibraryScreen(BaseAppScreen):
         generation = self._notes_state.focus_intent_generation
         if layout_changed:
             tree = self._library_media_settlement_tree()
-            self._advance_library_media_presentation_epoch(
+            self._media_controller._advance_library_media_presentation_epoch(
                 tree[2] if tree is not None else None,
                 rearm=False,
             )
@@ -7851,38 +7839,10 @@ class LibraryScreen(BaseAppScreen):
         return super()._focus_identity_for_recompose()
 
     def restore_focus_after_recompose(self, previous: str | None) -> None:
-        """One owner per recompose window (task-31946 AC#2).
-
-        The shared seam schedules this ONCE per whole-screen recompose, so
-        the Media restore and the generic one cannot double-fire: they are
-        two statements of the same callback, and the generic tail is a
-        no-op the moment ``_restore_library_media_focus`` has focused
-        something real (it only acts when focus is still ``None``). The
-        tail is the only restore on the other three routes.
-
-        A one-shot focus CHANNEL stands the whole seam down, not just the
-        Media half: it lands its focus in a LATER callback, and ANY
-        foreign ``set_focus`` inside its window disarms it outright
-        (``on_descendant_focus`` revokes the pending receipt for anything
-        that is not the armed list's own row class) -- the generic tail
-        would do exactly that.
-
-        But it only stands down when the channel will actually LAND
-        something (PR L review item 2). ``_focus_library_list_entry``
-        returns without focusing anything in two cases, and in both the
-        seam is the only thing left between the user and a dead keyboard:
-
-        * the ``rail-only`` emergency stage, and
-        * a route with no row class at all -- Conversations is absent
-          from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``, so the armed channel
-          is a no-op there by design.
-
-        (The third case, a row class whose list is EMPTY, is closed at
-        the channel itself: notes now falls back to its filter input the
-        way prompts and skills already did. Media's empty page has no
-        unconditional control to fall back to, so it is closed in the
-        predicate instead -- it stands down when nothing is there.)
-        """
+        """Restore focus once per recompose, with Media restore before generic fallback.
+        Stand down only for a one-shot channel that will actually land focus: a foreign
+        focus change would revoke its receipt. Rail-only, rowless Conversations, and
+        empty Media still need fallback; other empty lists focus their filter input."""
         if self._library_focus_channel_owns_this_window():
             return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
@@ -9220,41 +9180,10 @@ class LibraryScreen(BaseAppScreen):
         }
 
     def restore_state(self, state: dict[str, Any]) -> None:
-        """Restore Library selection/view state saved by ``save_state``.
-
-        The app calls this on a freshly-constructed, not-yet-mounted
-        instance BEFORE ``switch_screen`` mounts it, so these attrs are
-        exactly what ``on_mount`` and the first ``compose_content`` see.
-
-        Stale-id safety (the record was deleted or is otherwise gone by the
-        time the user comes back): the conversations and media LIST canvases
-        already fall back to the first displayed row when the restored id is
-        absent (``build_library_conversations_state`` /
-        ``build_library_media_state``); the notes-editor and media-viewer
-        deep-link fetches this triggers from ``on_mount`` recover when the id
-        no longer resolves (``_refresh_library_note_detail`` returns Notes to
-        its list; ``_refresh_library_media_detail`` keeps the permanent Reader
-        mounted with an explicit Retry state).
-        A restored ``editor``/``viewer`` view with no matching selected id
-        (should never happen, but a saved-state dict is not statically typed)
-        degrades to the list view below rather than rendering a permanent
-        loading placeholder.
-
-        The per-pane filter/sort values restored below are read by the
-        canvas builders at mount time (``_build_library_media_state``,
-        the notes canvas branch of ``compose_content``,
-        ``_build_library_conversations_state``) -- setting them here, before
-        ``switch_screen`` mounts this instance, makes the first paint reflect
-        them. A restored conversation query is then reissued once by the real
-        source refresh so it searches the complete dataset rather than the
-        cached first-page sample. The conversations query is user text
-        re-sanitized through ``_safe_text`` here too -- it was
-        already sanitized once when the user submitted it
-        (``handle_library_conversations_filter_submitted``), but a saved-
-        state dict is not statically typed, so this is defense against a
-        corrupted/foreign dict rather than a real double-sanitization of
-        trusted input.
-        """
+        """Restore saved selection, views, filters and sorting before first mount.
+        Missing IDs degrade to lists; failed detail fetches use Notes-list or Reader-Retry
+        recovery. Reissue restored conversation queries against the complete dataset
+        and sanitize their text again because saved-state dictionaries are untyped."""
         super().restore_state(state)
         if not isinstance(state, dict):
             return
@@ -9550,38 +9479,10 @@ class LibraryScreen(BaseAppScreen):
         *,
         media_return: _LibraryMediaReturnReceipt | None = None,
     ) -> None:
-        """Request the primary list's first row be focused (task-2856 AC1).
-
-        Call this (never ``call_after_refresh(self._focus_library_list_entry)``
-        directly) from every "enter/return to a list canvas" seam -- a
-        fresh rail-row press landing on Media/Notes/Prompts/Skills, and
-        every "back to list" exit from that canvas's viewer/editor. Arms
-        ``_library_pending_list_entry_focus`` for
-        ``LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS`` (re-requested by
-        ``compose_content`` on every recompose while armed -- see that
-        flag's docstring in ``__init__`` for why a single-consume flag
-        is not enough) IN ADDITION TO scheduling the immediate attempt.
-
-        The settle window is a background-recompose safety net ONLY --
-        review round 2 found the timer was the sole disarm path, so a
-        user who Tabbed (or clicked) away from the list within the window
-        had their navigation silently overridden by the next background
-        recompose. ``on_key``/``on_descendant_focus`` now disarm
-        IMMEDIATELY the moment the user does anything that is not the
-        system re-focusing its own row (see both methods' docstrings), so
-        the timer's only remaining job is bounding how long an IDLE list
-        keeps re-requesting focus across its own chained background
-        workers.
-
-        PR #1410 review (Qodo): re-arming before a prior timer's own
-        deadline (e.g. two "enter/return to list" seams firing back-to-
-        back) used to leave that PRIOR timer scheduled underneath this
-        one -- if it fired later it disarmed a request THIS arm still
-        intended to keep active. The stored handle
-        (``_library_list_entry_focus_timer``) is stopped here before the
-        new one is scheduled, so only the most recent arm's timer is ever
-        live.
-        """
+        """Arm immediate list-entry focus plus a bounded background-settlement window.
+        Use this at every list entry/return, never schedule the focus callback directly.
+        Stop the previous timer before rearming. User keys or foreign focus disarm
+        immediately; the timer only bounds retries across idle background recomposes."""
         self._media_state.successful_focus_ownership = None
         # Same reason PR #1410's review stopped the settle timer below: a
         # retry tick left over from the PREVIOUS arm carries that arm's
@@ -9761,7 +9662,7 @@ class LibraryScreen(BaseAppScreen):
         pending_receipt = self._library_pending_list_entry_media_return
         successful_return_focus = bool(
             pending_receipt is not None
-            and self._library_media_successful_focus_is_allowed(
+            and self._media_controller._library_media_successful_focus_is_allowed(
                 pending_receipt,
                 pending_receipt.stable_id,
             )
@@ -11156,34 +11057,17 @@ class LibraryScreen(BaseAppScreen):
         rail_mode: str = "sync",
         then: Callable[[], None] | None = None,
     ) -> LibraryEntryReconcileResult:
-        """Replace only the active Library canvas child for one entry owner.
-
-        The generation/route pair is checked before every DOM mutation and
-        after each await.  Once mounted, stateful owners are synchronized from
-        the screen again so state changed while removal/mounting yielded to the
-        message pump cannot be stranded in the pre-await constructor snapshot.
+        """Replace the active canvas child only for the current generation/route.
+        Check ownership before mutations and after awaits; resync the mounted owner
+        from current state so suspension cannot strand a stale constructor snapshot.
 
         Args:
-            widget: The destination canvas child to mount.
-            generation: Snapshot generation this projection belongs to.
-            route_key: Route key this projection belongs to.
-            rail_mode: ``"sync"`` (default) fully recomposes the rail from
-                the fresh shell state -- required for entry reconciliation,
-                where counts/sections may have changed with the snapshot.
-                ``"selection"`` patches only the two selection-affected rows
-                in place (``LibraryRail.apply_selection``) -- the task-21116
-                per-click open seam, where only the selected row moved and a
-                full rail rebuild would recreate every row button per click.
-            then: Optional follow-up ordered AFTER the mounted owner's own
-                post-mount synchronization recompose settles (task-21116).
-                Required for follow-ups that measure or scroll the new
-                children: the sync recompose is serviced by the CANVAS's
-                pump, so a follow-up scheduled from the caller's
-                continuation can run against children the sync is about to
-                replace (reproduced: the compact Media viewer-back scroll
-                restore clamped to 0 against a not-yet-final list). Runs
-                only when the replacement APPLIED.
-        """
+            widget: Destination child.
+            generation: Projection generation.
+            route_key: Projection route.
+            rail_mode: "sync" rebuilds counts/sections; "selection" patches only rows.
+            then: Follow-up after the owner's own sync recompose, only if applied.
+                Measuring earlier can clamp scroll against children about to detach."""
         if not self._library_entry_reconcile_is_current(generation, route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
 
@@ -11368,40 +11252,13 @@ class LibraryScreen(BaseAppScreen):
         *,
         then: Callable[[], None] | None = None,
     ) -> None:
-        """Project one just-selected Library surface without a screen recompose.
-
-        task-21116: the per-click "open this item / open this canvas" sites
-        (Search/RAG result opens, media row opens, section "Export…"
-        actions, media-viewer exits) used to end in a whole-screen
-        ``self.refresh(recompose=True)`` -- a remove/remount of the nav
-        bar, footer, rail, and canvas on the largest screen in the app.
-        This seam routes them through the same strict canvas-child
-        replacement the entry lifecycle already uses
-        (``_replace_library_canvas_child``): the rail and header are
-        synchronized in place and only the canvas host's child is
-        replaced. It also re-registers the footer shortcut set, which
-        ``compose_content`` would otherwise refresh on the retired
-        whole-screen recompose.
-
-        The caller must have fully applied the destination state (row id,
-        views, selected ids) BEFORE calling: the replacement seam derives
-        its shell state and supersede guards from the live screen state.
+        """Project selected destination state with canvas-only replacement.
+        Call after updating row/view/IDs; synchronize rail/header/footer in place.
 
         Args:
-            build: Zero-argument builder for the destination canvas child.
-                Called lazily so a failure falls back to the legacy
-                whole-screen recompose instead of raising.
-            then: Optional follow-up ordered after the mounted destination's
-                children have settled (see ``_replace_library_canvas_child``).
-                On a whole-screen fallback it runs synchronously right after
-                the ``refresh`` call -- the exact statement order the
-                retired call sites used (``refresh(recompose=True)`` then
-                arm/focus). Dropped when a newer navigation superseded the
-                projection.
-
-        Returns:
-            None.
-        """
+            build: Lazy destination builder; failure uses whole-screen fallback.
+            then: Run after mounted-owner synchronization settles. On fallback run
+                immediately after refresh, matching legacy order; drop if superseded."""
         if not self.is_mounted:
             # Parity with the retired unconditional refresh: an unmounted
             # screen simply records the recompose request for mount time.
@@ -15719,7 +15576,7 @@ class LibraryScreen(BaseAppScreen):
         }:
 
             def focus_page_control() -> None:
-                self._focus_library_media_page_control(focus_identity)
+                self._media_controller._focus_library_media_page_control(focus_identity)
 
             then = focus_page_control
         else:
@@ -15744,8 +15601,6 @@ class LibraryScreen(BaseAppScreen):
         if not _sync_library_canvas(self, "media", then=then):
             self._library_notes_restoring_focus = False
 
-    def _focus_library_media_page_control(self, invoked: str) -> None:
-        return self._media_controller._focus_library_media_page_control(invoked)
 
     def _request_library_media_browse(
         self,
@@ -15771,8 +15626,6 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.filter_timer.stop()
             self._media_state.filter_timer = None
 
-    def _request_library_media_filter(self, query: str) -> None:
-        return self._media_controller._request_library_media_filter(query)
 
     def _load_library_media_list_if_needed(self) -> None:
         return self._media_controller._load_library_media_list_if_needed()
@@ -16018,8 +15871,6 @@ class LibraryScreen(BaseAppScreen):
             selectors.append("#library-media-trash-back")
         return tuple(dict.fromkeys(selectors))
 
-    def _focus_library_media_trash_after_paint(self, identity: str, generation: int) -> None:
-        return self._media_controller._focus_library_media_trash_after_paint(identity, generation)
 
     def _build_library_notes_state(self) -> LibraryNotesListState:
         """Build the notes canvas's list-view display state from local records."""
@@ -18565,35 +18416,15 @@ class LibraryScreen(BaseAppScreen):
         request_id: int,
         preview: ExportPreview | None = None,
     ) -> LibraryEntryReconcileResult:
-        """Marshal a landed counts result onto the export form (UI thread).
-
-        Guards against a stale result from a scope the user has since
-        navigated away from (a second "Export…" press, or another rail
-        row entirely, before the first counts worker finished) -- dropped
-        rather than overwriting fresher (or absent) counts.
-
-        Updates the mounted canvas via targeted DOM surgery, NEVER a
-        recompose (mirrors ``handle_library_ingest_path_changed``'s
-        targeted-update discipline): the user may be mid-keystroke in the
-        name/description ``Input`` when the counts land -- on a large
-        library (this feature's whole point) that window is real -- and a
-        recompose would destroy and rebuild the ``Input``, silently
-        dropping keyboard focus (the typed text survives via the form
-        dict; focus does not). Only three widgets can change when counts
-        land, and all three are always-mounted on the export canvas: the
-        scope line's text, the empty-scope helper's text/visibility
-        (display-toggled rather than conditionally composed in
-        ``LibraryExportCanvas.compose`` for exactly this reason), and the
-        Export button's disabled gate. The media/quality rows CANNOT
-        change here: their visibility (``show_media_fields``) derives
-        purely from ``scope.kind``, which is pinned before the worker
-        ever starts -- never from counts.
+        """Apply current export counts on the UI thread, rejecting stale scope/requests.
+        Patch the mounted scope text, empty-scope helper and button only, preserving
+        input identity/focus. Media/quality visibility depends on the pinned scope,
+        not counts, and must not change here.
 
         Args:
-            scope: The scope the landed ``counts`` were computed for.
-            counts: The landed counts (keys "media"/"conversations"/"notes"/
-                "prompts").
-            request_id: Monotonic identity of the Export visit/count request.
+            scope: Scope used for the result.
+            counts: Media/conversations/notes/prompts counts.
+            request_id: Monotonic visit/count-request identity.
             preview: The sibling contents/size read (task-32353 AC#2),
                 landed under the same staleness guards as ``counts``.
         """
@@ -19219,41 +19050,13 @@ class LibraryScreen(BaseAppScreen):
         allow_structural_recompose: bool = True,
         allow_screen_fallback: bool = True,
     ) -> None:
-        """Refresh ONLY the pre-flight summary + queue children (task-2042).
-
-        Recomposing the whole canvas on every pre-flight result / job tick
-        remounted the form widgets: a click in flight against Start/Browse
-        was swallowed (mouse-down on the old Button instance, mouse-up on
-        the new one) and the canvas scroll snapped. The two dynamic blocks
-        are their own render-from-state widgets, so only they recompose;
-        the form region keeps widget identity, focus, and scroll for free.
-        Structural changes -- the type-group set (options panels) or the
-        runtime header lines -- still take the context-preserving full
-        recompose, as does any unexpected canvas shape.
+        """Refresh summary and queue children without remounting the ingest form.
+        Keep form identity, focus and scroll; structural changes may use full recompose.
 
         Args:
-            allow_structural_recompose: Whether a structural state change
-                may request the legacy whole-screen recompose.
-            allow_screen_fallback: (task-28007 Task 3 fix round 1, I-2)
-                Whether a failed targeted update (the canvas query itself
-                raising, or a structural change above) may request that
-                fallback at all -- mirrors ``_sync_library_canvas``'s own
-                parameter. A caller mid an Import-run's ``finally``/
-                per-item repaint passes ``False``: an unmount that lands
-                mid-run can leave ``_library_selected_row_id`` still
-                pointing at Import while the canvas's own children are
-                already torn down, so ``query_one`` raises ``NoMatches``
-                here -- scheduling a whole-screen recompose on a dying
-                screen at that point is both useless and unsafe.
-                (Task 3 re-review, N-1) It is part of the STRUCTURAL
-                branch's condition, not a check inside it: barring the
-                fallback must degrade to the targeted repaint below, never
-                to no repaint at all. ``canvas.state`` is a plain
-                attribute, so returning after assigning it painted
-                nothing -- which is exactly the stuck-disabled
-                "Analyze N skipped" button the run's ``finally`` repaint
-                exists to prevent.
-        """
+            allow_structural_recompose: Permit fallback for changed groups/header.
+            allow_screen_fallback: Permit whole-screen fallback at all. False still
+                performs targeted repaint, including during import-finally teardown."""
         if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
             # (task-2043 review) A late worker result while a DIFFERENT
             # canvas is showing must not trigger the full-recompose
@@ -19837,34 +19640,17 @@ class LibraryScreen(BaseAppScreen):
         note_id: str,
         operation: LibraryNotesOperationState | None = None,
     ) -> None:
-        """Write the exported note content to the path chosen via ``FileSave``.
-
-        Runs the dialog-returned path through ``validate_path_simple``
-        before writing: ``FileSave`` lets the user pick any absolute
-        destination, so there is no fixed base directory to constrain it
-        to the way ``validate_path``/``safe_join_path`` require -- this is
-        the same base-directory-free validator the rest of this codebase
-        already uses for user-chosen save/output paths (e.g. this screen's
-        note import path, ``settings_screen``'s
-        storage-location fields). It rejects null bytes and other
-        shell-metacharacter/traversal patterns; a rejected path is a quiet
-        warning notice with no write and no crash, same as any other
-        failure in this method. This method awaits nothing (the write is a
-        plain synchronous ``Path.write_text``), so it is a plain method
-        rather than a coroutine -- Textual's ``call_after_refresh`` (its
-        only caller, via ``_export_library_note``'s ``FileSave`` callback)
-        accepts either.
+        """Synchronously export the captured note through a validated user-chosen path.
+        Use validate_path_simple: FileSave permits arbitrary absolute destinations,
+        so no fixed base applies. Invalid paths warn without writing or crashing.
 
         Args:
-            selected_path: The chosen destination, or ``None`` if the
-                dialog was cancelled.
-            export_format: ``"markdown"`` or ``"text"`` (see
-                ``build_note_export_content``).
-            title: The note title captured when Export was pressed.
-            content: The note body captured when Export was pressed.
-            keywords_text: The note's keywords, as a comma-separated string.
-            note_id: The note's id.
-        """
+            selected_path: Destination, or None for cancel.
+            export_format: "markdown" or "text".
+            title: Captured title.
+            content: Captured body.
+            keywords_text: Comma-separated keywords.
+            note_id: Note identifier."""
         active_operation = operation or self._begin_library_notes_operation("export")
         if active_operation is None:
             return
@@ -20410,38 +20196,11 @@ class LibraryScreen(BaseAppScreen):
         return coerce_library_rail_preferences(raw)
 
     def _load_library_search_history(self) -> tuple[str, ...]:
-        """Read persisted Library Search/RAG query history, defensively.
-
-        Two sources are consulted, in order:
-
-        1. `self.app_instance.app_config["library"]["search"]["history"]` --
-           the in-memory config dict. This is the primary source: it is what
-           pilots seed directly, and it reflects any history recorded during
-           the current session (`_record_library_search_history` mutates it
-           in place, alongside persisting to disk).
-        2. `get_cli_setting("library.search")` -- a live re-read of
-           `config.toml` via `load_cli_config_and_ensure_existence()`. This
-           fallback exists because `app.app_config` comes from
-           `load_settings()`, whose merged output does NOT reliably surface
-           the `[library.search]` TOML table (it can come back empty even
-           when `config.toml` has history on disk) -- so a freshly started
-           app would otherwise always see empty history despite having
-           persisted some in a prior session. `get_cli_setting` reads the
-           CLI config file directly and does carry the value.
-
-        Only source (1) is used when it already yields a list, so pilots
-        that seed `app_config` directly stay authoritative and never touch
-        disk. Missing keys or a malformed shape from either source quietly
-        fall back to no history; entries are coerced to trimmed strings and
-        capped to the same shape `update_search_history` produces (<= 10
-        entries, <= 200 chars each).
-
-        `config.toml` is user-editable, so each entry is also run through
-        `_safe_text` (control-character stripping, dangerous-pattern
-        removal, length validation) before it ever becomes a history
-        `Button` label -- belt-and-suspenders alongside the markup escape
-        `library_rag_history_children` applies at render time.
-        """
+        """Read sanitized, bounded Search/RAG history from config.
+        A list in app_config is authoritative; otherwise read library.search directly
+        from CLI config because merged settings can omit that table. Malformed values
+        yield no history. Trim entries, cap at ten / 200 characters, and apply _safe_text
+        before labels reach the renderer's independent markup escaping."""
         app_config = getattr(self.app_instance, "app_config", None)
         raw = None
         if isinstance(app_config, dict):
@@ -21926,34 +21685,12 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-bulk-delete-confirm")
     def handle_library_media_bulk_delete_confirm(self, event: Button.Pressed) -> None:
-        """Hand the confirmed bulk delete off to a worker (task-2853 AC3).
-
-        Reads the selection synchronously (before any recompose could
-        change it) and hands the frozen id tuple to
-        ``_delete_library_media_selection`` -- mirroring how
-        ``handle_library_media_delete_confirm`` reads ``_selected_media_id``
-        synchronously for the single-item case.
-
-        task-3020 AC1: guarded by ``_library_media_bulk_delete_in_flight``,
-        checked and set BEFORE the worker is scheduled -- the confirm
-        button stays visible and enabled until the worker's own
-        completion recompose swaps it away, so a fast double-press would
-        otherwise read the same frozen selection twice and hand off two
-        workers over the same ids (harmless for ``mark_as_trash``, which
-        is idempotent, but the second worker's own rail-count decrement
-        would double-count). ``exclusive=True``/``group=`` is added too as
-        a second line of defense, matching this screen's other single-
-        flight workers (e.g. ``library_note_save``).
-
-        P1 re-critique finding 3: the same flag and the same worker
-        ``group`` are now shared with ``handle_library_media_bulk_delete_
-        undo`` -- see the flag's own declaration for why. A press here
-        while an Undo is still running is refused exactly like a double-
-        press on this same button always was.
+        """Freeze selected IDs and start one bulk-delete worker.
+        Check/set the shared delete/Undo in-flight flag before dispatch so rapid presses
+        cannot double-decrement counts. Exclusive worker grouping is a second guard.
 
         Args:
-            event: Button press event emitted by the confirm row's "Delete".
-        """
+            event: Confirm-row Delete button event."""
         event.stop()
         if self._media_state.bulk_delete_in_flight:
             return
@@ -23937,41 +23674,16 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate Notes, Skills, Files, list/detail, and Search/RAG bindings.
-
-        Returning ``False`` deactivates the binding entirely, so Escape /
-        Ctrl+S behave as if unbound anywhere else on the Library screen.
-        All of this screen's "escape" ``BINDINGS`` entries share the same
-        key (count them in ``BINDINGS``; a hard-coded number here went
-        stale twice) -- Textual tries them in order and stops at the first
-        whose ``check_action`` passes, so each one returning ``False``
-        outside its own context is what lets the next fall through
-        untouched (task-3302 added the Ingest-canvas gate and task-3020
-        added the bulk-delete-confirm cancel to the original six; task-4023
-        AC#7 added the Export and Study-handoff backs).
-
-        task-2858 AC#2 (LIB-09): the three Search/RAG evidence-card
-        actions (``u``/``enter``/``o``) had NO gate here before this task
-        -- their own action bodies already no-op outside their context
-        (see ``action_library_rag_use_in_console`` and
-        ``_focused_library_rag_result_card_index``'s callers), but
-        ``check_action`` never reflected that, so ``action_show_
-        workbench_help``'s ``BINDINGS`` filter (below) would otherwise
-        keep advertising ``u`` on every non-Search canvas -- the exact
-        F1 contamination this task closes. Every action reachable from
-        ``BINDINGS`` now has an explicit branch here; see
-        ``test_library_screen_bindings_are_all_gated_or_universal``.
+        """Gate bindings and advertised shortcuts to their active Library context.
+        False allows same-key bindings to fall through; every non-universal action
+        must have an explicit gate (including Search/RAG evidence-card actions).
 
         Args:
-            action: The binding's action name Textual is resolving.
-            parameters: The action's positional parameters (unused here;
-                every gated binding is parameterless).
+            action: Binding action name.
+            parameters: Unused; gated bindings are parameterless.
 
         Returns:
-            ``False`` to deactivate the binding in the current context,
-            ``True`` to force-activate it, or ``None`` to defer to Textual's
-            default resolution.
-        """
+            False to deactivate, True to activate, or None for Textual's default."""
         if action in {"focus_next", "focus_previous"}:
             # task-32106 (PR #2571 re-review, NEW-1). These stay universal
             # everywhere except the canvas-only emergency stage, where
@@ -24974,37 +24686,13 @@ class LibraryScreen(BaseAppScreen):
             _sync_library_canvas(self, "prompts")
 
     async def _run_library_prompts_import(self, raw_path: str) -> None:
-        """Import prompts from a file or folder path, skipping duplicate names.
-
-        Deliberately does NOT use
-        ``Prompts_Interop.import_prompts_from_files``: that helper's own
-        write path (``add_or_update_prompt_interop``) hardcodes
-        ``overwrite=True`` with no parameter to opt out, and writes
-        directly through the global interop DB singleton, bypassing
-        ``prompt_scope_service``/``LocalPromptService`` entirely -- both
-        violate this feature's "duplicate name = skip, never overwrite"
-        contract and this codebase's "UI writes only through the scope
-        service" rule. Instead, each supported file is read and parsed via
-        the same module-level parser functions
-        ``import_prompts_from_files`` itself dispatches to
-        (``parse_json_prompts_from_content`` etc. -- see
-        ``_LIBRARY_PROMPT_IMPORT_PARSERS``), and each parsed prompt is
-        created individually through the service layer, mirroring
-        ``_save_library_prompt``'s own duplicate-name pre-check (a
-        ``get_prompt`` lookup by name, ``include_deleted=True``, since
-        ``Prompts.name`` is globally unique regardless of soft-delete
-        state) before ever attempting a write -- a soft-deleted name is
-        treated as "taken" too, matching "never overwrite/suffix".
-
-        A file that fails to read/parse (invalid JSON/YAML, decode error)
-        is logged and skipped WHOLE -- it never partially applies some of
-        its prompts while silently discarding the rest because of a
-        parse-time exception.
+        """Import parsed files through the scope service, skipping all taken names.
+        Do not use interop's writer: it overwrites via the global singleton. Reuse its
+        parsers, but pre-check names including soft-deleted rows and never suffix or
+        overwrite. A read/parse failure skips the whole file, not just some prompts.
 
         Args:
-            raw_path: The Import row's typed path (file or folder),
-                already known non-blank by the caller.
-        """
+            raw_path: Nonblank file or directory path from the Import row."""
         if self._prompts_state.mutation_in_flight:
             return
         try:
@@ -31535,40 +31223,13 @@ class LibraryScreen(BaseAppScreen):
     def _after_library_media_viewer_sync(
         self, follow_up: str | Callable[[], object]
     ) -> None:
-        """Sync the media viewer, then run ``follow_up`` against its NEW children.
-
-        task-31633 / Qodo High on #2470 ("Readers lose keys after escape").
-        A viewer-scoped sync rebuilds the Reader on the VIEWER's message pump,
-        and ``screen.call_after_refresh`` queues onto the SCREEN's -- two
-        pumps with no ordering. Measured on 43b0a7440 with the screen seam:
-        Escape from inside the More disclosure focused the control the
-        recompose was about to detach, Textual re-picked focus for the pruned
-        widget, and task-31567's restore (its captured identity gone with the
-        rest of the children) fell back to the media list row -- focus out of
-        the Reader entirely, so the next Escape acted on the list.
-
-        So the follow-up rides the viewer's own post-recompose hook, and is
-        CHAINED behind whatever is already queued there rather than replacing
-        it: ``queue_after_recompose`` replaces, and the sync above just
-        queued task-31567's restore on that same one slot (that is how
-        task-31567 lost a receipt's "land on Undo"). Order inside the chain:
-        our ``_focus_library_control`` DEFERS (``Widget.focus`` goes through
-        ``app.call_later``), so when the chained restore runs, focus is still
-        wherever the recompose left it and the restore does its own landing
-        (the captured identity, else the list entry); the deferred focus then
-        lands on the target and wins. The transient is benign -- the list
-        entry is focused with ``scroll_visible=False`` and the programmatic
-        marker armed -- and when the target is not composed at all the focus
-        call no-ops and the restore's landing stands.
+        """Sync the viewer, then run the follow-up on its own post-recompose hook.
+        Screen and viewer pumps are unordered: a Screen refresh callback may focus
+        children about to detach. Chain behind the existing restore, never replace it.
+        Deferred explicit focus then wins; if its target is absent, restore stands.
 
         Args:
-            follow_up: A Library control selector to focus once the sync has
-                landed (``"#library-media-reader-more"``), or a zero-argument
-                callable to run there instead.
-
-        Returns:
-            None.
-        """
+            follow_up: Library control selector or zero-argument callback."""
         self._sync_library_media_viewer_or_recompose()
         self._queue_after_library_media_viewer_recompose(
             partial(self._focus_library_control, follow_up)

@@ -1,8 +1,5 @@
-"""Ordered assembly of the existing Library subsystem controllers.
-
-Keep named dependencies explicit and resolve sibling/state lookups at call time.
-This assembly runs at the original construction position in LibraryScreen.__init__.
-"""
+"""Assemble controllers at their original __init__ position.
+Keep named sibling/state dependencies late-bound."""
 
 from __future__ import annotations
 
