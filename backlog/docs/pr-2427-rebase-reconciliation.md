@@ -3337,3 +3337,29 @@ Ruff/whitespace pass; the file's one inherited formatter difference is unchanged
 Publication of this checkpoint permits fresh CI/review in parallel with final
 423-case Settings native qualification; it is not permission to merge before
 that run's terminal resource inventory and final-head review/checks are clear.
+
+### Complete Settings resource qualification and final review follow-up
+
+The frozen complete configuration-hub run is terminal: 423 passed, three warnings,
+exit 0 in 613.76s (`/private/tmp/pr2427-settings-owner-final.log`). Its final native
+inventory contains zero SQLite, instance-lock, TTS lock/directory/pipe or other
+file retention. The eight descriptors are stdio, one kqueue and four sockets,
+matching the focused control's bounded pytest/Chroma footprint. Receipt:
+`$TMPDIR/pr2427-settings-owner-final.dYeCUD/fd_identity.jsonl`. Settings sources
+were unchanged throughout the run and at published `645126abf5`; the unchanged
+15 snapshot and five Canvas Settings cases already passed. Session 3490 is closed.
+
+Qodo updated its review for `645126abf5` at 18:26 UTC with one new documentation
+finding, inline comment 3971709694: the Direct-mode paragraph still advertised
+15 tools although the shared provider includes the five chunk descriptors and
+note-save descriptor too. Step 135 corrects the total to 21 without changing
+registration, authorization or implementation. Existing review findings remain
+resolved/dismissed. Fast Lane, Backlog/CSS, latency and all GGUF platform checks
+pass on this head; the derived-artifact job was still running at the 18:30 snapshot.
+
+Dev advanced again to `de6793b9f5` with PR 2540's Library Notes import-UX work.
+All local runs are terminal before this next reconciliation. Step 136 scopes
+the rebase to preserving that accepted upstream behavior and qualifying its
+complete affected owners; prior frozen Settings evidence is not an active run
+or a reason to repeat unchanged code. Final merge remains gated on the rebased
+revision's verification and reviews/checks.
