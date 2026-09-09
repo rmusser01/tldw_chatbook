@@ -407,6 +407,85 @@ class LibraryNoteDeleteReceipt:
     expected_version: int
 
 
+#: Rows the Trash view loads at once. Bounded for the same reason the folder
+#: tree's page is: a library with thousands of tombstones must not build one
+#: unbounded list, and the view's job is recovering what was just lost.
+LIBRARY_NOTES_TRASH_PAGE_SIZE = 20
+
+
+@dataclass(frozen=True)
+class LibraryNotesTrashRow:
+    """One soft-deleted note in the Library Notes Trash view.
+
+    Attributes:
+        note_id: The deleted note's id.
+        title: Display title (``"Untitled"`` when blank).
+        version: The tombstone's own version -- what ``restore_note``
+            expects handed back, so this row restores through exactly the
+            seam the delete receipt's Undo uses.
+        age_label: Relative age of the deletion (e.g. ``"5m"``), or ``""``
+            when the record carries no timestamp.
+    """
+
+    note_id: str
+    title: str
+    version: int
+    age_label: str = ""
+
+
+@dataclass(frozen=True)
+class LibraryNotesTrashState:
+    """Display state for the Library Notes Trash view and its opener row.
+
+    Attributes:
+        rows: The loaded page of soft-deleted notes, newest deletion first.
+        total: Exact number of soft-deleted notes, read with the same page
+            -- the count the "Recently deleted (N)" row names.
+    """
+
+    rows: tuple[LibraryNotesTrashRow, ...] = ()
+    total: int = 0
+
+
+def build_library_notes_trash_state(
+    records: Sequence[Mapping[str, Any]] | None,
+    *,
+    total: int | None = None,
+    now: datetime | None = None,
+) -> LibraryNotesTrashState:
+    """Project one repository page of soft-deleted notes into display state.
+
+    Records missing a mapping shape or an ``id`` are dropped rather than
+    raising, matching ``build_library_notes_list_state`` beside it.
+
+    Args:
+        records: The repository's ``items`` for the page, already ordered.
+        total: Exact soft-deleted total; defaults to the rendered row count.
+        now: Reference time for the relative-age labels.
+
+    Returns:
+        The Trash view's display state.
+    """
+    reference_now = now if now is not None else datetime.now(timezone.utc)
+    rows = tuple(
+        LibraryNotesTrashRow(
+            note_id=_text(record.get("id")),
+            title=_text(record.get("title")) or "Untitled",
+            version=int(record.get("version") or 0),
+            age_label=(
+                format_console_relative_age(_updated_raw(record), now=reference_now)
+                if _updated_raw(record)
+                else ""
+            ),
+        )
+        for record in (records or ())
+        if isinstance(record, Mapping) and _text(record.get("id"))
+    )
+    return LibraryNotesTrashState(
+        rows=rows, total=len(rows) if total is None else max(int(total), 0)
+    )
+
+
 @dataclass(frozen=True)
 class LibraryNotesListState:
     """Display state for the Library notes canvas's list view.

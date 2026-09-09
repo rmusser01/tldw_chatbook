@@ -81,7 +81,12 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: SECOND subsystem writes -- see below), so 100 move. Pinned here so a field
 #: silently added to or dropped from the dataclass fails loudly instead of
 #: quietly resizing the shim surface this file checks.
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 100
+#:
+#: 100 at the wave-8 census; **102** since task-32144 added the Trash view's
+#: two fields (``trash``, ``trash_loading``) -- both ordinary Notes-owned
+#: ``_library_notes_``-prefixed state, so they extend the census rather than
+#: change its shape.
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 102
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

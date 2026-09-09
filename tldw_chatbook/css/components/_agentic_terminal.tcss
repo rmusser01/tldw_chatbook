@@ -2137,6 +2137,17 @@ ConsoleRunLogModal {
     max-width: 100%;
 }
 
+/* task-32144: a Trash row's title takes the width its Restore button leaves,
+   so a long title ellipsizes rather than pushing that button off the pane --
+   the same shape the delete receipt's copy uses below. */
+.library-notes-trash-row-copy {
+    width: 1fr;
+    min-width: 0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    padding: 0 1 0 0;
+}
+
 /* task-32123: the receipt's copy owns its own row above the two recovery
    actions, so a title too long for the pane ends in an ellipsis instead of
    pushing Undo off the edge. */

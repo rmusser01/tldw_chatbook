@@ -17240,6 +17240,43 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
+    def list_deleted_notes(
+        self, limit: int = 20, offset: int = 0
+    ) -> Dict[str, Any]:
+        """Page the soft-deleted notes behind the Library Notes Trash view.
+
+        task-32144: the inverse of ``list_notes``' visibility. Both the page
+        and the exact total are read in ONE transaction, matching the Library
+        read seams below, so the "Recently deleted (N)" row can never name a
+        count the list it opens disagrees with. Ordered by ``last_modified``
+        DESC -- ``soft_delete_note`` stamps it -- so the most recent deletion
+        (the one a dismissed receipt just stranded) is the first row.
+
+        Args:
+            limit: Maximum rows in the returned page.
+            offset: Rows to skip before the page.
+
+        Returns:
+            ``{"items": [...], "total": int}``; each item carries the id,
+            title, deletion timestamp and the tombstone's own ``version`` --
+            which is exactly what ``restore_note`` expects handed back.
+        """
+        page_size = max(int(limit), 0)
+        skip = max(int(offset), 0)
+        with self.transaction() as conn:
+            total = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM notes WHERE deleted = 1"
+                ).fetchone()["cnt"]
+            )
+            rows = conn.execute(
+                "SELECT id, title, last_modified, version FROM notes"
+                " WHERE deleted = 1"
+                " ORDER BY last_modified DESC, id LIMIT ? OFFSET ?",
+                (page_size, skip),
+            ).fetchall()
+        return {"items": [dict(row) for row in rows], "total": total}
+
     # ============================= Library read seams (task-1337) =========================================
     #
     # Additive, read-only queries backing the local Library agent tools. They

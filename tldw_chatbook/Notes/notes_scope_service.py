@@ -1930,6 +1930,47 @@ class NotesScopeService:
             )
         raise ValueError("Workspace notes require a selected workspace context.")
 
+    async def list_deleted_notes(
+        self,
+        *,
+        scope: ScopeType | str,
+        limit: int = 20,
+        offset: int = 0,
+        user_id: Optional[str] = None,
+    ) -> Mapping[str, Any]:
+        """Page the soft-deleted notes the Library Trash view restores from.
+
+        Local-only for the same reason ``restore_note`` is: the Trash view is
+        backed by the local ChaChaNotes tombstone contract, and no server or
+        workspace backend exposes a deleted-notes seam. Runtime policy treats
+        the read as an ordinary local ``list``.
+
+        Args:
+            scope: Note scope; only ``local_note`` is supported.
+            limit: Maximum rows in the returned page.
+            offset: Rows to skip before the page.
+            user_id: Local Notes user identity.
+
+        Returns:
+            ``{"items": [...], "total": int}`` -- each item carries the note
+            id, title, deletion timestamp and its tombstone ``version``.
+
+        Raises:
+            ValueError: If the scope is not local or ``user_id`` is missing.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise ValueError(
+                "Deleted notes are only listed for local notes."
+            )
+        return await asyncio.to_thread(
+            self.local_notes_service.list_deleted_notes,
+            self._require_user_id(user_id),
+            limit,
+            offset,
+        )
+
     async def count_notes(
         self,
         *,

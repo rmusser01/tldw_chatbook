@@ -432,6 +432,24 @@ class NotesInteropService:
 
         return result
 
+    def list_deleted_notes(
+        self, user_id: str, limit: int = 20, offset: int = 0
+    ) -> Dict[str, Any]:
+        """Page the soft-deleted notes behind the Library Notes Trash view.
+
+        Args:
+            user_id: The user whose per-user database to read (resolves the
+                DB handle only; notes are not per-user-filtered).
+            limit: Maximum rows in the returned page.
+            offset: Rows to skip before the page.
+
+        Returns:
+            ``{"items": [...], "total": int}``, per
+            ``CharactersRAGDB.list_deleted_notes``.
+        """
+        db = self._get_db(user_id)
+        return db.list_deleted_notes(limit=limit, offset=offset)
+
     # --- Library read seams (task-1337) ---
 
     def list_library_notes(
