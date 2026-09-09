@@ -298,6 +298,15 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 "Import once — Copy files into Notes. Later changes to the originals are not tracked.",
                 markup=False,
             )
+            # task-32125: both relationships are one choice, so both buttons
+            # belong here under their own description. Import once used to be
+            # composed into the pinned bar, 36 rows below its description.
+            yield Button(
+                "Import once",
+                id="notes-add-import-once",
+                classes="library-canvas-action",
+                compact=True,
+            )
             yield Static(
                 "Keep a folder synced — Create a lasting connection. Changes continue between the folder and Notes.",
                 markup=False,
@@ -804,12 +813,6 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     def _compose_pinned_actions(self) -> ComposeResult:
         phase = self.snapshot.phase
         if phase == "choose":
-            yield Button(
-                "Import once",
-                id="notes-add-import-once",
-                classes="library-canvas-action",
-                compact=True,
-            )
             yield Button(
                 "Back to Notes",
                 id="notes-sync-back",
