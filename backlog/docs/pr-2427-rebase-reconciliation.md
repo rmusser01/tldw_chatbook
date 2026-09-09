@@ -1810,3 +1810,101 @@ argument; broader app/Console/schema/CSS changes still require affected offline
 qualification and diagnostic-delta review. Preserve current work before rebasing
 the exact reviewed range onto this base; do not raise ratchets or reinterpret
 upstream explicit target/approval/ownership rules.
+
+### Wave-twelve rebase and initial qualification (2026-09-09 UTC)
+
+Saved step 74 at `c64eefd369`, with independent review finding no actionable
+issues in the narrow fixture/diagnostic changes. Backup
+`codex/pr2427-before-wave12-rebase-20260909` preserves that checkpoint.
+All 217 review commits were rebased onto `733f7a628c064005d27bed8bbcf53aae01b5dd45`,
+finishing at `be62ee0fcb924055f14e26e6fbc3e86a526cb233`.
+
+Reconciliation preserves both upstream lessons and reviewed fixture lessons;
+the index lesson remains in its relocated section. Hydration keeps the
+upstream legacy-wrapper test and the distinct canonical complete-snapshot test,
+with upstream canonical durable-settings assertions and the reviewed shared
+exact-owner cleanup fixture. Independent conflict review confirmed that union.
+Console suspend retains the incoming visibility notification before the
+existing settings-navigation owner's claim release. The Workspace migration
+conflict was formatting-only. No source limits were raised: Library Screen
+is 31843 lines / 1229 methods after the single incoming WorkspaceCreateModal
+persona-service argument.
+
+Incoming diagnostic additions were reviewed: bounded constant messages for
+default-Persona notice failure, continuation/generation hydration fallback,
+Buddy publication cleanup and app migration; removed/moved statements retain
+their existing privacy boundaries. The combined Session entry is measured at
+26 calls with digest `a71888e4c6bcd258f247`. The unmodified generator verifies
+**601 owners, 1351 TASK-492 calls, 55 TASK-31551 calls, 7665 TASK-494 calls and
+12 sink files** (`/private/tmp/pr2427-wave12-inventory.log`).
+
+Initial verification: **218 passed, 3 warnings in 32.07 seconds** across the
+three complete conflict-affected hydration/Workspace test files, complete
+canvas-scoped sync, and six Library size/owner/assembly files
+(`/private/tmp/pr2427-wave12-guards.log`). Scoped Ruff and diff-check pass.
+All derived-artifact preflight checks pass, including 3667 unique task records,
+115 declared ChaChaNotes tables and 282 indexed names / 67 plan pins
+(`/private/tmp/pr2427-wave12-preflight.log`). An earlier command named a
+nonexistent size-test path and exited 4 without collecting tests; the corrected
+complete command above is the evidence, not that invocation.
+
+Runtime source is frozen for active verification:
+
+- Incoming dev's 43 changed test files are covered by the three completed
+  conflict files plus four sequential offline groups in
+  `/private/tmp/pr2427-wave12-incoming-{1,2,3,4}.{log,xml}`. Each group has its
+  own terminal evidence; later groups run even if an earlier group fails.
+- Complete Media render/Trash/return-settlement files run in
+  `/private/tmp/pr2427-wave12-media.{log,xml}`.
+- Native complete Library Shell runs in
+  `/private/tmp/pr2427-wave12-shell-native.YbMd42/{pytest.log,native.jsonl}`;
+  require final exit zero and empty SQLite paths.
+- Final diagnostic/startup/import/CSS tests run in
+  `/private/tmp/pr2427-wave12-final-gates.log`.
+
+These are pending results. Wave-eleven's two intermittent full-run failures
+are not declared fixed by their isolated/repeated passes. Publication, fresh
+head review, latest-base check and normal protected merge remain open.
+
+Incoming group 1 subsequently ended **305 passed, 3 failed, 2 warnings in
+79.40 seconds**. All failures are the three early-exit parameters in
+`Tests/App/test_scheduler_startup_deferral.py`: quit/shutdown observe a Console
+tab-strip `MountError`, while setup_failure does not raise the injected
+`RuntimeError`. Their cause is not yet established; an exact three-case
+reproduction is running in `/private/tmp/pr2427-wave12-startup-red.log`.
+Group 2 continues independently. The final diagnostic cohort has recorded a
+failure but has not yet emitted its final traceback/summary. Keep all these
+gates open; runtime source remains unchanged for active verification.
+
+Further terminal wave-twelve results:
+
+- Exact startup reproduction: **3 failed, 2 warnings in 6.83 seconds**.
+- Incoming group 2: **429 passed, 2 failed, 3 warnings in 61.13 seconds**.
+  Both failures are bridge live/resume marker text equality for the controller
+  refusal string. Exact reproduction: **2 failed, 1 passed, 273 deselected,
+  2 warnings in 1.02 seconds** (`/private/tmp/pr2427-wave12-bridge-red.log`).
+  `_step_record` intentionally uses `redact_log_line`; its sensitive `user:`
+  assignment match redacts this payload on persistence and records the result
+  field as redacted. Resumed markers therefore omit detail. Structured success
+  versus blocked outcomes remain correct. Do not weaken durable redaction to
+  recover stale byte-for-byte live/resume expectations.
+- Incoming group 3: **86 passed, 5 warnings in 86.29 seconds**.
+- Complete Media cohort: **258 passed, 1 failed, 3 warnings in 320.14 seconds**.
+  `test_local_reader_chrome_stops_before_the_sixth_row` read an empty painted
+  body after loaded-id settlement; its isolated retry passed (**1 passed,
+  3 warnings in 3.43 seconds**, `/private/tmp/pr2427-wave12-paint-red.log`).
+  The helper currently waits for request settlement and one pilot pause,
+  not a rendered first content line. Root-cause confirmation remains open.
+  The previously failing Trash focus case passed in this complete cohort.
+- Final diagnostic/boot cohort: **77 passed, 1 failed, 11 warnings in
+  187.87 seconds**. The metadata-only test still requires two Session startup
+  diagnostics explicitly removed by upstream Buddy/default-settings changes;
+  the generated inventory itself already verifies the accepted removals.
+  Reconcile the specific obsolete entries and retain coverage for the new
+  metadata-only default-resolution path, not the entire privacy guard.
+
+All results above belong to unchanged runtime `be62ee0fcb`. Group 4 and the
+native Library run remain active. No full-source pass or merged status is
+claimed. The no-splash setup wrapper also explicitly catches and logs setup
+exceptions, explaining why a test expecting propagation needs lifecycle-path
+review; the two mount failures still need attribution before any repair.
