@@ -25,7 +25,12 @@ def _read(stream):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("split", (1, 12, 13))
-async def test_split_json_waits_for_the_complete_utf8_body(split):
+async def test_split_json_waits_for_the_complete_utf8_body(split: int) -> None:
+    """Wait for the entire JSON body, including a split UTF-8 code point.
+
+    Args:
+        split: Byte offset separating the two incoming body chunks.
+    """
     body = '{"value": "☃"}'.encode()
     stream = _stream()
     stream.feed_data(body[:split])
