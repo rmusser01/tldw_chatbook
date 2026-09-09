@@ -18,7 +18,6 @@ from tldw_chatbook.Notes.note_folder_models import (
     normalize_folder_name,
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
-    _NON_IMPORTABLE_CLASSIFICATIONS,
     ImportAction,
     ImportMatchKind,
     ImportPreviewItem,
@@ -87,6 +86,9 @@ class NoteImportWorkflowSnapshot:
     progress: ImportExecutionProgress | None = None
     receipt: ImportExecutionReceipt | None = field(default=None, repr=False)
     latest_receipt: ImportExecutionReceipt | None = field(default=None, repr=False)
+    # The reviewed plan is discarded when a new selection starts, so the rows
+    # behind ``latest_receipt``'s skipped count are captured at settle time.
+    latest_skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     cancel_requested: bool = False
     decision_item_ids: frozenset[str] = frozenset()
     collision_rename_input: str = field(default="", repr=False)
@@ -343,6 +345,7 @@ def clear_selection(
             page_size=state.page.page_size,
             latest_receipt=state.latest_receipt,
         ),
+        latest_skipped_items=state.latest_skipped_items,
         revision=state.revision + 1,
     )
 
@@ -708,6 +711,9 @@ def settle_import(
         progress=None,
         receipt=receipt,
         latest_receipt=receipt,
+        latest_skipped_items=_skipped_items(
+            state, min(receipt.skipped, MAX_RECEIPT_SKIPPED_ROWS)
+        ),
         cancel_requested=False,
     )
 
@@ -870,11 +876,7 @@ def project_library_note_import_snapshot(
         ),
         receipt_detail=_receipt_detail(receipt),
         skipped_count=receipt.skipped if receipt else 0,
-        skipped_items=(
-            _skipped_items(state, min(receipt.skipped, MAX_RECEIPT_SKIPPED_ROWS))
-            if receipt
-            else ()
-        ),
+        skipped_items=state.latest_skipped_items if receipt else (),
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
         obsidian_available=state.vault_detected,
@@ -1000,6 +1002,13 @@ def _skipped_items(
     ones a partial run actually reached. ``limit`` is the receipt's own skipped
     count (bounded), which keeps the rendered rows and the disclosure heading
     from disagreeing on a cancelled import.
+
+    Args:
+        state: A settling workflow state whose reviewed plan is still present.
+        limit: How many skipped rows the receipt can honestly account for.
+
+    Returns:
+        ``(display path, reason)`` for each skip, in plan order.
     """
 
     if state.plan is None or limit <= 0:
@@ -1007,10 +1016,11 @@ def _skipped_items(
     return tuple(
         (
             item.source.display_path,
-            # A source the user skipped keeps no classification reason of its
-            # own -- "Ready to import as a new note." under Skipped is a lie.
+            # Only a skip the user chose is theirs: an unchanged repeat and
+            # every non-importable source already default to SKIP, and their
+            # own reason says why (review of task-32130).
             item.reason
-            if item.classification in _NON_IMPORTABLE_CLASSIFICATIONS
+            if item.default_action is ImportAction.SKIP
             else "Skipped by you.",
         )
         for item in state.plan.items

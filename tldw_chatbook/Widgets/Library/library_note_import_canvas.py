@@ -189,6 +189,14 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         """Report one Skip all / Create all over a rendered review group."""
 
         def __init__(self, classification: str, action: str) -> None:
+            """Carry one group bulk action to the owning controller.
+
+            Args:
+                classification: The ``ImportClassification`` value naming the
+                    pressed group's heading.
+                action: The ``ImportAction`` value to apply to that group.
+                    The controller validates both and refuses an unknown one.
+            """
             super().__init__()
             self.classification = classification
             self.action = action
@@ -731,45 +739,49 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                     else "Confirm the match before updating."
                 )
                 yield update
-
-            if item.uncertain and not item.confirmed:
-                yield Button(
-                    "Confirm this match",
-                    id=f"note-import-confirm-{dom_token}",
-                    name=item.item_id,
-                    classes=(
-                        "library-canvas-action note-import-row-action "
-                        "note-import-confirm-match"
-                    ),
-                    compact=True,
-                )
-            if item.action == "update_existing":
-                yield Button(
-                    _choice_label(
-                        selected=item.replace_content,
-                        text="Replace note content",
-                    ),
-                    id=f"note-import-replace-{dom_token}",
-                    name=f"{item.item_id}:replace_content",
-                    classes=(
-                        "library-canvas-action note-import-row-action "
-                        "note-import-item-choice"
-                    ),
-                    compact=True,
-                )
-                yield Button(
-                    _choice_label(
-                        selected=item.add_membership,
-                        text="Add folder placement",
-                    ),
-                    id=f"note-import-membership-{dom_token}",
-                    name=f"{item.item_id}:add_membership",
-                    classes=(
-                        "library-canvas-action note-import-row-action "
-                        "note-import-item-choice"
-                    ),
-                    compact=True,
-                )
+        # The follow-on choices go on their own line. Five controls plus a path
+        # need about 120 columns; below that the trailing ones used to render
+        # entirely outside the body and could not be clicked (review of 32135).
+        if (item.uncertain and not item.confirmed) or item.action == "update_existing":
+            with Horizontal(classes="note-import-row"):
+                if item.uncertain and not item.confirmed:
+                    yield Button(
+                        "Confirm this match",
+                        id=f"note-import-confirm-{dom_token}",
+                        name=item.item_id,
+                        classes=(
+                            "library-canvas-action note-import-row-action "
+                            "note-import-confirm-match"
+                        ),
+                        compact=True,
+                    )
+                if item.action == "update_existing":
+                    yield Button(
+                        _choice_label(
+                            selected=item.replace_content,
+                            text="Replace note content",
+                        ),
+                        id=f"note-import-replace-{dom_token}",
+                        name=f"{item.item_id}:replace_content",
+                        classes=(
+                            "library-canvas-action note-import-row-action "
+                            "note-import-item-choice"
+                        ),
+                        compact=True,
+                    )
+                    yield Button(
+                        _choice_label(
+                            selected=item.add_membership,
+                            text="Add folder placement",
+                        ),
+                        id=f"note-import-membership-{dom_token}",
+                        name=f"{item.item_id}:add_membership",
+                        classes=(
+                            "library-canvas-action note-import-row-action "
+                            "note-import-item-choice"
+                        ),
+                        compact=True,
+                    )
         if (
             self.compact
             and item.classification not in _NON_IMPORTABLE

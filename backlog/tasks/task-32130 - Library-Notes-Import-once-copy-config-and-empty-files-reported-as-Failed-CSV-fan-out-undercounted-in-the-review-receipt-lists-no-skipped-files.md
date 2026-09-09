@@ -53,4 +53,6 @@ Receipt: `LibraryNoteImportSnapshot` gained `skipped_count`/`skipped_items`, der
 AC#2 did not reproduce: a 2-row CSV already planned 'create 2 new notes' (`_effect_summary` counts payloads). Pinned with a test instead of changed.
 
 Files: Notes/note_import_plan_models.py, note_import_parsers.py, note_import_planner.py, Library/library_note_import_state.py, Widgets/Library/library_note_import_canvas.py, Tests/Notes/test_note_import_planner.py, Tests/Library/test_library_note_import_state.py, Tests/UI/test_library_notes_wave_import_ux.py. Live-verified end to end on the 71-file vault (caps 06/07/08).
+
+Review addendum (Qodo findings 1, 6, 8): `empty_structured_source` joined the classification map, so an empty JSON/YAML array and a header-only CSV are SKIPPED ('This source does not contain any notes.') rather than Failed. `not_a_note` became the whole document's verdict -- a document mixing note records with non-note records is `invalid_content`, not configuration, so a damaged export is not called harmless. The receipt disclosure attributes a skip to the user only when the item's `default_action` was not already SKIP, so an unchanged repeat keeps its own planner reason instead of 'Skipped by you.'
 <!-- SECTION:NOTES:END -->

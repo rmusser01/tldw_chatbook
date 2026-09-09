@@ -14,7 +14,6 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Collapsible, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
 from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
@@ -398,6 +397,61 @@ async def test_a_clipped_row_still_reaches_its_effect_and_destination() -> None:
         destination = app.query_one(".note-import-row-destination", Static)
         assert destination.display is True
         assert "vault / Archive" in _plain(destination)
+
+
+async def test_every_review_control_stays_inside_a_narrow_viewport() -> None:
+    """A row's trailing buttons must be reachable, not clipped off-screen."""
+    from textual.containers import Container
+
+    snapshot = _import_snapshot(
+        phase="review",
+        status_line="Review 2 items before import.",
+        preview_items=(
+            _item(
+                1,
+                classification="uncertain_match",
+                action="create_new",
+                reason="This source may match an existing note.",
+                uncertain=True,
+            ),
+            _item(
+                2,
+                classification="changed_repeat",
+                action="update_existing",
+                reason="This source differs from an existing note.",
+                can_update=True,
+                effect_summary="Content: keep existing content.",
+                membership_summary="Folder placement: unchanged.",
+            ),
+        ),
+        can_import=True,
+        import_disabled_reason="",
+    )
+
+    class _CompactHost(ConsolidatedCSSApp):
+        CSS_PATH = TldwCli.CSS_PATH
+
+        def compose(self) -> ComposeResult:
+            with Container(id="library-canvas", classes="library-notes-compact"):
+                yield LibraryNoteImportCanvas(
+                    snapshot,
+                    compact=True,
+                    id="library-note-import-canvas",
+                )
+
+    app = _CompactHost()
+    async with app.run_test(size=(60, 24)) as pilot:
+        await pilot.pause()
+        body = app.query_one("#note-import-body")
+        buttons = list(body.query(Button))
+        assert len(buttons) >= 9  # both rows' full control sets are mounted
+        overflowing = [
+            button.id
+            for button in buttons
+            if button.region.right > body.content_region.right
+            or button.region.x < body.content_region.x
+        ]
+        assert overflowing == []
 
 
 async def test_a_wide_row_does_not_repeat_its_destination() -> None:

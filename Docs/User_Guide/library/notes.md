@@ -521,20 +521,28 @@ line — path · what will happen · where it lands — with its **Skip** and
 and, where the group can create notes, **Create all** for the rows it counts.
 An empty or whitespace-only file is reported as "Empty file — nothing to
 import." and an application configuration file (a JSON or YAML document with no
-note body) as "Not a note file (app configuration)." — neither is a failure. A
-structured source states how many notes it will create, so a two-row CSV reads
-"create 2 new notes". You can still skip an item, create a new note, or, when
-an existing match is authorized, update its content and/or add its folder
-placement. Uncertain matches must be confirmed. If the imported top-level
-folder already exists, choose whether to use it, create a unique sibling, or
-enter another name.
+note body) as "Not a note file (app configuration)." A well-formed document
+that simply holds no note — an empty JSON array, a CSV with only headers —
+reads "This source does not contain any notes." None of these is a failure. A
+document that mixes note records with other records is still a failure ("This
+source could not be parsed as notes."), so a damaged export is never presented
+as harmless configuration. A structured source states how many notes it will
+create, so a two-row CSV reads "create 2 new notes". You can still skip an
+item, create a new note, or, when an existing match is authorized, update its
+content and/or add its folder placement; **Confirm this match**, **Replace note
+content** and **Add folder placement** sit on their own line under the row, so
+they stay reachable in a narrow pane. Uncertain matches must be confirmed. If
+the imported top-level folder already exists, choose whether to use it, create
+a unique sibling, or enter another name.
 
 Only **Import selected items** approves and executes the exact choices shown.
 Progress remains visible and **Cancel import** stops cooperatively after the
 current item; completed items are not rolled back. The receipt states what
 happened in plain words — "Import finished · 61 notes created · 11 files
 skipped" — and a **Skipped (N)** disclosure lists each skipped path with its
-reason. A partial receipt states what finished. Retryable failures show
+reason. A file the app skipped for you — an unchanged repeat, an empty or
+unsupported source — keeps its own reason there; only a row you set to Skip
+yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
 **Retry N failures**; a cancelled batch with unfinished items shows **Retry
 unfinished items**. **Back to Notes** may hide a running import without
 stopping it; the list then offers **View import** or **Continue import** until
@@ -885,3 +893,10 @@ listed in the receipt's **Skipped (N)** disclosure with its own reason.)*
 
 *Verified against fix/library-notes-docs — 2026-09-09 (task-32141: guide
 sweep after the Notes critique wave; 13 claims verified, 5 corrected).*
+
+*Verified against fix/library-notes-import-ux — 2026-09-09 (review of
+task-32130 and task-32135: a note-free structured document is skipped rather
+than failed while a mixed one stays a failure, an automatic skip keeps its own
+reason on the receipt instead of "Skipped by you.", the receipt keeps its
+skipped paths after another selection starts, and the follow-on review choices
+moved onto their own line so nothing is clipped out of reach.)*
