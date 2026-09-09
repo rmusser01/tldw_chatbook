@@ -22,7 +22,22 @@ class ImportClassification(str, Enum):
     CHANGED_REPEAT = "changed_repeat"
     UNCERTAIN_MATCH = "uncertain_match"
     UNSUPPORTED = "unsupported"
+    # task-32130: an empty file and an application config file are neither
+    # unsafe nor unsupported; reporting them as FAILED was dishonest.
+    SKIPPED = "skipped"
+    EMPTY = "empty"
     FAILED = "failed"
+
+
+_NON_IMPORTABLE_CLASSIFICATIONS = frozenset(
+    {
+        ImportClassification.UNSUPPORTED,
+        ImportClassification.SKIPPED,
+        ImportClassification.EMPTY,
+        ImportClassification.FAILED,
+    }
+)
+"""Classifications that carry no payload and may only be skipped."""
 
 
 class ImportAction(str, Enum):
@@ -329,6 +344,8 @@ _DEFAULT_ACTIONS = {
     ImportClassification.CHANGED_REPEAT: ImportAction.CREATE_NEW,
     ImportClassification.UNCERTAIN_MATCH: ImportAction.CREATE_NEW,
     ImportClassification.UNSUPPORTED: ImportAction.SKIP,
+    ImportClassification.SKIPPED: ImportAction.SKIP,
+    ImportClassification.EMPTY: ImportAction.SKIP,
     ImportClassification.FAILED: ImportAction.SKIP,
 }
 
@@ -419,10 +436,7 @@ class ImportPreviewItem:
             raise ValueError("selected_action must be present in allowed_actions.")
         if self.default_action is not _DEFAULT_ACTIONS[self.classification]:
             raise ValueError("default_action does not match the classification.")
-        importable = self.classification not in {
-            ImportClassification.UNSUPPORTED,
-            ImportClassification.FAILED,
-        }
+        importable = self.classification not in _NON_IMPORTABLE_CLASSIFICATIONS
         if importable and not payloads:
             raise ValueError("Importable items require at least one payload.")
 
@@ -462,14 +476,11 @@ class ImportPreviewItem:
         allowed_actions: tuple[ImportAction, ...],
     ) -> None:
         """Reject classification, match, and action combinations that cannot run."""
-        if self.classification in {
-            ImportClassification.UNSUPPORTED,
-            ImportClassification.FAILED,
-        }:
+        if self.classification in _NON_IMPORTABLE_CLASSIFICATIONS:
             if allowed_actions != (ImportAction.SKIP,):
-                raise ValueError("Unsupported and failed items must only allow Skip.")
+                raise ValueError("Non-importable items must only allow Skip.")
             if self.match is not None:
-                raise ValueError("Unsupported and failed items cannot carry a match.")
+                raise ValueError("Non-importable items cannot carry a match.")
             return
 
         if self.classification is ImportClassification.NEW:

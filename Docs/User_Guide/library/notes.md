@@ -115,7 +115,9 @@ editor's own Back control returns to its list.
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button plus a "From a template" list.
 - **Add from files…** — asks whether this is an **Import once** or a lasting
-  **Keep a folder synced** relationship before reading a source.
+  **Keep a folder synced** relationship before reading a source. Both buttons
+  sit together, each directly under its own description; the bar below holds
+  only **Back to Notes**.
 - **Manage sync folders** — appears when roots or migration candidates exist;
   it shows text-explicit status and the valid action for each root.
 
@@ -425,7 +427,9 @@ drops, because Enter there goes back rather than creating anything.
 
 ### Add from files and lasting sync
 
-**Add from files…** first asks what relationship you want:
+**Add from files…** first asks what relationship you want. Until you choose,
+the header names neither relationship — it reads "Add from files" and its next
+action is to pick one:
 
 - **Import once** copies supported files into Database Notes and ends after its
   reviewed receipt. Later changes to the originals are not tracked.
@@ -486,10 +490,13 @@ not the same as **Keep a folder synced**: the import ends after this reviewed
 batch, while lasting sync retains a root relationship.
 
 Choose files one at a time with **Add another file**, or choose one folder.
-A folder is exclusive; it cannot be combined with selected files. Selected
-files also need an existing-or-new destination path such as
-`Research / Interviews`. The destination is only a proposal during checking;
-no folder or note is created yet.
+A folder is exclusive; it cannot be combined with selected files, so a folder
+selection offers no **Add another file**. Either way, **Change selection**
+reopens the picker and replaces what you chose, and **Clear** drops the
+selection without leaving Import once. Selected files also need an
+existing-or-new destination path such as `Research / Interviews`. The
+destination is only a proposal during checking; no folder or note is created
+yet.
 
 The folder picker's **Folder path** field can be typed into directly: press
 **Enter** to browse into the typed path, or click **Select folder** to use it
@@ -500,22 +507,40 @@ folder is picked, the confirmation line shows its full path (elided in the
 middle for long paths, keeping the folder name itself visible), not just its
 name.
 
-Choose **Check selection** to build a read-only review. Review groups explain
-whether each source is new, an unchanged or changed repeat, an uncertain
-match, unsupported, or failed. You can skip an item, create a new note, or,
-when an existing match is authorized, update its content and/or add its folder
-placement. Uncertain matches must be confirmed. If the imported top-level
-folder already exists, choose whether to use it, create a unique sibling, or
-enter another name.
+Choose **Check selection** to build a read-only review. Each source is one
+line — path · what will happen · where it lands — with its **Skip** and
+**Create new** controls beside the path. Rows are grouped by outcome (**New**,
+**Unchanged repeat**, **Changed repeat**, **Uncertain match**, **Unsupported**,
+**Skipped**, **Empty**, **Failed**) and each group header carries **Skip all**
+and, where the group can create notes, **Create all** for the rows it counts.
+An empty or whitespace-only file is reported as "Empty file — nothing to
+import." and an application configuration file (a JSON or YAML document with no
+note body) as "Not a note file (app configuration)." A well-formed document
+that simply holds no note — an empty JSON array, a CSV with only headers —
+reads "This source does not contain any notes." None of these is a failure. A
+document that mixes note records with other records is still a failure ("This
+source could not be parsed as notes."), so a damaged export is never presented
+as harmless configuration. A structured source states how many notes it will
+create, so a two-row CSV reads "create 2 new notes". You can still skip an
+item, create a new note, or, when an existing match is authorized, update its
+content and/or add its folder placement; **Confirm this match**, **Replace note
+content** and **Add folder placement** sit on their own line under the row, so
+they stay reachable in a narrow pane. Uncertain matches must be confirmed. If
+the imported top-level folder already exists, choose whether to use it, create
+a unique sibling, or enter another name.
 
 Only **Import selected items** approves and executes the exact choices shown.
 Progress remains visible and **Cancel import** stops cooperatively after the
-current item; completed items are not rolled back. A partial receipt states
-what finished. Retryable failures show **Retry N failures**; a cancelled batch
-with unfinished items shows **Retry unfinished items**. **Back to Notes** may
-hide a running import without stopping it; the list then offers **View import**
-or **Continue import** until it settles. **Last import** reopens the same-session
-receipt afterward.
+current item; completed items are not rolled back. The receipt states what
+happened in plain words — "Import finished · 61 notes created · 11 files
+skipped" — and a **Skipped (N)** disclosure lists each skipped path with its
+reason. A file the app skipped for you — an unchanged repeat, an empty or
+unsupported source — keeps its own reason there; only a row you set to Skip
+yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
+**Retry N failures**; a cancelled batch with unfinished items shows **Retry
+unfinished items**. **Back to Notes** may hide a running import without
+stopping it; the list then offers **View import** or **Continue import** until
+it settles. **Last import** reopens the same-session receipt afterward.
 
 ## Common tasks
 
@@ -530,7 +555,8 @@ receipt afterward.
 1. In the notes list, click **Add from files…**, choose **Import once**, and
    pick the first file or one folder.
 2. For files, click **Add another file** as needed and enter the Database Notes
-   destination. A folder already supplies its proposed hierarchy.
+   destination. A folder already supplies its proposed hierarchy. Picked the
+   wrong source? Use **Change selection** or **Clear**.
 3. Click **Check selection** and review classifications, actions, matches, and
    any top-level folder collision.
 4. Click **Import selected items**. You can cancel cooperatively, retry work
@@ -744,3 +770,20 @@ path. The confirmation line shows the full picked path, not just its
 basename. Pinned in `Tests/UI/test_file_open_select_folder.py`,
 `Tests/UI/test_select_directory_typed_path.py`,
 `Tests/UI/test_enhanced_select_directory.py`.)*
+
+*Verified against fix/library-notes-import-ux — 2026-09-09 (task-32125: the
+chooser shows **Import once** and **Keep a folder synced** together, each under
+its own description, and the header no longer says "Lasting sync" before you
+have chosen. task-32130: empty files and application config files are reported
+as empty/skipped instead of failed, the receipt discloses **Skipped (N)** with
+every path and reason, and the completion line counts what happened.
+task-32134: **Change selection** and **Clear** ship beside the selection.
+task-32135: review rows are one line each, grouped, with per-group **Skip all**
+/ **Create all**.)*
+
+*Verified against fix/library-notes-import-ux — 2026-09-09 (review of
+task-32130 and task-32135: a note-free structured document is skipped rather
+than failed while a mixed one stays a failure, an automatic skip keeps its own
+reason on the receipt instead of "Skipped by you.", the receipt keeps its
+skipped paths after another selection starts, and the follow-on review choices
+moved onto their own line so nothing is clipped out of reach.)*

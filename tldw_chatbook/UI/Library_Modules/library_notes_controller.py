@@ -4692,8 +4692,53 @@ class LibraryNotesController:
     def handle_library_note_import_add_source(
         self, event: LibraryNoteImportCanvas.AddSourceRequested
     ) -> None:
+        """Open the picker to add one more file to a file selection.
+
+        Args:
+            event: The canvas request raised by *Add another file*.
+        """
         event.stop()
         self._push_library_note_import_picker()
+    @on(LibraryNoteImportCanvas.ChangeSourceRequested)
+    def handle_library_note_import_change_source(
+        self, event: LibraryNoteImportCanvas.ChangeSourceRequested
+    ) -> None:
+        """Reopen the picker; the selection changes only if one comes back.
+
+        Args:
+            event: The canvas request raised by *Change selection*.
+        """
+        event.stop()
+        self._push_library_note_import_picker(replace=True)
+    @on(LibraryNoteImportCanvas.ClearSourceRequested)
+    def handle_library_note_import_clear_source(
+        self, event: LibraryNoteImportCanvas.ClearSourceRequested
+    ) -> None:
+        """Drop the chosen source without leaving the import workflow.
+
+        Args:
+            event: The canvas request raised by *Clear*.
+        """
+        event.stop()
+        self._library_note_import_controller.clear_selection()
+    @on(LibraryNoteImportCanvas.GroupActionRequested)
+    def handle_library_note_import_group_action(
+        self, event: LibraryNoteImportCanvas.GroupActionRequested
+    ) -> None:
+        """Apply one group's bulk action, reporting a rejected payload.
+
+        Args:
+            event: The canvas request carrying the group's classification and
+                the action to apply. Values that name no enum member are
+                refused by the controller and surface as a failure notice.
+        """
+        event.stop()
+        try:
+            self._library_note_import_controller.set_group_action(
+                event.classification, event.action
+            )
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
     @on(LibraryNoteImportCanvas.DestinationChanged)
     def handle_library_note_import_destination(
         self, event: LibraryNoteImportCanvas.DestinationChanged

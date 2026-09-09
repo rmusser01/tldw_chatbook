@@ -30,6 +30,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ProposedFolderMembership,
     RootCollisionState,
 )
+from tldw_chatbook.Notes import note_import_planner
 from tldw_chatbook.UI.Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
 )
@@ -721,3 +722,176 @@ async def test_cancel_sets_the_executor_event_and_waits_for_partial_receipt(
     release.set()
     await execution
     assert controller.snapshot.phase.value == "receipt"
+
+
+# --- task-32134 / task-32135 review of the wave -------------------------
+
+
+def _grouped_plan(source: Path) -> NoteImportPlan:
+    """One plan of 30 NEW items, so page 1 holds 25 of them and page 2 five."""
+    base = _plan(source)
+    items = tuple(
+        replace(
+            base.items[0],
+            item_id=f"item-{number:06d}",
+            source=replace(
+                base.items[0].source,
+                display_path=f"note-{number:02d}.md",
+            ),
+        )
+        for number in range(1, 31)
+    )
+    return replace(base, items=items)
+
+
+def _real_override_controller(plan: NoteImportPlan) -> LibraryNoteImportController:
+    """Bind the real planner override so bulk actions can be observed."""
+    controller = _controller(plan=plan, calls=[], repository=_FolderRepository())
+    controller._apply_override = note_import_planner.apply_item_override
+    return controller
+
+
+@pytest.mark.asyncio
+async def test_group_action_changes_exactly_the_rendered_page(tmp_path: Path) -> None:
+    """Skip all settles the rows its header counted, and no others."""
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    controller = _real_override_controller(_grouped_plan(source))
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+    await controller.check()
+
+    controller.set_group_action("new", "skip")
+
+    items = controller.snapshot.plan.items
+    assert [item.selected_action for item in items[:25]] == [ImportAction.SKIP] * 25
+    assert [item.selected_action for item in items[25:]] == [
+        ImportAction.CREATE_NEW
+    ] * 5
+    # Skip cannot carry effects, and Create new must approve membership.
+    assert all(not item.replace_content for item in items[:25])
+    assert all(not item.add_membership for item in items[:25])
+
+    controller.set_page(2)
+    controller.set_group_action("new", "create_new")
+
+    items = controller.snapshot.plan.items
+    assert [item.selected_action for item in items[:25]] == [ImportAction.SKIP] * 25
+    assert all(item.add_membership for item in items[25:])
+
+
+@pytest.mark.asyncio
+async def test_group_action_ignores_classes_it_did_not_name(tmp_path: Path) -> None:
+    """A Skip all on one class leaves every other class alone."""
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    plan = _grouped_plan(source)
+    unsupported = replace(
+        plan.items[0],
+        item_id="item-000099",
+        source=replace(plan.items[0].source, display_path="cover.png"),
+        payloads=(),
+        memberships=(),
+        classification=ImportClassification.UNSUPPORTED,
+        default_action=ImportAction.SKIP,
+        selected_action=ImportAction.SKIP,
+        allowed_actions=(ImportAction.SKIP,),
+        add_membership=False,
+    )
+    controller = _real_override_controller(
+        replace(plan, items=(unsupported, *plan.items[:3]))
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+    await controller.check()
+
+    controller.set_group_action("unsupported", "skip")
+
+    actions = [item.selected_action for item in controller.snapshot.plan.items]
+    assert actions == [ImportAction.SKIP, *([ImportAction.CREATE_NEW] * 3)]
+
+
+@pytest.mark.asyncio
+async def test_group_action_outside_review_is_refused(tmp_path: Path) -> None:
+    """A stale bulk press cannot mutate a plan that is not under review."""
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    controller = _real_override_controller(_grouped_plan(source))
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+
+    with pytest.raises(ValueError):
+        controller.set_group_action("new", "skip")
+
+
+@pytest.mark.asyncio
+async def test_group_action_refuses_a_classification_it_cannot_name(
+    tmp_path: Path,
+) -> None:
+    """An unknown group is rejected, not silently applied to nothing."""
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    controller = _real_override_controller(_grouped_plan(source))
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+    await controller.check()
+    before = [item.selected_action for item in controller.snapshot.plan.items]
+
+    with pytest.raises(ValueError):
+        controller.set_group_action("not-a-classification", "skip")
+
+    assert [
+        item.selected_action for item in controller.snapshot.plan.items
+    ] == before
+
+
+@pytest.mark.asyncio
+async def test_clear_selection_resets_the_selection_and_cached_folder_names(
+    tmp_path: Path,
+) -> None:
+    """Clear drops the selection, plan and cached root names, keeping the receipt."""
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    controller = _real_override_controller(_grouped_plan(source))
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+    await controller.check()
+    assert controller._existing_top_level_names
+
+    controller.clear_selection()
+
+    snapshot = controller.snapshot
+    assert snapshot.selected_paths == ()
+    assert snapshot.selection_is_folder is False
+    assert snapshot.plan is None
+    assert controller._existing_top_level_names == ()
+    assert controller.presentation_snapshot.status_line == (
+        "Choose one or more files, or one folder."
+    )
+
+
+def test_change_selection_keeps_the_old_source_until_a_path_returns(
+    tmp_path: Path,
+) -> None:
+    """A cancelled Change selection picker leaves the selection untouched."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    controller = _controller(
+        plan=_plan(tmp_path / "one.md"), calls=[], repository=_FolderRepository()
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(first, is_folder=True)
+
+    # Cancel: the screen's picker callback never runs, so nothing changes.
+    assert controller.snapshot.selected_paths == (first,)
+
+    controller.accept_selected_path(second, is_folder=True, replace=True)
+
+    assert controller.snapshot.selected_paths == (second,)
+    assert controller.snapshot.selection_is_folder is True

@@ -20,6 +20,7 @@ from tldw_chatbook.Library.library_note_import_state import (
     begin_checking,
     begin_importing,
     begin_retry,
+    clear_selection,
     initial_note_import_snapshot,
     project_library_note_import_snapshot,
     request_import_cancellation,
@@ -40,6 +41,7 @@ from tldw_chatbook.Notes.note_folder_models import (
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportBounds,
+    ImportClassification,
     RootCollisionChoice,
 )
 
@@ -134,25 +136,39 @@ class LibraryNoteImportController:
 
     def begin_selection(self) -> None:
         """Start a new selection while retaining the latest session receipt."""
-        self._state = initial_note_import_snapshot(
-            latest_receipt=self._state.latest_receipt
-        )
-        self._existing_top_level_names = ()
-        self._error_message = ""
-        self.publish()
+        self.clear_selection()
 
     def accept_selected_path(
         self,
         path: Path,
         *,
         is_folder: bool | None = None,
+        replace: bool = False,
     ) -> None:
-        """Admit one picker result as a file or the exclusive folder source."""
+        """Admit one picker result as a file or the exclusive folder source.
+
+        Args:
+            path: The path the picker returned.
+            is_folder: Whether ``path`` is a folder. ``None`` asks the
+                filesystem, which is what a real picker result needs.
+            replace: Drop the previous selection first, and only once a path
+                has actually arrived -- cancelling the picker leaves the
+                selection the user already had (task-32134).
+
+        Raises:
+            TypeError: If ``path`` is not a :class:`~pathlib.Path` or
+                ``is_folder`` is not a boolean.
+            ValueError: If the selection rules reject the path, such as adding
+                a file to an exclusive folder import.
+        """
         if not isinstance(path, Path):
             raise TypeError("path must be a Path.")
         folder = path.is_dir() if is_folder is None else is_folder
         if type(folder) is not bool:
             raise TypeError("is_folder must be a boolean when provided.")
+        if replace:
+            self._state = clear_selection(self._state)
+            self._existing_top_level_names = ()
         self._state = (
             select_folder(self._state, path)
             if folder
@@ -160,6 +176,50 @@ class LibraryNoteImportController:
         )
         self._error_message = ""
         self.publish()
+
+    def clear_selection(self) -> None:
+        """Drop the current selection without leaving the import workflow."""
+        self._state = clear_selection(self._state)
+        self._existing_top_level_names = ()
+        self._error_message = ""
+        self.publish()
+
+    def set_group_action(self, classification: str, action: str) -> None:
+        """Apply one action to every rendered review item of one class.
+
+        Only the items on the page whose group header was pressed change, so
+        the header's count is exactly what the bulk action settles.
+
+        Args:
+            classification: The :class:`ImportClassification` value naming the
+                group whose header was pressed.
+            action: The :class:`ImportAction` value to apply to that group.
+
+        Raises:
+            ValueError: If either value is not a member of its enum, or the
+                workflow is not in review. Both reach the user as one failure
+                notice rather than a silent no-op.
+        """
+        plan = self._require_review_plan()
+        # Validate at the boundary: an unknown classification used to compare
+        # unequal to every group and change nothing at all.
+        group = ImportClassification(classification)
+        selected = ImportAction(action)
+        for rendered in self._state.page.items:
+            if (
+                rendered.classification is not group
+                or rendered.selected_action is selected
+                or selected not in rendered.allowed_actions
+            ):
+                continue
+            plan = self._apply_override(
+                plan,
+                rendered.item_id,
+                selected,
+                replace_content=False,
+                add_membership=selected is ImportAction.CREATE_NEW,
+            )
+        self._replace_review_plan(plan)
 
     def set_destination(self, value: str) -> None:
         """Retain exact destination input and its mutation-free validation."""
