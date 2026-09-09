@@ -17,7 +17,13 @@ if TYPE_CHECKING:
 
 
 def build_library_controllers(screen: LibraryScreen) -> None:
-    """Wire existing owners without evaluating any of their lazy dependencies."""
+    """Wire existing owners without evaluating any of their lazy dependencies.
+
+    Args:
+        screen: Library screen receiving the conversation-reader,
+            conversations, export, collections, RAG-search and skills
+            controllers in place; supplies their late-bound state and services.
+    """
     screen._conversation_reader_controller = LibraryConversationReaderController(
         screen,
         conversations_state_accessor=lambda: screen._conversations_state,

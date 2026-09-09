@@ -23,8 +23,18 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
-    """Keep server transport imports out of local normalization callers."""
+def __getattr__(name: str) -> type:
+    """Keep server transport imports out of local normalization callers.
+
+    Args:
+        name: Lazy export name; only ``ServerEvaluationsService`` is supported.
+
+    Returns:
+        The server service class, cached in this package's namespace.
+
+    Raises:
+        AttributeError: If the name is not the supported lazy export.
+    """
     if name != "ServerEvaluationsService":
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     from .server_evaluations_service import ServerEvaluationsService
