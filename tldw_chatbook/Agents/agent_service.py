@@ -46,6 +46,7 @@ from .agent_models import (
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
+    RUN_STUCK,
     SPAWN_TOOL_NAME,
     STEERING_SOURCE_SUPERVISOR,
     STEP_ERROR,
@@ -58,6 +59,7 @@ from .agent_models import (
     ProviderContinuationEvent,
     RunBudget,
     RunOutcome,
+    RunTerminationReason,
     SkillFileBindings,
     SpawnAdmissionRefusal,
     ToolCall,
@@ -961,14 +963,20 @@ def _call_with_timeout(
         ):
             if operation is not None:
                 operation.mark_stopping()
-            return ToolResult(ok=False, error=f"tool call cancelled: {tool_name}")
+            return ToolResult(
+                ok=False,
+                error=f"tool call cancelled: {tool_name}",
+                termination_reason=RunTerminationReason.UNKNOWN_EFFECT,
+            )
         if worker.is_alive() and pauses_deadline():
             deadline = time.monotonic() + seconds
     if worker.is_alive():
         if operation is not None:
             operation.mark_stopping()
         return ToolResult(
-            ok=False, error=f"tool call timed out after {seconds:g}s: {tool_name}"
+            ok=False,
+            error=f"tool call timed out after {seconds:g}s: {tool_name}",
+            termination_reason=RunTerminationReason.UNKNOWN_EFFECT,
         )
     if "error" in box:
         return ToolResult(ok=False, error=box["error"])
@@ -2483,6 +2491,13 @@ class AgentService:
                     RUN_LOG_SLICE_TOOL_SCHEMA,
                 )
             )
+        if self._automatic_work is not None and self._automatic_work.goal is not None:
+            goal = self._automatic_work.goal
+            runtime_schemas = [
+                schema
+                for schema in runtime_schemas
+                if goal.permits_runtime(schema.name)
+            ]
         project_context = self.project_instruction_context
         payload_state: InstructionChainPayloadState | None = None
         staged_delivery: dict[str, InstructionDeliveryReceipt] = {}
@@ -4614,10 +4629,16 @@ class AgentService:
                     deps,
                     **continuation_kwargs,
                 )
+        except AutomaticWorkRefused as error:
+            budget_tokens_known = False
+            outcome = RunOutcome(
+                status=RUN_STUCK, steps=[], termination_reason=error.termination_reason
+            )
         except _ProjectInstructionPayloadError as error:
             budget_tokens_known = False
             outcome = RunOutcome(
                 status=RUN_ERROR,
+                termination_reason=RunTerminationReason.UNKNOWN_EFFECT,
                 steps=[
                     AgentStep(
                         index=0,
@@ -4637,6 +4658,7 @@ class AgentService:
             # instead — this summary becomes user-facing failure copy.
             outcome = RunOutcome(
                 status=RUN_ERROR,
+                termination_reason=RunTerminationReason.UNKNOWN_EFFECT,
                 steps=[
                     AgentStep(
                         index=0,

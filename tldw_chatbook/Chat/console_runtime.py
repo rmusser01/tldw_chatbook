@@ -767,6 +767,26 @@ class ConsoleRuntime:
         wake.start_recovery()
         return self._chat_controller
 
+    def ensure_goal_coordinator(self):
+        """Attach goal execution to the existing startup audit and runtime owner."""
+        controller = self._chat_controller
+        if controller is None or self._disposed:
+            raise RuntimeError("Console runtime is unavailable")
+        coordinator = getattr(controller, "_goal_coordinator", None)
+        if coordinator is None:
+            from tldw_chatbook.Agents.goal_run_service import GoalRunService
+            from tldw_chatbook.Chat.console_goal_runs import ConsoleGoalCoordinator
+
+            bridge = controller._agent_bridge
+            persistence = controller.store.persistence
+            if bridge is None or persistence is None:
+                raise RuntimeError("Native goal stores are unavailable")
+            coordinator = ConsoleGoalCoordinator(
+                controller, GoalRunService(bridge.runs_db, persistence)
+            )
+            controller._goal_coordinator = coordinator
+        return coordinator
+
     # -- the view seam -----------------------------------------------------
 
     def _hook_target(self, kind: str) -> Any | None:

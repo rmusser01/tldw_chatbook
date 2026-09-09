@@ -67,7 +67,9 @@ MESSAGE_ORIGIN_AGENT_WAKE = "agent_wake"
 #: local-only column that never enters sync payloads, so the degradation is
 #: confined to the device that downgraded; accepted rather than gated on a
 #: schema bump.
-MESSAGE_ORIGINS: frozenset[str] = frozenset({"", MESSAGE_ORIGIN_AGENT_WAKE})
+MESSAGE_ORIGINS: frozenset[str] = frozenset(
+    {"", MESSAGE_ORIGIN_AGENT_WAKE, "goal_iteration"}
+)
 
 
 @dataclass(frozen=True, slots=True)

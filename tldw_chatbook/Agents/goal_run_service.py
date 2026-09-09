@@ -30,6 +30,16 @@ class GoalRunService:
         Binding and identity conflicts pause setup. Ready is not execution authority.
         """
         snapshot = self.db.goal_runs.create(request, launch_id=launch_id)
+        # Completed provisioning is not a request to reset runtime lifecycle.
+        if snapshot.status not in {"starting", "paused", "ready"}:
+            return snapshot
+        with self.db.connection() as conn:
+            accepted = conn.execute(
+                "SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=? AND a.accepted_at IS NOT NULL LIMIT 1",
+                (snapshot.id,),
+            ).fetchone()
+        if accepted:
+            return snapshot
         reason = self._binding_reason(snapshot.request)
         if not snapshot.policy.admission_enabled:
             reason = "goal_policy_disabled"

@@ -78,7 +78,13 @@ class GoalRunsStore:
                     existing["payload_hash"] != digest
                     or existing["request_json"] != payload
                 ):
-                    raise ValueError("launch_payload_conflict")
+                    stored = existing["request_json"]
+                    if (
+                        hashlib.sha256(stored.encode("utf-8")).hexdigest()
+                        != existing["payload_hash"]
+                        or GoalRequest.model_validate_json(stored) != request
+                    ):
+                        raise ValueError("launch_payload_conflict")
                 return self._snapshot(conn, existing)
             goal_id, conversation_id = str(uuid4()), str(uuid4())
             chain_id = self.db.automatic_work._create_chain(
@@ -160,7 +166,8 @@ class GoalRunsStore:
             status=row["status"],
             pause_reason=row["pause_reason"],
             iteration_count=conn.execute(
-                "SELECT count(*) FROM goal_iterations WHERE goal_id=?", (row["id"],)
+                "SELECT count(*) FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=? AND a.accepted_at IS NOT NULL",
+                (row["id"],),
             ).fetchone()[0],
             request=GoalRequest.model_validate_json(row["request_json"]),
             reports=tuple(

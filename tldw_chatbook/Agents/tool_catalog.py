@@ -1227,6 +1227,13 @@ class ToolCatalogRegistry:
             )
             if reason is not None:
                 return ToolResult(ok=False, error=reason)
+        from .automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
+        if automatic is not None and automatic.goal is not None:
+            automatic.check()
+            if tool_id not in automatic.goal.goal.request.tool_scope.catalog_tools:
+                return ToolResult(ok=False, error="Tool outside goal scope.")
         return provider.invoke(tool_id, args)
 
     def timeout_for(self, name: str) -> float | None:
@@ -1257,6 +1264,18 @@ def initial_disclosure(
     Returns (active schemas, offer_find_load).
     """
     catalog = registry.list_catalog()
+    from .automatic_work_runtime import current_automatic_work
+
+    automatic = current_automatic_work()
+    if automatic is not None and automatic.goal is not None:
+        scope = automatic.goal.goal.request.tool_scope
+        bound_mcp = {binding.tool_id for binding in scope.mcp_bindings}
+        catalog = [
+            entry
+            for entry in catalog
+            if entry.id in scope.catalog_tools
+            and (entry.source != "mcp" or entry.id in bound_mcp)
+        ]
     if len(catalog) <= DIRECT_DISCLOSE_THRESHOLD:
         schemas = [registry.load_schema(e.id) for e in catalog]
         return schemas[: budget.max_active_tools], False

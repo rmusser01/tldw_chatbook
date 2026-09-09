@@ -11,6 +11,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Callable, Literal, TypeAlias
 
 from tldw_chatbook.Chat.provider_continuation import (
@@ -188,11 +189,27 @@ class ToolCall:
     raw_arguments: str = ""
 
 
+class RunTerminationReason(str, Enum):
+    DONE = "done"
+    CANCELLED = "cancelled"
+    STUCK = "stuck"
+    STEP_LIMIT = "step_limit"
+    MODEL_TURN_LIMIT = "model_turn_limit"
+    WALL_LIMIT = "wall_limit"
+    TOKEN_LIMIT = "token_limit"
+    AUTOMATIC_LIMIT = "automatic_limit"
+    PERMISSION_REFUSED = "permission_refused"
+    AUTHORITY_CHANGED = "authority_changed"
+    UNKNOWN_EFFECT = "unknown_effect"
+    PREFLIGHT_REFUSED = "preflight_refused"
+
+
 @dataclass(frozen=True)
 class ToolResult:
     ok: bool
     content: str = ""
     error: str = ""
+    termination_reason: RunTerminationReason | None = None
 
 
 class SpawnAdmissionRefusal(ToolResult):
@@ -548,6 +565,7 @@ class RunOutcome:
     # coordinator's retention store reads it off the outcome;
     # ``AgentService._persist`` never writes it to the database.
     final_messages: list[dict] | None = None
+    termination_reason: RunTerminationReason | None = None
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:

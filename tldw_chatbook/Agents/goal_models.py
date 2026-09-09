@@ -80,9 +80,32 @@ class GoalBindingRef(GoalModel):
         return value
 
 
+class GoalMCPBinding(GoalModel):
+    """Non-secret immutable process and tool-definition references."""
+
+    tool_id: Identity
+    server_key: Identity
+    tool_name: Identity
+    profile_sha256: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+    definition_sha256: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+
+
 class GoalToolScope(GoalModel):
     catalog_tools: tuple[Identity, ...] = Field(default=(), max_length=128)
     runtime_tools: tuple[Identity, ...] = Field(default=(), max_length=128)
+    mcp_bindings: tuple[GoalMCPBinding, ...] = Field(default=(), max_length=128)
+
+    @model_validator(mode="after")
+    def scoped_bindings(self):
+        if any(
+            binding.tool_id not in self.catalog_tools for binding in self.mcp_bindings
+        ):
+            raise ValueError("MCP binding is outside catalog scope")
+        if len({binding.tool_id for binding in self.mcp_bindings}) != len(
+            self.mcp_bindings
+        ):
+            raise ValueError("duplicate MCP binding")
+        return self
 
 
 class VerificationSpec(GoalModel):

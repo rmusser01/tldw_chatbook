@@ -683,6 +683,7 @@ class ConsoleFleetWakeCoordinator:
 
     async def wait_for_recovery(self) -> bool:
         """Wait for the runtime's single audit; never start recovery on a view read."""
+        self.capture_loop_if_running()
         if self._recovery_task is not None:
             await asyncio.shield(self._recovery_task)
         return self._recovery_ready

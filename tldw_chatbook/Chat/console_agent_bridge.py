@@ -3536,6 +3536,11 @@ class ConsoleAgentBridge:
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools
         config = first_request_plan.config
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
+        if automatic is not None and automatic.goal is not None:
+            config = automatic.goal.narrow_config(config, registry)
         project_instruction_context = None
         service_confirm_project_instruction_dispatch = (
             confirm_project_instruction_dispatch
@@ -3618,6 +3623,27 @@ class ConsoleAgentBridge:
         # -> asyncio.run(install) -> broad-catch wrap. import_skill_file
         # raises a bare ValueError("local_skill_exists:...") on collision, so
         # the install catch is broad.
+        def goal_tool_refusal(name: str) -> ToolResult | None:
+            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+            from tldw_chatbook.Agents.automatic_work_runtime import (
+                current_automatic_work,
+            )
+
+            context = current_automatic_work()
+            if context is None or context.goal is None:
+                return None
+            try:
+                context.check()
+                if not context.goal.permits_runtime(name):
+                    raise AutomaticWorkRefused("goal_tool_scope")
+            except AutomaticWorkRefused as exc:
+                return ToolResult(
+                    ok=False,
+                    error=exc.reason,
+                    termination_reason=exc.termination_reason,
+                )
+            return None
+
         install_skill_tool = None
         if (
             self._skills_service is not None
@@ -3626,6 +3652,9 @@ class ConsoleAgentBridge:
             scope = self._skills_service
 
             def install_skill_tool(url: str) -> ToolResult:
+                refusal = goal_tool_refusal("install_skill")
+                if refusal is not None:
+                    return refusal
                 from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
                     classify_skill_source_url,
                     install_skill_from_url,
@@ -3662,6 +3691,9 @@ class ConsoleAgentBridge:
                     automatic_work = current_automatic_work()
                     if automatic_work is not None:
                         automatic_work.check()
+                    refusal = goal_tool_refusal("install_skill")
+                    if refusal is not None:
+                        return refusal
                     result = asyncio.run(
                         install_skill_from_url(url, scope_service=scope)
                     )
@@ -3703,6 +3735,13 @@ class ConsoleAgentBridge:
             def run_skill_script_tool(
                 skill_name: str, script_path: str, args: list[str]
             ) -> ToolResult:
+                from tldw_chatbook.Agents.automatic_work_budget import (
+                    AutomaticWorkRefused,
+                )
+
+                refusal = goal_tool_refusal("run_skill_script")
+                if refusal is not None:
+                    return refusal
                 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 
                 try:
@@ -3775,8 +3814,17 @@ class ConsoleAgentBridge:
                     automatic_work = current_automatic_work()
                     if automatic_work is not None:
                         automatic_work.check()
+                    refusal = goal_tool_refusal("run_skill_script")
+                    if refusal is not None:
+                        return refusal
                     outcome = asyncio.run(
                         scope.run_skill_script(skill_name, script_path, list(args))
+                    )
+                except AutomaticWorkRefused as exc:
+                    return ToolResult(
+                        ok=False,
+                        error=exc.reason,
+                        termination_reason=exc.termination_reason,
                     )
                 except Exception as exc:  # noqa: BLE001
                     return ToolResult(ok=False, error=f"run_skill_script: {exc}")
@@ -3805,7 +3853,19 @@ class ConsoleAgentBridge:
                         f"produced {len(outcome.output_files)} file(s): {listed}"
                     )
                     lines.append(f"output directory: {outcome.output_dir}")
-                return ToolResult(ok=True, content="\n".join(lines))
+                from tldw_chatbook.Agents.agent_models import RunTerminationReason
+
+                return ToolResult(
+                    ok=True,
+                    content="\n".join(lines),
+                    termination_reason=(
+                        RunTerminationReason.UNKNOWN_EFFECT
+                        if automatic_work is not None
+                        and automatic_work.goal is not None
+                        and outcome.exit_code is None
+                        else None
+                    ),
+                )
 
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,

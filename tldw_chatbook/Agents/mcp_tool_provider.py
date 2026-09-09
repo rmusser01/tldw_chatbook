@@ -924,6 +924,28 @@ class MCPToolProvider:
                     # captured authority and check again at actual dispatch.
                     with automatic_work.scope():
                         automatic_work.check()
+                        if automatic_work.goal is not None:
+                            from tldw_chatbook.MCP.permission_store import (
+                                definition_hash,
+                            )
+
+                            from .automatic_work_budget import AutomaticWorkRefused
+
+                            binding = next(
+                                (
+                                    item
+                                    for item in automatic_work.goal.goal.request.tool_scope.mcp_bindings
+                                    if item.server_key == tool.server_key
+                                    and item.tool_name == tool.name
+                                ),
+                                None,
+                            )
+                            if (
+                                binding is None
+                                or binding.definition_sha256
+                                != definition_hash(tool.description, tool.input_schema)
+                            ):
+                                raise AutomaticWorkRefused("mcp_binding_changed")
                         return await create_execution()
 
                 execution_coroutine = execute_authorized()

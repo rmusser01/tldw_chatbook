@@ -9,6 +9,35 @@ from dataclasses import dataclass, fields
 class AutomaticWorkRefused(RuntimeError):
     """Admission refused with a stable reason, never a model or tool body."""
 
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+    @property
+    def termination_reason(self):
+        from .agent_models import RunTerminationReason
+
+        if self.reason == "cancelled":
+            return RunTerminationReason.CANCELLED
+        if self.reason in {
+            "generation_budget",
+            "child_launch_budget",
+            "model_call_budget",
+            "tokens_budget",
+            "output_tokens_budget",
+            "wall_budget",
+            "iteration_wall_budget",
+        }:
+            return RunTerminationReason.AUTOMATIC_LIMIT
+        if self.reason in {
+            "history_unavailable",
+            "review_required",
+            "clock_unknown",
+            "clock_reversed",
+        }:
+            return RunTerminationReason.UNKNOWN_EFFECT
+        return RunTerminationReason.AUTHORITY_CHANGED
+
 
 @dataclass(frozen=True)
 class AutomaticWorkLimits:
@@ -35,15 +64,18 @@ class AutomaticWorkLimits:
         }
 
     @classmethod
-    def from_settings(cls) -> AutomaticWorkLimits:
+    def from_settings(cls, attempt_kind: str = "fleet_wake") -> AutomaticWorkLimits:
         """Snapshot finite agent limits with environment precedence and defaults."""
         from .run_log import _setting
 
-        defaults = cls()
+        if attempt_kind not in {"fleet_wake", "goal_iteration"}:
+            raise ValueError("unknown automatic attempt kind")
+        defaults = cls(child_launches=0) if attempt_kind == "goal_iteration" else cls()
+        prefix = "max_goal" if attempt_kind == "goal_iteration" else "max_autowake"
         values = {}
         for field in fields(defaults):
             default = getattr(defaults, field.name)
-            value = _setting(f"max_autowake_{field.name}", default)
+            value = _setting(f"{prefix}_{field.name}", default)
             if isinstance(value, str):
                 try:
                     value = int(value)
@@ -90,3 +122,17 @@ class AutomaticWakeAttempt:
     owner_id: str
     state: str
     run_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class GoalAttempt:
+    """An iteration link proves an empty source batch is goal authority."""
+
+    id: str
+    goal_id: str
+    ordinal: int
+    chain_id: str
+    conversation_id: str
+    session_id: str
+    owner_id: str
+    state: str

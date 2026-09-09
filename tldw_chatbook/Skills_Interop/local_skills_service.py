@@ -2358,6 +2358,18 @@ class LocalSkillsService:
             self._canonical_skill_name(skill_name), script_path, path
         )
         effective_limits = limits or resolve_script_run_limits()
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
+        goal = automatic.goal if automatic is not None else None
+        if goal is not None:
+            automatic.check()
+            effective_limits = replace(
+                effective_limits,
+                wall_clock_seconds=min(
+                    effective_limits.wall_clock_seconds, goal.remaining_seconds()
+                ),
+            )
         target_argv = (
             [str(path), *args]
             if plan.mechanism == "direct-exec"
@@ -2383,32 +2395,68 @@ class LocalSkillsService:
             # only place a script's artifacts can survive, and it stays owned by
             # this offloaded callable so a cancelled caller can never make
             # cleanup race a still-live child (see this function's docstring).
+            invocation = None
+            if goal is not None:
+                # Recheck inside the worker after every approval/scheduling wait.
+                self._require_trusted_skill(skill_name)
+                invocation = goal.begin_script(
+                    path,
+                    args,
+                    plan.skill_name,
+                    self.trust_service.current_fingerprint_digest(plan.skill_name),
+                )
             output_root = self._script_output_root()
             run_dir = Path(
                 tempfile.mkdtemp(prefix="tldw-skill-script-", dir=output_root)
             )
+            dispatch_limits = effective_limits
+            if goal is not None:
+                automatic.check()
+                dispatch_limits = replace(
+                    effective_limits,
+                    wall_clock_seconds=min(
+                        effective_limits.wall_clock_seconds, goal.remaining_seconds()
+                    ),
+                )
             result = run_script_subprocess(
-                target_argv, cwd=run_dir, limits=effective_limits
+                target_argv, cwd=run_dir, limits=dispatch_limits
             )
             produced = self._list_output_files(run_dir)
             if not produced:
                 # Nothing to keep: do not leave an empty directory behind to be
                 # pruned later, and do not count it against the retention slots.
                 _shutil.rmtree(run_dir, ignore_errors=True)
-                return replace(result, output_dir=None, output_files=())
+                result = replace(result, output_dir=None, output_files=())
+                if goal is not None:
+                    goal.finish_script(invocation, result)
+                return result
             self._prune_output_runs(
                 output_root, SCRIPT_OUTPUT_KEEP_RUNS, protect=run_dir
             )
-            return replace(
-                result, output_dir=str(run_dir), output_files=produced
-            )
+            result = replace(result, output_dir=str(run_dir), output_files=produced)
+            if goal is not None:
+                goal.finish_script(invocation, result)
+            return result
 
         # Offloaded to a thread: run_script_subprocess is a blocking call
         # (up to limits.wall_clock_seconds + 6.0s worst case) and this
         # method's own signature advertises `async def` -- calling it
         # directly would occupy whatever event loop this coroutine runs on
         # for the full duration.
-        return await asyncio.to_thread(_run_in_scratch_dir)
+        def _run_owned_scratch_dir():
+            from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+            owner = current_execution_owner()
+            operation = (
+                owner.reserve_tool() if goal is not None and owner is not None else None
+            )
+            try:
+                return _run_in_scratch_dir()
+            finally:
+                if operation is not None:
+                    operation.finish()
+
+        return await asyncio.to_thread(_run_owned_scratch_dir)
 
     async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
         self._enforce("skills.seed.launch.local")

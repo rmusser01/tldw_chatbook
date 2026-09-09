@@ -60,6 +60,7 @@ from .agent_models import (
     ModelTurn,
     ProviderContinuationEvent,
     RunOutcome,
+    RunTerminationReason,
     SpawnAdmissionRefusal,
     ToolBatchReady,
     ToolCall,
@@ -871,6 +872,15 @@ def run_agent_loop(
             final_messages = final_messages + [
                 {"role": "assistant", "content": kw.get("final_text", "")}
             ]
+        kw.setdefault(
+            "termination_reason",
+            {
+                RUN_DONE: RunTerminationReason.DONE,
+                RUN_CANCELLED: RunTerminationReason.CANCELLED,
+                RUN_STUCK: RunTerminationReason.STUCK,
+                RUN_ERROR: RunTerminationReason.UNKNOWN_EFFECT,
+            }.get(status),
+        )
         return RunOutcome(
             status,
             steps,
@@ -1012,16 +1022,24 @@ def run_agent_loop(
             return _outcome(RUN_CANCELLED)
         if len(steps) >= budget.max_steps:
             add(STEP_ERROR, summary="step budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _outcome(
+                RUN_STUCK, termination_reason=RunTerminationReason.STEP_LIMIT
+            )
         if model_turns >= budget.max_model_turns:
             add(STEP_ERROR, summary="model-turn budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _outcome(
+                RUN_STUCK, termination_reason=RunTerminationReason.MODEL_TURN_LIMIT
+            )
         if deps.clock() - started > budget.max_wall_seconds:
             add(STEP_ERROR, summary="wall-clock budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _outcome(
+                RUN_STUCK, termination_reason=RunTerminationReason.WALL_LIMIT
+            )
         if budget.max_total_tokens and total_tokens >= budget.max_total_tokens:
             add(STEP_ERROR, summary="token budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _outcome(
+                RUN_STUCK, termination_reason=RunTerminationReason.TOKEN_LIMIT
+            )
 
         restoring_batch = restored_calls is not None and bool(restored_calls)
         ephemeral_continuation = False
@@ -1339,6 +1357,13 @@ def run_agent_loop(
                 verdict = verdicts[call.call_id]
             else:
                 verdict = verdicts.get(call.name, "proceed")
+            from .automatic_work_runtime import current_automatic_work
+
+            automatic = current_automatic_work()
+            if automatic is not None and automatic.goal is not None:
+                automatic.check()
+                if not automatic.goal.permits_call(call.name):
+                    verdict = "Tool outside goal scope."
             if continuation_checkpoint is not None and verdict != "proceed":
                 continuation_cap = (
                     min(budget.max_tool_result_chars, 16_000)
@@ -1375,6 +1400,11 @@ def run_agent_loop(
                         return continuation_error()
                 else:
                     _append_tool_result(messages, call, content)
+                if automatic is not None and automatic.goal is not None:
+                    return _outcome(
+                        RUN_STUCK,
+                        termination_reason=RunTerminationReason.PERMISSION_REFUSED,
+                    )
                 continue
             if continuation_checkpoint is not None and not transition_call(
                 call, "executing"
@@ -1390,6 +1420,11 @@ def run_agent_loop(
             )
             if verdict != "proceed":
                 content = verdict
+                result = ToolResult(
+                    ok=False,
+                    error=verdict,
+                    termination_reason=RunTerminationReason.PERMISSION_REFUSED,
+                )
             else:
                 if call.name == SPAWN_TOOL_NAME:
                     if SPAWN_TOOL_NAME not in config.allowed_tools:
@@ -1694,3 +1729,9 @@ def run_agent_loop(
                     return continuation_error()
             else:
                 _append_tool_result(messages, call, content)
+            if (
+                automatic is not None
+                and automatic.goal is not None
+                and result.termination_reason is not None
+            ):
+                return _outcome(RUN_STUCK, termination_reason=result.termination_reason)

@@ -24,6 +24,7 @@ from tldw_chatbook.Agents.automatic_work_budget import (
     AutomaticWorkRefused,
     AutomaticWorkReservation,
     AutomaticWorkSnapshot,
+    GoalAttempt,
 )
 
 if TYPE_CHECKING:
@@ -710,7 +711,10 @@ class AutomaticWorkLedger:
 
     @staticmethod
     def _attempt(
-        conn: sqlite3.Connection, attempt_id: str, owner_id: str
+        conn: sqlite3.Connection,
+        attempt_id: str,
+        owner_id: str,
+        kind: str = "fleet_wake",
     ) -> sqlite3.Row:
         row = conn.execute(
             "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
@@ -719,6 +723,23 @@ class AutomaticWorkLedger:
             raise ValueError("unknown wake attempt")
         if row["owner_id"] != owner_id:
             raise ValueError("attempt owner mismatch")
+        if row["attempt_kind"] != kind:
+            raise ValueError("attempt kind mismatch")
+        if kind == "goal_iteration":
+            link = conn.execute(
+                "SELECT g.chain_id, g.conversation_id FROM goal_iterations i JOIN goal_runs g ON g.id=i.goal_id WHERE i.attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if (
+                link is None
+                or link["chain_id"] != row["chain_id"]
+                or link["conversation_id"] != row["conversation_id"]
+                or row["session_id"] != row["conversation_id"]
+                or json.loads(row["run_ids_json"]) != []
+            ):
+                raise ValueError("goal attempt link mismatch")
+        elif not json.loads(row["run_ids_json"]):
+            raise ValueError("fleet attempt requires survivor records")
         return row
 
     @staticmethod
@@ -762,6 +783,8 @@ class AutomaticWorkLedger:
                 "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
             ).fetchone()
             if existing:
+                if existing["attempt_kind"] != "fleet_wake":
+                    raise ValueError("attempt kind conflict")
                 if (
                     existing["chain_id"],
                     existing["owner_id"],
@@ -832,6 +855,97 @@ class AutomaticWorkLedger:
             )
             return self._attempt_view(self._attempt(conn, attempt_id, owner_id))
 
+    def read_goal_attempt(self, attempt_id: str, *, owner_id: str) -> GoalAttempt:
+        """Read goal authority only when its immutable iteration link agrees."""
+        with self._db.connection() as conn:
+            row = self._attempt(conn, attempt_id, owner_id, "goal_iteration")
+            link = conn.execute(
+                "SELECT goal_id, ordinal FROM goal_iterations WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            return GoalAttempt(
+                row["id"],
+                link["goal_id"],
+                link["ordinal"],
+                row["chain_id"],
+                row["conversation_id"],
+                row["session_id"],
+                row["owner_id"],
+                row["state"],
+            )
+
+    def prepare_goal_iteration(self, goal_id: str, *, owner_id: str) -> GoalAttempt:
+        """Reserve one generation and link it to real goal intent in FULL commit."""
+        _identity(goal_id)
+        goal = self._db.goal_runs.get(goal_id)
+        with self._admission_transaction(goal.chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            row = conn.execute(
+                "SELECT * FROM goal_runs WHERE id=?", (goal_id,)
+            ).fetchone()
+            if row["status"] != "ready":
+                raise AutomaticWorkRefused("goal_not_ready")
+            existing = conn.execute(
+                "SELECT a.id, a.owner_id FROM automatic_wake_attempts a JOIN goal_iterations i ON i.attempt_id=a.id WHERE i.goal_id=? AND a.state IN ('prepared','accepted')",
+                (goal_id,),
+            ).fetchone()
+            if existing:
+                self._attempt(conn, existing["id"], owner_id, "goal_iteration")
+                attempt_id = existing["id"]
+            else:
+                self._check_admission(
+                    conn,
+                    goal.chain_id,
+                    kind="generation",
+                    amount=1,
+                    limits=AutomaticWorkLimits.from_settings("goal_iteration"),
+                )
+                if conn.execute(
+                    "SELECT 1 FROM automatic_wake_attempts WHERE conversation_id=? AND state IN ('prepared','accepted')",
+                    (goal.conversation_id,),
+                ).fetchone():
+                    raise AutomaticWorkRefused("conversation_wake_active")
+                ordinal = conn.execute(
+                    "SELECT COALESCE(MAX(ordinal),0)+1 FROM goal_iterations WHERE goal_id=?",
+                    (goal_id,),
+                ).fetchone()[0]
+                attempt_id, reservation_id = uuid4().hex, uuid4().hex
+                now = self._wall_clock()
+                conn.execute(
+                    "INSERT INTO automatic_work_reservations (id,chain_id,owner_id,kind,amount,state,created_at,updated_at) VALUES (?,?,?,'generation',1,'reserved',?,?)",
+                    (reservation_id, goal.chain_id, owner_id, now, now),
+                )
+                conn.execute(
+                    "INSERT INTO automatic_wake_attempts (id,chain_id,conversation_id,session_id,owner_id,generation_reservation_id,run_ids_json,state,created_at,attempt_kind) VALUES (?,?,?,?,?,?,'[]','prepared',?,'goal_iteration')",
+                    (
+                        attempt_id,
+                        goal.chain_id,
+                        goal.conversation_id,
+                        goal.conversation_id,
+                        owner_id,
+                        reservation_id,
+                        now,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO goal_iterations (id,goal_id,ordinal,launch_id,attempt_id,status) VALUES (?,?,?,?,?,'prepared')",
+                    (uuid4().hex, goal_id, ordinal, uuid4().hex, attempt_id),
+                )
+        return self.read_goal_attempt(attempt_id, owner_id=owner_id)
+
+    def accept_goal_iteration(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Only the first committed goal acceptance grants native dispatch."""
+        return self._accept_attempt(
+            attempt_id,
+            owner_id=owner_id,
+            limits=AutomaticWorkLimits.from_settings("goal_iteration"),
+            kind="goal_iteration",
+        )
+
+    def abort_goal_iteration(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Refund only an unaccepted goal generation reservation."""
+        return self._abort_attempt(attempt_id, owner_id=owner_id, kind="goal_iteration")
+
     def accept_wake(
         self,
         attempt_id: str,
@@ -839,14 +953,33 @@ class AutomaticWorkLedger:
         owner_id: str,
         limits: AutomaticWorkLimits | None = None,
     ) -> bool:
-        """Durably consume a prepared attempt; only the first True may dispatch."""
+        """Durably consume a prepared fleet attempt."""
+        return self._accept_attempt(
+            attempt_id, owner_id=owner_id, limits=limits, kind="fleet_wake"
+        )
+
+    def _accept_attempt(
+        self,
+        attempt_id: str,
+        *,
+        owner_id: str,
+        limits: AutomaticWorkLimits | None,
+        kind: str,
+    ) -> bool:
         with self._db.connection() as conn:
-            chain_id = self._attempt(conn, attempt_id, owner_id)["chain_id"]
+            chain_id = self._attempt(conn, attempt_id, owner_id, kind)["chain_id"]
         with self._admission_transaction(chain_id) as conn:
             self._check_runtime_owner(conn, owner_id)
-            attempt = self._attempt(conn, attempt_id, owner_id)
+            attempt = self._attempt(conn, attempt_id, owner_id, kind)
             if attempt["state"] != "prepared":
                 return False
+            if kind == "goal_iteration":
+                goal = conn.execute(
+                    "SELECT g.status FROM goal_runs g JOIN goal_iterations i ON i.goal_id=g.id WHERE i.attempt_id=?",
+                    (attempt_id,),
+                ).fetchone()
+                if goal is None or goal["status"] != "ready":
+                    raise AutomaticWorkRefused("goal_not_ready")
             self._check_admission(conn, chain_id, kind="generation", limits=limits)
             reservation = self._reservation(
                 conn, attempt["generation_reservation_id"], owner_id
@@ -862,13 +995,21 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_wake_attempts SET state='accepted', accepted_at=? WHERE id=?",
                 (now, attempt_id),
             )
+            if kind == "goal_iteration":
+                conn.execute(
+                    "UPDATE goal_iterations SET status='accepted', revision=revision+1 WHERE attempt_id=?",
+                    (attempt_id,),
+                )
             self._start_automatic(conn, chain_id)
         return True
 
     def abort_wake(self, attempt_id: str, *, owner_id: str) -> bool:
         """Release a proven pre-acceptance refusal; accepted work never refunds."""
+        return self._abort_attempt(attempt_id, owner_id=owner_id, kind="fleet_wake")
+
+    def _abort_attempt(self, attempt_id: str, *, owner_id: str, kind: str) -> bool:
         with self.transaction() as conn:
-            attempt = self._attempt(conn, attempt_id, owner_id)
+            attempt = self._attempt(conn, attempt_id, owner_id, kind)
             if attempt["state"] != "prepared":
                 return False
             conn.execute(
@@ -882,6 +1023,11 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_wake_attempts SET state='aborted', completed_at=? WHERE id=?",
                 (self._wall_clock(), attempt_id),
             )
+            if kind == "goal_iteration":
+                conn.execute(
+                    "UPDATE goal_iterations SET status='aborted', revision=revision+1 WHERE attempt_id=?",
+                    (attempt_id,),
+                )
         return True
 
     def complete_wake(self, attempt_id: str, *, owner_id: str) -> bool:
