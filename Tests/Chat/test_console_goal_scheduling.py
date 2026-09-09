@@ -633,3 +633,140 @@ async def test_checkpoint_failure_fences_continuation_without_redispatch(
         assert saved.pause_reason == "checkpoint_unavailable"
     finally:
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["step_limit", "model_turn_limit", "wall_limit"])
+async def test_native_iteration_limit_saves_partial_work_without_successor(
+    stores, monkeypatch, reason
+):
+    import json
+    import time
+
+    from tldw_chatbook.Agents.agent_models import RunBudget
+    from tldw_chatbook.Agents.goal_models import GoalToolScope
+    from tldw_chatbook.Chat import console_agent_bridge
+
+    budget = RunBudget(
+        max_steps=1 if reason == "step_limit" else 64,
+        max_model_turns=1 if reason == "model_turn_limit" else 8,
+        max_wall_seconds=0.05 if reason == "wall_limit" else 240,
+    )
+    monkeypatch.setattr(console_agent_bridge, "console_run_budget", lambda: budget)
+    runs, persistence, registry, req = stores
+    req = req.model_copy(
+        update={
+            "tool_scope": GoalToolScope(
+                catalog_tools=("builtin:get_current_datetime",),
+                runtime_tools=("find_tools",),
+            )
+        }
+    )
+
+    def provider(**kwargs):
+        if reason == "wall_limit":
+            time.sleep(0.1)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "partial investigation retained",
+                        "tool_calls": [
+                            {
+                                "id": "find",
+                                "type": "function",
+                                "function": {
+                                    "name": "find_tools",
+                                    "arguments": json.dumps({"query": "none"}),
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 2},
+        }
+
+    goal, _, _, _, co, gateway, calls = build_goal_rig(
+        (runs, persistence, registry, req), monkeypatch, provider
+    )
+    try:
+        saved = await co.start(goal.id)
+        assert len(calls) == 1, "known iteration limit must not purchase a successor"
+        assert saved.status == "paused" and saved.pause_reason == "iteration_" + reason
+        assert saved.iteration_count == 1 and len(saved.checkpoints) == 1
+        assert saved.accounting.used["generation"] == 1
+        assert saved.accounting.used["model_call"] == 1
+        assert saved.accounting.used["tokens"] == 4
+        with runs.connection() as conn:
+            run_id = conn.execute(
+                "SELECT run_id FROM goal_iterations WHERE goal_id=?", (goal.id,)
+            ).fetchone()[0]
+        retained = runs.get_run(run_id)
+        assert "partial investigation retained" in str(retained["steps"])
+        assert retained["status"] == "stuck"
+        await co.start(goal.id)
+        assert len(calls) == 1
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stop_write_failure_still_fences_and_drains_active_owner(
+    stores, monkeypatch
+):
+    import sqlite3
+
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    entered, release = threading.Event(), threading.Event()
+
+    def provider(**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return progress(1)
+
+    goal, _, _, controller, co, gateway, calls = build_goal_rig(
+        stores, monkeypatch, provider
+    )
+    runner = co.start(goal.id)
+    runtime = ConsoleRuntime(app=None)
+    runtime._chat_controller = controller
+    runtime._provider_gateway = gateway
+    close_order = []
+    gateway_close = gateway.aclose
+    stop = co.service.stop
+
+    async def observed_close():
+        close_order.append((runner.done(), controller.in_flight_run_count()))
+        await gateway_close()
+
+    def fail_stop(goal_id):
+        raise sqlite3.OperationalError("injected Stop write failure")
+
+    monkeypatch.setattr(gateway, "aclose", observed_close)
+    monkeypatch.setattr(co.service, "stop", fail_stop)
+    disposal = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 3)
+        disposal = asyncio.create_task(runtime.dispose())
+        await asyncio.sleep(0.05)
+        assert not disposal.done(), "a failed Stop write cannot skip active-owner drain"
+        assert not runner.done() and not close_order
+        with pytest.raises(RuntimeError, match="runtime_unavailable"):
+            co.start(goal.id)
+        release.set()
+        await asyncio.wait_for(disposal, 3)
+        assert close_order == [(True, 0)]
+        assert len(calls) == 1
+        saved = co.service.get(goal.id)
+        assert saved.status in {"paused", "recovery_required"}
+        assert saved.accounting.used["generation"] == 1
+    finally:
+        release.set()
+        monkeypatch.setattr(co.service, "stop", stop)
+        if disposal is not None:
+            await asyncio.gather(disposal, return_exceptions=True)
+        await controller.shutdown()
+        await co.shutdown()
+        await gateway_close()

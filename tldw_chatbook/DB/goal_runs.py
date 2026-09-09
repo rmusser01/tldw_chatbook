@@ -475,6 +475,9 @@ class GoalRunsStore:
                 )
             if not uncertain and result.termination_reason in (
                 RunTerminationReason.TOKEN_LIMIT,
+                RunTerminationReason.STEP_LIMIT,
+                RunTerminationReason.MODEL_TURN_LIMIT,
+                RunTerminationReason.WALL_LIMIT,
                 RunTerminationReason.AUTOMATIC_LIMIT,
                 RunTerminationReason.PERMISSION_REFUSED,
                 RunTerminationReason.AUTHORITY_CHANGED,

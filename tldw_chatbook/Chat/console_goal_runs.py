@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from loguru import logger
+
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     RunOutcome,
@@ -437,8 +439,11 @@ class ConsoleGoalCoordinator:
             "stopped",
         }:
             self._stop_requested = True
-            if self._active is not None:
-                self.controller._signal_stop(session_id=self._active.session_id)
+            self._signal_active_stop()
+
+    def _signal_active_stop(self) -> None:
+        if self._active is not None:
+            self.controller._signal_stop(session_id=self._active.session_id)
 
     def start(self, goal_id: str) -> asyncio.Task[GoalSnapshot]:
         """Start one runtime-owned chain; await the task to observe its next rest state."""
@@ -536,8 +541,18 @@ class ConsoleGoalCoordinator:
     def close_admission(self) -> None:
         """Synchronously fence continuation before controller shutdown drains workers."""
         self._closed = True
+        self._stop_requested = True
+        self.notify_capacity()
+        loop = self._event_loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._signal_active_stop)
+        # Durable Stop is best-effort at teardown. Neither the in-memory fence
+        # nor physical draining may depend on database availability.
         if self.active_goal_id is not None:
-            self.service.stop(self.active_goal_id)
+            try:
+                self.service.stop(self.active_goal_id)
+            except Exception:  # noqa: BLE001 - shutdown must still drain its owner
+                logger.warning("Goal Stop persistence failed during shutdown.")
 
     async def shutdown(self) -> None:
         self.close_admission()
