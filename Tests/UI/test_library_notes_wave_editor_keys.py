@@ -268,3 +268,47 @@ async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
         assert str(status.renderable) != "Draft — not saved yet"
 
 
+# --- task-32138: ctrl+n and n both work on the landing and inside Notes ----
+
+
+@pytest.mark.asyncio
+async def test_ctrl_n_opens_create_from_the_landing():
+    """AC#1: ctrl+n was inert on the landing; it must now open Create."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        assert not screen._library_selected_row_id
+
+        await pilot.press("ctrl+n")
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+
+@pytest.mark.asyncio
+async def test_bare_n_still_opens_create_from_the_landing():
+    """Regression guard: the existing bare-`n` landing accelerator survives."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await pilot.press("n")
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+
+@pytest.mark.asyncio
+async def test_bare_n_also_opens_create_from_inside_notes():
+    """AC#1: `n` was landing-only; it must now also work inside Notes,
+    matching where ctrl+n already fires (the same ``check_action`` gate)."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).focus()
+        await pilot.pause()
+
+        await pilot.press("n")
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+

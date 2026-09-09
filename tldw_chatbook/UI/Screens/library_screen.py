@@ -1108,13 +1108,16 @@ class LibraryScreen(BaseAppScreen):
     )
 
     #: task-2237 (R2): the landing state advertises its full keyboard
-    #: story -- `/` focuses the rail search box, `i`/`n` are the hub
-    #: next-action accelerators (landing-scoped, like the actions they
-    #: mirror), and F6 cycles the workbench panes.
+    #: story -- `/` focuses the rail search box, `i` is the Import
+    #: accelerator, and F6 cycles the workbench panes. task-32138: New note
+    #: now advertises ``ctrl+n`` here too -- the same copy the Notes canvas
+    #: already used -- instead of a bare `n` that worked nowhere else; the
+    #: bare `n` key still fires (kept for muscle memory and an existing
+    #: pin), it is just no longer the ADVERTISED story in two places.
     LIBRARY_LANDING_SHORTCUTS = (
         ("/", "focus search"),
         ("i", "import content"),
-        ("n", "new note"),
+        ("ctrl+n", "new note"),
         ("F6", "next pane"),
     )
 
@@ -8066,15 +8069,20 @@ class LibraryScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        # Landing-scoped hub accelerator (task-2237): `n` (new note) stays
-        # landing-only -- unlike `i`, it opens a CREATE editor, which would
-        # be a surprising context loss from a browse canvas.
-        if self._library_selected_row_id:
-            return
+        # `n` (new note) accelerator (task-2237), landing-scoped by design --
+        # unlike `i`, it opens a CREATE editor, which would be a surprising
+        # context loss from a browse canvas OTHER than Notes. task-32138
+        # widened it to also fire wherever ctrl+n already does (inside the
+        # Notes workflow itself): the two keys share ``library_notes_new``'s
+        # ``check_action`` gate now, rather than the landing check here and
+        # a separate ctrl+n-only Binding disagreeing about where New note
+        # works.
         if event.key != "n":
             return
+        if not self.check_action("library_notes_new", ()):
+            return
         self.run_worker(
-            self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE),
+            self.action_library_notes_new(),
             exclusive=True,
             group="library_rail_row_switch",
         )
@@ -23266,12 +23274,23 @@ class LibraryScreen(BaseAppScreen):
             )
             region = self._library_notes_focus_region()
             if action == "library_notes_new":
-                return visible_notes and region in {
-                    "navigator",
-                    "editor",
-                    "preview",
-                    "context",
-                }
+                # task-32138: ctrl+n was inert on the Library landing --
+                # only the bare `n` accelerator (a separate, manual on_key
+                # branch, task-2237) opened Create there, while ctrl+n only
+                # fired once already inside Notes. Both keys now cover both
+                # places (see the pinned reconciliation note on
+                # ``test_library_notes_bindings_are_inactive_outside_notes_
+                # workflow``): the landing has no selected row, so widen the
+                # gate the same way task-3302 widened `i`/Import to work
+                # from anywhere.
+                return bool(
+                    (
+                        visible_notes
+                        and region
+                        in {"navigator", "editor", "preview", "context"}
+                    )
+                    or not self._library_selected_row_id
+                )
             if action == "library_notes_focus_filter":
                 return bool(
                     visible_notes

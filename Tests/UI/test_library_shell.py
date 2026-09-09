@@ -6393,16 +6393,23 @@ def test_library_screen_has_one_canonical_cross_cutting_handler_per_event():
 
 
 def test_library_notes_bindings_are_inactive_outside_notes_workflow():
-    """Notes-only bindings do not leak through the screen-wide action gate."""
+    """Notes-only bindings do not leak through the screen-wide action gate.
+
+    task-32138 reconciliation: ``library_notes_new`` (ctrl+n) is no longer
+    Notes-only -- it is now DELIBERATELY active on the Library landing too
+    (no row selected, the same state a fresh unmounted screen has here),
+    mirroring how task-3302 widened `i`/Import to work from anywhere. The
+    other three stay strictly Notes-scoped.
+    """
     screen = LibraryScreen(_open_source_test_app())
 
     for action in (
-        "library_notes_new",
         "library_notes_focus_filter",
         "library_notes_save",
         "library_notes_escape",
     ):
         assert screen.check_action(action, ()) is False, action
+    assert screen.check_action("library_notes_new", ()) is True
 
 
 def test_library_dead_inspector_copy_is_removed():
@@ -6859,9 +6866,12 @@ async def test_landing_footer_advertises_the_landing_keyboard_story():
         # covers F6 and excludes "F6 panes" from that trailing cluster --
         # see Tests/UI/test_screen_footer_hints.py for the identical,
         # already-updated pin on the same landing-footer string.
+        # task-32138: New note's landing key changed from `n` to `ctrl+n`
+        # (both still fire; the footer now advertises the one copy that
+        # also works inside the Notes canvas).
         assert footer.shortcut_text == (
-            "/ focus search | i import content | n new note | F6 next pane | "
-            "F1 help · Ctrl+P palette · Ctrl+Q quit"
+            "/ focus search | i import content | ctrl+n new note | "
+            "F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit"
         )
 
 
