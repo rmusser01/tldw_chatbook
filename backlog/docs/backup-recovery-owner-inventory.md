@@ -782,17 +782,12 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/voice_bundle_codec.py | _encode_bundle | ZipFile | 1 | unsupported | tts |
 | tldw_chatbook/TTS/voice_bundle_codec.py | _stream_member | write | 2 | unsupported | tts |
 | tldw_chatbook/TTS/voice_bundle_codec.py | _stream_member.write | write | 1 | unsupported | tts |
-| tldw_chatbook/TTS/voice_bundle_service.py | _copy_and_inspect | open | 4 | unsupported | tts |
+| tldw_chatbook/TTS/voice_bundle_service.py | _bundle_open | open | 2 | unsupported | tts |
+| tldw_chatbook/TTS/voice_bundle_service.py | _cleanup_operation | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/voice_bundle_service.py | _copy_and_inspect | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/voice_bundle_service.py | _create_operation | mkdir | 1 | unsupported | tts |
-| tldw_chatbook/TTS/voice_bundle_service.py | _create_operation | open | 2 | unsupported | tts |
-| tldw_chatbook/TTS/voice_bundle_service.py | _create_operation_file | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/voice_bundle_service.py | _fingerprint_source_sync | open | 2 | unsupported | tts |
-| tldw_chatbook/TTS/voice_bundle_service.py | _prepare_root_sync | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/voice_bundle_service.py | _prepare_root_sync | secure_private_directory | 1 | unsupported | tts |
-| tldw_chatbook/TTS/voice_bundle_service.py | _publish_sync | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/voice_bundle_service.py | _publish_sync | write | 1 | unsupported | tts |
-| tldw_chatbook/TTS/voice_bundle_service.py | _published_file_matches | open | 1 | unsupported | tts |
 | tldw_chatbook/Third_Party/aider/waiting.py | Spinner._supports_unicode | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Third_Party/aider/waiting.py | Spinner.end | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Third_Party/aider/waiting.py | Spinner.step | write | 2 | unsupported | miscellaneous |
@@ -1114,7 +1109,6 @@ The control owner now exclusively creates bounded version-1 before/after write i
 | tldw_chatbook/TTS/profile_reference_materialization.py | _sweep_orphans | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _cleanup_materialization_sync | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _CandidateValidationJob.cleanup.remove_snapshot | os.unlink | 2 | unsupported | tts |
-| tldw_chatbook/TTS/voice_bundle_service.py | _cleanup_operation | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._copy_pending_video_external | os.unlink | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | os.unlink | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | os.unlink | 1 | generic_boundary | generic |
@@ -2760,3 +2754,51 @@ maintenance composition, recovered runtime-root inventory/bytes, clone bundles,
 profile-service dirty UI and shared voices remain immediate Task10 work. Table
 rows remain unsupported at the whole-owner level. No runtime startup release,
 Complete backup, replacement, or Task31993 completion follows from this cohort.
+
+### Task10 phase14i: bundle native operations and exact lazy app source
+
+`TTSVoiceBundlePortabilityService` now reserves concrete native operations before
+queued workers and retains ordinary admission across actual prepare, inspection,
+fingerprint and publication resources. Direct descriptor calls pass their exact
+selected path to admission; external selected source/destination/parent paths do
+not inherit runtime-root scope or enlarge enrollment. Original finite creator
+edges and exact `_Operation` membership constrain selected leaves. Independent
+native admission and root flock observers cover actual encoded private bundles.
+
+The source census's former direct `open` rows now converge on `_bundle_open`;
+its original `_open_bundle_descriptor` primitive records native returns before
+outer failure. `_open_bundle_stream` and existing private-directory observers
+preserve stream/traversal attribution. Buffered members do not own their native
+FDs; unknown/failed streams retain the FD and never compete with a second closer.
+First uncertain native/lease closes are not replayed. Unknown native allocations,
+failed exact namespace cleanup and substituted/renamed originals retain blocking
+ownership despite sanitized public outcomes. Proven original partial-create
+cleanup can retire; foreign/restart residue is not guessed disposable.
+
+Owner-loop `_maintenance_close_admission`, async `_maintenance_drain(deadline)`
+and `_maintenance_resume` preserve pending in-memory review sessions and await
+actual caller/worker/repository result lifetimes. They are distinct from terminal
+`seal/close/wait_closed`. TTL/count, stale reviews, single consumption, explicit
+inactive consent, original artifact-before-profile fence order and source
+fingerprinting remain. Export acknowledgement is independent of maintenance
+eligibility: the original publisher's exact durable inode evidence preserves
+success through late cleanup failure; fingerprint success does not. Existing
+no-replace, post-publication convergence and intentional pre-publication `0600`
+temporary-file preservation are unchanged.
+
+Only the actual lazy app factory binds `_ConfiguredBundleSource` to the original
+configured repository, app/profile/dependency/coordinator objects, config selectors
+and exact root. Original fence class/function identity is checked without custom
+accessor execution. Explicit custom routes stay ordinary/unqualified. Tests include
+real configured SQLite reference import/export, byte-identical encoded output,
+source/remap/callback drift and cleanup after drift. Other native evidence uses
+controlled repository values with actual bundle/filesystem/native operations;
+it does not qualify the downstream model service or whole app startup.
+
+All TTS installed census rows remain `unsupported / tts`. The surviving
+`tts_clone_materializations` and `tts_voice_bundle_portability` roots still need
+source-backed installed inventory classification, including unknown/foreign
+residue. Profile service and dirty Profile Library UI, consumer/artifact/native
+runtime, shared voice paths, existing combined app/source-order and other Task10
+guard debts remain pending. No source-backed disposition or complete capability
+is inferred from directory names, clean native workers or this cohort's tests.

@@ -5922,3 +5922,19 @@ corrected traversal/allocation cases passed with observers restored. Assert the
 selected native resource at the fault seam; a reached shared callable alone does
 not identify which owner failed. Preserve the withdrawn result and corrected
 counterfactual provenance rather than relabeling either as a BASE test.
+
+## Pure source binding must not replay custom descriptors (TASK-31993 phase14i)
+
+The bundle source checks first captured a cached profile service's current
+`consumer_mutation_fence`. Two actual lazy app-factory fixtures then failed:
+a custom proxy property was evaluated again during binding, and an instance's
+custom fence was treated as a configured relationship before being rejected.
+This broke ordinary custom construction while calling a supposedly pure check.
+
+The correction stores original class/function references in the existing defining
+module, reads only the already-loaded module and static class/instance state, and
+compares the already-passed bound method. Custom routes remain unqualified without
+accessor replay. Eagerly importing that module from a shared source helper would
+have changed default materializer laziness; original lazy factory tests are part
+of the evidence. A source check's successful return is not proof that it was pure:
+count custom accessor calls and assert ordinary custom behavior explicitly.

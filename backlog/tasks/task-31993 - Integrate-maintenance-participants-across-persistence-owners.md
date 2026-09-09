@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 23:53'
-updated_date: '2026-09-09 04:25'
+updated_date: '2026-09-09 05:07'
 labels:
   - backup-recovery
 dependencies:
@@ -162,6 +162,17 @@ Reason: direct implementation of approved native storage lifetimes under control
 ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct implementation of approved native/source lifetimes; preserve ADR051 exact clone-reference ownership.
+
+### Phase14i implementation plan — retained voice bundle native operations
+
+1. Reproduce actual public inspection/export close failures with selected native identities and independent process admission.
+2. Apply ruling113: retain concrete original bundle operation outcomes, selected finite paths, ordinary admission and exact native creation/stream cleanup through public privacy mapping.
+3. Preserve export acknowledgement/no-replace/convergence/temp retention, and review session TTL/count/single-use across reversible gate/drain/resume.
+4. Establish separate original app-factory source drift RED and controller ruling before source binding.
+5. Verify targeted native allocation/close/namespace/cancellation/publication/session/source behavior and original affected domain cases; update exact census, ADR126 and notes; scoped commit and full dual report.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct approved native/source maintenance contract; Task10 remains In Progress with all three AC unchecked.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -947,6 +958,14 @@ The original build_default_tts_service edge binds its exact configured materiali
 ADR required: yes (reuse existing). ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: direct approved rulings109–112, with the explicitly withdrawn first-global-close attribution and corrected selected-inode counterfactual recorded. Exact owner census, scoped static and self-review accompany targeted native/source/response/domain/shared-helper tests. The original11-node app/factory order has six raw_source_selection_changed failures on both immutable BASE and current code; isolated coherent original cases pass, without clearing combined-order/source-rebinding Task10 debt. Full dual phase14h report preserves precise commands/logs, corrections and commit/clean addendum.
 
 Task31993 stays In Progress with all3 acceptance criteria unchecked. Bundles14i, profile-service/dirty UI, voices15, actual response consumers/adapter/model/process/audio retirement, runtime-root sensitive inventory, app/headless/startup composition and inherited debts remain mandatory. No full suite, network/model/audio/user resources, host cleanup, Complete/startup/replacement promotion, merge or push. Controller owns wholeTask10 review.
+
+### Phase14i implementation notes — retained bundle native operations
+
+Implemented original bundle worker ownership on ordinary exact-path admission, retained descriptor/stream/namespace outcomes, first-failure close retention, and reversible service maintenance preserving opaque reviews. Source and caller destination paths never inherit runtime-root enrollment. Original publisher post-convergence identity preserves acknowledged durable bytes independently of native readiness; fingerprint/body/control outcomes retain their own precedence. Exact original lazy app/config/repository/profile/dependency/coordinator/fence checks preserve custom routes without accessor replay or eager imports. Profile service adds only original class/fence anchors, not lifecycle behavior.
+
+ADR required: yes (reuse existing). ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: direct rulings113–114 and their native/external/failed-create/custom-source refinements. Changed voice_bundle_service, profile_source, pure profile_service anchors and the actual app factory; new private bundle maintenance fixtures and narrowly corrected existing publication test seams; exact owner census/docs/lesson updated. Final targeted evidence: native73 passed before last bounded source/guard/control refinements; original domain92 passed; affected8, final control12, source/custom10 and app/request4 passed at documented later revisions; exact census1 passed, scoped Ruff/format and diff-check passed. Counts overlap; no combined total or full-suite claim. Exact commands, behavioral RED versus fixture/counterfactual provenance and native limits are in the dual phase14i report.
+
+Task31993 remains In Progress/all3AC unchecked. WholeTask10 review, whole app/startup source/order and existing guard debts, profile service/dirty UI/consumers/artifact/native runtime, shared voices and actual runtime-root inventory classification remain required. No Complete backup/replacement, native backend or other-platform qualification is inferred. Ordinary exported files remain user-selected outputs, not baseline roots.
 <!-- SECTION:NOTES:END -->
 
 ## Design references

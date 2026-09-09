@@ -9743,6 +9743,9 @@ class TldwCli(
                 ),
             )
             self._tts_voice_bundle_service = service
+            from tldw_chatbook.TTS.profile_source import bind_app_bundle_service
+
+            bind_app_bundle_service(self)
         return service
 
     async def _close_tts_voice_bundle_service(self) -> None:

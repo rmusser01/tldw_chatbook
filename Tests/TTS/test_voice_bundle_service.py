@@ -1514,8 +1514,8 @@ async def test_export_cancellation_after_durable_publication_returns_success(
     entered = threading.Event()
     release = threading.Event()
 
-    def publish_then_wait(*args):
-        outcome = real_publish(*args)
+    def publish_then_wait(*args, **kwargs):
+        outcome = real_publish(*args, **kwargs)
         entered.set()
         release.wait(5)
         return outcome
@@ -1760,6 +1760,7 @@ async def test_export_path_never_uses_unlink(
         unlink_calls.append((args, kwargs))
         raise AssertionError("export must not unlink any pathname")
 
+    monkeypatch.setattr(bundle_service, "os", SimpleNamespace(**vars(os)))
     monkeypatch.setattr(bundle_service.os, "unlink", forbidden_unlink)
     await service.export(
         PROFILE_ID,
@@ -1810,6 +1811,7 @@ async def test_export_temp_substitution_is_preserved_without_unlink(
         raise AssertionError("export must not unlink substituted temp paths")
 
     monkeypatch.setattr(bundle_service, "_test_boundary", substitute)
+    monkeypatch.setattr(bundle_service, "os", SimpleNamespace(**vars(os)))
     monkeypatch.setattr(bundle_service.os, "unlink", forbidden_unlink)
     if boundary == "destination_pre_publish":
         with pytest.raises(TTSVoiceBundleError, match="destination_changed"):

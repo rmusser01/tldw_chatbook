@@ -779,3 +779,50 @@ admission instead of the materializer's own selected-directory traversal. Only t
 corrected runtime-inode fault and observer-disabled counterfactual establish that
 shared edge; neither is an exported-BASE claim. Native POSIX evidence does not
 promote complete backup/replacement, Windows support, or startup/runtime readiness.
+
+### Task10 phase14i: retained voice bundle operations (rulings113–114)
+
+The original bundle service retains each concrete native worker operation on
+ordinary storage leases. Fixed runtime and selected caller paths/parents receive
+ordinary admission before their IO; runtime admission alone cannot authorize a
+selected external file. Every new native allocation rechecks exact source and
+path admission. Only the original finite operation/member/temp selection edges
+can extend an operation's selected names. Traversal observers remain outcome
+observers, not descendant permission.
+
+Native descriptor and buffered-stream creators record returned resources before
+outer wrappers can fail. Buffered member streams use `closefd=False`; the concrete
+operation is the sole descriptor closer. Unknown stream ownership retains its
+associated descriptor to avoid later writes through a reused number. The first
+ambiguous close/allocation or namespace residue remains a blocker, independent
+of public sanitization and task completion. No descriptor close is replayed;
+distinct known resources retire independently. New allocations stop once an
+operation has uncertain ownership. Uncertain lease release retains remaining
+holds. Failed-create disposal requires the earliest observed original native
+inode and matching current private empty directory, preserving substitutions.
+
+Reversible service maintenance closes admission and waits for actual calls,
+queued/native workers, retained repository calls, and result publication. Pending
+opaque inspection sessions survive unchanged, including their existing expiry
+and consumption rules. Terminal sealing/session disposal remains separate.
+A successful export acknowledgement survives late native cleanup failure only
+when the original publisher recorded its exact destination/inode after both
+existing durability/convergence checks. A successful fingerprint boolean is not
+publication evidence. Native uncertainty independently blocks maintenance;
+existing body/control outcomes retain their precedence. Published bytes and the
+intentional pre-publication private temporary residue are never pathname-deleted
+for readiness.
+
+Only the actual original lazy app factory can bind a configured bundle source.
+Checks retain original app/service/config selectors, selected profile/root,
+configured repository, dependency/profile/coordinator receivers and original
+bound mutation fence. Custom constructor/selector/profile/fence routes remain
+ordinary and unqualified. Source checks do not invoke custom accessors. Binding
+is pure; the preceding ordinary app selectors/repository open retain their IO.
+Native cleanup keeps its original descriptors and namespace after source drift.
+
+This cohort qualifies concrete POSIX native behavior on the execution host.
+Runtime-root inventory classification (including empty roots and foreign residue),
+whole service/backend/process and dirty UI/consumer safe points, app/startup
+release, shared voice paths and whole-Task10 review remain required. No Complete
+backup, replacement, startup release, or other-platform qualification is added.

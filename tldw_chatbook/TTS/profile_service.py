@@ -3506,3 +3506,9 @@ class TTSProfileService:
         if voice_result.state == "model_missing":
             return "unavailable"
         return "unverified"
+
+
+# Pure original-source anchors for the lazy app bundle factory. Do not import
+# this service merely to bind a materializer or a standalone bundle constructor.
+_ORIGINAL_PROFILE_SERVICE_CLASS = TTSProfileService
+_ORIGINAL_CONSUMER_MUTATION_FENCE = TTSProfileService.consumer_mutation_fence
