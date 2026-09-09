@@ -247,6 +247,38 @@ async def test_delete_confirmation_disables_the_other_info_buttons():
         ), "The delete admission was dropped by the (no-op) press"
 
 
+@pytest.mark.asyncio
+async def test_delete_confirmation_disables_the_context_back_button():
+    """PR #2547 review (Qodo finding 4): Back was left out of the disabled
+    selector list above, so it stayed live while every other Info action
+    was disabled. Pressing it ran ``handle_library_note_context_back``,
+    which clears ``_library_note_context`` without cancelling the pending
+    admission -- displacing the confirmation prompt out of Info instead of
+    leaving it in place or requiring Cancel/Delete.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note_in_info(screen, pilot)
+        screen.query_one("#library-note-context-delete", Button).press()
+        await pilot.pause()
+        assert screen._notes_state.confirming_delete is True
+
+        back_button = screen.query_one("#library-note-context-back", Button)
+        assert back_button.disabled, "Back stayed live behind the prompt"
+
+        back_button.press()
+        await pilot.pause()
+        assert screen._notes_state.confirming_delete is True, (
+            "Back displaced the delete confirmation instead of staying inert"
+        )
+        info_region = screen.query_one("#library-note-context-region")
+        assert info_region.display, (
+            "Back's (no-op) press moved the pane away from Info"
+        )
+
+
 # --- task-32133: refused Escape notifies; a blank note reads as a draft ----
 
 

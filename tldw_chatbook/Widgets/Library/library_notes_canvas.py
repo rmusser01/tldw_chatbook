@@ -1807,10 +1807,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if str(back_button.label) != back_label:
             back_button.label = back_label
         back_button.display = not show_context and not bulk_read_only
+        back_button.disabled = confirming_delete
         context_back_button = self.query_one("#library-note-context-back", Button)
         if str(context_back_button.label) != back_label:
             context_back_button.label = back_label
         context_back_button.display = show_context
+        # PR #2547 review (Qodo finding 4): Back was left out of the
+        # disabled-selector loops below, so it stayed live behind the
+        # confirmation prompt. A press ran the Back handler, which clears
+        # ``_library_note_context`` without cancelling the pending
+        # admission -- displacing the prompt instead of leaving Info in
+        # place like every other Danger/Reuse & Export action.
+        context_back_button.disabled = confirming_delete
         self.query_one("#library-note-editor-title").display = show_editor
         self.query_one("#library-note-preview-title").display = show_preview
         self.query_one("#library-note-context-title").display = show_context
