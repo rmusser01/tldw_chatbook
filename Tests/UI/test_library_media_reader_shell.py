@@ -1555,3 +1555,29 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
         assert shell.effective_layout.items_open
         assert (len(service.search_calls), len(service.detail_calls)) == reads
         assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_apply_route_rejects_an_unknown_route_before_mutating() -> None:
+    """Qodo #6: ``apply_route`` validates against the two route constants.
+
+    ``apply_route`` is the single writer of the ``.library-media-route`` /
+    ``.library-notes-route`` markers every "is this route active?" probe reads.
+    An unhandled string used to flip both markers off and mislabel the grips,
+    leaving the shell in a state no probe answers. The guard rejects it BEFORE
+    any mutation, so a bad route cannot half-apply.
+    """
+    app = _SixtyColumnMediaShellApp()
+    async with app.run_test(size=(60, 24)) as pilot:
+        await pilot.pause()
+        shell = app.query_one(".library-media-route", LibraryBrowseReaderShell)
+        assert shell.route == "media"
+
+        with pytest.raises(ValueError):
+            shell.apply_route("collections")
+
+        # Untouched: still the media route it was constructed on, markers and
+        # all -- the guard ran before the first ``set_class``.
+        assert shell.route == "media"
+        assert shell.has_class("library-media-route")
+        assert not shell.has_class("library-notes-route")

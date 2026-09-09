@@ -337,3 +337,67 @@ async def test_library_rail_mode_switch_does_not_rebuild_the_screen(
         + "\n\nMeasured: "
         + repr(measured)
     )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_resident_repaint_recovers_with_a_whole_screen_recompose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Qodo #7: the ONE whole-screen recompose the residency pin must allow.
+
+    The pin above proves a healthy media<->notes switch recomposes ZERO times.
+    This is its dark twin. When the resident canvas REFUSES its in-place
+    repaint on a return-switch, ``_adopt_library_browse_canvas`` runs
+    ``_sync_library_canvas`` with ``allow_screen_fallback=False`` -- it declines
+    to recover itself precisely so the caller
+    (``_select_library_rail_row_after_source_admission``) can, through its
+    ``if not replaced: await self.recompose()`` arm. That Boolean was discarded:
+    the swap reported success over a canvas still showing stale content, and the
+    recovery never fired. With the Boolean propagated the failed repaint drives
+    the swap to False and the whole-screen recompose runs as the recovery.
+    """
+    from tldw_chatbook.UI.Library_Modules import library_browse_route_swap
+
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+    counters = _install_counters(monkeypatch)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _settle(pilot, passes=30)
+        if screen.query("#library-rail-explore-all"):
+            screen.query_one("#library-rail-explore-all", Button).press()
+            await _settle(pilot, passes=30)
+
+        # Warm-up into Media (resident), then to Notes, so the Media canvas is
+        # resident-and-hidden -- the state a return-switch repaints in place.
+        await _switch(
+            screen, pilot, counters, LIBRARY_ROW_BROWSE_MEDIA, "#library-media-canvas"
+        )
+        await _switch(
+            screen, pilot, counters, LIBRARY_ROW_BROWSE_NOTES, "#library-notes-canvas"
+        )
+
+        # The resident Media canvas refuses its repaint on the way back.
+        # Patched on the route-swap module's own binding, so it changes only
+        # ``_adopt_library_browse_canvas``'s in-place repaint.
+        monkeypatch.setattr(
+            library_browse_route_swap,
+            "_sync_library_canvas",
+            lambda *args, **kwargs: False,
+        )
+        tallies = await _switch(
+            screen, pilot, counters, LIBRARY_ROW_BROWSE_MEDIA, "#library-media-canvas"
+        )
+
+    assert len(tallies["screen_recomposes"]) >= 1, (
+        "A failed resident repaint on the Media return-switch did not trigger "
+        f"the whole-screen recompose recovery (the swap swallowed it): {tallies!r}"
+    )
+    # The recovery actually reached Media: recompose rebuilds the destination.
+    assert tallies["canvas_present"] and tallies["canvas_displayed"], tallies
+    assert tallies["selected_row_id"] == LIBRARY_ROW_BROWSE_MEDIA, tallies

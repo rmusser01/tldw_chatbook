@@ -498,3 +498,104 @@ async def test_a_hidden_resident_canvas_refuses_its_own_migrated_presses() -> No
         )
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
         assert screen.query_one("#library-notes-canvas").display
+
+
+# ---------------------------------------------------------------------------
+# The census-escape guard. Phase C fused the two per-route reader shells into
+# one resident ``LibraryBrowseReaderShell`` (id ``#library-browse-reader-
+# shell``) and renamed their grips onto the ``library-browse`` prefix. The
+# ``#`` -> ``.`` census that carried the ~35 "is this route active?" DOM probes
+# across missed one LIVE ``query_one("#library-media-reader-shell")`` (a width
+# probe in ``_select_library_rail_row_after_source_admission``): the retired id
+# never matches, ``NoMatches`` is caught, the width reads 0, and every "Browse
+# Media" entry silently cleared the user's ``priority_pane`` -- the exact
+# regression the surrounding comment block documents guarding against (Qodo
+# #9). A ``sqlite_master``-is-green-for-a-dead-index situation: the code
+# looked fine and ran, it just queried a name nothing answers to.
+#
+# This guard closes the CLASS, not the instance: it fails if any production
+# module reintroduces a live ``query``/``query_one`` against a retired
+# shell/grip id. It parses the AST rather than grepping the text on purpose --
+# a retired id is legitimately NAMED in prose (this module's own comment above,
+# and ``library_browse_reader_shell``'s module docstring), and only a string
+# literal handed to a query call is the bug.
+_RETIRED_LIBRARY_QUERY_IDS: frozenset[str] = frozenset(
+    {
+        # The two fused per-route reader shells.
+        "library-media-reader-shell",
+        "library-notes-reader-shell",
+        # Their grips, retired with the per-route ``id_prefix``es
+        # (``library-media`` / ``library-notes``) for the shared
+        # ``library-browse`` prefix.
+        "library-media-library-grip",
+        "library-media-items-grip",
+        "library-notes-library-grip",
+        "library-notes-items-grip",
+    }
+)
+
+#: The Textual node-query methods whose first positional arg is a CSS selector.
+_QUERY_METHOD_NAMES: frozenset[str] = frozenset(
+    {"query", "query_one", "query_exactly_one", "query_children"}
+)
+
+_PRODUCTION_ROOT = _REPO_ROOT / "tldw_chatbook"
+
+
+def _live_retired_id_queries(
+    path: pathlib.Path,
+) -> list[tuple[int, str, str]]:
+    """Every ``query``/``query_one`` call in ``path`` whose selector literal
+    names a retired shell/grip id.
+
+    Args:
+        path: A production ``.py`` module.
+
+    Returns:
+        ``(lineno, retired_id, selector_literal)`` for each offending call.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    hits: list[tuple[int, str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr not in _QUERY_METHOD_NAMES:
+            continue
+        for arg in node.args:
+            if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+                continue
+            for retired in _RETIRED_LIBRARY_QUERY_IDS:
+                if retired in arg.value:
+                    hits.append((node.lineno, retired, arg.value))
+    return hits
+
+
+@pytest.mark.unit
+def test_no_production_module_queries_a_retired_library_shell_or_grip_id() -> None:
+    """A live query of a retired phase-C id is a silent dead probe.
+
+    ``query_one`` of a name nothing mounts raises ``NoMatches``, and every one
+    of these sites already wraps that in a ``try``/``except`` that swallows it
+    into a benign-looking default -- so the failure is invisible until a user
+    notices the behaviour it drives is wrong. This guard turns the whole class
+    into a red test at the source, the way ``_on_rows`` pins the routing table:
+    the moment a retired id reappears inside a query, it names the file, line,
+    and selector.
+    """
+    offenders: dict[str, list[tuple[int, str, str]]] = {}
+    for path in sorted(_PRODUCTION_ROOT.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        hits = _live_retired_id_queries(path)
+        if hits:
+            offenders[str(path.relative_to(_REPO_ROOT))] = hits
+    assert not offenders, (
+        "Live query of a retired phase-C shell/grip id (these ids are no "
+        "longer mounted -- the query silently raises NoMatches). Retarget to "
+        "the resident id (#library-browse-reader-shell) or the shared grips "
+        "(#library-browse-library-grip / #library-browse-items-grip), or the "
+        f"route marker class (.library-media-route): {offenders!r}"
+    )
