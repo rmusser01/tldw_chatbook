@@ -707,3 +707,38 @@ registry or diagnostic exception payload is added. These host-specific native te
 are not Windows qualification, whole TTS runtime drain or startup release. Migration,
 restore publication/rebind, reference materialization, bundles, voices, dirty UI,
 service/audio/model/process and app/headless aggregation remain Task10 obligations.
+
+
+### Task10 phase14g: live TTS migration and restore outcomes (rulings100–108)
+
+Actual migration/restore/publication/recovery operations retain a concrete ordinary
+native record on existing source leases and repository membership. Exact source,
+parent and validated recovery-row associations constrain helper use; original opaque
+namespace and destination policies remain decisive. Scalar standalone helpers own
+actual supplied sources, while returned-FD namespace helpers preserve their existing
+destination owner. No ambient callback/capture permission, duplicate global native
+registry or second mutex is added.
+
+A private descriptor-connector outcome records duplication and actual native SQLite
+return before subsequent wrapper/finally failures, because verified-descriptor SQLite
+bypasses ordinary path admission. Source readers and initialized connections retain
+constructor and first-close outcomes before later configuration/callback failures.
+Original public source cleanup retries remain compatible but cannot heal native
+uncertainty; positive first cleanup retires, including historical BLOB children under
+their original native parent. New final cleanup propagates original control flow by
+identity when no body error exists, preserving original publication body precedence.
+
+Shared-open scalar parent checks use the same ordinary record. Existing exact-current
+revalidation observes its bounded parent reopen on the held exact owner without new
+admission during close. Traversal/final primitive attribution and positive descriptor
+reuse stay intact. Proven query-only DELETE-mode partial construction may close only
+after exact parent/main/security/publication checks and explicit WAL/SHM absence;
+full-current WAL authority and foreign-namespace quarantine remain unchanged.
+
+The existing schema-version-aware migration reference validator qualifies genuine v3
+restore before migration; no schema or archive validation policy changes. Public open
+maps errors outside its catch while retaining the original reservation-finally timing.
+Actual pause evidence preserves preflight or durable publishing bytes and recovers
+convergently after ordinary resume. A journal is not capture readiness, and this phase
+grants no PONR continuation authority. TTS materializer/bundle/voice/runtime/dirty UI,
+app/headless aggregation and startup release remain mandatory Task10 obligations.

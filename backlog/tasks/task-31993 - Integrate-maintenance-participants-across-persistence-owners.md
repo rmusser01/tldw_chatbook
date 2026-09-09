@@ -141,6 +141,18 @@ Reason: direct approved native ownership integration, preserving ADR028/040/051/
 ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct implementation of approved native resource ownership, preserving ADR028/040/051/023; controller ruling precedes each ownership change.
+
+### Phase14g implementation plan — TTS migration and restore native lifetimes
+
+1. Establish actual initialize/migration/publication/recovery/restore native and namespace behavioral RED using genuine historical SQLite schemas and private native observers.
+2. Obtain controller source-backed rulings before ownership/interface changes; reuse retained repository generation, ordinary leases, exact opaque destination and journal authority, preserving public PONR and error precedence.
+3. Retain native uncertainty and pending compound work through actual completion or a verified durable recoverable boundary; prove failed acquisition, cancellation, competing maintenance and source-worker resume without granting callback/capture authority.
+4. Run only affected repository/schema/publication/recovery tests, exact census and scoped static checks; self-review and update ADR126, inventory and actual evidence notes.
+5. Commit bounded phase and identical dual reports; leave Task31993 In Progress with all three criteria unchecked and all later mandatory cohorts explicit.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct implementation of approved native storage lifetimes under controller rulings; preserve ADR028/040/051/023 and existing publication/recovery contracts.
+
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -917,3 +929,11 @@ limits and final commit/clean-status addendum.
 The exact current TTS wrapper now owns source admission before native pins and retains dual SQLite/descriptors, unique unknown allocation outcomes and close-once uncertainty through the existing cleanup exception. Standalone close checks the original WAL/SHM namespace. ProfileStoreLease records actual native acquisition/cleanup independently of primary/residual compatibility slots; positive close after unlock error retires, while unknown native outcomes preserve independent exclusion. Parent-owned real reference BLOB retirement is proven without another registry or changed public error mapping.
 
 Direct implementation of ADR126 under controller rulings95–99, preserving ADR028/040/051/023. Exact native and independent private-process evidence, ordinary refusal, control-flow, cancellation/queued work, standalone reference validation, real capture/reference round trips and scoped census/static checks are recorded with exact commands and limitations in the dual phase14f report. Source changes are limited to profile_schema.py and profile_store_lock.py; tests and exact owner inventory follow their actual native seams. No full suite, SemLock host cleanup, user resources, audio/models/network, startup/Complete promotion, merge or push. Task10 remains In Progress with all three AC unchecked; migration/publication/rebind, materializer/bundle/voice/runtime/dirty UI and actual app/headless aggregation remain mandatory.
+
+### Phase14g implementation notes — live TTS migration and restore native outcomes
+
+Actual initialization, publication/recovery, restore and rebind retain native ownership through explicit source operations, descriptor connector outcomes and existing exact-current/opaque destination owners. Failed source close remains unresolved through the original public cleanup retry; positive parent close retires genuine historical reference BLOBs. Scalar standalone helpers own only actual sources, supplied helpers reject foreign source/parent associations, and original exact namespace and publication journal policy remain decisive.
+
+Direct implementation of ADR126 under controller rulings100–108, preserving ADR028/040/051/023. Genuine v3 restore uses the existing version-aware reference validator; proven query-only DELETE-mode partial open can retire under exact absent-sidecar checks. Current revalidation observes original parent IO on its held owner without fresh maintenance admission. Public-open mapping stays context-free while reservation cleanup timing remains. Preflight and PONR pause cases preserve exact source/reference bytes and verify real repeated recovery after ordinary resume; no callback/capture borrowing or new PONR continuation is granted.
+
+Scoped native tests, source/control/cancellation/deadline and publication/recovery compatibility, original opaque destination behavior, literal SQLite owner and exact source census, static checks and self-review are recorded in the identical dual phase14g report with precise RED versus fixture provenance. Modified source is confined to private_sqlite.py and TTS migration namespace/publication/recovery/native, repository and schema helpers; exact inventory and an incident-backed testing lesson accompany it. Task31993 remains In Progress with all three acceptance criteria unchecked. Materializer14h, bundles14i, service/dirty UI/runtime14j, shared voices15, actual app/headless/startup aggregation and inherited native/census/order debts remain mandatory. No full sweep, host cleanup, network/models/audio/user resources, merge or push.

@@ -5893,3 +5893,20 @@ repository retired, despite the leaked WAL descriptor. A unique pending token fo
 each allocation keeps that unknown attempt after later success or ordinary absence.
 The regression failed at independent native admission, then passed after the token
 change; exception type and later native success were not evidence of prior absence.
+
+
+## Descriptor readers and migration observers need their actual native route (TASK-31993 phase14g, 2026-09-08)
+
+Four real historical TTS open/restore tests showed native maintenance entering after
+descriptor-reader close failure. The verified-descriptor SQLite route bypassed the
+ordinary path-backed admission decorator, contrary to the initial ownership assumption.
+Observe that route's actual duplicated FD and native SQLite return before wrapper or
+finally failures; a similarly named path reader is not evidence for descriptor ownership.
+
+During the same phase, a diagnostic `mode=ro` query of a paused publishing source
+created WAL/SHM entries and made recovery appear broken. Immutable reads of the already
+closed exact fixture preserved its namespace and exposed the real durable recovery
+behavior. Count reached native failures separately from fixture timestamp errors,
+observer-created sidecars, or broad monkeypatches that interrupt earlier optional opens.
+Historical fixtures must run real MIGRATIONS: a genuine v3 reference BLOB exposed a
+current-only restore validator that restamped current DDL would have hidden.

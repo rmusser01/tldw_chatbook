@@ -733,20 +733,11 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._load_saved_blends | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend.initialize | mkdir | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/voice_manager_base.py | VoiceManagerBase.__init__ | mkdir | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_namespace.py | admit_zero_reusable_tombstone | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_namespace.py | move_exact_noreplace | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_namespace.py | open_new_or_reused_private_file | open | 2 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_namespace.py | prepare_reusable_tombstone | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_namespace.py | remove_exact | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_namespace.py | remove_zero_reusable_tombstone | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_namespace.py | require_reusable_tombstone | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_publication.py | _append_journal | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_migration_native.py | _native_open | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_publication.py | _append_journal | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_publication.py | _immutable_validate | connect_private_sqlite_descriptor | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_publication.py | _open_exact | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_publication.py | _prepare_parent | secure_private_directory | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_publication.py | _write_new_journal | write | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_recovery.py | _open_leaf | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_recovery.py | _validate_authoritative_targets | connect_private_sqlite_descriptor | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_recovery.py | recover_profile_migration_publication | secure_private_directory | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_audio.py | _read_regular_source | open | 1 | unsupported | tts |
@@ -775,7 +766,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/profile_schema.py | _CandidateValidationJob.pin_parent | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _copy_source_to_snapshot | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _open_candidate_source | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_schema.py | capture_post_init_profile_store_authority | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | open_exact_current_profile_store | connect_private_sqlite | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | open_exact_current_profile_store | connect_private_sqlite_descriptor | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_schema.py | _ExactCurrentProfileConnection.open_descriptor | open | 1 | unsupported | tts |
@@ -2682,3 +2672,53 @@ uncertain lease-close result; independent native admission verifies the retained
 Only an explicit per-call refusal at the original SQLite admission boundary clears
 that current pending target attempt. Same-code errors after native allocation remain
 unknown; standalone kwargs, factory contracts and capture/source scopes are unchanged.
+
+
+### Task10 phase14g — live migration, publication, restore and rebind native outcomes
+
+The concrete `_MigrationNativeState` retains ordinary leases in the existing live
+lease set and an explicit repository operation set. Source-version readers,
+initialized connections and actual restore candidates retain their own constructor
+and first-close outcomes; an existing public compatibility retry cannot clear a
+failed first native outcome. Ordinary refusal and positive cleanup retire. No new
+ambient context, global SQLite/BLOB registry, native mutex or callback/capture grant
+is introduced. Original literal registered SQLite call sites remain visible.
+
+Publication, recovery, namespace and postinit helpers explicitly associate their
+original native parent/file/descriptor-reader/journal/fsync operations with that
+record. A supplied operation must match its exact source and known parent; recovery
+may associate only exact validated journal-row leaves after original authority
+checks. The returned-FD namespace API keeps its existing opaque destination owner
+when no operation is supplied. Scalar standalone publication/recovery/postinit
+operations own only actual supplied sources. Existing opaque authority checks still
+decide whether any path operation is allowed.
+
+Verified-descriptor SQLite calls bypass ordinary path-backed SQLite admission.
+Their private per-call `_SQLiteDescriptorOutcome` now observes actual duplication,
+native SQLite return, unreturned allocations, and independent duplicate/reader
+retirement before later wrapper failures. The DB seam grants no TTS/path authority.
+Historical real reference BLOBs remain owned by their native SQLite parent; actual
+source-thread observations prove positive parent retirement without another registry.
+
+The shared-open journal precheck has its own bounded source record. Exact-current
+revalidation observes its existing parent traversal on the already-held exact owner,
+without trying to obtain fresh admission during maintenance cleanup. Original
+traversal and final-close primitives remain distinct. Positive closes permit fresh
+OS descriptor-number reuse; uncertain closes never replay. Failed construction can
+retire a positively query-only DELETE-mode current connection only with original
+parent/main/security checks and both WAL/SHM absent. Full-current use still requires
+the retained WAL/SHM pair; foreign namespace or unknown mode stays excluded.
+
+Genuine v3 restore uses the existing version-aware reference validator; current-v4
+validation remains unchanged. Real preflight/publishing pause cases verify exact
+source and reference bytes, original result/journal phase, and repeated recovery
+convergence after ordinary resume. A durable journal does not itself qualify capture,
+and no publication continuation authority is granted. Exact census movement is the
+11 old raw-open rows above into `_native_open`'s two actual branches; owner disposition
+remains unsupported pending all remaining TTS/application producers.
+
+ADR126 rulings100–108 govern this bounded phase. Materializer14h, bundles14i,
+service/dirty UI/runtime14j, shared voices15, actual backend/model/audio/native-process
+and full app/headless/startup aggregation remain Task10 work. Inherited SemLock,
+shared-voice census, pet AST and combined-order debts remain; diagnostic drift is
+Task26. Tests use private temporary sources and native observers on this host only.

@@ -1464,6 +1464,7 @@ class TTSProfileRepository:
         self._maintenance_cleanup_future: Future[None] | None = None
         self._publication_completions: dict[Future[object], asyncio.Future[None]] = {}
         self._backup_native_operations: set[_BackupNativeState] = set()
+        self._migration_native_operations: set = set()
 
     @property
     def state(self) -> ProfileRepositoryState:
@@ -1568,13 +1569,16 @@ class TTSProfileRepository:
         self._bind_or_check_loop()
         reservation = self._reserve_maintenance_entry()
         try:
-            result = await self._open_admitted(reservation)
-            from .profile_source import check_repository_source
+            open_error: BaseException | None = None
+            try:
+                result = await self._open_admitted(reservation)
+                from .profile_source import check_repository_source
 
-            check_repository_source(self)
-            return result
-        except BaseException as error:
-            _raise_operation_error(error)
+                check_repository_source(self)
+                return result
+            except BaseException as error:
+                open_error = error
+            _raise_operation_error(open_error)
             raise AssertionError("unreachable")
         finally:
             reservation.close()
@@ -1790,31 +1794,40 @@ class TTSProfileRepository:
     ) -> tuple[ProfileStoreLease, sqlite3.Connection] | None:
         """Open exact v4 while continuously holding one shared gate."""
 
+        from .profile_migration_native import (
+            _migration_native,
+            _native_parent,
+            _native_close,
+        )
+
         lease = ProfileStoreLease(active_path, ProfileStoreLockMode.SHARED)
         connection: sqlite3.Connection | None = None
         body_error: BaseException | None = None
         release_error: BaseException | None = None
         try:
             lease.acquire()
-            parent_fd, _leaf = private_paths._open_verified_parent(
-                active_path,
-                missing_leaf_allowed=True,
-            )
-            try:
-                journal_leaf = f".{active_path.name}.migration-publication.json"
-                for suffix in ("", *_STORE_SIDECAR_SUFFIXES):
-                    try:
-                        os.stat(
-                            f"{journal_leaf}{suffix}",
-                            dir_fd=parent_fd,
-                            follow_symlinks=False,
-                        )
-                    except FileNotFoundError:
-                        continue
-                    self._worker_release_unproven_shared(lease, active_path)
-                    return None
-            finally:
-                os.close(parent_fd)
+            with _migration_native((active_path,), repository=self) as _native:
+                parent_fd, _leaf = _native_parent(
+                    _native,
+                    private_paths,
+                    active_path,
+                    missing_leaf_allowed=True,
+                )
+                try:
+                    journal_leaf = f".{active_path.name}.migration-publication.json"
+                    for suffix in ("", *_STORE_SIDECAR_SUFFIXES):
+                        try:
+                            os.stat(
+                                f"{journal_leaf}{suffix}",
+                                dir_fd=parent_fd,
+                                follow_symlinks=False,
+                            )
+                        except FileNotFoundError:
+                            continue
+                        self._worker_release_unproven_shared(lease, active_path)
+                        return None
+                finally:
+                    _native_close(_native, os, parent_fd)
             try:
                 connection = open_exact_current_profile_store(
                     active_path,
@@ -1883,69 +1896,91 @@ class TTSProfileRepository:
     ) -> PostInitProfileStoreAuthority:
         """Create or migrate one store only while holding exclusive ownership."""
 
-        lease = ProfileStoreLease(
-            active_path,
-            ProfileStoreLockMode.EXCLUSIVE,
-            timeout_seconds=_INITIALIZATION_LOCK_TIMEOUT_SECONDS,
+        from .profile_migration_native import (
+            _migration_native,
+            _migration_paths,
+            _source_initialize,
+            _source_close,
         )
-        connection: sqlite3.Connection | None = None
-        body_error: BaseException | None = None
-        connection_error: BaseException | None = None
-        lease_error: BaseException | None = None
-        authority: PostInitProfileStoreAuthority | None = None
-        try:
-            lease.acquire()
-            recover_profile_migration_publication(active_path)
-            source_version = self._worker_exact_schema_version(active_path)
-            if source_version is None:
-                if not allow_create:
-                    raise _repository_error("missing")
-                connection = open_profile_store(active_path)
-            elif source_version < CURRENT_PROFILE_SCHEMA_VERSION:
-                self._worker_publish_migrated_store(active_path, source_version)
-                connection = open_profile_store(active_path, must_exist=True)
-            elif source_version == CURRENT_PROFILE_SCHEMA_VERSION:
-                connection = open_profile_store(active_path, must_exist=True)
-            else:
-                raise _repository_error("schema_unsupported")
-            validate_profile_store_rows(connection)
-            self._require_configured_path_matches(
-                active_path,
-                "operation_failed",
-            )
-        except BaseException as error:
-            body_error = error
 
-        if connection is not None:
+        with _migration_native(
+            (active_path,), repository=self, related=_migration_paths(active_path)
+        ) as _native:
+            lease = ProfileStoreLease(
+                active_path,
+                ProfileStoreLockMode.EXCLUSIVE,
+                timeout_seconds=_INITIALIZATION_LOCK_TIMEOUT_SECONDS,
+            )
+            connection: sqlite3.Connection | None = None
+            body_error: BaseException | None = None
+            connection_error: BaseException | None = None
+            lease_error: BaseException | None = None
+            authority: PostInitProfileStoreAuthority | None = None
             try:
-                connection.close()
-            except BaseException as error:
-                connection_error = error
-                self._connection = connection
-                self._lease = lease
-                self._active_database_path = active_path
-        if body_error is None and connection_error is None:
-            try:
-                authority = capture_post_init_profile_store_authority(active_path)
+                lease.acquire()
+                recover_profile_migration_publication(active_path, _native=_native)
+                source_version = self._worker_exact_schema_version(
+                    active_path, _native=_native
+                )
+                if source_version is None:
+                    if not allow_create:
+                        raise _repository_error("missing")
+                    connection = _source_initialize(
+                        _native, open_profile_store, active_path
+                    )
+                elif source_version < CURRENT_PROFILE_SCHEMA_VERSION:
+                    self._worker_publish_migrated_store(
+                        active_path, source_version, _native=_native
+                    )
+                    connection = _source_initialize(
+                        _native, open_profile_store, active_path, must_exist=True
+                    )
+                elif source_version == CURRENT_PROFILE_SCHEMA_VERSION:
+                    connection = _source_initialize(
+                        _native, open_profile_store, active_path, must_exist=True
+                    )
+                else:
+                    raise _repository_error("schema_unsupported")
+                validate_profile_store_rows(connection)
+                self._require_configured_path_matches(
+                    active_path,
+                    "operation_failed",
+                )
             except BaseException as error:
                 body_error = error
-        if self._connection is not None:
-            self._lease = lease
-            self._active_database_path = active_path
-        elif connection_error is None:
-            try:
-                lease.release()
-            except BaseException as error:
-                lease_error = error
+
+            if connection is not None:
+                try:
+                    _source_close(_native, connection)
+                except BaseException as error:
+                    connection_error = error
+                    self._connection = connection
+                    self._lease = lease
+                    self._active_database_path = active_path
+            if body_error is None and connection_error is None:
+                try:
+                    authority = capture_post_init_profile_store_authority(
+                        active_path, _native=_native
+                    )
+                except BaseException as error:
+                    body_error = error
+            if self._connection is not None:
                 self._lease = lease
                 self._active_database_path = active_path
-        _raise_with_cleanup_precedence(
-            body_error,
-            connection_error,
-            lease_error,
-        )
-        assert authority is not None
-        return authority
+            elif connection_error is None:
+                try:
+                    lease.release()
+                except BaseException as error:
+                    lease_error = error
+                    self._lease = lease
+                    self._active_database_path = active_path
+            _raise_with_cleanup_precedence(
+                body_error,
+                connection_error,
+                lease_error,
+            )
+            assert authority is not None
+            return authority
 
     def _worker_publish_migrated_store(
         self,
@@ -1955,8 +1990,17 @@ class TTSProfileRepository:
         source_path: Path | None = None,
         stage_hook: Callable[[ProfileMigrationPublicationStage], None] | None = None,
         progress_guard: Callable[[], None] | None = None,
+        _native=None,
     ) -> None:
         """Prepare and transactionally publish one exact v4 candidate set."""
+
+        from .profile_migration_native import (
+            _source_allocation,
+            _source_options,
+            _source_observed,
+            _source_close,
+            _source_cleanup,
+        )
 
         slot_for_boundary = {
             ProfileMigrationBoundary.PRE_V3: ProfileMigrationPublicationSlot.PRE_V3,
@@ -1968,40 +2012,40 @@ class TTSProfileRepository:
             ProfileMigrationPublicationSlot.PRE_V4: MigrationTombstoneKey.PRE_V4_CANDIDATE,
         }
         backup_path_for_slot = {
-            ProfileMigrationPublicationSlot.PRE_V3: _v2_migration_backup_path(
-                active_path
-            ),
-            ProfileMigrationPublicationSlot.PRE_V4: _v3_migration_backup_path(
-                active_path
-            ),
+            ProfileMigrationPublicationSlot.PRE_V3: _v2_migration_backup_path(active_path),
+            ProfileMigrationPublicationSlot.PRE_V4: _v3_migration_backup_path(active_path),
         }
         active_candidate_path = active_path.with_name(
             PROFILE_MIGRATION_CANDIDATE_LEAVES[ProfileMigrationPublicationSlot.ACTIVE]
         )
-        owners: list[
-            tuple[ProfileMigrationBoundaryDestination, MigrationTombstoneKey]
-        ] = []
+        owners: list[tuple[ProfileMigrationBoundaryDestination, MigrationTombstoneKey]] = []
         publication_started = False
         source: sqlite3.Connection | None = None
         body_error: BaseException | None = None
         try:
-            self._worker_prepare_reusable_tombstones(active_path)
+            self._worker_prepare_reusable_tombstones(active_path, _native=_native)
             if source_path is None:
-                source = connect_private_sqlite(
-                    "tts.profile_migration_backup",
-                    active_path,
-                    read_only=True,
-                    must_exist=True,
-                    isolation_level=None,
-                )
+                with _source_allocation(_native, active_path) as _source_call_outcome:
+                    source = connect_private_sqlite(
+                        "tts.profile_migration_backup",
+                        active_path,
+                        read_only=True,
+                        must_exist=True,
+                        isolation_level=None,
+                        **_source_options(_source_call_outcome),
+                    )
+                    _source_observed(_source_call_outcome, source)
             else:
-                source = connect_private_sqlite(
-                    "tts.profile_restore_stage",
-                    source_path,
-                    read_only=True,
-                    must_exist=True,
-                    isolation_level=None,
-                )
+                with _source_allocation(_native, source_path) as _source_call_outcome:
+                    source = connect_private_sqlite(
+                        "tts.profile_restore_stage",
+                        source_path,
+                        read_only=True,
+                        must_exist=True,
+                        isolation_level=None,
+                        **_source_options(_source_call_outcome),
+                    )
+                    _source_observed(_source_call_outcome, source)
             source.row_factory = sqlite3.Row
             source.execute("PRAGMA foreign_keys = ON")
             if source_version == 0:
@@ -2019,9 +2063,7 @@ class TTSProfileRepository:
             active_owner = open_canonical_profile_migration_destination(
                 active_candidate_path,
                 schema_version=source_version,
-                tombstone_key=tombstone_for_slot[
-                    ProfileMigrationPublicationSlot.ACTIVE
-                ],
+                tombstone_key=tombstone_for_slot[ProfileMigrationPublicationSlot.ACTIVE],
             )
             owners.append(
                 (
@@ -2069,12 +2111,13 @@ class TTSProfileRepository:
                 validate=validate_candidate,
                 progress_guard=progress_guard,
             )
-            source.close()
+            _source_close(_native, source)
             source = None
 
             active_artifact = prepare_profile_migration_artifact(
                 active_candidate_path,
                 slot=ProfileMigrationPublicationSlot.ACTIVE,
+                _native=_native,
             )
             ordered_slots = tuple(
                 slot
@@ -2088,6 +2131,7 @@ class TTSProfileRepository:
                 prepare_profile_migration_artifact(
                     active_path.with_name(PROFILE_MIGRATION_CANDIDATE_LEAVES[slot]),
                     slot=slot,
+                    _native=_native,
                 )
                 for slot in ordered_slots
             )
@@ -2095,12 +2139,14 @@ class TTSProfileRepository:
                 active_path,
                 slot=ProfileMigrationPublicationSlot.ACTIVE,
                 must_exist=True,
+                _native=_native,
             )
             backup_destinations = tuple(
                 retain_profile_migration_destination(
                     backup_path_for_slot[slot],
                     slot=slot,
                     must_exist=backup_path_for_slot[slot].exists(),
+                    _native=_native,
                 )
                 for slot in ordered_slots
             )
@@ -2111,14 +2157,15 @@ class TTSProfileRepository:
                 active_destination=active_destination,
                 backup_destinations=backup_destinations,
                 stage_hook=stage_hook,
+                _native=_native,
             )
-            self._worker_refresh_reusable_tombstones(active_path)
+            self._worker_refresh_reusable_tombstones(active_path, _native=_native)
         except BaseException as error:
             body_error = error
 
         if body_error is not None and publication_started:
             try:
-                self._worker_refresh_reusable_tombstones(active_path)
+                self._worker_refresh_reusable_tombstones(active_path, _native=_native)
             except BaseException as error:
                 cleanup_errors: list[BaseException] = [error]
             else:
@@ -2128,7 +2175,7 @@ class TTSProfileRepository:
 
         if source is not None:
             try:
-                source.close()
+                _source_cleanup(_native, source)
             except BaseException as error:
                 cleanup_errors.append(error)
                 self._worker_retain_failed_connection(source, active_path)
@@ -2159,7 +2206,9 @@ class TTSProfileRepository:
                 raise _repository_error(body_error.code)
             raise _repository_error("migration_failed")
 
-    def _worker_prepare_reusable_tombstones(self, active_path: Path) -> None:
+    def _worker_prepare_reusable_tombstones(
+        self, active_path: Path, *, _native=None
+    ) -> None:
         """Turn retained exact cleanup evidence into zero reusable leaves."""
 
         parent = ParentAuthority(active_path.parent.stat())
@@ -2177,6 +2226,7 @@ class TTSProfileRepository:
                         active_path,
                         parent_authority=parent,
                         tombstone_key=key,
+                        _native=_native,
                     )
                 except Exception:
                     raise _repository_error("migration_failed") from None
@@ -2210,6 +2260,7 @@ class TTSProfileRepository:
                     file_identity=expected,
                     source_key=source_key,
                     destination_key=destination_key,
+                    _native=_native,
                 )
                 if destination_key in {
                     MigrationTombstoneKey.LIVE_WAL,
@@ -2220,13 +2271,16 @@ class TTSProfileRepository:
                         parent_authority=parent,
                         file_identity=prepared,
                         tombstone_key=destination_key,
+                        _native=_native,
                     )
                 else:
                     known[destination_key] = prepared
             except Exception:
                 raise _repository_error("migration_failed") from None
 
-    def _worker_refresh_reusable_tombstones(self, active_path: Path) -> None:
+    def _worker_refresh_reusable_tombstones(
+        self, active_path: Path, *, _native=None
+    ) -> None:
         """Retain exact identities produced by a completed publication."""
 
         refreshed: dict[MigrationTombstoneKey, os.stat_result] = {}
@@ -2280,8 +2334,17 @@ class TTSProfileRepository:
             except Exception:
                 raise _repository_error("operation_failed") from None
 
-    def _worker_exact_schema_version(self, active_path: Path) -> int | None:
+    def _worker_exact_schema_version(
+        self, active_path: Path, *, _native=None
+    ) -> int | None:
         """Read the exact version without authorizing migration or creation."""
+
+        from .profile_migration_native import (
+            _source_allocation,
+            _source_options,
+            _source_observed,
+            _source_close,
+        )
 
         if not active_path.exists():
             return None
@@ -2290,13 +2353,16 @@ class TTSProfileRepository:
         close_error: BaseException | None = None
         version: int | None = None
         try:
-            connection = connect_private_sqlite(
-                "tts.profile_migration_backup",
-                active_path,
-                read_only=True,
-                must_exist=True,
-                isolation_level=None,
-            )
+            with _source_allocation(_native, active_path) as _source_call_outcome:
+                connection = connect_private_sqlite(
+                    "tts.profile_migration_backup",
+                    active_path,
+                    read_only=True,
+                    must_exist=True,
+                    isolation_level=None,
+                    **_source_options(_source_call_outcome),
+                )
+                _source_observed(_source_call_outcome, connection)
             value = connection.execute("PRAGMA user_version").fetchone()[0]
             if type(value) is not int:
                 raise ValueError
@@ -2305,7 +2371,7 @@ class TTSProfileRepository:
             body_error = error
         if connection is not None:
             try:
-                connection.close()
+                _source_close(_native, connection)
             except BaseException as error:
                 close_error = error
                 self._worker_retain_failed_connection(connection, active_path)
@@ -3215,173 +3281,198 @@ class TTSProfileRepository:
     ) -> ProfileRestoreReceipt:
         """Restore through the same recoverable publication used by migration."""
 
-        self._clear_reference_damage_markers()
-        candidate: _CandidateSnapshot | None = None
-        restored_at: datetime | None = None
-        exclusive_lease: ProfileStoreLease | None = None
-        primary_error: BaseException | None = None
-        cleanup_errors: list[BaseException] = []
-        recovery_path: Path | None = None
-        try:
-            restored_at = self._clock()
-            self._require_configured_path_matches(active_path, "restore_failed")
-            candidate = _validate_restore_candidate_path(candidate_path, active_path)
-            _require_restore_time(deadline)
-            self._worker_close_for_restore(deadline)
-            remaining = _remaining_seconds(deadline)
-            if remaining <= 0:
-                raise _repository_error("restore_failed")
-            exclusive_lease = ProfileStoreLease(
-                active_path,
-                ProfileStoreLockMode.EXCLUSIVE,
-                timeout_seconds=remaining,
-            )
-            exclusive_lease.acquire()
-            _require_restore_time(deadline)
-            recover_profile_migration_publication(active_path)
-            parent_authority = ParentAuthority(active_path.parent.stat())
-            for key in MigrationTombstoneKey:
-                require_reusable_tombstone(
-                    active_path,
-                    parent_authority=parent_authority,
-                    tombstone_key=key,
-                )
-            self._worker_remove_live_sidecars(deadline=deadline)
-            if not _candidate_is_unchanged(candidate):
-                raise _repository_error("restore_failed")
-            source_version = self._worker_schema_version_for_restore(candidate.path)
-            if not 0 <= source_version <= CURRENT_PROFILE_SCHEMA_VERSION:
-                raise _repository_error("schema_unsupported")
-            self._worker_validate_restore_source(candidate.path, source_version)
-            self._require_configured_path_matches(active_path, "restore_failed")
-            if not _candidate_is_unchanged(candidate):
-                raise _repository_error("restore_failed")
+        from .profile_migration_native import _migration_native, _migration_paths
 
-            def prepublication_guard(
-                stage: ProfileMigrationPublicationStage,
-            ) -> None:
-                nonlocal recovery_path
-                if stage is not ProfileMigrationPublicationStage.PREFLIGHT:
-                    return
+        with _migration_native(
+            (active_path, candidate_path),
+            repository=self,
+            related=_migration_paths(active_path),
+        ) as _native:
+            self._clear_reference_damage_markers()
+            candidate: _CandidateSnapshot | None = None
+            restored_at: datetime | None = None
+            exclusive_lease: ProfileStoreLease | None = None
+            primary_error: BaseException | None = None
+            cleanup_errors: list[BaseException] = []
+            recovery_path: Path | None = None
+            try:
+                restored_at = self._clock()
+                self._require_configured_path_matches(active_path, "restore_failed")
+                candidate = _validate_restore_candidate_path(candidate_path, active_path)
                 _require_restore_time(deadline)
-                self._require_configured_path_matches(
+                self._worker_close_for_restore(deadline)
+                remaining = _remaining_seconds(deadline)
+                if remaining <= 0:
+                    raise _repository_error("restore_failed")
+                exclusive_lease = ProfileStoreLease(
                     active_path,
-                    "restore_failed",
+                    ProfileStoreLockMode.EXCLUSIVE,
+                    timeout_seconds=remaining,
                 )
+                exclusive_lease.acquire()
+                _require_restore_time(deadline)
+                recover_profile_migration_publication(active_path, _native=_native)
+                parent_authority = ParentAuthority(active_path.parent.stat())
+                for key in MigrationTombstoneKey:
+                    require_reusable_tombstone(
+                        active_path,
+                        parent_authority=parent_authority,
+                        tombstone_key=key,
+                        _native=_native,
+                    )
+                self._worker_remove_live_sidecars(deadline=deadline)
                 if not _candidate_is_unchanged(candidate):
                     raise _repository_error("restore_failed")
-                recovery_path = self._worker_create_recovery_backup(
-                    cast(datetime, restored_at),
-                    deadline,
+                source_version = self._worker_schema_version_for_restore(
+                    candidate.path, _native=_native
                 )
+                if not 0 <= source_version <= CURRENT_PROFILE_SCHEMA_VERSION:
+                    raise _repository_error("schema_unsupported")
+                self._worker_validate_restore_source(
+                    candidate.path, source_version, _native=_native
+                )
+                self._require_configured_path_matches(active_path, "restore_failed")
+                if not _candidate_is_unchanged(candidate):
+                    raise _repository_error("restore_failed")
 
-            self._worker_publish_migrated_store(
-                active_path,
-                source_version,
-                source_path=candidate.path,
-                stage_hook=prepublication_guard,
-                progress_guard=lambda: _require_restore_time(deadline),
-            )
-            exclusive_lease.release()
-            exclusive_lease = None
-            self._worker_rebind_current_store()
-            connection = self._connection
-            if connection is None:
-                raise _repository_error("restore_failed")
-            profile_count, assignment_count = self._worker_store_counts(connection)
-            with self._state_lock:
-                if (
-                    self._generation != generation
-                    or self._terminal
-                    or self._state is not ProfileRepositoryState.RESTORING
-                ):
-                    raise _repository_error("stale")
-                self._state = ProfileRepositoryState.OPEN
-            return ProfileRestoreReceipt(
-                restored_at=cast(datetime, restored_at),
-                profile_count=profile_count,
-                assignment_count=assignment_count,
-            )
-        except BaseException as error:
-            if isinstance(error, ExactProfileStoreAuthorityError):
-                self._worker_seal_exact_authority(error)
-            primary_error = error
+                def prepublication_guard(
+                    stage: ProfileMigrationPublicationStage,
+                ) -> None:
+                    nonlocal recovery_path
+                    if stage is not ProfileMigrationPublicationStage.PREFLIGHT:
+                        return
+                    _require_restore_time(deadline)
+                    self._require_configured_path_matches(
+                        active_path,
+                        "restore_failed",
+                    )
+                    if not _candidate_is_unchanged(candidate):
+                        raise _repository_error("restore_failed")
+                    recovery_path = self._worker_create_recovery_backup(
+                        cast(datetime, restored_at),
+                        deadline,
+                    )
 
-        retained_failed_connection = False
-        if exclusive_lease is not None:
-            if self._connection is not None and self._lease is None:
-                self._lease = exclusive_lease
-                self._active_database_path = active_path
+                self._worker_publish_migrated_store(
+                    active_path,
+                    source_version,
+                    source_path=candidate.path,
+                    stage_hook=prepublication_guard,
+                    progress_guard=lambda: _require_restore_time(deadline),
+                    _native=_native,
+                )
+                exclusive_lease.release()
                 exclusive_lease = None
-                retained_failed_connection = True
-            else:
-                try:
-                    exclusive_lease.release()
-                except BaseException as error:
-                    cleanup_errors.append(error)
+                self._worker_rebind_current_store()
+                connection = self._connection
+                if connection is None:
+                    raise _repository_error("restore_failed")
+                profile_count, assignment_count = self._worker_store_counts(connection)
+                with self._state_lock:
+                    if (
+                        self._generation != generation
+                        or self._terminal
+                        or self._state is not ProfileRepositoryState.RESTORING
+                    ):
+                        raise _repository_error("stale")
+                    self._state = ProfileRepositoryState.OPEN
+                return ProfileRestoreReceipt(
+                    restored_at=cast(datetime, restored_at),
+                    profile_count=profile_count,
+                    assignment_count=assignment_count,
+                )
+            except BaseException as error:
+                if isinstance(error, ExactProfileStoreAuthorityError):
+                    self._worker_seal_exact_authority(error)
+                primary_error = error
+
+            retained_failed_connection = False
+            if exclusive_lease is not None:
+                if self._connection is not None and self._lease is None:
                     self._lease = exclusive_lease
                     self._active_database_path = active_path
-        rebound_ok = False
-        if (
-            not cleanup_errors
-            and not retained_failed_connection
-            and not (
+                    exclusive_lease = None
+                    retained_failed_connection = True
+                else:
+                    try:
+                        exclusive_lease.release()
+                    except BaseException as error:
+                        cleanup_errors.append(error)
+                        self._lease = exclusive_lease
+                        self._active_database_path = active_path
+            rebound_ok = False
+            if (
+                not cleanup_errors
+                and not retained_failed_connection
+                and not (
+                    isinstance(primary_error, ProfileRepositoryError)
+                    and primary_error.code == "unavailable"
+                )
+            ):
+                try:
+                    self._worker_rebind_current_store()
+                    rebound_ok = True
+                except BaseException as error:
+                    cleanup_errors.append(error)
+            with self._state_lock:
+                if (
+                    self._generation == generation
+                    and not self._terminal
+                    and self._state is ProfileRepositoryState.RESTORING
+                ):
+                    self._state = (
+                        ProfileRepositoryState.OPEN
+                        if rebound_ok
+                        else ProfileRepositoryState.UNAVAILABLE
+                    )
+            _ = recovery_path
+            for pending_error in (primary_error, *cleanup_errors):
+                if pending_error is not None and not isinstance(pending_error, Exception):
+                    raise pending_error
+            if (
                 isinstance(primary_error, ProfileRepositoryError)
                 and primary_error.code == "unavailable"
-            )
-        ):
-            try:
-                self._worker_rebind_current_store()
-                rebound_ok = True
-            except BaseException as error:
-                cleanup_errors.append(error)
-        with self._state_lock:
-            if (
-                self._generation == generation
-                and not self._terminal
-                and self._state is ProfileRepositoryState.RESTORING
             ):
-                self._state = (
-                    ProfileRepositoryState.OPEN
-                    if rebound_ok
-                    else ProfileRepositoryState.UNAVAILABLE
-                )
-        _ = recovery_path
-        for pending_error in (primary_error, *cleanup_errors):
-            if pending_error is not None and not isinstance(pending_error, Exception):
-                raise pending_error
-        if (
-            isinstance(primary_error, ProfileRepositoryError)
-            and primary_error.code == "unavailable"
-        ):
-            raise _repository_error("unavailable")
-        if rebound_ok and isinstance(primary_error, ProfileRepositoryError):
-            if primary_error.code in {
-                "corrupt_data",
-                "lock_timeout",
-                "schema_corrupt",
-                "schema_partial",
-                "schema_unsupported",
-                "stale",
-            }:
-                raise _repository_error(primary_error.code)
+                raise _repository_error("unavailable")
+            if rebound_ok and isinstance(primary_error, ProfileRepositoryError):
+                if primary_error.code in {
+                    "corrupt_data",
+                    "lock_timeout",
+                    "schema_corrupt",
+                    "schema_partial",
+                    "schema_unsupported",
+                    "stale",
+                }:
+                    raise _repository_error(primary_error.code)
+                raise _repository_error("restore_failed")
             raise _repository_error("restore_failed")
-        raise _repository_error("restore_failed")
 
-    def _worker_schema_version_for_restore(self, candidate_path: Path) -> int:
+    def _worker_schema_version_for_restore(
+        self, candidate_path: Path, *, _native=None
+    ) -> int:
         """Read one admitted restore candidate without authorizing migration."""
+
+        from .profile_migration_native import (
+            _source_allocation,
+            _source_options,
+            _source_observed,
+            _source_close,
+        )
 
         connection: sqlite3.Connection | None = None
         body_error: BaseException | None = None
         version: int | None = None
         try:
-            connection = connect_private_sqlite(
-                "tts.profile_restore_stage",
-                candidate_path,
-                read_only=True,
-                must_exist=True,
-                isolation_level=None,
-            )
+            with _source_allocation(_native, candidate_path) as _source_call_outcome:
+                connection = connect_private_sqlite(
+                    "tts.profile_restore_stage",
+                    candidate_path,
+                    read_only=True,
+                    must_exist=True,
+                    isolation_level=None,
+                    **_source_options(_source_call_outcome),
+                )
+                _source_observed(_source_call_outcome, connection)
             row = connection.execute("PRAGMA user_version").fetchone()
             if row is None or len(row) != 1 or type(row[0]) is not int:
                 raise ValueError
@@ -3391,7 +3482,7 @@ class TTSProfileRepository:
         close_error: BaseException | None = None
         if connection is not None:
             try:
-                connection.close()
+                _source_close(_native, connection)
             except BaseException as error:
                 close_error = error
                 self._worker_retain_failed_connection(
@@ -3409,19 +3500,31 @@ class TTSProfileRepository:
         self,
         candidate_path: Path,
         source_version: int,
+        *,
+        _native=None,
     ) -> None:
         """Fully qualify an incoming source before creating recovery evidence."""
+
+        from .profile_migration_native import (
+            _source_allocation,
+            _source_options,
+            _source_observed,
+            _source_close,
+        )
 
         connection: sqlite3.Connection | None = None
         body_error: BaseException | None = None
         try:
-            connection = connect_private_sqlite(
-                "tts.profile_restore_stage",
-                candidate_path,
-                read_only=True,
-                must_exist=True,
-                isolation_level=None,
-            )
+            with _source_allocation(_native, candidate_path) as _source_call_outcome:
+                connection = connect_private_sqlite(
+                    "tts.profile_restore_stage",
+                    candidate_path,
+                    read_only=True,
+                    must_exist=True,
+                    isolation_level=None,
+                    **_source_options(_source_call_outcome),
+                )
+                _source_observed(_source_call_outcome, connection)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
             if source_version == 0:
@@ -3436,14 +3539,17 @@ class TTSProfileRepository:
                 self._worker_require_full_integrity(connection)
                 validate_profile_store_rows(connection)
                 if source_version >= 3:
-                    validate_reference_rows(connection)
+                    _profile_schema._validate_migration_reference_rows(
+                        connection,
+                        schema_version=source_version,
+                    )
                 self._worker_store_counts(connection)
         except BaseException as error:
             body_error = error
         close_error: BaseException | None = None
         if connection is not None:
             try:
-                connection.close()
+                _source_close(_native, connection)
             except BaseException as error:
                 close_error = error
                 self._worker_retain_failed_connection(
@@ -5661,6 +5767,7 @@ class TTSProfileRepository:
             and not self._residual_cleanup_paths
             and not self._exact_authority_quarantined
             and not self._backup_native_operations
+            and not self._migration_native_operations
         )
 
     def _worker_maintenance_cleanup(self) -> None:

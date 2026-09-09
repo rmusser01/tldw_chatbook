@@ -31,6 +31,7 @@ from tldw_chatbook.Utils.private_paths import (
 
 
 _SQLITE_CONNECT = sqlite3.connect
+_ORIGINAL_DESCRIPTOR_DUP = os.dup
 # Identity lookup only. Actual ordinary leases and core participants own lifetimes.
 _ordinary_connections = weakref.WeakKeyDictionary()
 
@@ -1235,6 +1236,23 @@ def _classify_target(
     )
 
 
+@dataclass(eq=False)
+class _SQLiteDescriptorOutcome:
+    """Per-call native evidence only; the supplied caller owns source admission."""
+
+    entered: bool = False
+    duplicate_pending: bool = False
+    duplicate: int | None = None
+    duplicate_close_attempted: bool = False
+    duplicate_closed: bool = False
+    connector_pending: bool = False
+    connection_pending: bool = False
+    connection: sqlite3.Connection | None = None
+    connection_close_attempted: bool = False
+    connection_closed: bool = False
+    errors: list[BaseException] = field(default_factory=list)
+
+
 @dataclass
 class _SQLiteAdmissionOutcome:
     """Per-call proof of admission refusal before source/native preflight."""
@@ -1385,6 +1403,7 @@ def _connect_registered_sqlite(
     immutable: bool = False,
     expected_identity: os.stat_result | None = None,
     _verified_descriptor_fd: int | None = None,
+    _descriptor_outcome: _SQLiteDescriptorOutcome | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
     if "uri" in kwargs:
@@ -1410,11 +1429,19 @@ def _connect_registered_sqlite(
             or opened.st_nlink != 1
         ):
             raise ValueError("SQLite descriptor must be a regular file")
-        return _SQLITE_CONNECT(
+        if _descriptor_outcome is not None:
+            if type(_descriptor_outcome) is not _SQLiteDescriptorOutcome:
+                raise TypeError("invalid_descriptor_outcome")
+            _descriptor_outcome.connection_pending = True
+        connection = _SQLITE_CONNECT(
             f"file:/dev/fd/{_verified_descriptor_fd}?mode=ro&immutable=1",
             uri=True,
             **kwargs,
         )
+        if _descriptor_outcome is not None:
+            _descriptor_outcome.connection = connection
+            _descriptor_outcome.connection_pending = False
+        return connection
     raw, target_kind = _classify_target(database, read_only=read_only)
     if target_kind is SQLiteTargetKind.MEMORY and must_exist:
         raise ValueError("must_exist is only valid for file-backed SQLite")
@@ -1505,13 +1532,23 @@ def connect_private_sqlite(
     )
 
 
+_ORIGINAL_DESCRIPTOR_CONNECTOR = _connect_registered_sqlite
+
 def connect_private_sqlite_descriptor(
     owner_id: str,
     file_fd: int,
+    _native_outcome: _SQLiteDescriptorOutcome | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
     """Open an immutable SQLite view bound to an already verified descriptor."""
 
+    if _native_outcome is not None:
+        if (
+            type(_native_outcome) is not _SQLiteDescriptorOutcome
+            or _native_outcome.entered
+        ):
+            raise TypeError("invalid_descriptor_outcome")
+        _native_outcome.entered = True
     policy = _validated_owner_policy(owner_id)
     if SQLiteTargetKind.READ_ONLY_URI not in policy.allowed_target_kinds:
         raise ValueError("SQLite owner does not allow descriptor reads")
@@ -1523,19 +1560,59 @@ def connect_private_sqlite_descriptor(
         or opened.st_nlink != 1
     ):
         raise ValueError("SQLite descriptor must be a regular file")
-    duplicate = os.dup(file_fd)
+    duplicate_primitive = os.dup
+    if _native_outcome is not None:
+        _native_outcome.duplicate_pending = True
     try:
-        return _connect_registered_sqlite(
+        duplicate = duplicate_primitive(file_fd)
+    except OSError:
+        if (
+            _native_outcome is not None
+            and duplicate_primitive is _ORIGINAL_DESCRIPTOR_DUP
+        ):
+            _native_outcome.duplicate_pending = False
+        raise
+    if _native_outcome is not None:
+        _native_outcome.duplicate = duplicate
+        _native_outcome.duplicate_pending = False
+    connector = _connect_registered_sqlite
+    if _native_outcome is not None:
+        _native_outcome.connector_pending = True
+    try:
+        connection = connector(
             owner_id,
             ":memory:",
             read_only=True,
             must_exist=True,
             immutable=True,
             _verified_descriptor_fd=duplicate,
+            _descriptor_outcome=_native_outcome,
             **kwargs,
         )
+        if _native_outcome is not None:
+            _native_outcome.connector_pending = False
+        return connection
+    except BaseException as error:
+        if _native_outcome is not None:
+            _native_outcome.errors.append(error)
+            if (
+                connector is _ORIGINAL_DESCRIPTOR_CONNECTOR
+                and not _native_outcome.connection_pending
+                and _native_outcome.connection is None
+            ):
+                _native_outcome.connector_pending = False
+        raise
     finally:
-        os.close(duplicate)
+        if _native_outcome is not None:
+            _native_outcome.duplicate_close_attempted = True
+        try:
+            os.close(duplicate)
+        except BaseException as error:
+            if _native_outcome is not None:
+                _native_outcome.errors.append(error)
+            raise
+        if _native_outcome is not None:
+            _native_outcome.duplicate_closed = True
 
 
 @dataclass(slots=True)

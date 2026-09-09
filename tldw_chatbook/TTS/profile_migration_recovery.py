@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.TTS.profile_migration_native import (
+    _migration_native,
+    _native_reader, _close_reader,
+    _migration_paths,
+    _native_open,
+    _native_close,
+    _native_parent,
+)
+
 import os
 import sqlite3
 import stat
@@ -130,8 +139,11 @@ def _require_configured_parent(
     expected: os.stat_result,
     *,
     exact_links: bool = False,
+    _native=None,
 ) -> None:
-    reopened_fd, _leaf = private_paths._open_verified_parent(
+    reopened_fd, _leaf = _native_parent(
+        _native,
+        private_paths,
         selected,
         missing_leaf_allowed=True,
     )
@@ -142,7 +154,7 @@ def _require_configured_parent(
         ):
             raise ValueError
     finally:
-        os.close(reopened_fd)
+        _native_close(_native, os, reopened_fd)
 
 
 def _artifact_size_allowed(byte_length: int) -> bool:
@@ -214,8 +226,10 @@ def _hash_sqlite(file_fd: int) -> tuple[int, bytes, int, os.stat_result]:
     return before.st_size, digest.digest(), int.from_bytes(header[60:64], "big"), after
 
 
-def _open_leaf(parent_fd: int, leaf: str) -> int:
-    return os.open(
+def _open_leaf(parent_fd: int, leaf: str, *, _native=None) -> int:
+    return _native_open(
+        _native,
+        os,
         leaf,
         os.O_RDONLY
         | getattr(os, "O_NOFOLLOW", 0)
@@ -229,6 +243,8 @@ def _observe_artifact(
     parent_fd: int,
     leaf: str,
     row: ProfileMigrationJournalSlot,
+    *,
+    _native=None,
 ) -> _ObservedArtifact | None:
     try:
         entry = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
@@ -238,7 +254,7 @@ def _observe_artifact(
         return None
     if not _valid_stat(entry, links=frozenset({1, 2})):
         raise ValueError
-    file_fd = _open_leaf(parent_fd, leaf)
+    file_fd = _open_leaf(parent_fd, leaf, _native=_native)
     try:
         byte_length, digest, schema_version, opened = _hash_sqlite(file_fd)
         current = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
@@ -260,19 +276,21 @@ def _observe_artifact(
             raise ValueError
         return _ObservedArtifact(leaf, opened, kind, row)
     finally:
-        os.close(file_fd)
+        _native_close(_native, os, file_fd)
 
 
 def _observe_rows(
     parent_fd: int,
     parsed: ParsedProfileMigrationJournal,
+    *,
+    _native=None,
 ) -> tuple[_ObservedRow, ...]:
     observed = tuple(
         _ObservedRow(
             row,
-            _observe_artifact(parent_fd, row.candidate, row),
-            _observe_artifact(parent_fd, row.target, row),
-            _observe_artifact(parent_fd, row.rollback, row),
+            _observe_artifact(parent_fd, row.candidate, row, _native=_native),
+            _observe_artifact(parent_fd, row.target, row, _native=_native),
+            _observe_artifact(parent_fd, row.rollback, row, _native=_native),
         )
         for row in parsed.recovery_rows
     )
@@ -310,6 +328,8 @@ def _observe_rows(
 def _read_journal(
     parent_fd: int,
     journal_leaf: str,
+    *,
+    _native=None,
 ) -> _JournalSnapshot | None:
     try:
         entry = os.stat(journal_leaf, dir_fd=parent_fd, follow_symlinks=False)
@@ -319,7 +339,7 @@ def _read_journal(
         return None
     if not _valid_stat(entry, links=frozenset({1})):
         raise ValueError
-    file_fd = _open_leaf(parent_fd, journal_leaf)
+    file_fd = _open_leaf(parent_fd, journal_leaf, _native=_native)
     try:
         raw, opened = _read_stable(
             file_fd,
@@ -343,11 +363,13 @@ def _read_journal(
             opened.st_ctime_ns,
         )
     finally:
-        os.close(file_fd)
+        _native_close(_native, os, file_fd)
 
 
-def _reobserve_exact(parent_fd: int, expected: _ObservedArtifact) -> os.stat_result:
-    current = _observe_artifact(parent_fd, expected.leaf, expected.row)
+def _reobserve_exact(
+    parent_fd: int, expected: _ObservedArtifact, *, _native=None
+) -> os.stat_result:
+    current = _observe_artifact(parent_fd, expected.leaf, expected.row, _native=_native)
     if (
         current is None
         or current.kind != expected.kind
@@ -369,8 +391,10 @@ def _remove_exact(
     parent_authority: ParentAuthority,
     selected: Path,
     expected: _ObservedArtifact,
+    *,
+    _native=None,
 ) -> None:
-    _require_configured_parent(selected, parent_identity)
+    _require_configured_parent(selected, parent_identity, _native=_native)
     remove_exact_namespace(
         selected.parent / expected.leaf,
         parent_authority=parent_authority,
@@ -381,6 +405,7 @@ def _remove_exact(
             else _ROLLBACK_TOMBSTONES[expected.row.slot]
         ),
         allowed_links=frozenset({1, 2}),
+        _native=_native,
     )
 
 
@@ -391,17 +416,20 @@ def _move_exact(
     selected: Path,
     source: _ObservedArtifact,
     destination_leaf: str,
+    *,
+    _native=None,
 ) -> None:
-    _require_configured_parent(selected, parent_identity)
-    identity = _reobserve_exact(parent_fd, source)
+    _require_configured_parent(selected, parent_identity, _native=_native)
+    identity = _reobserve_exact(parent_fd, source, _native=_native)
     moved = move_exact_noreplace(
         selected.parent / source.leaf,
         selected.parent / destination_leaf,
         parent_authority=parent_authority,
         file_identity=identity,
         allowed_links=frozenset({1, 2}),
+        _native=_native,
     )
-    file_fd = _open_leaf(parent_fd, destination_leaf)
+    file_fd = _open_leaf(parent_fd, destination_leaf, _native=_native)
     try:
         opened = os.fstat(file_fd)
         if not private_paths._same_identity(opened, moved) or not _valid_stat(
@@ -410,7 +438,7 @@ def _move_exact(
             raise ValueError
         os.fsync(file_fd)
     finally:
-        os.close(file_fd)
+        _native_close(_native, os, file_fd)
     _fsync_parent(parent_fd, parent_identity)
 
 
@@ -421,9 +449,11 @@ def _remove_journal(
     selected: Path,
     journal_leaf: str,
     snapshot: _JournalSnapshot,
+    *,
+    _native=None,
 ) -> None:
-    _require_configured_parent(selected, parent_identity)
-    current = _read_journal(parent_fd, journal_leaf)
+    _require_configured_parent(selected, parent_identity, _native=_native)
+    current = _read_journal(parent_fd, journal_leaf, _native=_native)
     if (
         current is None
         or not private_paths._same_identity(current.identity, snapshot.identity)
@@ -435,12 +465,13 @@ def _remove_journal(
     ):
         raise ValueError
     parse_profile_migration_journal(current.raw)
-    _require_configured_parent(selected, parent_identity)
+    _require_configured_parent(selected, parent_identity, _native=_native)
     remove_exact_namespace(
         selected.parent / journal_leaf,
         parent_authority=parent_authority,
         file_identity=current.identity,
         tombstone_key=MigrationTombstoneKey.JOURNAL,
+        _native=_native,
     )
 
 
@@ -483,6 +514,8 @@ def _rollback(
     parent_authority: ParentAuthority,
     selected: Path,
     rows: Sequence[_ObservedRow],
+    *,
+    _native=None,
 ) -> None:
     for item in reversed(rows):
         candidate, target, rollback = item.candidate, item.target, item.rollback
@@ -495,6 +528,7 @@ def _rollback(
                     selected,
                     target,
                     item.row.candidate,
+                    _native=_native,
                 )
             else:
                 _remove_exact(
@@ -503,6 +537,7 @@ def _rollback(
                     parent_authority,
                     selected,
                     target,
+                    _native=_native,
                 )
                 if private_paths._same_identity(candidate.identity, target.identity):
                     _remove_exact(
@@ -511,6 +546,7 @@ def _rollback(
                         parent_authority,
                         selected,
                         candidate,
+                        _native=_native,
                     )
                     candidate = None
             target = None
@@ -523,6 +559,7 @@ def _rollback(
                         parent_authority,
                         selected,
                         rollback,
+                        _native=_native,
                     )
             elif target is None and rollback is not None:
                 _move_exact(
@@ -532,13 +569,16 @@ def _rollback(
                     selected,
                     rollback,
                     item.row.target,
+                    _native=_native,
                 )
             else:
                 raise ValueError
         elif target is not None or rollback is not None:
             raise ValueError
     for item in rows:
-        candidate = _observe_artifact(parent_fd, item.row.candidate, item.row)
+        candidate = _observe_artifact(
+            parent_fd, item.row.candidate, item.row, _native=_native
+        )
         if candidate is not None:
             _remove_exact(
                 parent_fd,
@@ -546,6 +586,7 @@ def _rollback(
                 parent_authority,
                 selected,
                 candidate,
+                _native=_native,
             )
 
 
@@ -555,6 +596,8 @@ def _complete(
     parent_authority: ParentAuthority,
     selected: Path,
     rows: Sequence[_ObservedRow],
+    *,
+    _native=None,
 ) -> None:
     for item in rows:
         candidate, target, rollback = item.candidate, item.target, item.rollback
@@ -567,6 +610,7 @@ def _complete(
                     selected,
                     target,
                     item.row.rollback,
+                    _native=_native,
                 )
             elif not private_paths._same_identity(target.identity, rollback.identity):
                 raise ValueError
@@ -577,6 +621,7 @@ def _complete(
                     parent_authority,
                     selected,
                     target,
+                    _native=_native,
                 )
             target = None
         if target is None:
@@ -589,6 +634,7 @@ def _complete(
                 selected,
                 candidate,
                 item.row.target,
+                _native=_native,
             )
             candidate = None
         elif target.kind != "candidate":
@@ -600,6 +646,7 @@ def _complete(
                 parent_authority,
                 selected,
                 candidate,
+                _native=_native,
             )
     refreshed = _observe_rows(
         parent_fd,
@@ -610,6 +657,7 @@ def _complete(
             parent_identity.st_dev,
             parent_identity.st_ino,
         ),
+        _native=_native,
     )
     for item in refreshed:
         if item.target is None or item.target.kind != "candidate":
@@ -621,6 +669,7 @@ def _complete(
                 parent_authority,
                 selected,
                 item.rollback,
+                _native=_native,
             )
 
 
@@ -632,10 +681,11 @@ def _validate_authoritative_targets(
     parsed: ParsedProfileMigrationJournal,
     *,
     kind: str,
+    _native=None,
 ) -> None:
     for row in parsed.recovery_rows:
         _require_configured_parent(
-            selected, parent_authority.identity, exact_links=True
+            selected, parent_authority.identity, exact_links=True, _native=_native
         )
         if kind == "prior" and not row.had_prior:
             try:
@@ -645,19 +695,21 @@ def _validate_authoritative_targets(
                     raise ValueError
                 continue
             raise ValueError
-        before = _observe_artifact(parent_fd, row.target, row)
+        before = _observe_artifact(parent_fd, row.target, row, _native=_native)
         if before is None or before.kind != kind or before.identity.st_nlink != 1:
             raise ValueError
-        file_fd = _open_leaf(parent_fd, row.target)
+        file_fd = _open_leaf(parent_fd, row.target, _native=_native)
         try:
             opened_before = os.fstat(file_fd)
             if not private_paths._same_identity(opened_before, before.identity):
                 raise ValueError
-            connection = connect_private_sqlite_descriptor(
-                "tts.profile_migration_recovery_descriptor",
-                file_fd,
-                isolation_level=None,
-            )
+            with _native_reader(_native) as _reader_outcome:
+                connection = connect_private_sqlite_descriptor(
+                    "tts.profile_migration_recovery_descriptor",
+                    file_fd,
+                    isolation_level=None,
+                    _native_outcome=_reader_outcome,
+                )
             try:
                 connection.row_factory = sqlite3.Row
                 connection.execute("PRAGMA foreign_keys = ON")
@@ -669,17 +721,17 @@ def _validate_authoritative_targets(
                     connection, version_row[0]
                 )
             finally:
-                connection.close()
+                _close_reader(_native, connection, _reader_outcome)
             _hash_sqlite(file_fd)
             opened_after = os.fstat(file_fd)
             if not private_paths._same_identity(opened_before, opened_after):
                 raise ValueError
         finally:
-            os.close(file_fd)
+            _native_close(_native, os, file_fd)
         _require_configured_parent(
-            selected, parent_authority.identity, exact_links=True
+            selected, parent_authority.identity, exact_links=True, _native=_native
         )
-        after = _observe_artifact(parent_fd, row.target, row)
+        after = _observe_artifact(parent_fd, row.target, row, _native=_native)
         if (
             after is None
             or after.kind != kind
@@ -687,7 +739,9 @@ def _validate_authoritative_targets(
             or not private_paths._same_identity(before.identity, after.identity)
         ):
             raise ValueError
-    _require_configured_parent(selected, parent_authority.identity, exact_links=True)
+    _require_configured_parent(
+        selected, parent_authority.identity, exact_links=True, _native=_native
+    )
 
 
 def _choose_action(
@@ -715,182 +769,220 @@ def recover_profile_migration_publication(
     active_store_path: str | os.PathLike[str],
     *,
     _stage_hook: Callable[[str], None] | None = None,
+    _native=None,
 ) -> bool:
     """Recover one recognized publication before any profile-store open."""
 
-    selected = lexical_path(active_store_path)
-    journal_leaf = f".{selected.name}.migration-publication.json"
-    with _RECOVERY_LOCK:
-        parent_fd = -1
-        admitted = False
-        deferred: BaseException | None = None
-        body_error: BaseException | None = None
-        try:
-            result = secure_private_directory(
-                selected.parent,
-                create=False,
-                application_owned=True,
-            )
-            if result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
-                raise ValueError
-            parent_fd, _leaf = private_paths._open_verified_parent(
-                selected,
-                missing_leaf_allowed=True,
-            )
-            parent_identity = os.fstat(parent_fd)
-            parent_authority = ParentAuthority(parent_identity)
-            if not _valid_parent_stat(parent_identity):
-                raise ValueError
-            journal_snapshot = _read_journal(parent_fd, journal_leaf)
-            if journal_snapshot is None:
-                os.close(parent_fd)
-                parent_fd = -1
-                return False
-            admitted_snapshot: _JournalSnapshot = journal_snapshot
-            parsed = parse_profile_migration_journal(admitted_snapshot.raw)
-            if (
-                not parsed.matches_parent(parent_identity)
-                or not parsed.recovery_rows
-                or parsed.recovery_rows[0].slot
-                is not ProfileMigrationPublicationSlot.ACTIVE
-                or not parsed.recovery_rows[0].had_prior
-                or parsed.recovery_rows[0].target != selected.name
-                or not all(
-                    row.evidence_fits(MAX_PROFILE_MIGRATION_ARTIFACT_BYTES)
-                    for row in parsed.recovery_rows
-                )
-            ):
-                raise ValueError
-            rows = _observe_rows(parent_fd, parsed)
-            action = _choose_action(parsed.phase, rows)
-            admitted = True
-        except BaseException as error:
-            body_error = error
-        if body_error is not None:
-            if parent_fd >= 0:
-                os.close(parent_fd)
-            if not isinstance(body_error, Exception):
-                raise body_error
-            raise _safe_failure("unavailable" if admitted else "migration_failed")
-
-        # Admission pins the only authority this invocation may consume. From
-        # here through settlement, control-flow signals are deferred and the
-        # exact action is replayed from fresh observations until it converges.
-        while True:
-            attempt_error: BaseException | None = None
-            settled = False
+    with _migration_native((active_store_path,), _native, related=_migration_paths(lexical_path(active_store_path))) as _native:
+        selected = lexical_path(active_store_path)
+        journal_leaf = f".{selected.name}.migration-publication.json"
+        with _RECOVERY_LOCK:
+            parent_fd = -1
+            admitted = False
+            deferred: BaseException | None = None
+            body_error: BaseException | None = None
             try:
-                _require_configured_parent(
-                    selected, parent_authority.identity, exact_links=True
+                result = secure_private_directory(
+                    selected.parent,
+                    create=False,
+                    application_owned=True,
                 )
-                current_snapshot = _read_journal(parent_fd, journal_leaf)
-                if current_snapshot is None:
-                    # A deferred signal may have arrived after journal unlink
-                    # but before its namespace fsync. Re-durably settle that
-                    # exact absence before treating recovery as complete.
-                    _fsync_parent(parent_fd, parent_identity)
-                    _require_configured_parent(
-                        selected, parent_authority.identity, exact_links=True
-                    )
-                    _validate_authoritative_targets(
-                        parent_fd,
-                        parent_identity,
-                        parent_authority,
-                        selected,
-                        parsed,
-                        kind="prior" if action == "rollback" else "candidate",
-                    )
-                    settled = True
-                else:
-                    if (
-                        not private_paths._same_identity(
-                            current_snapshot.identity,
-                            admitted_snapshot.identity,
-                        )
-                        or current_snapshot.byte_length != admitted_snapshot.byte_length
-                        or current_snapshot.sha256_digest
-                        != admitted_snapshot.sha256_digest
-                        or current_snapshot.mtime_ns != admitted_snapshot.mtime_ns
-                        or current_snapshot.ctime_ns != admitted_snapshot.ctime_ns
-                        or current_snapshot.raw != admitted_snapshot.raw
-                    ):
-                        raise ValueError
-                    current_parsed = parse_profile_migration_journal(
-                        current_snapshot.raw
-                    )
-                    if not current_parsed.matches_parent(parent_identity) or not all(
+                if result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+                    raise ValueError
+                parent_fd, _leaf = _native_parent(
+                    _native,
+                    private_paths,
+                    selected,
+                    missing_leaf_allowed=True,
+                )
+                parent_identity = os.fstat(parent_fd)
+                parent_authority = ParentAuthority(parent_identity)
+                if not _valid_parent_stat(parent_identity):
+                    raise ValueError
+                journal_snapshot = _read_journal(
+                    parent_fd, journal_leaf, _native=_native
+                )
+                if journal_snapshot is None:
+                    _native_close(_native, os, parent_fd)
+                    parent_fd = -1
+                    return False
+                admitted_snapshot: _JournalSnapshot = journal_snapshot
+                parsed = parse_profile_migration_journal(admitted_snapshot.raw)
+                if (
+                    not parsed.matches_parent(parent_identity)
+                    or not parsed.recovery_rows
+                    or parsed.recovery_rows[0].slot
+                    is not ProfileMigrationPublicationSlot.ACTIVE
+                    or not parsed.recovery_rows[0].had_prior
+                    or parsed.recovery_rows[0].target != selected.name
+                    or not all(
                         row.evidence_fits(MAX_PROFILE_MIGRATION_ARTIFACT_BYTES)
-                        for row in current_parsed.recovery_rows
-                    ):
-                        raise ValueError
-                    current_rows = _observe_rows(parent_fd, current_parsed)
-                    if _stage_hook is not None:
-                        _stage_hook("admitted")
+                        for row in parsed.recovery_rows
+                    )
+                ):
+                    raise ValueError
+                # The original validated journal binds these exact relative slots.
+                # This associates native outcomes only; all opaque observation and
+                # namespace checks below remain mandatory.
+                _native.paths = _native.paths | frozenset(
+                    selected.with_name(leaf)
+                    for row in parsed.recovery_rows
+                    for leaf in (row.target, row.candidate, row.rollback)
+                )
+                rows = _observe_rows(parent_fd, parsed, _native=_native)
+                action = _choose_action(parsed.phase, rows)
+                admitted = True
+            except BaseException as error:
+                body_error = error
+            if body_error is not None:
+                if parent_fd >= 0:
+                    _native_close(_native, os, parent_fd)
+                if not isinstance(body_error, Exception):
+                    raise body_error
+                raise _safe_failure("unavailable" if admitted else "migration_failed")
+
+            # Admission pins the only authority this invocation may consume. From
+            # here through settlement, control-flow signals are deferred and the
+            # exact action is replayed from fresh observations until it converges.
+            while True:
+                attempt_error: BaseException | None = None
+                settled = False
+                try:
                     _require_configured_parent(
                         selected,
                         parent_authority.identity,
                         exact_links=True,
+                        _native=_native,
                     )
-                    if action == "rollback":
-                        _rollback(
+                    current_snapshot = _read_journal(
+                        parent_fd, journal_leaf, _native=_native
+                    )
+                    if current_snapshot is None:
+                        # A deferred signal may have arrived after journal unlink
+                        # but before its namespace fsync. Re-durably settle that
+                        # exact absence before treating recovery as complete.
+                        _fsync_parent(parent_fd, parent_identity)
+                        _require_configured_parent(
+                            selected,
+                            parent_authority.identity,
+                            exact_links=True,
+                            _native=_native,
+                        )
+                        _validate_authoritative_targets(
                             parent_fd,
                             parent_identity,
                             parent_authority,
                             selected,
-                            current_rows,
+                            parsed,
+                            kind="prior" if action == "rollback" else "candidate",
+                            _native=_native,
                         )
+                        settled = True
                     else:
-                        _complete(
+                        if (
+                            not private_paths._same_identity(
+                                current_snapshot.identity,
+                                admitted_snapshot.identity,
+                            )
+                            or current_snapshot.byte_length
+                            != admitted_snapshot.byte_length
+                            or current_snapshot.sha256_digest
+                            != admitted_snapshot.sha256_digest
+                            or current_snapshot.mtime_ns != admitted_snapshot.mtime_ns
+                            or current_snapshot.ctime_ns != admitted_snapshot.ctime_ns
+                            or current_snapshot.raw != admitted_snapshot.raw
+                        ):
+                            raise ValueError
+                        current_parsed = parse_profile_migration_journal(
+                            current_snapshot.raw
+                        )
+                        if not current_parsed.matches_parent(
+                            parent_identity
+                        ) or not all(
+                            row.evidence_fits(MAX_PROFILE_MIGRATION_ARTIFACT_BYTES)
+                            for row in current_parsed.recovery_rows
+                        ):
+                            raise ValueError
+                        current_rows = _observe_rows(
+                            parent_fd, current_parsed, _native=_native
+                        )
+                        if _stage_hook is not None:
+                            _stage_hook("admitted")
+                        _require_configured_parent(
+                            selected,
+                            parent_authority.identity,
+                            exact_links=True,
+                            _native=_native,
+                        )
+                        if action == "rollback":
+                            _rollback(
+                                parent_fd,
+                                parent_identity,
+                                parent_authority,
+                                selected,
+                                current_rows,
+                                _native=_native,
+                            )
+                        else:
+                            _complete(
+                                parent_fd,
+                                parent_identity,
+                                parent_authority,
+                                selected,
+                                current_rows,
+                                _native=_native,
+                            )
+                        if _stage_hook is not None:
+                            _stage_hook("repaired")
+                        _validate_authoritative_targets(
                             parent_fd,
                             parent_identity,
                             parent_authority,
                             selected,
-                            current_rows,
+                            current_parsed,
+                            kind="prior" if action == "rollback" else "candidate",
+                            _native=_native,
                         )
-                    if _stage_hook is not None:
-                        _stage_hook("repaired")
-                    _validate_authoritative_targets(
-                        parent_fd,
-                        parent_identity,
-                        parent_authority,
-                        selected,
-                        current_parsed,
-                        kind="prior" if action == "rollback" else "candidate",
-                    )
-                    if _stage_hook is not None:
-                        _stage_hook("validated")
-                    _remove_journal(
-                        parent_fd,
-                        parent_identity,
-                        parent_authority,
-                        selected,
-                        journal_leaf,
-                        admitted_snapshot,
-                    )
-                    if _stage_hook is not None:
-                        _stage_hook("settled")
-                    _require_configured_parent(
-                        selected, parent_authority.identity, exact_links=True
-                    )
-                    settled = True
-            except BaseException as error:
-                attempt_error = error
+                        if _stage_hook is not None:
+                            _stage_hook("validated")
+                        _remove_journal(
+                            parent_fd,
+                            parent_identity,
+                            parent_authority,
+                            selected,
+                            journal_leaf,
+                            admitted_snapshot,
+                            _native=_native,
+                        )
+                        if _stage_hook is not None:
+                            _stage_hook("settled")
+                        _require_configured_parent(
+                            selected,
+                            parent_authority.identity,
+                            exact_links=True,
+                            _native=_native,
+                        )
+                        settled = True
+                except BaseException as error:
+                    attempt_error = error
 
-            if attempt_error is None and settled:
+                if attempt_error is None and settled:
+                    break
+                if attempt_error is not None and not isinstance(
+                    attempt_error, Exception
+                ):
+                    if deferred is None:
+                        deferred = attempt_error
+                    continue
+                body_error = attempt_error or ValueError()
                 break
-            if attempt_error is not None and not isinstance(attempt_error, Exception):
-                if deferred is None:
-                    deferred = attempt_error
-                continue
-            body_error = attempt_error or ValueError()
-            break
 
-        os.close(parent_fd)
-        if body_error is not None:
-            raise _safe_failure("unavailable")
-        if deferred is not None:
-            raise deferred
-        return True
+            _native_close(_native, os, parent_fd)
+            if body_error is not None:
+                raise _safe_failure("unavailable")
+            if deferred is not None:
+                raise deferred
+            return True
 
 
 __all__ = [

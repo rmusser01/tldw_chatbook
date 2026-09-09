@@ -187,6 +187,7 @@ class _ExactCurrentProfileConnection:
         self.file_identity = file_identity
         self.sidecar_fds = sidecar_fds
         self.sidecar_identities = sidecar_identities
+        self._delete_mode_partial_cleanup = False
 
         self.leases: list[Any] = []
         self.native_descriptors: set[int] = set()
@@ -207,6 +208,10 @@ class _ExactCurrentProfileConnection:
 
     def open_parent_descriptor(self, *args: Any, **kwargs: Any) -> int:
         self.admit()
+        return self._observe_revalidation_parent_descriptor(*args, **kwargs)
+
+    def _observe_revalidation_parent_descriptor(self, *args: Any, **kwargs: Any) -> int:
+        """Observe the held owner's original bounded recheck without new admission."""
         outcome = private_paths._NativeOpenOutcome()
         attempt = object()
         self.pending.add(attempt)
@@ -290,7 +295,9 @@ class _ExactCurrentProfileConnection:
                 if native is not None and role not in self.attempted_connections:
                     if role == "_connection":
                         revalidate_exact_current_profile_store(
-                            cast(sqlite3.Connection, self), self.selected
+                            cast(sqlite3.Connection, self),
+                            self.selected,
+                            _delete_mode_partial_cleanup=self._delete_mode_partial_cleanup,
                         )
                     self.attempted_connections.add(role)
                     native.close()
@@ -444,6 +451,8 @@ def _open_exact_store_sidecars(
 def revalidate_exact_current_profile_store(
     connection: sqlite3.Connection,
     path: Path | None,
+    *,
+    _delete_mode_partial_cleanup: bool = False,
 ) -> None:
     """Recheck retained exact-current authority immediately before live use."""
 
@@ -461,6 +470,8 @@ def revalidate_exact_current_profile_store(
         reopened_parent_fd, reopened_leaf = private_paths._open_verified_parent(
             path,
             missing_leaf_allowed=False,
+            _open=connection._observe_revalidation_parent_descriptor,
+            _close=connection.close_parent_descriptor,
         )
         reopened_parent = os.fstat(reopened_parent_fd)
         opened_parent = os.fstat(connection.parent_fd)
@@ -474,9 +485,24 @@ def revalidate_exact_current_profile_store(
         raise ExactProfileStoreAuthorityError() from None
     finally:
         if reopened_parent_fd >= 0:
-            os.close(reopened_parent_fd)
+            connection.close_descriptor(reopened_parent_fd)
     sidecars_match = set(connection.sidecar_fds) == {"-wal", "-shm"}
-    if sidecars_match:
+    if _delete_mode_partial_cleanup and connection._delete_mode_partial_cleanup:
+        sidecars_match = not connection.sidecar_fds
+        for suffix in ("-wal", "-shm"):
+            try:
+                os.stat(
+                    f"{path.name}{suffix}",
+                    dir_fd=connection.parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                continue
+            except OSError:
+                sidecars_match = False
+            else:
+                sidecars_match = False
+    elif sidecars_match:
         for suffix, descriptor in connection.sidecar_fds.items():
             try:
                 opened_sidecar = os.fstat(descriptor)
@@ -569,65 +595,79 @@ def _matches_post_init_authority(
 
 def capture_post_init_profile_store_authority(
     path: Path,
+    *,
+    _native=None,
 ) -> PostInitProfileStoreAuthority:
     """Pin one closed, sidecar-free store before releasing exclusive ownership."""
 
-    parent_fd = -1
-    file_fd = -1
-    try:
-        parent_fd, leaf = private_paths._open_verified_parent(
-            path,
-            missing_leaf_allowed=False,
-        )
-        parent = os.fstat(parent_fd)
-        if not _exact_store_namespace_safe(parent_fd, leaf):
-            raise _repository_error("operation_failed")
-        file_fd = os.open(
-            leaf,
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0)
-            | getattr(os, "O_NOCTTY", 0),
-            dir_fd=parent_fd,
-        )
-        opened = os.fstat(file_fd)
-        named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
-        provisional = PostInitProfileStoreAuthority(parent, opened)
-        if (
-            opened.st_size > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
-            or not _matches_post_init_authority(parent, opened, provisional)
-            or not _matches_post_init_authority(parent, named, provisional)
-        ):
-            raise _repository_error("operation_failed")
-        os.fsync(file_fd)
-        os.fsync(parent_fd)
-        settled_parent = os.fstat(parent_fd)
-        settled_file = os.fstat(file_fd)
-        settled_named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
-        if (
-            not _matches_post_init_authority(
-                settled_parent,
-                settled_file,
-                provisional,
+    from .profile_migration_native import (
+        _migration_native,
+        _native_parent,
+        _native_open,
+        _native_close,
+    )
+
+    with _migration_native((path,), native=_native) as _native:
+        parent_fd = -1
+        file_fd = -1
+        try:
+            parent_fd, leaf = _native_parent(
+                _native,
+                private_paths,
+                path,
+                missing_leaf_allowed=False,
             )
-            or not _matches_post_init_authority(
-                settled_parent,
-                settled_named,
-                provisional,
+            parent = os.fstat(parent_fd)
+            if not _exact_store_namespace_safe(parent_fd, leaf):
+                raise _repository_error("operation_failed")
+            file_fd = _native_open(
+                _native,
+                os,
+                leaf,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_NOCTTY", 0),
+                dir_fd=parent_fd,
             )
-            or not _exact_store_namespace_safe(parent_fd, leaf)
-        ):
-            raise _repository_error("operation_failed")
-        return provisional
-    except ProfileRepositoryError:
-        raise
-    except Exception:
-        raise _repository_error("operation_failed") from None
-    finally:
-        if file_fd >= 0:
-            os.close(file_fd)
-        if parent_fd >= 0:
-            os.close(parent_fd)
+            opened = os.fstat(file_fd)
+            named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            provisional = PostInitProfileStoreAuthority(parent, opened)
+            if (
+                opened.st_size > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
+                or not _matches_post_init_authority(parent, opened, provisional)
+                or not _matches_post_init_authority(parent, named, provisional)
+            ):
+                raise _repository_error("operation_failed")
+            os.fsync(file_fd)
+            os.fsync(parent_fd)
+            settled_parent = os.fstat(parent_fd)
+            settled_file = os.fstat(file_fd)
+            settled_named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            if (
+                not _matches_post_init_authority(
+                    settled_parent,
+                    settled_file,
+                    provisional,
+                )
+                or not _matches_post_init_authority(
+                    settled_parent,
+                    settled_named,
+                    provisional,
+                )
+                or not _exact_store_namespace_safe(parent_fd, leaf)
+            ):
+                raise _repository_error("operation_failed")
+            return provisional
+        except ProfileRepositoryError:
+            raise
+        except Exception:
+            raise _repository_error("operation_failed") from None
+        finally:
+            if file_fd >= 0:
+                _native_close(_native, os, file_fd)
+            if parent_fd >= 0:
+                _native_close(_native, os, parent_fd)
 
 
 def _update_metadata_digest(digest: Any, value: object) -> None:
@@ -1754,7 +1794,11 @@ def open_exact_current_profile_store(
         # Force SQLite to acquire its main database and WAL cohort before
         # retaining exact sidecar descriptors.
         live.execute("PRAGMA user_version").fetchone()
-        if live.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+        journal_mode = live.execute("PRAGMA journal_mode").fetchone()[0]
+        if journal_mode != "wal":
+            owned._delete_mode_partial_cleanup = (
+                journal_mode == "delete" and not sidecar_fds
+            )
             raise ExactProfileStoreNotCurrentError()
         if not sidecar_fds:
             opened_sidecars = _open_exact_store_sidecars(parent_fd, leaf, _owner=owned)
@@ -1827,6 +1871,8 @@ def open_profile_store(
     *,
     must_exist: bool = False,
     check_deadline: Callable[[], None] | None = None,
+    _native=None,
+    _source_outcome=None,
 ) -> sqlite3.Connection:
     """Open/configure a live store, optionally refusing to create a missing file.
 
@@ -1842,6 +1888,13 @@ def open_profile_store(
     Raises:
         ProfileRepositoryError: If inputs or the store fail closed validation.
     """
+
+    from .profile_migration_native import (
+        _source_allocation,
+        _source_options,
+        _source_observed,
+        _source_close,
+    )
 
     connection: sqlite3.Connection | None = None
     body_error: BaseException | None = None
@@ -1872,12 +1925,17 @@ def open_profile_store(
                 raise _repository_error("missing")
         connect_error: BaseException | None = None
         try:
-            connection = connect_private_sqlite(
-                "tts.profile_store",
-                path,
-                must_exist=must_exist,
-                isolation_level=None,
-            )
+            with _source_allocation(
+                _native, path, _outcome=_source_outcome
+            ) as _source_call_outcome:
+                connection = connect_private_sqlite(
+                    "tts.profile_store",
+                    path,
+                    must_exist=must_exist,
+                    isolation_level=None,
+                    **_source_options(_source_call_outcome),
+                )
+                _source_observed(_source_call_outcome, connection)
         except BaseException as error:
             connect_error = error
         if connect_error is not None:
@@ -1955,7 +2013,7 @@ def open_profile_store(
 
     cleanup = _CleanupState(body_error)
     if connection is not None:
-        cleanup.attempt(connection.close)
+        cleanup.attempt(lambda: _source_close(_native, connection))
     cleanup.raise_control_flow()
     if isinstance(body_error, ProfileRepositoryError):
         raise body_error
