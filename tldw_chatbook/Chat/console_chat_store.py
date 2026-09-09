@@ -34,6 +34,7 @@ from loguru import logger
 
 # None is an explicit plain choice; omission alone permits workspace inheritance.
 UNSPECIFIED_ASSISTANT = object()
+_HYDRATION_NOT_PREPARED = object()
 
 if TYPE_CHECKING:
     from tldw_chatbook.Canvas.staging import (
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
         CanvasStagingOwner,
     )
 
+    from .console_conversation_hydration import ConsoleConversationHydrationData
     from .console_session_settings import ConsoleAssistantStartup
 
 from tldw_chatbook.Agents.agent_models import (
@@ -2653,6 +2655,7 @@ class ConsoleChatStore:
         ephemeral: bool = False,
         remote_active: bool = False,
         activate: bool = True,
+        prepared_data: ConsoleConversationHydrationData | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -2692,6 +2695,8 @@ class ConsoleChatStore:
                 prompt immediately after an explicitly empty active path, or
                 ``None`` for ordinary selected/unset cursor state.
             settings: Optional provider/model settings snapshot for the session.
+            prepared_data: Optional unpublished bulk reads for this conversation.
+                Policy reconciliation and all store publication remain on the caller.
 
         Returns:
             The newly created and activated Console session.
@@ -2700,6 +2705,11 @@ class ConsoleChatStore:
         # definition not temporary. Refuse rather than silently produce a
         # session that is both temporary and persisted -- the one state the
         # gate's invariant does not allow.
+        if (
+            prepared_data is not None
+            and prepared_data.conversation_id != persisted_conversation_id
+        ):
+            raise ValueError("Conversation hydration identity changed")
         if ephemeral:
             raise ValueError(
                 "Cannot restore a persisted session as temporary: a temporary "
@@ -2775,14 +2785,15 @@ class ConsoleChatStore:
                 persisted_conversation_id,
                 list(all_nodes),
                 remote_active=remote_active,
+                prepared_rows=prepared_data.continuation_rows
+                if prepared_data is not None
+                else _HYDRATION_NOT_PREPARED,
             )
             self._ingest_full_tree(
                 session.id,
                 restored_nodes,
                 active_leaf_persisted_id=active_leaf_persisted_id,
-                active_leaf_before_persisted_id=(
-                    active_leaf_before_persisted_id
-                ),
+                active_leaf_before_persisted_id=(active_leaf_before_persisted_id),
             )
             self._normalize_restored_provider_continuation(
                 session.id, str(persisted_conversation_id)
@@ -2790,7 +2801,12 @@ class ConsoleChatStore:
             self._reconcile_restored_chat_sync_intents(
                 session.id, str(persisted_conversation_id)
             )
-            self._hydrate_generation_metadata_from_persistence(session.id)
+            if prepared_data is None:
+                self._hydrate_generation_metadata_from_persistence(session.id)
+            elif isinstance(prepared_data.generation_rows, dict):
+                self.hydrate_generation_metadata(
+                    session.id, prepared_data.generation_rows
+                )
             self._seed_console_settings_owned_bases(session)
             self._bump_payload_revision(session.id)
             return session
@@ -3627,19 +3643,28 @@ class ConsoleChatStore:
         nodes: list[ConsoleChatMessage],
         *,
         remote_active: bool = False,
+        prepared_rows: object = _HYDRATION_NOT_PREPARED,
     ) -> list[ConsoleChatMessage]:
         """Tolerantly attach private checkpoints without exposing their data."""
-        database = getattr(self.persistence, "db", None) if self.persistence else None
-        getter = getattr(database, "get_messages_for_conversation", None)
-        if not callable(getter):
-            self._quarantine_continuation_hydration(session_id, conversation_id)
-            return nodes
-        try:
-            rows = getter(conversation_id, limit=100_000)
-        except Exception:
-            logger.warning("Console continuation restore was unavailable.")
-            self._quarantine_continuation_hydration(session_id, conversation_id)
-            return nodes
+        if prepared_rows is not _HYDRATION_NOT_PREPARED:
+            if prepared_rows is None:
+                self._quarantine_continuation_hydration(session_id, conversation_id)
+                return nodes
+            rows = prepared_rows
+        else:
+            database = (
+                getattr(self.persistence, "db", None) if self.persistence else None
+            )
+            getter = getattr(database, "get_messages_for_conversation", None)
+            if not callable(getter):
+                self._quarantine_continuation_hydration(session_id, conversation_id)
+                return nodes
+            try:
+                rows = getter(conversation_id, limit=100_000)
+            except Exception:
+                logger.warning("Console continuation restore was unavailable.")
+                self._quarantine_continuation_hydration(session_id, conversation_id)
+                return nodes
         by_persisted_id = {
             node.persisted_message_id: node
             for node in nodes

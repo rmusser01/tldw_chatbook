@@ -202,3 +202,57 @@ async def test_current_persona_name_is_literal_text(kind):
         app.push_screen(modal)
         await pilot.pause()
         assert "Archivist [/]" in str(modal.query_one("#buddy-persona-help").render())
+
+
+@pytest.mark.asyncio
+async def test_buddy_form_rejects_overlong_archive_at_shared_input_boundary():
+    m = modal_module()
+    app = App()
+    async with app.run_test() as pilot:
+        modal = m.BuddyManagementModal()
+        app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#buddy-import", Input).value = "x" * 4097
+        with pytest.raises(ValueError):
+            modal._choice()
+
+
+@pytest.mark.asyncio
+async def test_artwork_paging_retains_selected_label_and_staged_choice():
+    m = modal_module()
+    all_rows = tuple((f"[bold]Buddy {index}[/bold]", str(index)) for index in range(5))
+
+    async def page(offset):
+        return all_rows[offset : offset + 2]
+
+    app = App()
+    async with app.run_test() as pilot:
+        modal = m.BuddyManagementModal(
+            buddies=all_rows[:2],
+            artwork_page=page,
+            artwork_page_size=2,
+            selected_buddy=all_rows[-1],
+            initial=m.BuddyManagementChoice(enabled=True, buddy_id="4"),
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        assert modal._choice().buddy_id == "4"
+        modal.query_one("#buddy-artwork-next", Button).press()
+        await pilot.pause()
+        assert {key for _, key in modal._buddies} == {"2", "3"}
+        assert modal._choice().buddy_id == "4"
+        modal.query_one("#buddy-artwork", Select).value = "3"
+        await pilot.pause()
+        modal.query_one("#buddy-artwork-next", Button).press()
+        await pilot.pause()
+        assert {key for _, key in modal._buddies} == {"4"}
+        assert modal._choice().buddy_id == "3"
+        assert modal.query_one("#buddy-artwork-next", Button).disabled
+        modal.query_one("#buddy-artwork-previous", Button).press()
+        await pilot.pause()
+        assert modal._choice().buddy_id == "3"
+        labels = [
+            str(label)
+            for label, _ in modal.query_one("#buddy-artwork", Select)._options
+        ]
+        assert "[bold]Buddy 3[/bold]" in labels

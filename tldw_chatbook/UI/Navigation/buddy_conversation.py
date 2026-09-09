@@ -75,8 +75,11 @@ class BuddyConversationCoordinator:
             return None
         return session
 
-    def _saved_record_available(self, conversation_id: str) -> bool:
-        service = getattr(self.app, "local_chat_conversation_service", None)
+    def _saved_record_available(
+        self, conversation_id: str, *, service: Any = None
+    ) -> bool:
+        if service is None:
+            service = getattr(self.app, "local_chat_conversation_service", None)
         if service is None:
             return False
         try:
@@ -88,6 +91,24 @@ class BuddyConversationCoordinator:
             )
         except Exception:  # noqa: BLE001 - unavailable identity never becomes another target
             return False
+
+    async def _read_saved_availability(self, conversation_id: str) -> bool:
+        service = getattr(self.app, "local_chat_conversation_service", None)
+        if service is None:
+            return False
+        db = getattr(service, "db", None)
+        if getattr(db, "is_memory_db", False):
+            return self._saved_record_available(conversation_id, service=service)
+
+        def read() -> bool:
+            try:
+                return self._saved_record_available(conversation_id, service=service)
+            finally:
+                close = getattr(db, "close_connection", None)
+                if callable(close):
+                    close()
+
+        return await asyncio.to_thread(read)
 
     def can_open_console(self, binding: BuddyBinding) -> bool:
         if self.resolve(binding) is not None:
@@ -147,6 +168,7 @@ class BuddyConversationCoordinator:
             hydrate_console_generation_settings,
             hydrate_console_session,
             load_console_conversation_tree,
+            prepare_console_session_data,
         )
 
         target = binding.conversation_id
@@ -154,7 +176,7 @@ class BuddyConversationCoordinator:
         store = None
         restored = None
         try:
-            if not await asyncio.to_thread(self._saved_record_available, target):
+            if not await self._read_saved_availability(target):
                 raise ValueError("This saved conversation is missing or unavailable.")
             if self._profile_identity() != self._profile or runtime._disposed:
                 return
@@ -169,9 +191,7 @@ class BuddyConversationCoordinator:
                     raise ValueError("Console interaction could not start.")
             store = runtime.chat_store
             tree = await load_console_conversation_tree(self.app, target)
-            if not tree or not await asyncio.to_thread(
-                self._saved_record_available, target
-            ):
+            if not tree or not await self._read_saved_availability(target):
                 raise ValueError("This saved conversation is missing or unavailable.")
             if self.controller is None or runtime._disposed:
                 return
@@ -183,6 +203,15 @@ class BuddyConversationCoordinator:
                 raise ValueError(
                     "This saved conversation is not available for local interaction."
                 )
+            prepared_data = await prepare_console_session_data(
+                app=self.app,
+                store=store,
+                conversation_id=target,
+                tree=tree,
+            )
+            record_available = await self._read_saved_availability(target)
+            if self.controller is None or runtime._disposed or not record_available:
+                raise ValueError("This saved conversation is no longer available.")
             # Recheck after I/O. An existing or repurposed slot owns its own state.
             matches = [
                 row
@@ -215,10 +244,9 @@ class BuddyConversationCoordinator:
                 if not conversation.get("workspace_id")
                 else None,
                 activate=False,
+                prepared_data=prepared_data,
             )
-            record_available = await asyncio.to_thread(
-                self._saved_record_available, target
-            )
+            record_available = await self._read_saved_availability(target)
             if self.controller is None or runtime._disposed or not record_available:
                 raise ValueError("This saved conversation is no longer available.")
             if binding.resolve_session(store.sessions()) is not restored:

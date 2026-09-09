@@ -74,8 +74,12 @@ def read_buddy_archive(path: os.PathLike[str] | str) -> BuddySnapshot:
     Raises:
         PersonaVisualImportError: Native validation fails or the source changes.
     """
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
     try:
-        source = importer._pin_source(path)
+        # The importer owns no-follow identity checks; do not resolve links here.
+        validated_path = validate_path_simple(path, probe_existing=False)
+        source = importer._pin_source(validated_path)
         with zipfile.ZipFile(BytesIO(source.data)) as archive:
             members, pack, records = importer._validated_archive(archive, lambda: False)
             assets = []
@@ -146,7 +150,11 @@ def read_buddy_archive(path: os.PathLike[str] | str) -> BuddySnapshot:
             lambda: importer._source_identity_current(
                 source_path, source_identity, source_digest
             ),
-            tuple(sorted(pack["source_context"].items())),
+            tuple(
+                sorted(
+                    {**pack["source_context"], "provenance": "untrusted-import"}.items()
+                )
+            ),
         )
         if not snapshot.is_current():
             raise importer.PersonaVisualImportError("persona_visual_import_stale")

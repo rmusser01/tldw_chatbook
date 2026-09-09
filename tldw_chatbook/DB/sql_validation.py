@@ -58,6 +58,8 @@ VALID_TABLES = {
         "actor_pack_persona_intents",
         "actor_portable_identities",
         "agent_lessons_seed_state",
+        "buddy_profiles",
+        "buddy_visual_bindings",
         "canvas_conversation_hints",
         "canvas_documents",
         "canvas_revisions",

@@ -8013,13 +8013,13 @@ UPDATE db_schema_version
 
     def _migrate_from_v69_to_v70(self, conn: sqlite3.Connection) -> None:
         """Add independent local Buddy owners and versioned visual bindings."""
-        self._require_migration_entry_version(conn, 69, "V69→V70")
         path = (
             Path(__file__).parent
             / "migrations"
             / "chachanotes_v69_to_v70_independent_buddy.sql"
         )
         with self.transaction() as cursor:
+            self._require_migration_entry_version(cursor.connection, 69, "V69→V70")
             self._execute_migration_statements(
                 cursor, path.read_text(encoding="utf-8"), "V69→V70"
             )
@@ -8031,8 +8031,8 @@ UPDATE db_schema_version
             )
             if updated.rowcount != 1:
                 raise SchemaError("Buddy migration version update failed")
-        if self._get_db_version(conn) != 70:
-            raise SchemaError("Buddy migration version check failed")
+            if self._get_db_version(cursor.connection) != 70:
+                raise SchemaError("Buddy migration version check failed")
 
     def _migrate_from_v68_to_v69(self, conn: sqlite3.Connection) -> None:
         """Permit the existing event FK to pin a call's exact saved source."""

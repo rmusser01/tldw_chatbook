@@ -66,29 +66,94 @@ class BuddyLibrary:
         *,
         persona_reader: Callable[[str], Mapping[str, object]] | None = None,
     ) -> None:
+        """Bind operations to one local profile.
+
+        Args:
+            db: Profile database owning Buddy and visual records.
+            profile_root: Confined root for private visual files.
+            persona_reader: Current local Persona authority used for guarded copying.
+        """
         self.db = db
         self.profile_root = Path(profile_root)
         self.repository = PersonaVisualRepository(db)
         self.persona_reader = persona_reader
 
-    def list_buddies(self) -> tuple[BuddyRecord, ...]:
-        rows = self.db.execute_query(
-            "SELECT buddy.id,buddy.name,buddy.version,buddy.source_key FROM buddy_profiles buddy "
-            "JOIN buddy_visual_bindings binding ON binding.buddy_id=buddy.id "
-            "WHERE buddy.status='active' AND binding.status='active' "
-            "AND binding.buddy_revision=buddy.version ORDER BY buddy.name COLLATE NOCASE,buddy.id"
-        ).fetchall()
+    def list_buddies(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> tuple[BuddyRecord, ...]:
+        """Read one bounded, consistently ordered page of installed artwork.
+
+        Args:
+            limit: Maximum records in this page, from 1 through 100.
+            offset: Number of ordered records to skip, starting at zero.
+
+        Returns:
+            Active owners with a current active visual binding, ordered by name/id.
+
+        Raises:
+            ValueError: The requested page bounds are invalid.
+        """
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= 100
+            or type(offset) is not int
+            or offset < 0
+        ):
+            raise ValueError("buddy_page_invalid")
+        with self.db.transaction() as cursor:
+            rows = cursor.execute(
+                "SELECT buddy.id,buddy.name,buddy.version,buddy.source_key FROM buddy_profiles buddy "
+                "JOIN buddy_visual_bindings binding ON binding.buddy_id=buddy.id "
+                "WHERE buddy.status='active' AND binding.status='active' "
+                "AND binding.buddy_revision=buddy.version ORDER BY buddy.name COLLATE NOCASE,buddy.id "
+                "LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
         return tuple(BuddyRecord(*row) for row in rows)
 
     def get_buddy(self, buddy_id: str) -> BuddyRecord | None:
-        return next((row for row in self.list_buddies() if row.id == buddy_id), None)
+        """Read one installed Buddy without enumerating the library.
+
+        Args:
+            buddy_id: Exact profile-local Buddy identity.
+
+        Returns:
+            Its active record, or None if the owner/binding is unavailable.
+        """
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT buddy.id,buddy.name,buddy.version,buddy.source_key FROM buddy_profiles buddy "
+                "JOIN buddy_visual_bindings binding ON binding.buddy_id=buddy.id "
+                "WHERE buddy.id=? AND buddy.status='active' AND binding.status='active' "
+                "AND binding.buddy_revision=buddy.version",
+                (buddy_id,),
+            ).fetchone()
+        return BuddyRecord(*row) if row is not None else None
 
     def get_graph(self, buddy_id: str) -> PersonaVisualGraph | None:
+        """Read the current visual identity for one Buddy.
+
+        Args:
+            buddy_id: Exact profile-local Buddy identity.
+
+        Returns:
+            Active visual graph, or None for an unavailable owner/binding.
+        """
         return self.repository.get_active_buddy_pack(buddy_id)
 
     def resolve_preview(
         self, buddy_id: str, *, state: str = "idle", reduced_motion: bool = False
     ) -> PersonaVisualResolution:
+        """Resolve a validated preview through the native renderer.
+
+        Args:
+            buddy_id: Exact profile-local Buddy identity.
+            state: Requested expression state.
+            reduced_motion: Whether animation must be suppressed.
+
+        Returns:
+            Render resolution with either validated artwork or an unavailable reason.
+        """
         return resolve_active_buddy_visual(
             self.repository,
             buddy_id,
@@ -99,19 +164,42 @@ class BuddyLibrary:
 
     @staticmethod
     def review_archive(path: Path | str) -> BuddySnapshot:
-        """Validate archive bytes and notices without staging or changing selection."""
+        """Validate archive bytes and notices without changing selection.
+
+        Args:
+            path: Absolute native archive path; links are rejected.
+
+        Returns:
+            Reviewed content with its private source-revalidation guard.
+
+        Raises:
+            PersonaVisualImportError: Invalid archive/path or changed source.
+        """
         return read_buddy_archive(path)
 
     def import_archive(
         self, path: Path | str, *, name: str | None = None
     ) -> BuddyRecord:
+        """Review and publish a native pack as independent artwork.
+
+        Args:
+            path: Absolute native archive path.
+            name: Optional display-name override.
+
+        Returns:
+            Published Buddy record, without changing selection.
+
+        Raises:
+            ValueError: Review, publication, or name validation fails.
+        """
         return self.publish_review(self.review_archive(path), name=name)
 
     def _source_record(self, source_key: str) -> BuddyRecord | None:
-        row = self.db.execute_query(
-            "SELECT id,name,version,source_key,status FROM buddy_profiles WHERE source_key=?",
-            (source_key,),
-        ).fetchone()
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT id,name,version,source_key,status FROM buddy_profiles WHERE source_key=?",
+                (source_key,),
+            ).fetchone()
         if row is None:
             return None
         if row[4] != "active":
@@ -125,7 +213,19 @@ class BuddyLibrary:
         name: str | None = None,
         source_key: str | None = None,
     ) -> BuddyRecord:
-        """Publish one reviewed immutable copy; only a complete binding is listed."""
+        """Publish one reviewed immutable copy; only a complete binding is listed.
+
+        Args:
+            review: Validated content with a still-current source guard.
+            name: Optional display-name override.
+            source_key: Optional private idempotency key for builtins/legacy copies.
+
+        Returns:
+            New Buddy record, or the existing active record for source_key.
+
+        Raises:
+            ValueError: Invalid/stale content, retired source, or failed publication.
+        """
         from tldw_chatbook.Persona_Visual.artwork import encode_native_artwork
 
         if type(review) is not BuddySnapshot or not review.is_current():
@@ -223,7 +323,19 @@ class BuddyLibrary:
     def copy_persona(
         self, persona_id: str, *, name: str | None = None, source_key: str | None = None
     ) -> BuddyRecord:
-        """Copy a current local Persona graph; its subsequent lifecycle is irrelevant."""
+        """Copy current local Persona artwork into an independent owner.
+
+        Args:
+            persona_id: Exact local Persona identity to validate and copy.
+            name: Optional display-name override.
+            source_key: Optional private idempotency key.
+
+        Returns:
+            Independent Buddy record that survives source Persona changes.
+
+        Raises:
+            ValueError: Persona authority/artwork is unavailable or changes during copying.
+        """
         from tldw_chatbook.Persona_Visual.artwork import artwork_from_pack
 
         if source_key is not None:
@@ -286,7 +398,17 @@ class BuddyLibrary:
         return self.publish_review(review, name=name, source_key=source_key)
 
     def ensure_builtin(self, *, legacy_retired: bool = False) -> BuddyRecord | None:
-        """Install bundled pixels once without Persona creation or selection changes."""
+        """Install bundled pixels once without Persona creation or selection changes.
+
+        Args:
+            legacy_retired: Whether a legacy tombstone forbids new installation.
+
+        Returns:
+            Existing/new builtin Buddy, or None when a retained tombstone forbids it.
+
+        Raises:
+            ValueError: Bundled content cannot be published safely.
+        """
         key = "builtin:pixel-migu"
         try:
             existing = self._source_record(key)
@@ -342,7 +464,15 @@ class BuddyLibrary:
         *,
         writer: Callable[[PersonaBuddyPreferences], bool],
     ) -> PersonaBuddyPreferences:
-        """Copy once, then persist; a failed copy/write leaves legacy choices intact."""
+        """Copy once, then persist; a failed copy/write leaves legacy choices intact.
+
+        Args:
+            preferences: Current immutable Buddy preferences.
+            writer: Persists a candidate and returns True only on success.
+
+        Returns:
+            Migrated preferences after successful persistence, otherwise the original.
+        """
         from .preferences import BuddySelection, PersonaBuddySelection
 
         selection = preferences.selection

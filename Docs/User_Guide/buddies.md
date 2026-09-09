@@ -5,7 +5,9 @@ the target's Persona. The floating Buddy's **⚙** control and Personas → **Ma
 focus the Buddy and press **m** for keyboard access.
 
 Choose installed artwork, preview an expression, and choose **Dynamic** or
-**Static**. **Import pack & size** contains the optional native
+**Static**. Large libraries use **Previous** and **Next** to browse 100 Buddies at
+a time; your current and staged choices remain selected while you browse.
+**Import pack & size** contains the optional native
 `.tldw-persona-vpack` / `.zip` path and terminal-cell dimensions. Global Reduce
 motion also suppresses animation. Apply saves your choices; Cancel discards them.
 If import or saving fails, the form retains your attempted values for correction.

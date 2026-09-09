@@ -87,6 +87,9 @@ class BuddyManagementModal(
     #buddy-size Static { width: 9; height: 3; content-align: left middle; }
     #buddy-size #buddy-height-label { width: 10; padding-left: 1; }
     #buddy-preview { height: auto; max-height: 12; content-align: center middle; }
+    #buddy-artwork-pages { height: 3; }
+    #buddy-artwork-pages Button { width: auto; min-width: 10; }
+    #buddy-artwork-page { width: 1fr; content-align: center middle; }
     #buddy-preview-actions { height: 3; }
     #buddy-management-body #buddy-preview-state { width: 1fr; min-width: 10; }
     #buddy-preview-button { width: auto; min-width: 11; }
@@ -106,9 +109,17 @@ class BuddyManagementModal(
         initial: BuddyManagementChoice | None = None,
         preview: Callable[[str, str], Any] | None = None,
         apply: Callable[[BuddyManagementChoice], Any] | None = None,
+        artwork_page: Callable[[int], Any] | None = None,
+        artwork_page_size: int = 100,
+        selected_buddy: tuple[str, str] | None = None,
     ) -> None:
         super().__init__()
         self._buddies = buddies
+        self._artwork_page = artwork_page
+        self._artwork_page_size = artwork_page_size
+        self._artwork_offset = 0
+        self._paging = False
+        self._selected_buddy = selected_buddy
         self._targets = targets
         self._personas = personas
         self._initial = initial or BuddyManagementChoice()
@@ -123,9 +134,20 @@ class BuddyManagementModal(
         artwork_choices = [(Text("Choose artwork"), _NO_ARTWORK)] + [
             (Text(label), key) for label, key in self._buddies
         ]
-        if initial.buddy_id and initial.buddy_id not in {
+        if self._selected_buddy and self._selected_buddy[1] not in {
             key for _, key in self._buddies
         }:
+            artwork_choices.append(
+                (Text(self._selected_buddy[0]), self._selected_buddy[1])
+            )
+        if (
+            initial.buddy_id
+            and initial.buddy_id not in {key for _, key in self._buddies}
+            and (
+                self._selected_buddy is None
+                or self._selected_buddy[1] != initial.buddy_id
+            )
+        ):
             artwork_choices.append(
                 (Text("Selected artwork is unavailable"), initial.buddy_id)
             )
@@ -154,6 +176,17 @@ class BuddyManagementModal(
                     allow_blank=False,
                     id="buddy-artwork",
                 )
+                if self._artwork_page is not None:
+                    with Horizontal(id="buddy-artwork-pages"):
+                        yield Button(
+                            "Previous", id="buddy-artwork-previous", disabled=True
+                        )
+                        yield Static("Page 1", id="buddy-artwork-page")
+                        yield Button(
+                            "Next",
+                            id="buddy-artwork-next",
+                            disabled=len(self._buddies) < self._artwork_page_size,
+                        )
                 if self._preview_callback is not None:
                     with Horizontal(id="buddy-preview-actions"):
                         yield Select(
@@ -367,28 +400,98 @@ class BuddyManagementModal(
         if succeeded:
             self.dismiss_safe_once(None)
 
+    @on(Button.Pressed, "#buddy-artwork-previous")
+    @on(Button.Pressed, "#buddy-artwork-next")
+    async def _change_artwork_page(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._paging or self._applying or self._artwork_page is None:
+            return
+        delta = (
+            -self._artwork_page_size
+            if event.button.id == "buddy-artwork-previous"
+            else self._artwork_page_size
+        )
+        offset = max(0, self._artwork_offset + delta)
+        self._paging = True
+        previous = self.query_one("#buddy-artwork-previous", Button)
+        following = self.query_one("#buddy-artwork-next", Button)
+        previous.disabled = following.disabled = True
+        try:
+            page = self._artwork_page(offset)
+            if inspect.isawaitable(page):
+                page = await page
+            if not self.is_mounted:
+                return
+            control = self.query_one("#buddy-artwork", Select)
+            selected = control.value
+            known = {key: label for label, key in self._buddies}
+            if self._selected_buddy is not None:
+                known[self._selected_buddy[1]] = self._selected_buddy[0]
+            if selected in known:
+                self._selected_buddy = (known[selected], selected)
+            self._buddies = tuple(page)
+            self._artwork_offset = offset
+            options = [(Text("Choose artwork"), _NO_ARTWORK)] + [
+                (Text(label), key) for label, key in self._buddies
+            ]
+            if selected != _NO_ARTWORK and selected not in {
+                key for _, key in self._buddies
+            }:
+                options.append(
+                    (
+                        Text(known.get(selected, "Selected artwork is unavailable")),
+                        selected,
+                    )
+                )
+            control.set_options(options)
+            control.value = selected
+            self.query_one("#buddy-artwork-page", Static).update(
+                f"Page {offset // self._artwork_page_size + 1}"
+            )
+        except Exception:  # noqa: BLE001 - retain staged selection on failed page reads
+            if self.is_mounted:
+                self.query_one("#buddy-form-error", Static).update(
+                    "Could not load artwork. Retry this page."
+                )
+        finally:
+            self._paging = False
+            if self.is_mounted:
+                previous.disabled = self._artwork_offset == 0
+                following.disabled = len(self._buddies) < self._artwork_page_size
+
     def _choice(self) -> BuddyManagementChoice:
-        enabled = self.query_one("#buddy-enabled", Switch).value
-        artwork = str(self.query_one("#buddy-artwork", Select).value)
-        archive = self.query_one("#buddy-import", Input).value.strip()
-        if enabled and artwork not in {key for _, key in self._buddies} and not archive:
+        # Lazy loading keeps the boot import budget independent of this form.
+        from tldw_chatbook.Utils.input_validation import BuddyManagementInput
+
+        try:
+            values = BuddyManagementInput(
+                enabled=self.query_one("#buddy-enabled", Switch).value,
+                artwork=self.query_one("#buddy-artwork", Select).value,
+                archive=self.query_one("#buddy-import", Input).value.strip(),
+                target=self.query_one("#buddy-follow", Select).value,
+                persona=self.query_one("#buddy-persona", Select).value,
+                motion=self.query_one("#buddy-motion", Select).value,
+                speak_responses=self.query_one("#buddy-speech", Switch).value,
+                width=self.query_one("#buddy-width", Input).value,
+                height=self.query_one("#buddy-height", Input).value,
+            )
+        except ValueError:
+            raise ValueError(
+                "Check the pack path and selections. Use a width of 8–120 and a height of 4–60 whole terminal cells."
+            ) from None
+        enabled, artwork, archive = values.enabled, values.artwork, values.archive
+        available = {key for _, key in self._buddies}
+        if self._selected_buddy is not None:
+            available.add(self._selected_buddy[1])
+        if enabled and artwork not in available and not archive:
             raise ValueError(
                 "Choose artwork or enter a Buddy pack path before enabling it."
             )
-        target_key = self.query_one("#buddy-follow", Select).value
+        target_key = values.target
         target = self._target()
         if target_key != _NO_TARGET and target is None:
             raise ValueError("Choose an available conversation or workspace.")
-        try:
-            width = int(self.query_one("#buddy-width", Input).value)
-            height = int(self.query_one("#buddy-height", Input).value)
-        except ValueError:
-            raise ValueError("Enter whole numbers for width and height.") from None
-        if not (8 <= width <= 120 and 4 <= height <= 60):
-            raise ValueError(
-                "Use a width of 8–120 and a height of 4–60 terminal cells."
-            )
-        persona = str(self.query_one("#buddy-persona", Select).value)
+        persona = values.persona
         if persona not in {
             PERSONA_UNCHANGED,
             PERSONA_NONE,
@@ -405,8 +508,8 @@ class BuddyManagementModal(
             import_path=archive,
             binding=target.binding if target else None,
             persona_choice=persona,
-            animated=self.query_one("#buddy-motion", Select).value == "dynamic",
-            speak_responses=self.query_one("#buddy-speech", Switch).value,
-            width=width,
-            height=height,
+            animated=values.motion == "dynamic",
+            speak_responses=values.speak_responses,
+            width=values.width,
+            height=values.height,
         )

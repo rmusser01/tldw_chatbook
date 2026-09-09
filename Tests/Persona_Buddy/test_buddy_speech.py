@@ -151,3 +151,22 @@ async def test_microphone_hold_waits_for_output_cleanup_and_preserves_manual_pau
     await queue.wait_idle()
     assert spoken == ["response", "response"]
     await queue.aclose()
+
+
+@pytest.mark.asyncio
+async def test_skip_while_paused_removes_next_question_before_earlier_response():
+    spoken = []
+
+    async def play(entry, current):
+        spoken.append(entry.key)
+        return current()
+
+    queue = BuddySpeechQueue(play)
+    queue.pause()
+    queue.enqueue(item("response"))
+    queue.enqueue(item("question", question=True))
+    queue.skip()
+    queue.resume()
+    await queue.wait_idle()
+    assert spoken == ["response"]
+    await queue.aclose()

@@ -145,6 +145,18 @@ class BuddyManagementCoordinator:
             targets = await self._target_choices()
             saved = controller.current_preferences()
             buddy_id = getattr(saved.selection, "buddy_id", None)
+            selected_buddy = (
+                await asyncio.to_thread(self.library.get_buddy, buddy_id)
+                if buddy_id
+                else None
+            )
+
+            async def artwork_page(offset: int) -> tuple[tuple[str, str], ...]:
+                page = await asyncio.to_thread(
+                    self.library.list_buddies, limit=100, offset=offset
+                )
+                return tuple((record.name, record.id) for record in page)
+
             initial = BuddyManagementChoice(
                 enabled=saved.enabled and saved.open,
                 buddy_id=buddy_id,
@@ -185,6 +197,10 @@ class BuddyManagementCoordinator:
                 initial=initial,
                 preview=self._preview,
                 apply=commit,
+                artwork_page=artwork_page,
+                selected_buddy=(selected_buddy.name, selected_buddy.id)
+                if selected_buddy
+                else None,
             )
             self.app.push_screen(self._modal, self._closed)
         except Exception:  # noqa: BLE001 - app boundary keeps storage faults out of the message pump

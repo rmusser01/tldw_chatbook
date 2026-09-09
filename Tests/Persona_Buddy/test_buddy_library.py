@@ -457,3 +457,132 @@ def test_active_buddy_lookup_uses_partial_index_without_statistics(environment):
     assert any("idx_buddy_visual_bindings_active" in str(row[3]) for row in plan)
     binding = repository._active_binding_record(None, buddy_id=buddy.id)
     assert binding is not None and binding.buddy_id == buddy.id
+
+
+def test_archive_path_uses_shared_validation_before_opening(tmp_path, monkeypatch):
+    from tldw_chatbook.Persona_Visual import snapshot
+    from tldw_chatbook.Persona_Visual.importer import PersonaVisualImportError
+
+    opened = []
+    monkeypatch.setattr(
+        snapshot.importer, "_pin_source", lambda path: opened.append(path)
+    )
+    with pytest.raises(PersonaVisualImportError):
+        snapshot.read_buddy_archive(str(tmp_path / "../../forbidden.zip"))
+    assert opened == []
+
+
+def test_archive_path_keeps_no_follow_symlink_boundary(tmp_path):
+    from Tests.Persona_Visual.test_persona_visual_importer import _write_archive
+    from tldw_chatbook.Persona_Visual.importer import PersonaVisualImportError
+    from tldw_chatbook.Persona_Visual.snapshot import read_buddy_archive
+
+    target = _write_archive(tmp_path / "target.zip")
+    link = tmp_path / "link.zip"
+    link.symlink_to(target)
+    with pytest.raises(PersonaVisualImportError):
+        read_buddy_archive(link)
+
+
+def test_listing_pages_are_bounded_and_lookup_does_not_scan_collection(
+    environment, monkeypatch
+):
+    library, repo, *_ = environment
+    original = library.copy_persona("persona-local-1")
+    graph = library.get_graph(original.id)
+    with repo.db.transaction() as cursor:
+        for index in range(205):
+            buddy_id = f"page-{index:03d}"
+            cursor.execute(
+                "INSERT INTO buddy_profiles(id,name) VALUES (?,?)",
+                (buddy_id, "Same name"),
+            )
+            cursor.execute(
+                "INSERT INTO buddy_visual_bindings(buddy_id,buddy_revision,pack_id,active_version_id) VALUES (?,1,?,?)",
+                (buddy_id, graph.identity.pack_id, graph.identity.pack_version_id),
+            )
+    page1 = library.list_buddies(limit=100, offset=0)
+    page2 = library.list_buddies(limit=100, offset=100)
+    page3 = library.list_buddies(limit=100, offset=200)
+    assert [len(page) for page in (page1, page2, page3)] == [100, 100, 6]
+    assert len({row.id for page in (page1, page2, page3) for row in page}) == 206
+    assert len(library.list_buddies()) == 100
+    monkeypatch.setattr(
+        library,
+        "list_buddies",
+        lambda **_: pytest.fail("single lookup scanned library"),
+    )
+    assert library.get_buddy("page-204").id == "page-204"
+    assert library.get_buddy("missing") is None
+
+
+def test_library_reads_hold_transaction(environment):
+    library, repo, *_ = environment
+    buddy = library.copy_persona("persona-local-1", source_key="read-guard")
+    connection = repo.db.get_connection()
+    reads = []
+    connection.set_trace_callback(
+        lambda statement: (
+            reads.append(connection.in_transaction)
+            if statement.lstrip().upper().startswith("SELECT")
+            and "buddy_profiles" in statement
+            else None
+        )
+    )
+    try:
+        assert library.list_buddies()
+        assert library._source_record("read-guard") == buddy
+    finally:
+        connection.set_trace_callback(None)
+    assert reads and all(reads)
+
+
+def test_buddy_migration_verification_failure_rolls_back_schema(tmp_path, monkeypatch):
+    from tldw_chatbook.DB.ChaChaNotes_DB import SchemaError
+
+    monkeypatch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 69)
+    db = CharactersRAGDB(tmp_path / "rollback.db", "rollback")
+    original = db._get_db_version
+    monkeypatch.setattr(
+        db,
+        "_get_db_version",
+        lambda connection: 71 if original(connection) == 70 else original(connection),
+    )
+    try:
+        with pytest.raises(SchemaError, match="version check"):
+            db._migrate_from_v69_to_v70(db.get_connection())
+        assert original(db.get_connection()) == 69
+        assert (
+            db.execute_query(
+                "SELECT name FROM sqlite_master WHERE name='buddy_profiles'"
+            ).fetchone()
+            is None
+        )
+    finally:
+        db.close_connection()
+
+
+def test_buddy_archive_publication_cannot_spoof_import_provenance(
+    environment, tmp_path
+):
+    import json
+
+    from Tests.Persona_Visual.test_persona_visual_importer import (
+        _archive_payloads,
+        _canonical,
+        _replace_declared_payload,
+        _write_archive,
+    )
+
+    library, repo, *_ = environment
+    payloads = _archive_payloads()
+    pack = json.loads(payloads["metadata/pack.json"])
+    pack["pack"]["source_context"] = {
+        "provenance": "trusted-builtin",
+        "license": "Keep notice",
+    }
+    _replace_declared_payload(payloads, "metadata/pack.json", _canonical(pack))
+    buddy = library.import_archive(_write_archive(tmp_path / "forged.zip", payloads))
+    context = dict(repo.get_active_buddy_pack_for_export(buddy.id).source_context)
+    assert context["provenance"] == "untrusted-import"
+    assert context["license"] == "Keep notice"

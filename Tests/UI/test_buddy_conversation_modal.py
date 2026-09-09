@@ -886,3 +886,153 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
         finally:
             if runtime.chat_controller is not None:
                 await runtime.chat_controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_recorder_buffer_callback_runs_on_textual_app_thread():
+    from tldw_chatbook.UI.Navigation.buddy_conversation import (
+        BuddyConversationCoordinator,
+        _VoiceCapture,
+    )
+
+    app = Harness()
+    callback = []
+    threads = []
+    finished = asyncio.Event()
+
+    class Recorder:
+        def start(self, *, on_buffer_limit):
+            callback.append(on_buffer_limit)
+
+        def discard(self):
+            pass
+
+    class Speech:
+        async def wait_silent(self):
+            pass
+
+    async with app.run_test():
+        coordinator = BuddyConversationCoordinator(app)
+        binding = BuddyBinding.for_session(app.target)
+        owner = object()
+        capture = _VoiceCapture(binding, Recorder(), "", Speech())
+        coordinator._voices[owner] = capture
+
+        def voice(*args, **kwargs):
+            threads.append(threading.get_ident())
+            finished.set()
+
+        coordinator.request_voice = voice
+        await coordinator._start_voice(owner, capture)
+        await asyncio.to_thread(callback[0])
+        await asyncio.wait_for(finished.wait(), 2)
+        assert threads == [threading.get_ident()]
+        assert capture.status == "recording"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "phase", ["tree", "attachments", "cursor", "continuations", "generation"]
+)
+@pytest.mark.parametrize("change", [False, True])
+async def test_saved_buddy_bulk_reads_allow_loop_progress_and_recheck_owner(
+    tmp_path, monkeypatch, phase, change
+):
+    from tldw_chatbook.Chat.chat_conversation_scope_service import (
+        ChatConversationScopeService,
+    )
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+
+    db = CharactersRAGDB(tmp_path / "restore.db", "buddy-restore")
+    local = ChatConversationService(db)
+    target = local.create_conversation(
+        title="Saved", runtime_backend="local", scope_type="global"
+    )
+    db.add_message(
+        {
+            "conversation_id": target,
+            "sender": "user",
+            "role": "user",
+            "content": "Saved input",
+        }
+    )
+    app = Harness()
+    app.chachanotes_db = db
+    app.local_chat_conversation_service = local
+    app.chat_conversation_scope_service = ChatConversationScopeService(
+        local_service=local, server_service=None
+    )
+    persistence = ChatPersistenceService(db)
+    app.store.persistence = persistence
+    service, name = {
+        "tree": (local, "get_conversation_tree"),
+        "attachments": (db, "get_attachments_for_messages"),
+        "cursor": (db, "get_conversation_active_cursor"),
+        "continuations": (db, "get_messages_for_conversation"),
+        "generation": (persistence, "get_generation_metadata_for_messages"),
+    }[phase]
+    original = getattr(service, name)
+    entered, release = threading.Event(), threading.Event()
+    reads = []
+    main_thread = threading.get_ident()
+
+    def delayed(*args, **kwargs):
+        reads.append(threading.get_ident())
+        entered.set()
+        assert release.wait(3), "bulk read blocked the event loop"
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service, name, delayed)
+    closed = []
+    close = db.close_connection
+
+    def close_worker():
+        close()
+        closed.append((threading.get_ident(), getattr(db._local, "conn", None)))
+
+    monkeypatch.setattr(db, "close_connection", close_worker)
+    published = []
+    restore = app.store.restore_persisted_session
+
+    def restore_on_app(**kwargs):
+        published.append(threading.get_ident())
+        return restore(**kwargs)
+
+    monkeypatch.setattr(app.store, "restore_persisted_session", restore_on_app)
+    try:
+        async with app.run_test():
+            binding = BuddyBinding(
+                "conversation", "saved:" + target, conversation_id=target
+            )
+            modal = open_buddy_conversation(app, binding, allow_voice=False)
+            await until(entered.is_set)
+            assert reads == [reads[0]] and reads[0] != main_thread
+            assert not published
+            if change:
+                app.chachanotes_db = object()
+            release.set()
+            await until(lambda: not modal.coordinator.restoring)
+            if change:
+                assert modal.coordinator.resolve(binding) is None
+                assert not published
+            else:
+                restored = modal.coordinator.resolve(binding)
+                assert restored is not None
+                assert published == [main_thread]
+                assert (
+                    app.store.messages_for_session(restored.id)[0].content
+                    == "Saved input"
+                )
+            assert app.store.active_session_id == app.other.id
+            assert any(
+                thread != main_thread and connection is None
+                for thread, connection in closed
+            )
+            assert db.get_conversation_by_id(target)["id"] == target
+            assert len(reads) == 1 and reads[0] != main_thread
+    finally:
+        release.set()
+        db.close_connection()

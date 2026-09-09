@@ -111,15 +111,15 @@ class BuddySpeechQueue:
         ):
             self._runner = asyncio.create_task(self._drain())
 
+    def _next_index(self) -> int:
+        return next((i for i, item in enumerate(self._pending) if item.question), 0)
+
     async def _drain(self) -> None:
         try:
             while self._pending and not (
                 self._closed or self._paused or self._muted or self._input_owners
             ):
-                index = next(
-                    (i for i, item in enumerate(self._pending) if item.question), 0
-                )
-                item = self._pending.pop(index)
+                item = self._pending.pop(self._next_index())
                 if not self._valid(item):
                     continue
                 epoch = self._epoch
@@ -168,7 +168,7 @@ class BuddySpeechQueue:
             if not self._playback.cancelling():
                 self._playback.cancel()
         elif self._pending:
-            self._pending.pop(0)
+            self._pending.pop(self._next_index())
 
     def mute(self) -> None:
         self._muted = True

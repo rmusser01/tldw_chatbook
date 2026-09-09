@@ -150,7 +150,7 @@ def create_persona_visual_import_draft(
             source_kind="imported",
             source_context=tuple(
                 sorted(
-                    {"provenance": "untrusted-import", **(source_context or {})}.items()
+                    {**(source_context or {}), "provenance": "untrusted-import"}.items()
                 )
             ),
             manifest_json=manifest_json,

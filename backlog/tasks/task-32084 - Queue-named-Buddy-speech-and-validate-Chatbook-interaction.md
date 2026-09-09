@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 19:33'
-updated_date: '2026-09-08 21:06'
+updated_date: '2026-09-09 02:49'
 labels:
   - buddy
   - console
@@ -28,22 +28,13 @@ Speak scoped responses serially and verify the complete Chatbook Buddy journey b
 - [x] #3 Existing TTS configuration and authority are reused; background listening is never enabled.
 - [x] #4 Targeted integration and compact/normal terminal journeys verify management, conversation and workspace behavior.
 - [x] #5 User documentation and a server port contract capture shipped behavior and limitations; no server implementation is claimed.
+- [x] #6 All Qodo findings have verified fixes or evidence-backed dispositions and targeted regressions on rebased dev; derived artifact and schema allowlist checks pass.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes
-ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md
-Reason: reuses existing TTS privacy and playback authority with one app-owned, explicit-binding Buddy speech queue.
-
-1. Read existing trusted message speech, destination confirmation, playback lifecycle and Buddy scope contracts.
-2. Add one serial speech queue with named prefixes, question priority, terminal-response deduplication and pause/skip/mute controls that never alter execution or acknowledgement.
-3. Reuse existing configured TTS destination and snapshot admission for explicit bound owners; validate content, profile and owner after asynchronous boundaries and cancel only owned playback.
-4. Integrate app-owned lifecycle and optional UI controls with root; verify targeted ordering, privacy, stale-owner/content and failure behavior.
-5. Root completes compact/normal integrated journeys, user documentation and server-port contract.
-
-Detailed speech plan: Docs/superpowers/plans/2026-09-08-buddy-named-speech.md
+ADR required: no new ADR. ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md. Reason: review corrections within the approved Buddy ownership and runtime contracts. Follow Docs/superpowers/plans/2026-09-09-buddy-pr-review-and-merge.md; root owns integration, PR checks and merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -62,4 +53,6 @@ Final Chatbook integration and review complete. Root gate: 813 passed across Bud
 Final review fixes: exact saved-binding promotion/restoration, immutable run-owner replay during validating, cold result receipt bootstrap and conversation loading, concurrent-loader retained decisions, and shielded Buddy speech shutdown before shared TTS teardown. Final focused concurrent/cold/retained/bootstrap gate6 and clocks30 pass; cancelled playback teardown13 pass. Additional compact60x20 conversation layout verifies live/unavailable reply and recovery controls (2 pass). All changed Python files parse, zero introduced Ruff diagnostics compared with HEAD, new files pass lint/formatter, and diff whitespace is clean. No full test suite, live paid provider, device microphone or audible playback was claimed.
 
 Docs/User_Guide/buddies.md and console/buddy-conversation.md explain management, exact follow, workspace defaults, dictation, consent, pause/skip/mute and restart limits. Docs/superpowers/specs/2026-09-08-buddy-server-port-contract.md records the later authenticated server contract; no server implementation is part of this change. ADR-139 is the ownership/lifecycle contract and its headless interaction amendment. Testing lessons record source stability, genuine cold startup and modal composition timing. All approved Chatbook tasks are complete; changes remain on the isolated codex/buddy-console-management branch for review.
+
+September 9 rebase/Qodo follow-up complete under ADR-139 and canonical settings contract ADR-095. All 11 Qodo comments have verified fixes or source-backed dispositions. Fixed central archive/form validation, bounded paged Buddy reads, transaction and migration guards, question-first Skip and reserved import provenance; collection-sized hydration reads now precede UI-thread publication with late authority checks. 362 affected tests and20 post-format/census tests pass, actual UI-ready imports973/973;19 changed files add no Ruff/formatter findings. Independent review found no Important/Critical issues. Root repaired the2 Buddy SQL allowlist entries and reviewed diagnostic statements before regenerating the inventory; all6 derived checks pass. User guide documents pagination. Full evidence: Docs/Development/Reviews/2026-09-09-buddy-pr-review.md. Publication and remote CI/merge are the remaining integration steps; no full local suite or real provider/audio claimed.
 <!-- SECTION:NOTES:END -->

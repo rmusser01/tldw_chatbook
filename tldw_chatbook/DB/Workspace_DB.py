@@ -602,9 +602,11 @@ COMMIT;
                 is not None
             )
             needs_v7 = version < 7 or not v7_backfill_exists
-            needs_v8 = version < 8 or "assistant_defaults_explicit_none" not in {
-                row[1] for row in conn.execute("PRAGMA table_info(workspace_records)")
-            }
+            with self.transaction() as read_conn:
+                needs_v8 = version < 8 or "assistant_defaults_explicit_none" not in {
+                    row[1]
+                    for row in read_conn.execute("PRAGMA table_info(workspace_records)")
+                }
             rows: list[tuple[str, str]] = []
             if needs_v2:
                 # Reads only here; all v2 writes happen below inside self.transaction().
