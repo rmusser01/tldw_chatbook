@@ -1,7 +1,7 @@
 # tldw_chatbook
 
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)](#alpha-status)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-green)](LICENSE)
 
 tldw_chatbook is a local-first terminal application for chatting with large
@@ -62,7 +62,7 @@ OpenAI-compatible endpoint.
 
 ### Requirements
 
-- Python `>=3.11`
+- Python `>=3.12`
 - Windows, macOS, or Linux
 - A terminal with Unicode support
 - Either an API key for a hosted provider or a separately running local model
@@ -100,7 +100,7 @@ py -3 -m venv .venv
 .venv\Scripts\activate.bat
 ```
 
-Use an executable that reports Python 3.11 or newer. A versioned executable such
+Use an executable that reports Python 3.12 or newer. A versioned executable such
 as `python3.12` or `py -3.12` is fine.
 
 ### 3. Install the core application
@@ -225,7 +225,7 @@ require native libraries. Add only the groups you plan to use.
 | `frontmatter` | YAML front matter support in Markdown notes and previews |
 | `speech_recording` | Microphone recording support |
 | `realtime` | Realtime audio/model dependencies |
-| `local_tts` | Local TTS engines such as Kokoro ONNX |
+| `local_tts` | Kokoro ONNX and official Kokoro PyTorch (Python 3.12) |
 | `chatterbox` | Chatterbox TTS support |
 | `higgs_tts` | Supporting packages for Higgs Audio; manual Higgs installation is also required |
 | `transcription_faster_whisper` | CPU/CUDA-optimized Whisper |

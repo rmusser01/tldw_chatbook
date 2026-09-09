@@ -1,0 +1,21 @@
+{
+  "created_utc": "2026-09-09T07:20:49.623867+00:00",
+  "scope": "All package files except this index itself",
+  "files": {
+    "README.md": "998d81a8d3ca5c7d935a47d77ea805f590d5c8c36bcf06e6ef42b34988edcd33",
+    "matrix.json": "3dc5650e822e220883d15888add7f8bc7b4824149ac2029a04304537338fa4ba",
+    "package-provenance.json": "320bdd0bbb2d56a6727890ec28bac9ca289d98be9ab91c2bf025732573433aa0",
+    "provenance/source-hashes.json": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+    "runs/cpu-fixed/evidence.json": "1e57d4ad4fc84679e9f40005308819b87df7b31897d6ef8132e6a3602ed2e7d3",
+    "runs/cpu-initial/evidence.json": "ba56f0abe2c45b9f73c7b7b96cf3f72bf39abc9cbb678e441863db49b9d9d646",
+    "runs/onnx-cpu-en-us-final-01/content.json": "ef4397b48336ea25747e8a7003bd1f7871f7e8f51aa2ea41e530cc680f3dffb8",
+    "runs/onnx-cpu-en-us-final-01/evidence.json": "78f392bd65083561281510f10797afdc21697d86da0c7f9201e008a23600fd16",
+    "runs/pytorch-cpu-en-us-final-01/content.json": "e73a3d0fdd501f0c613ac09487304abf44e82f92ffaa4ad217eecf2c4769289d",
+    "runs/pytorch-cpu-en-us-final-01/evidence.json": "706298cad19a5b12bd41fed8b8045cb42cae77f1389ef7c07d3088215c062819",
+    "runs/pytorch-mps-en-us-final-01/content.json": "8389238fdee366967a4e799e6b69b7f3e8be849a9b12d2241b9726694cc0456a",
+    "runs/pytorch-mps-en-us-final-01/evidence.json": "e81c599ad71537a07b12b077537b7d417aba80eb5144f35afa7b332c4d651458",
+    "summary.json": "6cd8746a726e23a09ba5297089275ddfb349b1d95e6d5f9beef87f25121332f5",
+    "verification.json": "6a9d7be788dc7dc8f3ffcbb331260724f4cd84c8e48b20508ce2c62776b8f5bf"
+  },
+  "updated_utc": "2026-09-09T07:23:02.700961+00:00"
+}

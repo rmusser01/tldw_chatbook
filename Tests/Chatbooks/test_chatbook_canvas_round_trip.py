@@ -17,6 +17,7 @@ import pytest
 
 import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
 from tldw_chatbook.Canvas.archive import export_canvas_archive
+from tldw_chatbook.Canvas.profiles import load_profile_snapshot
 from tldw_chatbook.Canvas.repository import (
     CanvasImportBatch,
     CanvasImportDocument,
@@ -34,7 +35,18 @@ def _digest(source: str) -> str:
     return sha256(source.encode("utf-8")).hexdigest()
 
 
-def _seed_canvas_graph(path: Path) -> dict[str, object]:
+_PROFILE_ROWS = (
+    ("canvas-v1", "canvas-v1", "canvas-v2-mermaid-1", "canvas-v99"),
+    (
+        "canvas-v2-mermaid-1",
+        "canvas-v2-mermaid-1",
+        "canvas-v2-mermaid-2",
+        "canvas-v2-revoked",
+    ),
+)
+
+
+def _seed_canvas_graph(path: Path, profiles=_PROFILE_ROWS[0]) -> dict[str, object]:
     db = CharactersRAGDB(path, client_id="canvas-archive-source")
     conversation_id = str(uuid4())
     message_ids = [str(uuid4()) for _ in range(4)]
@@ -69,8 +81,8 @@ def _seed_canvas_graph(path: Path) -> dict[str, object]:
     revision_ids = [str(uuid4()) for _ in range(4)]
     sources = (
         "<!doctype html><main>root ☃</main>",
-        "<!doctype html><main>left λ</main>",
-        "<!doctype html><main>right 🌿</main>",
+        "<!doctype html><main>root ☃</main>",
+        '<!doctype html><pre data-canvas-diagram="mermaid">flowchart TD\nA[Right]</pre>',
         "<!doctype html><main>future inert</main>",
     )
     created = [f"2026-09-04T12:1{index}:00+00:00" for index in range(4)]
@@ -98,7 +110,7 @@ def _seed_canvas_graph(path: Path) -> dict[str, object]:
                     parent_revision_id=None,
                     sequence=1,
                     title="Planner",
-                    runtime_profile="canvas-v1",
+                    runtime_profile=profiles[0],
                     source=sources[0],
                     content_sha256=_digest(sources[0]),
                     source_bytes=len(sources[0].encode("utf-8")),
@@ -113,7 +125,7 @@ def _seed_canvas_graph(path: Path) -> dict[str, object]:
                     parent_revision_id=revision_ids[0],
                     sequence=2,
                     title="Planner renamed",
-                    runtime_profile="canvas-v1",
+                    runtime_profile=profiles[1],
                     source=sources[1],
                     content_sha256=_digest(sources[1]),
                     source_bytes=len(sources[1].encode("utf-8")),
@@ -128,7 +140,7 @@ def _seed_canvas_graph(path: Path) -> dict[str, object]:
                     parent_revision_id=revision_ids[0],
                     sequence=3,
                     title="Planner alternate",
-                    runtime_profile="canvas-v1",
+                    runtime_profile=profiles[2],
                     source=sources[2],
                     content_sha256=_digest(sources[2]),
                     source_bytes=len(sources[2].encode("utf-8")),
@@ -143,7 +155,7 @@ def _seed_canvas_graph(path: Path) -> dict[str, object]:
                     parent_revision_id=None,
                     sequence=1,
                     title="Retired future Canvas",
-                    runtime_profile="canvas-v9",
+                    runtime_profile=profiles[3],
                     source=sources[3],
                     content_sha256=_digest(sources[3]),
                     source_bytes=len(sources[3].encode("utf-8")),
@@ -162,6 +174,7 @@ def _seed_canvas_graph(path: Path) -> dict[str, object]:
         "message_ids": tuple(message_ids),
         "canvas_ids": tuple(canvas_ids),
         "revision_ids": tuple(revision_ids),
+        "profiles": profiles,
         "sources": sources,
     }
 
@@ -179,11 +192,15 @@ def _rewrite_archive(
             archive.writestr(name, rewritten)
 
 
-def test_canvas_v3_whole_graph_round_trips_atomically_as_new(tmp_path: Path) -> None:
+@pytest.mark.parametrize("profiles", _PROFILE_ROWS)
+def test_canvas_v3_whole_graph_round_trips_atomically_as_new(
+    tmp_path: Path, profiles
+) -> None:
     """Dropping any branch, historical origin, tombstone, or hint breaks fidelity."""
 
     source_path = tmp_path / "source.sqlite"
-    expected = _seed_canvas_graph(source_path)
+    snapshot_before = load_profile_snapshot()
+    expected = _seed_canvas_graph(source_path, profiles)
     archive_path = tmp_path / "canvas-round-trip.zip"
     creator = ChatbookCreator({"ChaChaNotes": str(source_path)})
     creator.temp_dir = tmp_path / "creator-temp"
@@ -271,12 +288,8 @@ def test_canvas_v3_whole_graph_round_trips_atomically_as_new(tmp_path: Path) -> 
         "Planner alternate",
         "Retired future Canvas",
     ]
-    assert [item.runtime_profile for item in metadata] == [
-        "canvas-v1",
-        "canvas-v1",
-        "canvas-v1",
-        "canvas-v9",
-    ]
+    assert [item.runtime_profile for item in metadata] == list(profiles)
+    assert load_profile_snapshot() == snapshot_before
     assert [item.actor_kind for item in metadata] == [
         "assistant",
         "user_rename",
@@ -335,6 +348,66 @@ def test_canvas_v3_whole_graph_round_trips_atomically_as_new(tmp_path: Path) -> 
         assert item.canvas_id not in expected["canvas_ids"]
 
     target.close_connection()
+
+
+def test_multi_conversation_canvas_archive_preserves_exact_profiles(tmp_path):
+    source_path = tmp_path / "multi-source.sqlite"
+    graphs = [_seed_canvas_graph(source_path, profiles) for profiles in _PROFILE_ROWS]
+    archive_path = tmp_path / "multi.zip"
+    creator = ChatbookCreator({"ChaChaNotes": str(source_path)})
+    creator.temp_dir = tmp_path / "multi-export"
+    creator.temp_dir.mkdir()
+    assert creator.create_chatbook(
+        name="Multiple conversations",
+        description="Exact profiles",
+        content_selections={
+            ContentType.CONVERSATION: [
+                str(graph["conversation_id"]) for graph in graphs
+            ]
+        },
+        output_path=archive_path,
+    )[0]
+    with zipfile.ZipFile(archive_path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["version"] == "3.0"
+        assert len(manifest["canvas"]["documents"]) == 4
+        assert not any(
+            "runtime-manifest" in name or "mermaid-subset" in name
+            for name in archive.namelist()
+        )
+    target_path = tmp_path / "multi-target.sqlite"
+    importer = ChatbookImporter({"ChaChaNotes": str(target_path)})
+    importer.temp_dir = tmp_path / "multi-import"
+    importer.temp_dir.mkdir()
+    assert importer.import_chatbook(
+        archive_path, conflict_resolution=ConflictResolution.RENAME
+    )[0]
+    target = CharactersRAGDB(target_path, client_id="multi-verify")
+    try:
+        rows = (
+            target.get_connection()
+            .execute(
+                "SELECT runtime_profile, html FROM canvas_revisions ORDER BY runtime_profile, html"
+            )
+            .fetchall()
+        )
+        expected = sorted(
+            (profile, source)
+            for graph in graphs
+            for profile, source in zip(graph["profiles"], graph["sources"])
+        )
+        assert [(row[0], row[1]) for row in rows] == expected
+        assert (
+            target.get_connection()
+            .execute(
+                "SELECT COUNT(*) FROM canvas_revisions r JOIN messages m ON m.id=r.origin_message_id "
+                "JOIN canvas_documents d ON d.id=r.canvas_id WHERE m.conversation_id=d.conversation_id"
+            )
+            .fetchone()[0]
+            == 8
+        )
+    finally:
+        target.close_connection()
 
 
 def test_canvas_export_refuses_stored_digest_mismatch(tmp_path: Path) -> None:
@@ -415,9 +488,12 @@ def test_canvas_export_rejects_origin_missing_from_staged_conversation_snapshot(
     assert not archive_path.exists()
 
 
-def test_canvas_v3_exact_same_identity_restore_is_idempotent(tmp_path: Path) -> None:
+@pytest.mark.parametrize("profiles", _PROFILE_ROWS)
+def test_canvas_v3_exact_same_identity_restore_is_idempotent(
+    tmp_path: Path, profiles
+) -> None:
     source_path = tmp_path / "same.sqlite"
-    expected = _seed_canvas_graph(source_path)
+    expected = _seed_canvas_graph(source_path, profiles)
     archive_path = tmp_path / "same.zip"
     creator = ChatbookCreator({"ChaChaNotes": str(source_path)})
     creator.temp_dir = tmp_path / "creator"

@@ -1,0 +1,17 @@
+{
+  "repo": "Systran/faster-whisper-medium",
+  "revision": "08e178d48790749d25932bbc082711ddcfdfbc4f",
+  "repo_files": [
+    ".gitattributes",
+    "README.md",
+    "config.json",
+    "model.bin",
+    "tokenizer.json",
+    "vocabulary.txt"
+  ],
+  "completed_at": 1788942150.5615082,
+  "file": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f/vocabulary.txt",
+  "bytes": 459861,
+  "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+  "reason": "Initial provision allowlist omitted vocabulary.txt; nine recognizer startup failures are preserved separately."
+}

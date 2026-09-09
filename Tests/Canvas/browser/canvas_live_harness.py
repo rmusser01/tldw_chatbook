@@ -115,7 +115,12 @@ class RouteObservation:
 class ProductRouteRecorder:
     """Record all browser escape surfaces around a trusted Canvas route."""
 
-    def __init__(self, *, limit: int = 4_096, served: bool = False) -> None:
+    def __init__(
+        self, *, limit: int = 4_096, served: bool = False, profile: str = "canvas-v1"
+    ) -> None:
+        if profile not in {"canvas-v1", "canvas-v2-mermaid-1"}:
+            raise ValueError("unsupported recorder profile")
+        self._runtime_suffix = "_v2" if profile == "canvas-v2-mermaid-1" else ""
         self.phase = "bootstrap"
         self.execution_ack_count = 0
         self.limit = limit
@@ -152,8 +157,8 @@ class ProductRouteRecorder:
             **{
                 origin + static + "/" + name: ("GET", "script")
                 for name in (
-                    "canvas_renderer.js",
-                    "canvas_runtime_worker.js",
+                    f"canvas_renderer{self._runtime_suffix}.js",
+                    f"canvas_runtime_worker{self._runtime_suffix}.js",
                     "quickjs-runtime.js",
                 )
             },
@@ -194,7 +199,9 @@ class ProductRouteRecorder:
                 )
         workers = [row.target for row in rows if row.kind == "worker"]
         assert workers == [
-            self._worker_bootstrap(origin + static + "/canvas_runtime_worker.js")
+            self._worker_bootstrap(
+                origin + static + f"/canvas_runtime_worker{self._runtime_suffix}.js"
+            )
         ], "renderer startup worker census"
         navigations = [row for row in rows if row.kind == "navigation"]
         assert [(row.target, row.detail) for row in navigations] == [
@@ -387,8 +394,8 @@ class ProductRouteRecorder:
             }
         )
         static_paths = {
-            root + "/static/canvas_renderer.js",
-            root + "/static/canvas_runtime_worker.js",
+            root + f"/static/canvas_renderer{self._runtime_suffix}.js",
+            root + f"/static/canvas_runtime_worker{self._runtime_suffix}.js",
             root + "/static/quickjs-runtime.js",
             *trusted_static_paths,
         }
@@ -413,7 +420,7 @@ class ProductRouteRecorder:
                 module_paths = [
                     path
                     for path in static_paths
-                    if path.endswith("/canvas_runtime_worker.js")
+                    if path.endswith(f"/canvas_runtime_worker{self._runtime_suffix}.js")
                 ]
                 if item.phase in {"trusted-load", "bootstrap"} and item.target in {
                     self._worker_bootstrap(trusted_origin + path)

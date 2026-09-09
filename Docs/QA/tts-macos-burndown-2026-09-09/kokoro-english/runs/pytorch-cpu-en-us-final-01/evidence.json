@@ -1,0 +1,1670 @@
+{
+  "schema_version": 1,
+  "status": "runtime_passed_content_pending",
+  "pid": 95679,
+  "started_utc": "2026-09-09T06:50:59.182883+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172770.399781708,
+      "native_calls": [
+        {
+          "request_id": "speech-lab",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172771.973757375,
+          "thread_id": 6188281856,
+          "exit_at": 2172773.083199791
+        }
+      ],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "request": {
+        "model_id": "kokoro",
+        "voice_id": "af_heart",
+        "speed": 1.0
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/speech-lab.wav",
+        "sha256": "0f62ce8fcd9289ef4c26bce99269961222e2d2ae0045d1d61d2bc3e338c3a72d",
+        "pcm_sha256": "55a955f4b8e0024024915239b0b0c23a1877187a42b4f7caab516c1036a0b848",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05115993742831432,
+        "peak": 0.396484375
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 95776,
+        "player": "afplay",
+        "started_at": 2172773.312741833,
+        "exit_code": 0,
+        "elapsed_seconds": 9.910379583016038
+      },
+      "settled_at": 2172783.223203083,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172783.223205791,
+        "threads": 3,
+        "rss_bytes": 2111209472,
+        "peak_rss_bytes": 2111275008,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-warmup",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172783.242653833,
+      "native_calls": [
+        {
+          "request_id": "console-warmup",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172783.261748083,
+          "thread_id": 6188281856,
+          "exit_at": 2172784.332422
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172784.392380125
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172793.468736958
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195291,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "79215795e128ff7d8d135c307746f4aa56c4e72efbf0db1a5743376b8f7f1e9c"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "5da7bf28-09c0-4c0e-9c8d-2e25ef6c4262",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.033044083043933,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "ae469e4897fcb16732a43602f0f614d7b46359eaabcdacb8ca93df2d98a9130b",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-warmup.wav",
+        "sha256": "ae469e4897fcb16732a43602f0f614d7b46359eaabcdacb8ca93df2d98a9130b",
+        "pcm_sha256": "2f8f012b328c564dd1bfcff569a1adaf4170676f479cc942791e99d052412e39",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05115797410437433,
+        "peak": 0.414642333984375
+      },
+      "settled_at": 2172793.469863833,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172793.4698645,
+        "threads": 3,
+        "rss_bytes": 1949827072,
+        "peak_rss_bytes": 2129805312,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-cancel",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172793.494778083,
+      "native_calls": [
+        {
+          "request_id": "console-cancel",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172793.509452833,
+          "thread_id": 6188281856,
+          "exit_at": 2172796.580399
+        }
+      ],
+      "states": [
+        "stopped"
+      ],
+      "outcomes": [
+        true
+      ],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "cancelled",
+      "message_id": "f8880243-f1dc-4e33-9f6a-a4d937de596e",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "stop_requested_at": 2172793.520823916,
+      "resources_at_stop": {
+        "generation_owner": 1,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 1,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 1,
+        "leases": 1,
+        "backend_tasks": 1,
+        "native_calls": 1,
+        "player_processes": 0
+      },
+      "stop_returned_at": 2172796.582123666,
+      "settled_at": 2172796.582137166,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172796.582137375,
+        "threads": 3,
+        "rss_bytes": 3658006528,
+        "peak_rss_bytes": 3658006528,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-successor",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172796.613556875,
+      "native_calls": [
+        {
+          "request_id": "console-successor",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172796.6249675,
+          "thread_id": 6188281856,
+          "exit_at": 2172797.840721708
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172797.885309708
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172806.960830916
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195367,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "a3b446333c813ab703f76ec735066576f986841e5e3f1b0b86fe2e2cffae980d"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "ba450aa8-ddea-4570-acb4-39eb4ae499e6",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.006539999973029,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "983f25fd91b68b6bae2852142a73fa9eee2a81279ca67aaf7deb133bcc34d11c",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-successor.wav",
+        "sha256": "983f25fd91b68b6bae2852142a73fa9eee2a81279ca67aaf7deb133bcc34d11c",
+        "pcm_sha256": "bdb3eb656b9d4302849b6314e5bb2a0e084467ba8e3432a7e50e767aee5076f7",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05114928239124813,
+        "peak": 0.395599365234375
+      },
+      "settled_at": 2172806.96121775,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172806.961218083,
+        "threads": 3,
+        "rss_bytes": 3673800704,
+        "peak_rss_bytes": 3673948160,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-01",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172806.986051958,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-01",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172806.9970875,
+          "thread_id": 6188281856,
+          "exit_at": 2172808.07814575
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172808.1219685
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172817.217784708
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195341,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "a3f819f232a46951f05c9910073d85945e30f5e3a26a5088539e86f1bb07fa20"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "84f2635e-0d7d-4dd8-bc5c-c0ff65e3a224",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.030680125113577,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "8e2849b7e51347df7715d42746a506a98cd5b6c25c60a190461e45bc365f7cd0",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-01.wav",
+        "sha256": "8e2849b7e51347df7715d42746a506a98cd5b6c25c60a190461e45bc365f7cd0",
+        "pcm_sha256": "944622d6b2ae05d350ab9034a394ef2de3086897b7bf9ba972362300f0795205",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05117732171878241,
+        "peak": 0.4013671875
+      },
+      "settled_at": 2172817.220983958,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172817.220984375,
+        "threads": 3,
+        "rss_bytes": 2630811648,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-02",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172817.245946,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-02",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172817.255814625,
+          "thread_id": 6188281856,
+          "exit_at": 2172818.287542291
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172818.331262833
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172827.417927541
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195210,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "96019224ea072b62e5b995f95f7e1390db54b0dc3510fbad9d186989131991bd"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "d4c30afc-8512-4bc7-b60f-cd2a95995a87",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.026385416276753,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "911fa6dc4187169f06d18089b46a959791fab96296b4be2f2c799fb20105727e",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-02.wav",
+        "sha256": "911fa6dc4187169f06d18089b46a959791fab96296b4be2f2c799fb20105727e",
+        "pcm_sha256": "7f072ea671639119a97368d62f3f338957593c08db8d1353fa31397e04676b4a",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05114613142683894,
+        "peak": 0.409088134765625
+      },
+      "settled_at": 2172827.424499458,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172827.424499875,
+        "threads": 3,
+        "rss_bytes": 1865121792,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-03",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172827.448558375,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-03",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172827.461022458,
+          "thread_id": 6188281856,
+          "exit_at": 2172828.638321041
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172828.682633125
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172837.759257458
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195297,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "989b462358613808f9c87fcd10ea446fc5f6637d79fe4b5b3edc8bad69ca843a"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "6d907ad4-9527-4fdc-b31d-13d23b1fbdb0",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.008849499747157,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "f0827788d3fd43b5dd5233c0efca05198cf66aa647cf2c3bee26ee598c0b7de8",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-03.wav",
+        "sha256": "f0827788d3fd43b5dd5233c0efca05198cf66aa647cf2c3bee26ee598c0b7de8",
+        "pcm_sha256": "9874c66127f30ac2cca10a57bd6dc5fcc924a17ccb6b32832484f768a96f4887",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05117921857770957,
+        "peak": 0.412384033203125
+      },
+      "settled_at": 2172837.761557708,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172837.761558083,
+        "threads": 3,
+        "rss_bytes": 1821442048,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-04",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172837.789414083,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-04",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172837.8078955,
+          "thread_id": 6188281856,
+          "exit_at": 2172839.000191541
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172839.044685125
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172848.117383291
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195276,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "7ee1c9d78a3cb42ffc002ccfb3171ab04de32470e2c831363a5ab3def7c615ed"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "fa0a32b5-6d9d-4fbb-88c9-7ca293ee1902",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.01247370801866,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "f328dbf82d32664e9cde034b678fe6110a867619c4f368cac39a4610b5feb851",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-04.wav",
+        "sha256": "f328dbf82d32664e9cde034b678fe6110a867619c4f368cac39a4610b5feb851",
+        "pcm_sha256": "c6619ab55871870eefc918282ff5621248b11c7012465ffe7bc991cc40958186",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.051173614356125975,
+        "peak": 0.411041259765625
+      },
+      "settled_at": 2172848.124905583,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172848.124905958,
+        "threads": 3,
+        "rss_bytes": 2086338560,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-05",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172848.150804666,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-05",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172848.161915083,
+          "thread_id": 6188281856,
+          "exit_at": 2172849.239454375
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172849.284100916
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172858.360523583
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195299,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "6eaebbdfa26052a972c3fea84c41139ea3e91b32e758c37c89d8e06490d7c78f"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "7e157b1d-a97e-4e09-8658-d3f85c7c6e89",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.010809166822582,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "4062db657a06a67be9ff8fa3527d4002ef804878590fa08e1ea22c833795f50b",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-05.wav",
+        "sha256": "4062db657a06a67be9ff8fa3527d4002ef804878590fa08e1ea22c833795f50b",
+        "pcm_sha256": "cbfee549e5fcc6f1300713cce12a46979cc7f00633339f561b2134a4e672b611",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.051192867128112496,
+        "peak": 0.413787841796875
+      },
+      "settled_at": 2172858.3618835,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172858.361884,
+        "threads": 3,
+        "rss_bytes": 2109751296,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-06",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172858.387314916,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-06",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172858.397838125,
+          "thread_id": 6188281856,
+          "exit_at": 2172859.658662458
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172859.703990708
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172868.7806635
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195334,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "cfe44933c38a8f8524a6cbc03b801b8589c876bdeb1e795d135a17020c50effc"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "0fbe8f3e-9b0d-4644-87c7-d94ad80f80dc",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.014586833305657,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "3192f55fd2a8778fe9825a1e0b589222c9419032b5af804746ae5f6603fc3358",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-06.wav",
+        "sha256": "3192f55fd2a8778fe9825a1e0b589222c9419032b5af804746ae5f6603fc3358",
+        "pcm_sha256": "54d2687bf6756503c99bed6b1363ac5cc3004a8018391566208f777b9dc79490",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05117143630038024,
+        "peak": 0.403533935546875
+      },
+      "settled_at": 2172868.786175708,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172868.786176166,
+        "threads": 3,
+        "rss_bytes": 1814134784,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-07",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172868.811422541,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-07",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172868.824296958,
+          "thread_id": 6188281856,
+          "exit_at": 2172870.051375583
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172870.097520583
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172879.170556958
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195259,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "7dab7b77ab9d8f327819b54c99ffa37ae3f23eff008097b4c772b523da2fb281"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "1abb9913-a06b-48c7-82b3-6bf4e66d9f6b",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.010229124687612,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "f6a39b0b225bc48abd5db9568cdfd2db4c7ceb6469ba49499d700f5f1427dccb",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-07.wav",
+        "sha256": "f6a39b0b225bc48abd5db9568cdfd2db4c7ceb6469ba49499d700f5f1427dccb",
+        "pcm_sha256": "d49b6e72c4cd98195be73d42b7ebc02a84be7226fae1d7f5686589e218de65ee",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05119413274924518,
+        "peak": 0.39178466796875
+      },
+      "settled_at": 2172879.176827791,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172879.176828166,
+        "threads": 3,
+        "rss_bytes": 2082111488,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-08",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172879.205345875,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-08",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172879.217562125,
+          "thread_id": 6188281856,
+          "exit_at": 2172880.40567325
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172880.449661666
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172889.526183083
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195299,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "cde9119526858d11b822719c0e240014e77a6dadb5f70400d3a8dee505e08c9b"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "259b7854-3058-40f8-bc76-005e5e24d3ad",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.010163916740566,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "e9d19bec35f540b7b5abc1efccc3e17c7522ff411aed381d52155685f9e0261e",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-08.wav",
+        "sha256": "e9d19bec35f540b7b5abc1efccc3e17c7522ff411aed381d52155685f9e0261e",
+        "pcm_sha256": "d52ea615be7125b3226d101bc049a795a7558819f6a4984e1937040dd1c699ae",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.051159462810803226,
+        "peak": 0.36419677734375
+      },
+      "settled_at": 2172889.531299333,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172889.531299833,
+        "threads": 3,
+        "rss_bytes": 2104229888,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-09",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172889.559983666,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-09",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172889.571853833,
+          "thread_id": 6188281856,
+          "exit_at": 2172890.873280458
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172890.919026
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172899.993714916
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195351,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "e453fb6aa46d2b9c8dd2abccf5b8668a0c931cf89612c9a7820f066c65f75a41"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "5707158f-d2f6-405d-87d2-97e6f10c55f8",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.004693957976997,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "2c510aaca64ae653ba34b8333c456e026292facd7c0ea85967b00d8747460cc2",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-09.wav",
+        "sha256": "2c510aaca64ae653ba34b8333c456e026292facd7c0ea85967b00d8747460cc2",
+        "pcm_sha256": "2aebf45155d2f862cbc4b940ff27eba2f324890bedaac73c953950883ed9f988",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05116174076299391,
+        "peak": 0.397613525390625
+      },
+      "settled_at": 2172900.001977416,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172900.001977666,
+        "threads": 3,
+        "rss_bytes": 2112028672,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-10",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172900.044444958,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-10",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172900.058326166,
+          "thread_id": 6188281856,
+          "exit_at": 2172901.3650705
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172901.410303458
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172910.485431375
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195286,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "8fe85f9cc7e748342d615daf074e3d14bb40b3e113120569937cc65540f51fed"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "463ccbcb-b8fc-451b-bd20-45d4b46f4e23",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.00564616592601,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "94a6bcf665fa73eaa5ddbea823c50997baec4a0d54581b7bc60f0d2e7beb5f06",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-10.wav",
+        "sha256": "94a6bcf665fa73eaa5ddbea823c50997baec4a0d54581b7bc60f0d2e7beb5f06",
+        "pcm_sha256": "fc6fdb80fac5e064ddd9cabe90c8fb68c45d78aee871f96993cf0b2a1fe75013",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.051149195855703294,
+        "peak": 0.413116455078125
+      },
+      "settled_at": 2172910.496082333,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172910.496082833,
+        "threads": 3,
+        "rss_bytes": 2115846144,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-11",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172910.525443375,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-11",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172910.537509291,
+          "thread_id": 6188281856,
+          "exit_at": 2172911.752388958
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172911.796436791
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172920.868801541
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195315,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "705e47d0dc648990c02aa5952a223bef9e592353769c249407ce97d6c3646abf"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "84814a52-a333-4aa2-8c37-71bb84d86720",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.002376041840762,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "42b3bc73bd31adfe4bfe1ecd3dbbaecaadca8672a78b557f6bcc4fb62cfed7ff",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-11.wav",
+        "sha256": "42b3bc73bd31adfe4bfe1ecd3dbbaecaadca8672a78b557f6bcc4fb62cfed7ff",
+        "pcm_sha256": "e55df1170eb99fdb3ac132aa41d3e9dfaf039d1ed802256606fb3f29fed6a236",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05117017613342633,
+        "peak": 0.421966552734375
+      },
+      "settled_at": 2172920.879660416,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172920.879660791,
+        "threads": 3,
+        "rss_bytes": 1626177536,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-12",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2172920.908031333,
+      "native_calls": [
+        {
+          "request_id": "console-repeat-12",
+          "class": "kokoro.model.KModel",
+          "device": "cpu",
+          "speed": 1.0,
+          "fourier_module": "TorchSTFT",
+          "enter_at": 2172920.919559125,
+          "thread_id": 6188281856,
+          "exit_at": 2172922.202784666
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2172922.248332875
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2172931.32476075
+        }
+      ],
+      "devices": [
+        {
+          "frames": 215520,
+          "audible_frames": 195243,
+          "callbacks": 449,
+          "sample_rate": 24000,
+          "sha256": "3962ebc81e83698fa780e26b48d6025b857e2890444598173d749a91ee7fa868"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "8f0198e3-ac8d-4e72-858f-b35b029125fd",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 9.006492999847978,
+        "drained": true,
+        "device_frames": 215520
+      },
+      "source_bytes": 430844,
+      "source_sha256": "acaee395172d32f2fd83f39a7025de85cc8bcceb306961f068fece231470fe68",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/audio/console-repeat-12.wav",
+        "sha256": "acaee395172d32f2fd83f39a7025de85cc8bcceb306961f068fece231470fe68",
+        "pcm_sha256": "f549d85643120f39f3154f0babd3ba10c15fed882c524070bc60306d63dcef34",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 215400,
+        "seconds": 8.975,
+        "rms": 0.05115713571511191,
+        "peak": 0.411956787109375
+      },
+      "settled_at": 2172931.333486166,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2172931.333486625,
+        "threads": 3,
+        "rss_bytes": 2061025280,
+        "peak_rss_bytes": 3681370112,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    }
+  ],
+  "arguments": {
+    "engine": "pytorch",
+    "device": "cpu",
+    "model": "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth",
+    "voice": "af_heart",
+    "voice_dir": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices",
+    "voices": null,
+    "language": "en-us",
+    "format": "wav",
+    "speed": 1.0,
+    "text_file": null,
+    "cancel_text_file": null,
+    "scenarios": "playback,cancel,repeat",
+    "repeats": 12,
+    "phase_timeout": 300,
+    "cleanup_timeout": 60,
+    "run_timeout": 1800,
+    "expected_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+    "output": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01",
+    "play_audio": true,
+    "worker": true
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+  "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+  "assets": {
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "versions": {
+    "tldw_chatbook": "0.2.0",
+    "textual": "8.2.8",
+    "numpy": "2.5.3",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": "0.9.4",
+    "kokoro-onnx": "0.6.1",
+    "torch": "2.14.0",
+    "onnxruntime": "1.29.0",
+    "misaki": "0.9.4",
+    "spacy": "3.8.16",
+    "en-core-web-sm": "3.8.0"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2172766.177270625,
+    "threads": 2,
+    "rss_bytes": 225902592,
+    "peak_rss_bytes": 225902592
+  },
+  "runtime_files": {
+    "torch._C": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/torch/_C.cpython-312-darwin.so",
+      "sha256": "b5b5b86566d6e00ee22b73c51e6c243bd894ffbf06f12c58d0bab0549b1840ac"
+    },
+    "kokoro.model": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/kokoro/model.py",
+      "sha256": "301c55350a068c4ed3b4cbd1209d2afb848bebca72db5657405e47e9dfb604db"
+    }
+  },
+  "backend_assets": [
+    {
+      "model": "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth",
+      "engine": "pytorch"
+    }
+  ],
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation complete!",
+      "severity": "information"
+    },
+    {
+      "message": "Playback complete",
+      "severity": "information"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "5da7bf28-09c0-4c0e-9c8d-2e25ef6c4262",
+      "error": null
+    },
+    {
+      "message_id": "ba450aa8-ddea-4570-acb4-39eb4ae499e6",
+      "error": null
+    },
+    {
+      "message_id": "84f2635e-0d7d-4dd8-bc5c-c0ff65e3a224",
+      "error": null
+    },
+    {
+      "message_id": "d4c30afc-8512-4bc7-b60f-cd2a95995a87",
+      "error": null
+    },
+    {
+      "message_id": "6d907ad4-9527-4fdc-b31d-13d23b1fbdb0",
+      "error": null
+    },
+    {
+      "message_id": "fa0a32b5-6d9d-4fbb-88c9-7ca293ee1902",
+      "error": null
+    },
+    {
+      "message_id": "7e157b1d-a97e-4e09-8658-d3f85c7c6e89",
+      "error": null
+    },
+    {
+      "message_id": "0fbe8f3e-9b0d-4644-87c7-d94ad80f80dc",
+      "error": null
+    },
+    {
+      "message_id": "1abb9913-a06b-48c7-82b3-6bf4e66d9f6b",
+      "error": null
+    },
+    {
+      "message_id": "259b7854-3058-40f8-bc76-005e5e24d3ad",
+      "error": null
+    },
+    {
+      "message_id": "5707158f-d2f6-405d-87d2-97e6f10c55f8",
+      "error": null
+    },
+    {
+      "message_id": "463ccbcb-b8fc-451b-bd20-45d4b46f4e23",
+      "error": null
+    },
+    {
+      "message_id": "84814a52-a333-4aa2-8c37-71bb84d86720",
+      "error": null
+    },
+    {
+      "message_id": "8f0198e3-ac8d-4e72-858f-b35b029125fd",
+      "error": null
+    }
+  ],
+  "memory_after_cleanup": {
+    "at": 2172931.400715541,
+    "threads": 2,
+    "rss_bytes": 1407582208,
+    "peak_rss_bytes": 3681370112,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "ended_utc": "2026-09-09T06:53:47.277723+00:00",
+  "packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/evidence.json",
+    "original_sha256": "ea932ccebb58b6b71d93ad935d2c17138d34f0d56a6389db86b94c20ad8b58fa",
+    "source_map_references": {
+      "source_hashes": {
+        "path": "../../provenance/source-hashes.json",
+        "overrides": {},
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "7038b5b7779d66c6fe66a15eafb0204de2fcca2d0cd41c437f33ce17290bd188"
+      },
+      "source_hashes_after": {
+        "path": "../../provenance/source-hashes.json",
+        "overrides": {},
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "7038b5b7779d66c6fe66a15eafb0204de2fcca2d0cd41c437f33ce17290bd188"
+      }
+    },
+    "transformation": "Only source_hashes/source_hashes_after are factored into the shared hash map. All remaining original JSON fields are retained."
+  }
+}

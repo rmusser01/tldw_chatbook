@@ -1,0 +1,748 @@
+{
+  "status": "passed_evidence_curation_checks",
+  "runtime_json_roundtrips": [
+    {
+      "run": "pytorch-cpu-es-final-01",
+      "original_sha256": "6750513b199a2d69fbfa8f07faa594e3ba8d3d62e7b6b77d6b6f340eef3cfac7",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "pytorch-cpu-fr-final-01",
+      "original_sha256": "6a753c4b8b6b53c801a5afe238c3a177f5a7e5c75d4edb8aa39b682920a89ee2",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "pytorch-cpu-hi-final-01",
+      "original_sha256": "4769a0307aff8f286780343d40c0f3d4507ea9a14dfe1a82dea7879f235bf83c",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "pytorch-cpu-it-final-01",
+      "original_sha256": "e49a8c7acfd7acaa96aa7d386fcc7ac72ed020bbfa02ddfe37af10c293336519",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "pytorch-cpu-pt-br-final-01",
+      "original_sha256": "5cd828bf11163093a7916df71657eb8830b792344904936a6e820eb649004832",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "pytorch-cpu-ja-final-01",
+      "original_sha256": "a40b335647aaae0568898e28bc52491292679ae682333dac1aa04bca4fba8b46",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "pytorch-cpu-zh-final-01",
+      "original_sha256": "843e20356113cd5e8fa99bd2d7172bd0a85eead900df51771eccda91eb9334ff",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-es-final-01",
+      "original_sha256": "ce0938056fb880661fb867c52078d168cd678dedc787d02c4b3fea3ceff81aae",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-fr-final-01",
+      "original_sha256": "3d2c6fddecf4feca56cbd47f982bc237cdb5cbb72f06344442a3af7e008106d0",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-hi-final-01",
+      "original_sha256": "fe79e7866f345115b528bd4591a3918347e8556b71a6ced9ed5c69587ecf8e1b",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-it-final-01",
+      "original_sha256": "18006a72a4b660b769de584c20fe6965e842097a9832cc8db0305652a4379b62",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-pt-br-final-01",
+      "original_sha256": "1158c7446864dd4e338265da2e8f97327eab59152a2806d69e5190fdb2923a1b",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-ja-final-01",
+      "original_sha256": "642986acc7c28ed218c98c75c97e5c214c0e2082152048d0f2f410369b802748",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-zh-final-01",
+      "original_sha256": "84f0d89de2d90dcd97175d3beec789c191e7550ea3ef388cd6d858c0d523e445",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-fr-final-02",
+      "original_sha256": "5939514f363e5cbc6e115e368da3dfdcec645991862cae820edfc91d1b8f075d",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 47,
+        "source_hashes_after": 47
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-ja-final-02",
+      "original_sha256": "28d474856b949fdd50f24ad5760ff4b9ba560954c809dd8a6024d64658676531",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 47,
+        "source_hashes_after": 47
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "onnx-cpu-zh-final-02",
+      "original_sha256": "48f499d3e3ced72fce6933f71783914d9f37ca588a0c7c026e623999d5b5b685",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 47,
+        "source_hashes_after": 47
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    },
+    {
+      "run": "pytorch-cpu-ja-final-02",
+      "original_sha256": "1909a2a35c0bcd32730c6eb9c3427ee39c289ef0e3a6098f80d1f85d42ea5fab",
+      "all_original_json_values_reconstructed": true,
+      "source_map_override_counts": {
+        "source_hashes": 47,
+        "source_hashes_after": 47
+      },
+      "source_map_removal_counts": {
+        "source_hashes": 0,
+        "source_hashes_after": 0
+      }
+    }
+  ],
+  "all_byte_preserving_copies_match": true,
+  "byte_preserving_copies": 67,
+  "content_checks": [
+    {
+      "run": "pytorch-cpu-es-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-fr-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-hi-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-it-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-pt-br-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-zh-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-es-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-hi-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-it-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-pt-br-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-ja-final-01",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-fr-final-02",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-ja-final-02",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-zh-final-02",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-ja-final-02",
+      "recognizer": "small",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-fr-final-01",
+      "recognizer": "medium",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-hi-final-01",
+      "recognizer": "medium",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-pt-br-final-01",
+      "recognizer": "medium",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-zh-final-01",
+      "recognizer": "medium",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-hi-final-01",
+      "recognizer": "medium",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "pytorch-cpu-ja-final-02",
+      "recognizer": "medium",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-fr-final-02",
+      "recognizer": "medium",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-ja-final-02",
+      "recognizer": "medium",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    },
+    {
+      "run": "onnx-cpu-zh-final-02",
+      "recognizer": "medium",
+      "evidence_hash_matches_original": true,
+      "successful_phase_ids_audio_hashes_and_expected_text_match": true
+    }
+  ],
+  "baseline_totals_verified": {
+    "runtime_tuples": 14,
+    "runtime_passed": 11,
+    "runtime_failed": 3,
+    "cleanup_joined": 14,
+    "successful_phase_clips": 22,
+    "receipt_normalized_exact": 11,
+    "raw_exact": 7,
+    "complete_anchors": 11,
+    "distinct_audio_hashes": 17
+  },
+  "latest_observed_totals_verified": {
+    "runtime_tuples": 14,
+    "runtime_passed": 14,
+    "cleanup_joined": 14,
+    "successful_phase_clips": 28,
+    "recognizer_observations": {
+      "small": {
+        "tuples": 14,
+        "clips": 28,
+        "normalized_exact": 11
+      },
+      "medium": {
+        "tuples": 9,
+        "clips": 18,
+        "normalized_exact": 6
+      }
+    },
+    "selected_observation": {
+      "policy": "Select the latest runtime by start time for each engine/language tuple; use completed medium ASR for that entire tuple when available, otherwise small. Never choose the better recognizer per clip.",
+      "tuples": [
+        {
+          "run": "pytorch-cpu-es-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "pytorch-cpu-fr-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "pytorch-cpu-hi-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "pytorch-cpu-it-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "pytorch-cpu-pt-br-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "pytorch-cpu-ja-final-02",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "pytorch-cpu-zh-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "onnx-cpu-es-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "onnx-cpu-fr-final-02",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "onnx-cpu-hi-final-01",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "onnx-cpu-it-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "onnx-cpu-pt-br-final-01",
+          "recognizer": "small",
+          "clips": 2,
+          "normalized_exact": 2
+        },
+        {
+          "run": "onnx-cpu-ja-final-02",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        },
+        {
+          "run": "onnx-cpu-zh-final-02",
+          "recognizer": "medium",
+          "clips": 2,
+          "normalized_exact": 0
+        }
+      ],
+      "clips": 28,
+      "normalized_exact": 16
+    }
+  },
+  "supplemental_checks": {
+    "recorded_process_release": {
+      "pids": 26,
+      "all_absent": true,
+      "scope": "Four final-02 runtime workers and four afplay children, plus both nine-worker medium ASR attempts; captured receipt, no new process query."
+    },
+    "accepted_code_review": {
+      "cases": 10,
+      "all_passed": true,
+      "relevant_source_hashes_match_all_four_final_runtime_runs": true,
+      "scope": "actual production routing and KPipeline implementation; fake G2P and fake model; no real model/ASR/audio/server"
+    }
+  },
+  "asr_attempts": [
+    {
+      "tuple": "pytorch:fr:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-fr-final-01-startup.log",
+      "pid": 45208,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:hi:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-hi-final-01-startup.log",
+      "pid": 45230,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:pt-br:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-pt-br-final-01-startup.log",
+      "pid": 45252,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:zh:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-zh-final-01-startup.log",
+      "pid": 45270,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:hi:final-01",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/onnx-cpu-hi-final-01-startup.log",
+      "pid": 45298,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:ja:final-02",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/pytorch-cpu-ja-final-02-startup.log",
+      "pid": 45319,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:fr:final-02",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/onnx-cpu-fr-final-02-startup.log",
+      "pid": 45347,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:ja:final-02",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/onnx-cpu-ja-final-02-startup.log",
+      "pid": 45373,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:zh:final-02",
+      "summary": "asr/medium-review-final-01.json",
+      "outcome": "recognizer_startup_failed",
+      "transcripts_produced": 0,
+      "reason": "Initial provision allowlist omitted vocabulary.txt",
+      "log": "asr/medium-review-final-01/onnx-cpu-zh-final-02-startup.log",
+      "pid": 45393,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:fr:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_passed",
+      "transcripts_produced": 2,
+      "normalized_exact": 2,
+      "pid": 47782,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:hi:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 47972,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:pt-br:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_passed",
+      "transcripts_produced": 2,
+      "normalized_exact": 2,
+      "pid": 48107,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:zh:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48150,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:hi:final-01",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48206,
+      "joined": true
+    },
+    {
+      "tuple": "pytorch:ja:final-02",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48275,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:fr:final-02",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_passed",
+      "transcripts_produced": 2,
+      "normalized_exact": 2,
+      "pid": 48455,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:ja:final-02",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48590,
+      "joined": true
+    },
+    {
+      "tuple": "onnx:zh:final-02",
+      "summary": "asr/medium-review-final-02.json",
+      "outcome": "content_review_required",
+      "transcripts_produced": 2,
+      "normalized_exact": 0,
+      "pid": 48856,
+      "joined": true
+    }
+  ],
+  "all_recorded_final_and_successful_settlement_owners_zero": true,
+  "all_successful_playback_durations_cover_source_with_250ms_tolerance": true,
+  "all_successful_native_calls_exit_before_settlement_on_requested_cpu_engine": true,
+  "all_recorded_source_maps_unchanged_within_run": true,
+  "new_inference_asr_audio_production_or_task_changes": false,
+  "local_readme_links_verified": 64,
+  "packaged_json_files_parsed": 71,
+  "independent_cross_check": {
+    "status": "passed_independent_final_evidence_curation",
+    "semantic_roundtrips": 18,
+    "byte_identical_copies": 67,
+    "indexed_hashes": 90,
+    "local_readme_links": 64,
+    "raw_clip_normalization_and_anchor_checks": 48,
+    "latest_runtime_tuples": 14,
+    "latest_runtime_passes": 14,
+    "latest_clips": 28,
+    "small_latest_exact": 11,
+    "medium_complete_clips": 18,
+    "medium_exact": 6,
+    "selected_policy_exact": 16,
+    "selected_policy_clips": 28,
+    "startup_attempts_without_transcripts": 9,
+    "captured_owned_pids_absent": 26,
+    "curator_sha256": "3e362993223d317ff543249f548388d9e9251883568f0f3ec98526030faae7c6",
+    "new_live_work": false,
+    "task_status_changes": false
+  },
+  "static_analysis": {
+    "tool": "ruff",
+    "version": "0.16.6",
+    "command": [
+      "/private/tmp/tts-runtime-recovery-validation/kokoro-venv/bin/ruff",
+      "check",
+      "--isolated",
+      "/private/tmp/tts-macos-burndown/languages/curate_qa.py"
+    ],
+    "script_sha256": "3e362993223d317ff543249f548388d9e9251883568f0f3ec98526030faae7c6",
+    "exit_code": 0,
+    "stdout": "All checks passed!",
+    "readme_whitespace_check": {
+      "command": [
+        "git",
+        "diff",
+        "--no-index",
+        "--check",
+        "--",
+        "/dev/null",
+        "Docs/QA/tts-macos-burndown-2026-09-09/kokoro-languages/README.md"
+      ],
+      "exit_code": 1,
+      "output": "",
+      "interpretation": "No whitespace diagnostics; --no-index returns 1 for the new file difference."
+    }
+  }
+}

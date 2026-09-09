@@ -1,0 +1,113 @@
+{
+  "sha": "31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b",
+  "node_id": "C_kwDODdI4bNoAKDMxYmE2M2MzYmEyYTFiOTU2NTJiZjMyMmQxODJmYmMwYmM5ZjNjMmI",
+  "commit": {
+    "author": {
+      "name": "Paul O'Leary McCann",
+      "email": "polm@dampfkraft.com",
+      "date": "2025-02-26T09:27:14Z"
+    },
+    "committer": {
+      "name": "Paul O'Leary McCann",
+      "email": "polm@dampfkraft.com",
+      "date": "2025-02-26T09:27:14Z"
+    },
+    "message": "Update UniDic URLs (fix #17)\n\nUniDic changed their subdomain again for some reason.",
+    "tree": {
+      "sha": "749bdedcc37af52391900fa284ee4439805efe26",
+      "url": "https://api.github.com/repos/polm/unidic-py/git/trees/749bdedcc37af52391900fa284ee4439805efe26"
+    },
+    "url": "https://api.github.com/repos/polm/unidic-py/git/commits/31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b",
+    "comment_count": 0,
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  },
+  "url": "https://api.github.com/repos/polm/unidic-py/commits/31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b",
+  "html_url": "https://github.com/polm/unidic-py/commit/31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b",
+  "comments_url": "https://api.github.com/repos/polm/unidic-py/commits/31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b/comments",
+  "author": {
+    "login": "polm",
+    "id": 286278,
+    "node_id": "MDQ6VXNlcjI4NjI3OA==",
+    "avatar_url": "https://avatars.githubusercontent.com/u/286278?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/polm",
+    "html_url": "https://github.com/polm",
+    "followers_url": "https://api.github.com/users/polm/followers",
+    "following_url": "https://api.github.com/users/polm/following{/other_user}",
+    "gists_url": "https://api.github.com/users/polm/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/polm/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/polm/subscriptions",
+    "organizations_url": "https://api.github.com/users/polm/orgs",
+    "repos_url": "https://api.github.com/users/polm/repos",
+    "events_url": "https://api.github.com/users/polm/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/polm/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "committer": {
+    "login": "polm",
+    "id": 286278,
+    "node_id": "MDQ6VXNlcjI4NjI3OA==",
+    "avatar_url": "https://avatars.githubusercontent.com/u/286278?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/polm",
+    "html_url": "https://github.com/polm",
+    "followers_url": "https://api.github.com/users/polm/followers",
+    "following_url": "https://api.github.com/users/polm/following{/other_user}",
+    "gists_url": "https://api.github.com/users/polm/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/polm/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/polm/subscriptions",
+    "organizations_url": "https://api.github.com/users/polm/orgs",
+    "repos_url": "https://api.github.com/users/polm/repos",
+    "events_url": "https://api.github.com/users/polm/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/polm/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "parents": [
+    {
+      "sha": "0b5e50ede140c1ccad2765290b73239080f7811b",
+      "url": "https://api.github.com/repos/polm/unidic-py/commits/0b5e50ede140c1ccad2765290b73239080f7811b",
+      "html_url": "https://github.com/polm/unidic-py/commit/0b5e50ede140c1ccad2765290b73239080f7811b"
+    }
+  ],
+  "stats": {
+    "total": 8,
+    "additions": 4,
+    "deletions": 4
+  },
+  "files": [
+    {
+      "sha": "6d4556cd8d5604e856f88131cd3bf092ed702295",
+      "filename": "README.md",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 2,
+      "changes": 4,
+      "blob_url": "https://github.com/polm/unidic-py/blob/31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b/README.md",
+      "raw_url": "https://github.com/polm/unidic-py/raw/31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b/README.md",
+      "contents_url": "https://api.github.com/repos/polm/unidic-py/contents/README.md?ref=31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b",
+      "patch": "@@ -1,6 +1,6 @@\n # unidic-py\n \n-This is a version of [UniDic](https://ccd.ninjal.ac.jp/unidic/) for\n+This is a version of [UniDic](https://clrd.ninjal.ac.jp/unidic/) for\n Contemporary Written Japanese packaged for use with pip.\n \n Currently it supports 3.1.0, the latest version of UniDic. **Note this will\n@@ -132,7 +132,7 @@ type,pos1,pos2,pos3,pos4\n # License\n \n The modern Japanese UniDic is available under the GPL, LGPL, or BSD license,\n-[see here](https://ccd.ninjal.ac.jp/unidic/download#unidic_bccwj). UniDic is\n+[see here](https://clrd.ninjal.ac.jp/unidic/commerce_use.html). UniDic is\n developed by [NINJAL](https://www.ninjal.ac.jp/), the National Institute for\n Japanese Language and Linguistics. UniDic is copyrighted by the UniDic\n Consortium and is distributed here under the terms of the [BSD"
+    },
+    {
+      "sha": "11ce0df0be28ebeab3ac7eb5896570fb94f75c23",
+      "filename": "doc/dataset.md",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 2,
+      "changes": 4,
+      "blob_url": "https://github.com/polm/unidic-py/blob/31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b/doc%2Fdataset.md",
+      "raw_url": "https://github.com/polm/unidic-py/raw/31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b/doc%2Fdataset.md",
+      "contents_url": "https://api.github.com/repos/polm/unidic-py/contents/doc%2Fdataset.md?ref=31ba63c3ba2a1b95652bf322d182fbc0bc9f3c2b",
+      "patch": "@@ -73,7 +73,7 @@ by MeCab.\n UniDic fields are defined at [NINJAL's UniDic FAQ page][faq]. unidic-lite uses\n a subset of the fields in the most recent version.\n \n-[faq]: https://ccd.ninjal.ac.jp/unidic/faq\n+[faq]: https://clrd.ninjal.ac.jp/unidic/faq.html\n \n IPADic fields are as follows:\n \n@@ -90,7 +90,7 @@ IPADic fields are as follows:\n \n UniDic is developed by NINJAL. Here are some resources on UniDic:\n \n-- [UniDic home page](https://ccd.ninjal.ac.jp/unidic/faq)\n+- [UniDic home page](https://clrd.ninjal.ac.jp/unidic/)\n - [Universal Dependencies for Japanese](https://www.semanticscholar.org/paper/Universal-Dependencies-for-Japanese-Tanaka-Miyao/064b601542d27471e397f8df811f0ddb54824113)\n \n The MeCab documentation covers dictionary formats and tokenizer options. It"
+    }
+  ]
+}

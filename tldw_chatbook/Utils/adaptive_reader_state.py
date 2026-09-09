@@ -27,7 +27,7 @@ from .library_rail_width import (
 
 LIBRARY_TARGET_WIDTH = LIBRARY_REFERENCE_WIDTH
 LIBRARY_MAX_WIDTH = LIBRARY_CUSTOM_MAX_WIDTH
-ITEMS_TARGET_WIDTH = 40
+ITEMS_TARGET_WIDTH = 50
 ITEMS_MIN_WIDTH = 32
 ITEMS_MAX_WIDTH = 72
 READER_COMFORT_WIDTH = 44
@@ -88,7 +88,7 @@ class AdaptiveReaderLayoutProfile:
     """
 
     list_min_width: int = 32
-    list_target_width: int = 40
+    list_target_width: int = ITEMS_TARGET_WIDTH
     list_comfort_width: int = 56
     list_max_width: int = 72
     work_min_width: int = 44

@@ -68,7 +68,7 @@ async def _open_media_list(host, pilot):
 
 async def _wait_for_compact_class(screen, pilot, *, compact: bool):
     """Await the host's measured-crossing class matching the terminal size."""
-    if screen.query("#library-media-reader-shell"):
+    if screen.query(".library-media-route"):
         compact = False
     host_pane = screen.query_one("#library-canvas")
     await _wait_for_condition(
@@ -218,7 +218,7 @@ async def test_media_row_focus_moves_to_items_grip_when_resize_hides_items() -> 
 
         await pilot.resize_terminal(80, 24)
         await _wait_for_compact_class(screen, pilot, compact=True)
-        grip = screen.query_one("#library-media-items-grip", Button)
+        grip = screen.query_one("#library-browse-items-grip", Button)
         reader = screen.query_one("#library-media-viewer")
         await _wait_for_condition(
             pilot,
@@ -272,7 +272,7 @@ async def test_media_resize_focus_restore_yields_to_newer_user_focus(
             message="Resize did not queue a semantic Media focus restore.",
         )
 
-        library_grip = screen.query_one("#library-media-library-grip", Button)
+        library_grip = screen.query_one("#library-browse-library-grip", Button)
         screen._mark_library_notes_user_interaction()
         library_grip.focus()
         await pilot.pause()
@@ -796,9 +796,9 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
 
         items = screen.query_one("#library-canvas")
         initial_width = items.region.width
-        shell = screen.query_one("#library-media-reader-shell")
+        shell = screen.query_one(".library-media-route")
         initial_reader_width = shell.work.region.width
-        library_grip = screen.query_one("#library-media-library-grip", Button)
+        library_grip = screen.query_one("#library-browse-library-grip", Button)
         library_grip.focus()
         await pilot.press("enter")
         await _wait_for_condition(
@@ -826,7 +826,7 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
         )
         assert screen._media_state.reader_layout.library_open is False
 
-        library_grip = screen.query_one("#library-media-library-grip", Button)
+        library_grip = screen.query_one("#library-browse-library-grip", Button)
         library_grip.focus()
         await pilot.press("enter")
         await _wait_for_condition(
@@ -835,7 +835,7 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             message="Library grip did not reopen the Library pane.",
         )
 
-        items_grip = screen.query_one("#library-media-items-grip", Button)
+        items_grip = screen.query_one("#library-browse-items-grip", Button)
         items_grip.focus()
         await pilot.press("enter")
         await _wait_for_condition(
@@ -885,7 +885,7 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
             message="Compact Media layout never settled.",
         )
         if not screen._media_state.reader_layout.items_open:
-            items_grip = screen.query_one("#library-media-items-grip", Button)
+            items_grip = screen.query_one("#library-browse-items-grip", Button)
             items_grip.focus()
             await pilot.press("enter")
             await _wait_for_condition(
@@ -904,7 +904,7 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
             message="Compact Trash page never applied.",
         )
 
-        library_grip = screen.query_one("#library-media-library-grip", Button)
+        library_grip = screen.query_one("#library-browse-library-grip", Button)
         library_grip.focus()
         await pilot.press("enter")
         await _wait_for_condition(
@@ -933,7 +933,7 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
         assert screen._media_state.reader_layout.library_open is True
         assert screen._media_state.reader_layout.items_open is False
 
-        items_grip = screen.query_one("#library-media-items-grip", Button)
+        items_grip = screen.query_one("#library-browse-items-grip", Button)
         items_grip.focus()
         await pilot.press("enter")
         await _wait_for_condition(

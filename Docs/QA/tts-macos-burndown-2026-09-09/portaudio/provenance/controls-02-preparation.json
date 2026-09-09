@@ -1,0 +1,50 @@
+{
+  "status": "ready_awaiting_exclusive_audio_slot",
+  "script_sha256": "5c5961280119cbaab65e32f82d48a22f8536e2a3844c2ef312e41ccccaa823d5",
+  "candidate_library_sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+  "previous_run": "runs/controls-01",
+  "original_script": "runs/controls-01/qualify_sink_controls.py",
+  "original_script_sha256": "e414c9703a9d83c530c061bc714349b5ba817651edbd3663e6ab1b7d7d7c3445",
+  "profile_isolation": {
+    "paths": {
+      "config": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/config/config.toml",
+      "data": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/data/portaudio_controls",
+      "chachanotes_db": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/db/chachanotes.db",
+      "tts_profiles_db": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/data/portaudio_controls/tldw_chatbook_tts_profiles.db",
+      "chat_dictionaries": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/data/portaudio_controls/chat_dicts",
+      "prompts_db": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/db/prompts.db",
+      "media_db": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/db/media.db"
+    },
+    "config_sha256": "b041ffd0efc1c69e74539343a69fca67611861bd31968ac880a9f2ab0f722fbb",
+    "forbidden_imports": [],
+    "default_profile_audit_guard": "active through worker exit",
+    "denied_accesses": []
+  },
+  "import_only_pid": 28218,
+  "import_only_exit_code": 0,
+  "import_only_owned_child_joined": true,
+  "audio_initialized_in_preflight": false,
+  "command": [
+    "python3",
+    "/private/tmp/tts-macos-burndown/portaudio/qualify_sink_controls.py",
+    "--output",
+    "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02",
+    "--play-audio"
+  ],
+  "inputs": [
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-01/audio/console-warmup.wav",
+      "sha256": "43cdbf8f3d4d449c99513a7f3247dc88b95b9a223420b80a4cc6cb5646305cd4",
+      "sample_rate": 24000,
+      "channels": 1,
+      "seconds": 4.88
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-02/audio/console-warmup.wav",
+      "sha256": "9b7f62bcf0390eeb4fa659e38f4f7f633217417d82f1a16463f258fcb648a46a",
+      "sample_rate": 24000,
+      "channels": 1,
+      "seconds": 4.08
+    }
+  ]
+}

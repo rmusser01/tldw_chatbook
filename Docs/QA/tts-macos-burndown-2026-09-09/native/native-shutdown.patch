@@ -1,0 +1,428 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d26be64..5e1c57e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1609,6 +1609,22 @@ if (ENGINE_BUILD_TESTS)
+     # block forever rather than fail. Bound it so CI reports a failure instead.
+     set_tests_properties(http_live_body_test PROPERTIES TIMEOUT 120)
+ 
++    add_executable(http_shutdown_test
++        tests/unittests/test_http_shutdown.cpp
++        app/server/http.cpp
++    )
++    target_link_libraries(http_shutdown_test PRIVATE engine_runtime ggml)
++    if(WIN32)
++        target_link_libraries(http_shutdown_test PRIVATE ws2_32)
++    endif()
++    foreach(scenario active-handler stream-callback accept-loop-exception idle-client
++                     partial-header partial-body idle completed-request handler-exception)
++        add_test(NAME http_shutdown_${scenario}
++                 COMMAND http_shutdown_test ${scenario} 18095)
++        set_tests_properties(http_shutdown_${scenario} PROPERTIES
++                             TIMEOUT 10 RESOURCE_LOCK http_shutdown_port)
++    endforeach()
++
+     add_engine_unittest(partial_text_render_test tests/unittests/test_partial_text_render.cpp)
+ 
+     add_test(
+diff --git a/app/server/http.cpp b/app/server/http.cpp
+index 304864f..053278e 100644
+--- a/app/server/http.cpp
++++ b/app/server/http.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <atomic>
+ #include <cctype>
+ #include <charconv>
+ #include <chrono>
+@@ -12,6 +13,8 @@
+ #include <iostream>
+ #include <istream>
+ #include <limits>
++#include <memory>
++#include <mutex>
+ #include <optional>
+ #include <sstream>
+ #include <stdexcept>
+@@ -716,8 +719,7 @@ UniqueSocket bind_listen_socket(const std::string & host, int port) {
+     return socket_handle;
+ }
+ 
+-void handle_client(SocketHandle client, IHttpHandler & handler, uint64_t max_request_body_bytes) {
+-    UniqueSocket socket(client);
++void handle_client(const UniqueSocket & socket, IHttpHandler & handler, uint64_t max_request_body_bytes) {
+     try {
+         std::string leftover;
+         auto request = read_http_request(socket.get(), max_request_body_bytes, leftover);
+@@ -776,6 +778,81 @@ void handle_client(SocketHandle client, IHttpHandler & handler, uint64_t max_req
+     }
+ }
+ 
++// The handler belongs to serve_http's caller. Keep every request (including its
++// streaming callback) joined before that caller can destroy model/backend state.
++class ClientWorkers {
++public:
++    ~ClientWorkers() {
++        shutdown_and_join();
++    }
++
++    void start(UniqueSocket socket, IHttpHandler & handler, uint64_t max_request_body_bytes) {
++        auto worker = std::make_unique<Worker>(std::move(socket));
++        auto * entry = worker.get();
++        workers_.push_back(std::move(worker));
++        try {
++            entry->thread = std::thread([this, entry, &handler, max_request_body_bytes] {
++                handle_client(entry->socket, handler, max_request_body_bytes);
++                // Serialize close with shutdown: otherwise a recycled descriptor
++                // could refer to an unrelated socket when the server drains.
++                std::lock_guard<std::mutex> lock(socket_mutex_);
++                entry->socket = UniqueSocket{};
++                entry->finished.store(true, std::memory_order_release);
++            });
++        } catch (...) {
++            workers_.pop_back();
++            throw;
++        }
++    }
++
++    void reap_finished() {
++        for (auto it = workers_.begin(); it != workers_.end();) {
++            if ((*it)->finished.load(std::memory_order_acquire)) {
++                (*it)->thread.join();
++                it = workers_.erase(it);
++            } else {
++                ++it;
++            }
++        }
++    }
++
++    void shutdown_and_join() {
++        {
++            std::lock_guard<std::mutex> lock(socket_mutex_);
++            for (const auto & worker : workers_) {
++                const auto socket = worker->socket.get();
++                if (socket != kInvalidSocket) {
++#ifdef _WIN32
++                    shutdown(socket, SD_BOTH);
++#else
++                    shutdown(socket, SHUT_RDWR);
++#endif
++                }
++            }
++        }
++        // Never hold the socket lock while joining: finishing workers need it.
++        // Native inference may still finish here; the supervising process owns
++        // the hard deadline if a backend cannot return from computation.
++        for (const auto & worker : workers_) {
++            if (worker->thread.joinable()) {
++                worker->thread.join();
++            }
++        }
++        workers_.clear();
++    }
++
++private:
++    struct Worker {
++        explicit Worker(UniqueSocket client) : socket(std::move(client)) {}
++        UniqueSocket socket;
++        std::thread thread;
++        std::atomic<bool> finished{false};
++    };
++
++    std::mutex socket_mutex_;
++    std::vector<std::unique_ptr<Worker>> workers_;
++};
++
+ bool wait_for_client(SocketHandle socket, int timeout_ms) {
+     fd_set read_set;
+     FD_ZERO(&read_set);
+@@ -817,12 +894,18 @@ HttpResponse error_response(int status, const std::string & message, const std::
+ 
+ void serve_http(const std::string & host, int port, IHttpHandler & handler, ShutdownRequested shutdown_requested, uint64_t max_request_body_bytes) {
+     SocketRuntime sockets;
++    // Declaration order also closes the listener before draining on exceptions.
++    ClientWorkers clients;
+     auto listen_socket = bind_listen_socket(host, port);
+     std::cout << "audiocpp_server listening on http://" << host << ":" << port << "\n";
+     while (!shutdown_requested()) {
++        clients.reap_finished();
+         if (!wait_for_client(listen_socket.get(), 250)) {
+             continue;
+         }
++        if (shutdown_requested()) {
++            break;
++        }
+         sockaddr_in client_addr{};
+ #ifdef _WIN32
+         int client_len = sizeof(client_addr);
+@@ -845,8 +928,13 @@ void serve_http(const std::string & host, int port, IHttpHandler & handler, Shut
+             }
+             throw std::runtime_error("accept failed");
+         }
+-        std::thread(handle_client, client, std::ref(handler), max_request_body_bytes).detach();
++        UniqueSocket accepted(client);
++        if (!shutdown_requested()) {
++            clients.start(std::move(accepted), handler, max_request_body_bytes);
++        }
+     }
++    listen_socket = UniqueSocket{};
++    clients.shutdown_and_join();
+     std::cout << "audiocpp_server stopped\n";
+ }
+ 
+diff --git a/tests/unittests/test_http_shutdown.cpp b/tests/unittests/test_http_shutdown.cpp
+new file mode 100644
+index 0000000..623fd0b
+--- /dev/null
++++ b/tests/unittests/test_http_shutdown.cpp
+@@ -0,0 +1,248 @@
++// A request must finish before serve_http returns and destroys its handler.
++// Exercise the real transport without loading a model or running inference.
++#include "../../app/server/http.h"
++
++#include <atomic>
++#include <chrono>
++#include <csignal>
++#include <future>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++#include <thread>
++
++#ifdef _WIN32
++#include <winsock2.h>
++#include <ws2tcpip.h>
++using socket_t = SOCKET;
++constexpr socket_t invalid_socket = INVALID_SOCKET;
++#else
++#include <arpa/inet.h>
++#include <sys/select.h>
++#include <sys/socket.h>
++#include <unistd.h>
++using socket_t = int;
++constexpr socket_t invalid_socket = -1;
++#endif
++
++namespace {
++using namespace std::chrono_literals;
++
++std::atomic<bool> stop{false};
++std::atomic<int> polls{0};
++bool fail_accept_loop = false;
++
++bool stop_requested() {
++    polls.fetch_add(1);
++    if (stop.load() && fail_accept_loop) {
++        throw std::runtime_error("test accept-loop failure");
++    }
++    return stop.load();
++}
++
++void close_socket(socket_t socket) {
++#ifdef _WIN32
++    closesocket(socket);
++#else
++    close(socket);
++#endif
++}
++
++void require(bool condition, const char * message) {
++    if (!condition) {
++        throw std::runtime_error(message);
++    }
++}
++
++class GateHandler final : public minitts::server::IHttpHandler {
++public:
++    std::promise<void> entered;
++    std::promise<void> released;
++    std::shared_future<void> gate = released.get_future().share();
++
++    minitts::server::HttpResponse handle(const minitts::server::HttpRequest & request) override {
++        if (request.path == "/throw") {
++            throw std::runtime_error("test handler failure");
++        }
++        if (request.path == "/blocked") {
++            entered.set_value();
++            gate.wait();
++        }
++        auto response = minitts::server::json_response("{\"ok\":true}");
++        if (request.path == "/stream") {
++            response.stream_body = [this](minitts::server::HttpStreamWriter & writer) {
++                entered.set_value();
++                gate.wait();
++                writer.write("finished");
++            };
++        }
++        return response;
++    }
++};
++
++socket_t connect_client(int port) {
++    sockaddr_in address{};
++    address.sin_family = AF_INET;
++    address.sin_port = htons(static_cast<uint16_t>(port));
++    inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
++    const auto deadline = std::chrono::steady_clock::now() + 3s;
++    do {
++        const socket_t socket = ::socket(AF_INET, SOCK_STREAM, 0);
++        require(socket != invalid_socket, "could not create client socket");
++        if (connect(socket, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0) {
++            return socket;
++        }
++        close_socket(socket);
++        std::this_thread::sleep_for(5ms);
++    } while (std::chrono::steady_clock::now() < deadline);
++    throw std::runtime_error("test listener did not become ready");
++}
++
++void send_request(socket_t socket, const std::string & request) {
++    size_t offset = 0;
++    while (offset < request.size()) {
++        const int written = static_cast<int>(send(
++            socket, request.data() + offset, static_cast<int>(request.size() - offset), 0));
++        require(written > 0, "client send failed");
++        offset += static_cast<size_t>(written);
++    }
++}
++
++std::string receive_reply(socket_t socket) {
++    std::string reply;
++    char buffer[4096];
++    for (;;) {
++        const int received = static_cast<int>(recv(socket, buffer, sizeof(buffer), 0));
++        if (received <= 0) {
++            return reply;
++        }
++        reply.append(buffer, static_cast<size_t>(received));
++    }
++}
++
++bool peer_closed(socket_t socket) {
++    fd_set readers;
++    FD_ZERO(&readers);
++    FD_SET(socket, &readers);
++    timeval timeout{0, 400000};
++#ifdef _WIN32
++    const int ready = select(0, &readers, nullptr, nullptr, &timeout);
++#else
++    const int ready = select(socket + 1, &readers, nullptr, nullptr, &timeout);
++#endif
++    if (ready <= 0) {
++        return false;
++    }
++    char byte;
++    return recv(socket, &byte, 1, MSG_PEEK) <= 0;
++}
++
++void await_accepted(int previous_polls) {
++    const auto deadline = std::chrono::steady_clock::now() + 2s;
++    while (polls.load() < previous_polls + 2) {
++        require(std::chrono::steady_clock::now() < deadline, "accept loop did not advance");
++        std::this_thread::sleep_for(1ms);
++    }
++}
++
++}  // namespace
++
++int main(int argc, char ** argv) {
++    if (argc != 3) {
++        std::cerr << "usage: http_shutdown_test <case> <port>\n";
++        return 2;
++    }
++#ifdef _WIN32
++    WSADATA wsa;
++    WSAStartup(MAKEWORD(2, 2), &wsa);
++#endif
++#ifdef SIGPIPE
++    std::signal(SIGPIPE, SIG_IGN);
++#endif
++    const std::string scenario = argv[1];
++    const int port = std::stoi(argv[2]);
++    fail_accept_loop = scenario == "accept-loop-exception";
++    GateHandler handler;
++    auto entered = handler.entered.get_future();
++    std::promise<void> returned;
++    auto finished = returned.get_future();
++    std::thread server([&] {
++        try {
++            minitts::server::serve_http("127.0.0.1", port, handler, stop_requested, 1024 * 1024);
++            returned.set_value();
++        } catch (...) {
++            returned.set_exception(std::current_exception());
++        }
++    });
++    socket_t client = invalid_socket;
++    bool gate_released = false;
++    std::string failure;
++    try {
++        client = connect_client(port);
++        if (scenario == "active-handler" || scenario == "stream-callback" || fail_accept_loop) {
++            const std::string path = scenario == "stream-callback" ? "/stream" : "/blocked";
++            send_request(client, "GET " + path + " HTTP/1.1\r\nHost: test\r\n\r\n");
++            require(entered.wait_for(2s) == std::future_status::ready, "handler did not enter its gate");
++            stop.store(true);
++            const bool returned_early = finished.wait_for(600ms) == std::future_status::ready;
++            handler.released.set_value();
++            gate_released = true;
++            // Drain even on the failing baseline so its detached worker unwinds
++            // before the test destroys the handler it is deliberately protecting.
++            (void) receive_reply(client);
++            require(finished.wait_for(2s) == std::future_status::ready, "server did not finish after gate release");
++            require(!returned_early, "serve_http returned while the accepted request was still blocked");
++        } else if (scenario == "idle-client" || scenario == "partial-header" || scenario == "partial-body") {
++            if (scenario == "partial-header") {
++                send_request(client, "POST /blocked HTTP/1.1\r\nHost:");
++            } else if (scenario == "partial-body") {
++                send_request(client, "POST /blocked HTTP/1.1\r\nHost: test\r\nContent-Length: 12\r\n\r\nabc");
++            }
++            await_accepted(polls.load());
++            stop.store(true);
++            require(finished.wait_for(2s) == std::future_status::ready, "shutdown remained blocked on incomplete client I/O");
++            require(peer_closed(client), "serve_http returned but the incomplete client socket remained open");
++        } else if (scenario == "idle" || scenario == "completed-request" || scenario == "handler-exception") {
++            const std::string path = scenario == "handler-exception" ? "/throw" : "/";
++            send_request(client, "GET " + path + " HTTP/1.1\r\nHost: test\r\n\r\n");
++            const std::string response = receive_reply(client);
++            require(response.find(scenario == "handler-exception" ? "500" : "200") != std::string::npos,
++                    "ordinary response status changed");
++            close_socket(client);
++            client = invalid_socket;
++            stop.store(true);
++            require(finished.wait_for(2s) == std::future_status::ready, "idle shutdown did not finish");
++        } else {
++            throw std::runtime_error("unknown test case");
++        }
++    } catch (const std::exception & ex) {
++        failure = ex.what();
++    }
++    if (!gate_released) {
++        handler.released.set_value();
++    }
++    if (client != invalid_socket) {
++        close_socket(client);
++    }
++    stop.store(true);
++    server.join();
++    try {
++        finished.get();
++        if (fail_accept_loop && failure.empty()) {
++            failure = "accept-loop failure was lost";
++        }
++    } catch (const std::exception & ex) {
++        if (!fail_accept_loop || std::string(ex.what()) != "test accept-loop failure") {
++            failure = ex.what();
++        }
++    }
++#ifdef _WIN32
++    WSACleanup();
++#endif
++    std::cout << (failure.empty() ? "PASS " : "FAIL ") << scenario;
++    if (!failure.empty()) {
++        std::cout << ": " << failure;
++    }
++    std::cout << "\n";
++    return failure.empty() ? 0 : 1;
++}

@@ -1,0 +1,79 @@
+{
+  "started_utc": "2026-09-09T06:52:34.558066+00:00",
+  "scope": "one unsandboxed startup check, then the existing nine model-free transport cases once if startup succeeds",
+  "binary": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+  "binary_sha256": "e109eca6778465a865a3a6f3c283ba94f44bf7c1eaecfbb74ce8a01f478b00e1",
+  "build_commands": "cc -c -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer /private/tmp/tts-macos-burndown/native/source/external/cJSON/cJSON.c -o /private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/cJSON.o\nc++ -std=c++17 -pthread -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -I/private/tmp/tts-macos-burndown/native/source/include -I/private/tmp/tts-macos-burndown/native/source/external/cJSON /private/tmp/tts-macos-burndown/native/source/tests/unittests/test_http_shutdown.cpp /private/tmp/tts-macos-burndown/native/source/app/server/http.cpp /private/tmp/tts-macos-burndown/native/source/src/framework/io/json.cpp /private/tmp/tts-macos-burndown/native/source/src/framework/io/filesystem.cpp /private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/cJSON.o -o /private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test\n",
+  "binary_dependencies": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test:\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.180.0)\n\t@rpath/libclang_rt.asan_osx_dynamic.dylib (compatibility version 0.0.0, current version 0.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n",
+  "platform": "ProductName:\t\tmacOS\nProductVersion:\t\t26.5.2\nBuildVersion:\t\t25F84\n",
+  "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: arm64-apple-darwin25.5.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n",
+  "sandbox_results_sha256": "03d5b3a5b0ff6ac12f8d26f59afcf77a97d5e5232e9489de3cbdabd40faf6535",
+  "source_before": {
+    "app/server/http.cpp": "95cfd5ec82a8d98cfc09349e2e2d4787fec27d447df0be9c6a8c928aed810fe0",
+    "tests/unittests/test_http_shutdown.cpp": "1de4d5ca34c57a4199824482026770fc504fe900dec2520cb4aa365451a54393"
+  },
+  "cases": [],
+  "owned_pids": [
+    96587
+  ],
+  "startup": {
+    "label": "startup",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test"
+    ],
+    "timeout_seconds": 5,
+    "started_monotonic": 0.096438125,
+    "pid": 96587,
+    "timeout": true,
+    "sample": {
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "Sampling process 96587 for 1 second with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 96587 written to file /private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized-unsandboxed/startup-sample.txt\n"
+    },
+    "forced_cleanup": "SIGKILL to the exact owned child",
+    "returncode": -9,
+    "elapsed_seconds": 6.118974083,
+    "stdout": "",
+    "stderr": "",
+    "sanitizer_diagnostic": false
+  },
+  "startup_passed": false,
+  "prerequisite": "The existing Apple Clang ASan/UBSan executable must reach main outside the sandbox before transport behavior can be qualified; startup did not meet that prerequisite. No transport case was repeated.",
+  "source_after": {
+    "app/server/http.cpp": "95cfd5ec82a8d98cfc09349e2e2d4787fec27d447df0be9c6a8c928aed810fe0",
+    "tests/unittests/test_http_shutdown.cpp": "1de4d5ca34c57a4199824482026770fc504fe900dec2520cb4aa365451a54393"
+  },
+  "remaining_owned_pids": [],
+  "ended_utc": "2026-09-09T06:52:40.741358+00:00",
+  "status": "failed_or_blocked",
+  "analysis": {
+    "classification": "sanitizer_startup_blocked_before_main",
+    "sample_path": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized-unsandboxed/startup-sample.txt",
+    "sample_sha256": "3ac692c5bc7f28a32041133dac778ec4c46db8c7e78c1ca987f2c3a7cc2c653b",
+    "observed_stack": [
+      "dyld initializers",
+      "libSystem_initializer",
+      "__malloc_init",
+      "__asan::AsanInitInternal",
+      "__asan::InitializeShadowMemory",
+      "__sanitizer::get_dyld_hdr",
+      "dyld_shared_cache_iterate_text_swift",
+      "_Block_copy",
+      "malloc",
+      "__asan::AsanInitFromRtl",
+      "__sanitizer::StaticSpinMutex::LockSlow"
+    ],
+    "interpretation": "The sample shows sanitizer initialization re-entering through a malloc call while the same main thread is still initializing ASan, then waiting on its spin mutex. This supports a sanitizer-runtime initialization blocker; it does not qualify transport behavior or identify a proven OS/toolchain defect.",
+    "expected_main_behavior": "source/tests/unittests/test_http_shutdown.cpp:150-154 must print usage and return 2 for no arguments before any listener or test scenario is created.",
+    "platform_toolchain_prerequisite": "A compatible Apple Clang sanitizer runtime must finish initialization and reach main on macOS 26.5.2 (25F84), arm64, before ASan/UBSan transport qualification is possible. This existing Apple clang 17.0.0 (clang-1700.0.13.5) binary did not meet that prerequisite outside the sandbox.",
+    "build_rpath_sanitizer_runtime": "/Library/Developer/CommandLineTools/usr/lib/clang/17/lib/darwin/libclang_rt.asan_osx_dynamic.dylib",
+    "build_rpath_sanitizer_runtime_sha256": "9a4166d249eab6e4f1430d211e65e22172ffdf3257ec116ffc8a845d938337ec",
+    "adjacent_runtime_exists": false,
+    "dyld_library_path_override_present": false,
+    "dyld_fallback_library_path_override_present": false,
+    "cases_repeated": 0,
+    "models_initialized": 0,
+    "playback_started": false,
+    "followup_policy": "Stop after the one failed unsandboxed startup probe. Preserve the nine original sandbox timeouts without calling them transport failures or sanitizer passes."
+  }
+}

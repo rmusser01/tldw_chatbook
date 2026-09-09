@@ -1,0 +1,14 @@
+{
+  "base_commit": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "test_source_commit": "3a6436504eb701adbb49fb655d40616da76e5d8c",
+  "command": "PYTHONPATH=.:packages/tldw_profile_core/src PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring TLDW_BUDDY_QUALIFICATION_OUTPUT=/private/tmp/chatbook-buddy-v1-qualification-after-rebase /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/pytest Tests/UI/test_buddy_v1_qualification_capture.py Tests/TTS/test_buddy_guarded_speech.py -q",
+  "result": "13 passed, 3 warnings in 39.04s",
+  "scope": "Two rendered headless profile journeys and eleven controlled guarded-speech cases. No physical audio or native terminal coverage. Prior 177-test qualification remains tied to its original snapshot; repeated cases are not added as unique coverage.",
+  "tests_log_sha256": "ba368f25092b3e59a7918a910e0093419580ecd7ac7a40118a129000d58cfd1c",
+  "source_sha256": {
+    "Tests/UI/test_buddy_v1_qualification_capture.py": "7114371555febe4a3621271e26539511f868999368bc06b3837fcd9b19c65c8d",
+    "Tests/TTS/test_buddy_guarded_speech.py": "d779d797e90f6659548b2a04b031e6deedefbfe6364525f0922ffea1210ec0bd",
+    "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": "9181c98eed5a53b2678977902f4b0fd0f6d59b685ee2557adc2595f3588e0b2f"
+  },
+  "raw_capture_directory": "/private/tmp/chatbook-buddy-v1-qualification-after-rebase"
+}

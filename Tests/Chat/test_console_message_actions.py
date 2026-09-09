@@ -18,6 +18,84 @@ from tldw_chatbook.Chat.console_message_actions import (
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
+def test_mermaid_wrapper_never_creates_script_markup():
+    from tldw_chatbook.Canvas.authoring import wrap_mermaid_document
+
+    source = 'flowchart TD\nA[</pre><script>bad()</script>&]'
+    html = wrap_mermaid_document(source)
+    assert '<script>bad()' not in html
+    assert '&lt;/pre&gt;&lt;script&gt;bad()&lt;/script&gt;&amp;' in html
+    assert 'data-canvas-diagram="mermaid"' in html
+
+
+@pytest.mark.parametrize("source", ["", " \n", "é" * 4097, "\ud800"])
+def test_mermaid_wrapper_rejects_empty_over_budget_and_invalid_unicode(source):
+    from tldw_chatbook.Canvas.authoring import wrap_mermaid_document
+    from tldw_chatbook.Canvas.limits import CanvasLimitError
+
+    with pytest.raises(CanvasLimitError):
+        wrap_mermaid_document(source)
+
+
+def test_mermaid_fences_keep_html_ordinals_and_use_distinct_replay_identity():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="mixed", role=ConsoleMessageRole.ASSISTANT,
+        persisted_message_id="persisted-mixed",
+        content=('```mermaid\nflowchart TD\nA --> B\n```\n'
+                 '```html\n<p>First</p>\n```\n'
+                 '```mermaid\nflowchart LR\nA --> B\n```\n'
+                 '```html\n<p>Second</p>\n```\n'),
+    )
+    blocks = assistant_canvas_html_blocks(message)
+    assert [(b.language, b.index, b.identity) for b in blocks] == [
+        ("mermaid", 0, "mixed:canvas-mermaid:0"),
+        ("html", 0, "mixed:canvas-html:0"),
+        ("mermaid", 1, "mixed:canvas-mermaid:1"),
+        ("html", 1, "mixed:canvas-html:1"),
+    ]
+    html = service.dispatch("canvas-open-0", message).canvas_block_ref
+    mermaid = service.dispatch("canvas-open-mermaid-0", message).canvas_block_ref
+    assert html.language == "html"
+    assert mermaid.language == "mermaid"
+    assert message_actions.resolve_canvas_html_block(message, html).html == '<p>First</p>\n'
+    assert 'flowchart TD\nA --&gt; B\n' in message_actions.resolve_canvas_html_block(message, mermaid).html
+    assert service.dispatch("canvas-open-mermaid-new-0", message).canvas_block_ref.create_new
+    origin = message_actions.canvas_block_origin_turn_id
+    assert origin(message, 0) == origin(message, 0, language="html")
+    assert origin(message, 0) != origin(message, 0, language="mermaid")
+    assert assistant_canvas_html_blocks(replace(message, status="streaming")) == ()
+    changed = replace(message, content=message.content.replace("flowchart TD", "flowchart TB"))
+    assert message_actions.resolve_canvas_html_block(changed, mermaid) is None
+
+
+def test_oversized_mermaid_keeps_discovery_safe_and_refuses_open():
+    message = ConsoleChatMessage(
+        id="large", role=ConsoleMessageRole.ASSISTANT,
+        content="```mermaid\n" + "é" * 4097 + "\n```",
+    )
+    assert len(assistant_canvas_html_blocks(message)) == 1
+    result = ConsoleMessageActionService().dispatch("canvas-open-mermaid-0", message)
+    assert result.status == "blocked"
+    assert "8 KiB" in result.visible_copy
+    assert "é" not in repr(result)
+
+
+def test_mermaid_compile_repair_does_not_advertise_v1_diagram_execution():
+    from tldw_chatbook.Canvas.compiler import CanvasCompileError
+    from tldw_chatbook.Canvas.models import CanvasCompatibilityIssue
+
+    message = ConsoleChatMessage(id="diagram", role=ConsoleMessageRole.ASSISTANT,
+        content="```mermaid\nflowchart TD\nA --> B\n```")
+    reference = ConsoleMessageActionService().dispatch("canvas-open-mermaid-0", message).canvas_block_ref
+    error = CanvasCompileError((CanvasCompatibilityIssue(
+        code="profile-unavailable", message="Unavailable"),))
+    result = message_actions.canvas_compile_repair_result("canvas-open-mermaid-0", message, reference, error)
+    assert "Mermaid block 1" in result.target_content
+    assert "Canvas V1" not in result.target_content
+    assert "source-only" in result.target_content
+
+
 def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
