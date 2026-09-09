@@ -5311,6 +5311,56 @@ def test_configuration_documents_are_skipped_with_their_own_reason(
     assert plan.items[0].reason == "Not a note file (app configuration)."
 
 
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("empty.json", "[]"),
+        ("empty.yaml", "[]\n"),
+        ("headers-only.csv", "title,content\n"),
+    ],
+)
+def test_a_structured_document_with_no_notes_is_skipped_not_failed(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    """A well-formed but note-free document is nothing to fix (review of 32130)."""
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    issue = batch.issues[0]
+    assert issue.classification is ImportClassification.SKIPPED
+    assert issue.reason_code == "empty_structured_source"
+    assert issue.user_message == "This source does not contain any notes."
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("mixed.json", '[{"content": "Body"}, "file-explorer"]'),
+        ("mixed.json", '[{"content": "Body"}, {"livePreview": true}]'),
+        ("mixed.yaml", "- content: Body\n- theme: obsidian\n"),
+    ],
+)
+def test_a_document_mixing_notes_with_other_records_is_not_called_config(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+) -> None:
+    """A damaged export must not be presented as harmless configuration."""
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    issue = batch.issues[0]
+    assert issue.classification is ImportClassification.FAILED
+    assert issue.reason_code == "invalid_content"
+    assert issue.user_message == "This source could not be parsed as notes."
+
+
 def test_issue_items_keep_the_parser_reason_instead_of_one_generic_sentence(
     tmp_path: Path,
 ) -> None:

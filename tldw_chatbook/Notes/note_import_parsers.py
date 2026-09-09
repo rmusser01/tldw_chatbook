@@ -80,6 +80,8 @@ _MESSAGES = {
 _FAILURE_CLASSIFICATIONS = {
     "empty_source": ImportClassification.EMPTY,
     "not_a_note": ImportClassification.SKIPPED,
+    # A well-formed document that simply holds no note is not broken either.
+    "empty_structured_source": ImportClassification.SKIPPED,
 }
 
 
@@ -464,10 +466,21 @@ def _structured_payloads(
         raise _ParseFailure("empty_structured_source")
     if len(records) > bounds.max_notes_per_file:
         raise _ParseFailure("too_many_notes")
-    if not all(isinstance(record, Mapping) for record in records):
+    note_shaped = tuple(_is_note_record(record) for record in records)
+    if not any(note_shaped):
         # A well-formed document that holds no note record is configuration.
         raise _ParseFailure("not_a_note")
+    if not all(note_shaped):
+        # Part note, part something else: a damaged export, not configuration.
+        raise _ParseFailure("invalid_content")
     return tuple(_payload_from_mapping(record, bounds) for record in records)
+
+
+def _is_note_record(record: Any) -> bool:
+    """Report whether one structured record carries a note body at all."""
+    return isinstance(record, Mapping) and any(
+        alias in record for alias in _CONTENT_ALIASES
+    )
 
 
 def _payload_from_mapping(
@@ -481,9 +494,9 @@ def _payload_from_mapping(
         for aliases in (_TITLE_ALIASES, _CONTENT_ALIASES, _KEYWORD_ALIASES)
     ):
         raise _ParseFailure("invalid_content")
-    if not any(alias in record for alias in _CONTENT_ALIASES):
-        # No note body at all: configuration, not a malformed note.
-        raise _ParseFailure("not_a_note")
+    # Whether a record is note-shaped at all is decided for the whole document
+    # in _structured_payloads; a body-less record only reaches here from CSV,
+    # which always supplies one.
     content_value = record.get("content", record.get("body"))
     if not isinstance(content_value, str) or not content_value.strip():
         raise _ParseFailure("invalid_content")
