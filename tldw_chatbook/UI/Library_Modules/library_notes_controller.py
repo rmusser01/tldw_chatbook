@@ -4810,6 +4810,26 @@ class LibraryNotesController:
             exclusive=True,
             group="library_note_import_check",
         )
+    @on(LibraryNoteImportCanvas.ObsidianModeToggled)
+    def handle_library_note_import_obsidian_mode(
+        self, event: LibraryNoteImportCanvas.ObsidianModeToggled
+    ) -> None:
+        """Re-run the read-only check with the requested vault-reading mode.
+
+        Args:
+            event: The canvas toggle carrying the requested `enabled` mode.
+        """
+        event.stop()
+        try:
+            self._library_note_import_controller.set_obsidian_mode(event.enabled)
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
+            return
+        self.run_worker(
+            self._run_library_note_import_check(),
+            exclusive=True,
+            group="library_note_import_check",
+        )
     @on(LibraryNoteImportCanvas.CollisionNameChanged)
     def handle_library_note_import_collision_name(
         self, event: LibraryNoteImportCanvas.CollisionNameChanged
