@@ -1672,10 +1672,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         conflict = state.conflict
         confirming_delete = state.confirming_delete and not conflict
         bulk_read_only = state.bulk_read_only
+        # task-32132: Delete is only reachable from the Info Danger section
+        # (the Edit pane's own Delete lives in ``library-note-wide-
+        # utilities``, permanently hidden below). Confirming used to force
+        # ``show_context`` off unconditionally, snapping the pane to Edit --
+        # "delete this note?" painted 14 rows away, under a body editor the
+        # user never opened. Info stays put while confirming; only Preview
+        # (which never hosts a Delete button) still yields to Edit.
         show_context = (
             state.region == "context"
             and not conflict
-            and not confirming_delete
             and not bulk_read_only
         )
         show_preview = bulk_read_only or (

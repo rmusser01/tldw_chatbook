@@ -4266,6 +4266,14 @@ class LibraryScreen(BaseAppScreen):
             "library-notes-template-"
         ):
             return "create note"
+        # task-32132 AC#2: the delete-confirmation footer used to say
+        # "enter confirm delete" unconditionally -- while Cancel held the
+        # entry focus the prompt lands on (Enter cancels there), it was
+        # advertising the OTHER button's action.
+        if widget_id == "library-note-delete-cancel":
+            return "cancel"
+        if widget_id == "library-note-delete-confirm":
+            return "delete"
         return ""
 
     @staticmethod
@@ -7578,9 +7586,13 @@ class LibraryScreen(BaseAppScreen):
                 self.LIBRARY_NOTES_CONFLICT_SHORTCUTS_COMPACT,
             )
         if self._notes_state.confirming_delete:
+            # task-32132 AC#2: name the FOCUSED button's own action -- entry
+            # focus lands on Cancel, where Enter cancels, not "confirm
+            # delete" as the old static copy claimed regardless of focus.
+            enter_label = self._library_focus_enter_label() or "cancel"
             return self._notes_footer_tier(
-                (("enter", "confirm delete"), ("esc", "cancel delete")),
-                (("enter", "confirm"), ("esc", "cancel")),
+                (("enter", enter_label), ("tab", "switch button"), ("esc", "cancel")),
+                (("enter", enter_label), ("tab", "switch"), ("esc", "cancel")),
             )
         region = self._library_notes_focus_region()
         if region == "navigator":
@@ -7943,6 +7955,27 @@ class LibraryScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
+        # task-32132 AC#3: while the note-delete confirmation is open, Tab /
+        # Shift+Tab must stay inside it -- the natural focus chain used to
+        # walk straight out into the Info pane's other Danger-section
+        # buttons (Copy/Export/the Delete button itself) and beyond, into a
+        # pane grip, with the prompt still open and no visible cue why.
+        if (
+            self._notes_state.confirming_delete
+            and event.key in ("tab", "shift+tab", "backtab")
+        ):
+            try:
+                cancel_button = self.query_one("#library-note-delete-cancel", Button)
+                confirm_button = self.query_one("#library-note-delete-confirm", Button)
+            except (NoMatches, QueryError):
+                pass
+            else:
+                (
+                    confirm_button if self.focused is cancel_button else cancel_button
+                ).focus()
+                event.stop()
+                event.prevent_default()
+                return
         if isinstance(self.focused, (Input, TextArea)):
             return
         if event.key in ("up", "down") and _move_library_list_row_focus(

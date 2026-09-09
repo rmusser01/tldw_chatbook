@@ -4944,8 +4944,11 @@ class LibraryNotesController:
         self._library_note_delete_origin_context = origin_context
         self._library_note_delete_origin_preview = origin_preview
         self._library_note_confirming_delete = True
-        self._library_note_preview = False
-        self._library_note_context = False
+        # task-32132: Delete is only reachable from Info, and the canvas
+        # keeps Info showing while confirming -- forcing these off used to
+        # snap the pane to Edit out from under the user. Leave the mode
+        # exactly as the user left it; ``_restore_library_note_delete_
+        # origin`` below is then a no-op restore, same as it always was.
         self._apply_library_note_presentation_state()
         self._focus_library_note_control("#library-note-delete-cancel")
     def _focus_library_note_control(self, selector: str) -> None:

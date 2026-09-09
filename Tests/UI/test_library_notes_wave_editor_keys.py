@@ -119,3 +119,91 @@ async def test_slash_on_the_already_focused_notes_filter_rearms_selection():
         )
 
 
+# --- task-32132: delete confirmation stays put, footer follows focus,
+# Tab is trapped ---------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_confirmation_renders_in_info_without_changing_mode():
+    """AC#1: pressing Delete in Info must not snap the pane back to Edit."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note_in_info(screen, pilot)
+
+        info_region = screen.query_one("#library-note-context-region")
+        assert info_region.display, "Info wasn't active before Delete"
+
+        screen.query_one("#library-note-context-delete", Button).press()
+        await pilot.pause()
+
+        assert info_region.display, (
+            "Delete snapped the pane away from Info back to Edit"
+        )
+        assert not screen.query_one("#library-note-editor-region").display
+        assert screen.query_one("#library-note-delete-confirmation").display
+        assert screen.query_one("#library-note-context", Button).has_class(
+            "is-active"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_confirmation_footer_follows_the_focused_button():
+    """AC#2: the footer names the FOCUSED button's own Enter action."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note_in_info(screen, pilot)
+        screen.query_one("#library-note-context-delete", Button).press()
+        await pilot.pause()
+
+        cancel_button = screen.query_one("#library-note-delete-cancel", Button)
+        confirm_button = screen.query_one("#library-note-delete-confirm", Button)
+        assert screen.focused is cancel_button
+
+        shortcuts = dict(screen._library_notes_footer_shortcuts())
+        assert shortcuts.get("enter") == "cancel", (
+            f"Footer said Enter {shortcuts.get('enter')!r} while Cancel held "
+            "focus, where Enter cancels"
+        )
+
+        confirm_button.focus()
+        await pilot.pause()
+        shortcuts = dict(screen._library_notes_footer_shortcuts())
+        assert shortcuts.get("enter") == "delete", (
+            f"Footer said Enter {shortcuts.get('enter')!r} while Delete held "
+            "focus, where Enter deletes"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_confirmation_traps_tab_between_cancel_and_delete():
+    """AC#3: Tab/Shift+Tab cycle only Cancel<->Delete while the prompt is open."""
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note_in_info(screen, pilot)
+        screen.query_one("#library-note-context-delete", Button).press()
+        await pilot.pause()
+
+        cancel_button = screen.query_one("#library-note-delete-cancel", Button)
+        confirm_button = screen.query_one("#library-note-delete-confirm", Button)
+        assert screen.focused is cancel_button
+
+        for _ in range(8):
+            await pilot.press("tab")
+            await pilot.pause()
+            assert screen.focused in (cancel_button, confirm_button), (
+                f"Tab escaped the delete prompt onto {screen.focused!r}"
+            )
+        # An even number of Tabs (8) returns to the starting button.
+        assert screen.focused is cancel_button
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert screen.focused is confirm_button
+
+
