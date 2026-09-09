@@ -2839,7 +2839,16 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     # (focus search) and F6 (next pane) are also screen-wide keys, but they
     # are not Bindings (see ``LibraryScreen.on_key`` and the app-global F6
     # wiring), so they never appear in this audit.
-    universal_actions = frozenset({"focus_previous_workbench_pane"})
+    # task-32052: Tab/Shift+Tab join Shift+F6 as genuinely screen-wide --
+    # this screen re-declares Textual's own focus-movement keys only to
+    # SCOPE them to ``#screen-content`` (``action_focus_next``), so they
+    # must stay active on every surface, the landing included. They are
+    # excluded from the F1 panel by name instead (see
+    # ``_active_library_binding_shortcuts``), since app-wide keyboard
+    # chrome is not a Library shortcut.
+    universal_actions = frozenset(
+        {"focus_previous_workbench_pane", "focus_next", "focus_previous"}
+    )
 
     app = _build_test_app()
     screen = LibraryScreen(app)

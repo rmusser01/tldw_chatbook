@@ -2738,7 +2738,15 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             await pilot.press("tab")
             await pilot.pause()
             assert screen.focused is not None
-            assert screen.focused.id == "nav-home"
+            # task-32052 AC#3: this used to pin ``== "nav-home"`` -- Tab off
+            # the end of the Library controls walked into the top navigation
+            # bar, where Enter switches destination. That is the defect
+            # critique #8 row 3 reported (one Tab out of the New-note canvas
+            # landed on Home). Tab now wraps inside ``#screen-content``; the
+            # nav bar is reached with its own keys (Ctrl+digit / F-keys).
+            assert screen.focused.id == "library-open-chunking-lab"
+            nav_bar = screen.query_one("MainNavigationBar")
+            assert nav_bar not in screen.focused.ancestors
             assert len(screen.query("#library-rail-explore-all")) == 1
             assert not screen.query("#library-hub-explore-all")
             painted = "\n".join(
@@ -4994,7 +5002,13 @@ async def test_library_emergency_stalled_tab_does_not_arm_later_focus(
         bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
         bar.focus()
         await pilot.pause()
-        monkeypatch.setattr(screen, "focus_next", lambda: None)
+        # task-32052: the emergency Tab path goes through
+        # ``_move_library_screen_focus``, which passes a region selector to
+        # ``focus_next`` so Tab cannot walk into the nav bar. The fake stubs
+        # the Textual primitive at the boundary (rather than
+        # ``_move_library_screen_focus`` itself) so this pin still exercises
+        # that scoping; it just has to accept the selector.
+        monkeypatch.setattr(screen, "focus_next", lambda *args, **kwargs: None)
 
         await pilot.press("tab")
         await pilot.pause()
