@@ -3,10 +3,14 @@
 **STATUS: COMPLETE, with one honest shortfall named up front.** The rail-mode
 switch no longer rebuilds the screen (0 whole-screen recomposes, mounts more
 than halved, the acceptance pin green). **The freeze itself is not yet fixed:**
-the longest main-thread block is unchanged, and the measurement now points at
-exactly one remaining cause — the redundant canvas sync storm the design record
-scoped out of this task. Section 5 has the numbers and section 6 the correction
-to the record's own prediction about it.
+the longest main-thread block is unchanged. The redundant canvas sync storm
+the design record scoped out of this task accounts for the remaining MOUNTS —
+three canvas rebuilds per media switch-back, one of them belonging to the route
+being left — but NOT for most of the restyle: the switch with zero canvas
+rebuilds runs the most `Stylesheet.apply` calls of any of them. So the
+remaining cost is only partly attributed, and §5 says which part. §6 carries
+the corrections to the record's predictions and to my own first version of
+this report.
 
 Branch `feat/library-phase-c-resident-canvas`, worktree
 `.worktrees/library-decomp-foundation`. Commits:
@@ -23,9 +27,16 @@ Branch `feat/library-phase-c-resident-canvas`, worktree
 
 The design record named the reader-shell id split as "the largest single
 piece of Task 2's work". Confirmed by census before touching anything:
-`#library-media-reader-shell` at 19 production sites and 43 test references,
-`#library-notes-reader-shell` at 16 and 30, grip ids at 26 more. And confirmed
-as unavoidable: `#library-canvas` (the items host, 125 references) is a single
+all counts below are OCCURRENCES of the id token in any spelling (selector,
+bare string, `id=` argument), measured with `git grep -h -o -E` at the base
+commit `9158fac98` — not `grep -c`, which counts LINES and undercounts a line
+that names an id twice. `#library-media-reader-shell`: 19 production, 40 test.
+`#library-notes-reader-shell`: 16 production, 29 test. Grip ids: 27 test, 2
+production (both in comments). Test-side total the census had to rewrite,
+including 4 bare non-selector spellings: **100**. And confirmed
+as unavoidable: the items host id `library-canvas` (**145** occurrences — 125
+as `#library-canvas` selectors plus 20 bare `id=`/string spellings, excluding
+the `-loading`/`-error`/`-route-content` sibling ids) is a single
 id in BOTH routes' shells, so two resident shells side by side would be a
 `TooManyMatches` on the most-queried selector in the screen. One shell was the
 only shape that works.
@@ -46,7 +57,7 @@ only shape that works.
   *Why a marker rather than 35 `_library_selected_row_id` checks:* a marker
   projected from state at one seam IS the state check, written once. The
   hazard the record names is a proxy that goes permanently true, not a proxy
-  as such. It also kept ~99 test references to a mechanical `#` -> `.`
+  as such. It also kept those 100 test references to a mechanical `#` -> `.`
   rewrite, which is the difference between a reviewable diff and an
   unreviewable one.
 * Grips are shared, so `#library-browse-{library,items}-grip`. Their per-route
@@ -137,11 +148,20 @@ the derivation written into the test's docstring. Why 25 was unreachable: the
 canvas a switch goes TO has been off-route since the last visit — and, under
 the new route-ownership guard, deliberately un-synced while it was there — so
 switching back MUST repaint it, and that repaint is
-`sync_state` -> `refresh(recompose=True)` over the canvas's own 28 children.
-It happens twice per media switch (the synchronous group coalesces into one
-frame; the browse worker's result lands in another), and the second is not
-redundant — it paints results the first did not have. Six interleaved round
-trips in one process gave identical counts every iteration.
+`sync_state` -> `refresh(recompose=True)` over the canvas's own children.
+
+Attribution, measured by instrumenting every `sync_state` call with the
+canvas's `display` at call time (three runs, counts identical on all three):
+
+| switch | mounts | composition |
+|---|---|---|
+| media (switch-back) | 77–81 | **21 = the OUTGOING Notes canvas, rebuilt while still displayed** + ~60 across **two** destination-Media rebuilds |
+| notes (switch), 1st | 26 | **zero canvas rebuilds** (lazy first mount) |
+| notes (switch), later | 62 | **24 = a rebuild while the canvas is still HIDDEN**, superseded before it is shown, + 37 after |
+
+**Three rebuilds per media switch-back, not two, and one belongs to the route
+being LEFT.** My first version of this section said two and named only the
+destination; both halves were wrong.
 
 ## 5. Probe before/after — and the shortfall
 
@@ -160,11 +180,25 @@ CPU −19% to −31%, mounts −55% to −77%, whole-screen recompose gone. **Th
 longest main-thread block does not move** (142 -> 147 ms on notes is inside
 the base arm's own 128–149 ms spread).
 
-The reason is in the bucket table and is unambiguous: after residency, CSS
-restyle is **88 ms of the media switch's 154 ms (58%) across 423
-`Stylesheet.apply` calls**, and every one of those is triggered by mounting one
-of the 81 widgets the two canvas repaints produce. The freeze is now made of
-exactly one thing.
+**Where that cost is, stated carefully — my first version overclaimed and the
+other arm falsifies it.** After residency, CSS restyle is the largest measured
+CPU bucket on the media arm (88 ms of 154 ms, 58%). I then wrote that every
+`Stylesheet.apply` call is triggered by mounting one of the 81 widgets the
+repaints produce, and that the storm owns 100% of the remaining freeze.
+Measured `Stylesheet.apply` counts say otherwise:
+
+| switch | mounts | canvas rebuilds | apply calls | restyle |
+|---|---|---|---|---|
+| notes (switch), 1st | 26 | **0** | **459** | 95–99 ms |
+| media (switch-back) | 77–81 | 3 | 405–421 | 85–93 ms |
+| notes (switch), later | 62 | 3 | 331 | 65–71 ms |
+
+The arm with the fewest mounts and NO canvas rebuild runs the MOST applies and
+the most restyle. So apply count is not mount-proportional, much of the
+restyle is full-tree work residency does not remove, and 58% of measured CPU
+is not 100% of the block in any case (`block` and `cpu` are different
+quantities). **The remaining cost is only partly attributed**, and the storm
+task must open by attributing it — apply calls by trigger — not by fixing.
 
 ## 6. Two corrections to the design record (both now written into it)
 
@@ -179,9 +213,11 @@ OLD number on the metric that matters most.** The record framed wall-clock as
 context and predicted the landed switch would be somewhere between the 30 ms
 mechanism floor and the 124 ms baseline. It is at the baseline. The mechanism
 did what it promised (the whole-screen rebuild is gone; the rail, nav bar,
-footer, chrome and both canvases survive a switch); the storm now owns 100% of
-the freeze. **Task 2 removed the structural cause; it did not fix the freeze.**
-Anyone reading the plan's headline should read this paragraph with it.
+footer, chrome and both canvases survive a switch). **Task 2 removed the
+structural cause; it did not fix the freeze, and what the freeze is now made
+of is only partly attributed** — the storm accounts for the remaining MOUNTS,
+but not for most of the `Stylesheet.apply` calls (§5). Anyone reading the
+plan's headline should read this paragraph with it.
 
 **(c) The third TASK-32089 ruling is blocked by an existing pin, and was
 reverted rather than forced.** The record asked for the dispatcher's blanket
@@ -199,12 +235,24 @@ that round: the handler now logs the traceback, which it previously discarded.
 
 ## 7. Concerns, and what the next task should know
 
-1. **The freeze is not fixed — the sync storm now owns all of it.** Section 5
-   has the measurement. The next motivated change is "a canvas repaint that
-   changes nothing should not rebuild 28 children", and it is now cheap to
-   evaluate because the acceptance pin's mount ceilings are a ratchet: lower
-   them when it lands. Two things learned while measuring that the next task
-   should not re-learn:
+1. **The freeze is not fixed, and the remaining cost is only partly
+   attributed.** Section 5 has the measurement. Leads for the storm task, in
+   the order the measurement ranks them:
+   1. **The outgoing-canvas rebuild** — every media switch-back rebuilds the
+      *Notes* canvas (21 mounts) while it is still displayed, immediately
+      before hiding it. Nobody sees the result.
+   2. **The pre-display hidden rebuild** — a resident Notes switch spends 24
+      of its 62 mounts rebuilding while `display` is still `False`, because
+      the route STATE flips before the swap shows the canvas. Provably
+      discarded work, and the cheapest lead.
+   3. **The restyle split, which is unknown** — how much of the 405–459
+      applies per switch is mount-proportional and how much is full-tree.
+      Leads 1 and 2 only address the first part.
+
+   **That task must OPEN with an attribution measurement (apply calls by
+   trigger), not a fix** — ranking by mounts and assuming restyle follows is
+   exactly the inference this report had to retract. Two things learned while
+   measuring that the next task should not re-learn:
    * *An equality short-circuit inside `LibraryMediaCanvas.sync_state` does
      nothing on this path.* I tried it (full argument-tuple compare, discarded
      afterwards): the media switch-back stayed at 77 mounts, because the two
@@ -270,9 +318,23 @@ worktree for the changed arm, same invocation (`-p no:randomly -q`).
 
 ### The media battery (19 `test_library_media_*.py` files + `test_library_multiselect_media.py`)
 
-Base **26 failed / 684 passed**, changed **27 failed / 682 passed**. Three
-names differ, and all three were verified INDIVIDUALLY rather than argued
-from the totals:
+Base **26 failed / 684 passed** (710 tests), changed **27 failed / 682
+passed** (709). **The battery has one test fewer, and that is deliberate:**
+`test_library_media_reader_shell.py::test_media_grip_preserves_legacy_
+constructor_signature` was deleted in `7b4a7e289` together with its subject,
+the `LibraryMediaPaneGrip` class — a media-vocabulary grip subclass whose only
+job was to bake `library-media-pane-grip` and the one-cell width in at
+construction. The shared shell has to do both per ROUTE instead
+(`apply_route`), so the class had no callers left and keeping a test for a
+deleted class would have been theatre. What it asserted is still covered:
+the grip class is pinned directly at `test_library_media_reader_shell.py:143`
+(both grips carry it on the media route), the grip width comes from
+`layout.grip_width` and is pinned by the width-matrix tests, and the
+route-conditional half is pinned by the new
+`test_route_marker_class_tracks_the_selection_across_switches`.
+
+Three names differ, and all three were verified INDIVIDUALLY rather than
+argued from the totals:
 
 | name | verdict |
 |---|---|
@@ -310,9 +372,20 @@ and matched exactly.
   the same "canvas sync failed" line re-emitted with its traceback). Every row
   was read via `--statements … --since` before `--write`, per the artifact's
   own instruction; none interpolates user content, a secret, a path or a URL.
-* Both size ratchets: the screen's LINE budget lowered to its measured 32242
-  in the same commit; the modules ratchet needs no row (the new file is not a
-  `*_controller.py`).
+* Both size ratchets: the screen's LINE budget lowered to its measured value;
+  the modules ratchet needs no row (the new file is not a `*_controller.py`).
+
+  **Disclosure — the pin moved UP once inside this branch.** `7b4a7e289` set
+  it to the then-measured **32238**; `cb1a47ce2` then set it to **32242**,
+  because making the new module's two imports lazy (to keep the boot
+  pre-import payload at its base-commit 504) cost four lines in the screen.
+  Net against the budget this branch inherited it is still a lowering,
+  32263 -> 32242 (−21), and against the base commit's file the screen shrank
+  32351 -> 32242 (−109) — but an in-branch RAISE of a one-way ratchet is
+  exactly the shape that mechanism exists to catch, so it belongs here and not
+  only in a commit message. It is disclosed rather than avoided because the
+  alternative (leaving the pin at 32238 and holding the four lines elsewhere)
+  would have made the recorded number not match the file.
 * User guide (`Docs/User_Guide/library/media-and-conversations.md`)
   re-stamped, not edited: no on-screen copy, control or layout changed.
 * No pushes. `progress.md` untouched.

@@ -43,31 +43,42 @@ as the design record's ceiling-provenance paragraph instructs.** The original
 already-correct canvases and synced neither. A real switch cannot do that: the
 canvas it switches TO has been off-route since the last visit -- and, under the
 TASK-32089 route-ownership guard this task added, deliberately un-synced while
-it was there -- so switching back MUST repaint it. That repaint is
-``LibraryMediaCanvas.sync_state`` -> ``refresh(recompose=True)``, a rebuild of
-the canvas's own 28 children, and it happens TWICE per media switch: once in
-the synchronous group (the swap's own sync, the browse request's immediate
-sync, the facets request's immediate sync -- all one frame, so they coalesce)
-and once when the browse worker's result lands a frame later. That second
-rebuild is not redundant: it paints results the first one did not have.
+it was there -- so switching back MUST repaint it, and that repaint is
+``sync_state`` -> ``refresh(recompose=True)``, a rebuild of the canvas's own
+children.
 
-Measured on this branch, six interleaved Media<->Notes round trips in one
-process, counts identical on every iteration:
+Measured by instrumenting every ``sync_state`` call with the canvas's
+``display`` at call time and attributing mounts to the interval after it
+(three runs, mount and apply counts identical on all three):
 
-    media (switch-back)      77-81 mounts / 82-86 unmounts   (2 canvas rebuilds)
-    notes (switch), 1st      26 mounts /  2 unmounts   (lazy first mount)
-    notes (switch), later    62 mounts / 57 unmounts   (canvas rebuilds)
+    media (switch-back)   77-81 mounts = 21 (the OUTGOING Notes canvas,
+                          rebuilt while still displayed) + ~60 across TWO
+                          rebuilds of the destination Media canvas
+    notes (switch), 1st   26 mounts, and ZERO canvas rebuilds -- the lazy
+                          first mount of the Notes route
+    notes (switch), later 62 mounts = 24 (a rebuild that runs while the
+                          canvas is still HIDDEN, superseded before it is
+                          ever shown) + 37 across the rebuilds after it
 
-The ceilings below are that maximum plus ~11%. What they replace: 114-179
-mounts and 121-176 unmounts, plus one whole-screen recompose, per switch.
+So a media switch-back carries **three** canvas rebuilds, not two, and one of
+them belongs to the route being LEFT. The ceilings below are the measured
+maximum plus ~11%. What they replace: 114-179 mounts and 121-176 unmounts,
+plus one whole-screen recompose, per switch.
 
-**The remaining term is the redundant sync storm, not the mechanism.** The
+**The remaining MOUNTS are the redundant sync storm, not the mechanism.** The
 design record scoped that out of Task 2 and predicted this pin would not depend
 on it; that prediction was wrong, and this paragraph is the correction. Every
-mount left in the numbers above is a canvas rebuild; the mechanism's own cost
-is the 7-widget structural delta. When the storm is fixed, LOWER these numbers
--- they are a ratchet, and the design carrier remains
-``_MAX_WHOLE_SCREEN_RECOMPOSES``.
+mount left above is a canvas rebuild; the mechanism's own cost is the 7-widget
+structural delta. When the storm is fixed, LOWER these numbers -- they are a
+ratchet, and the design carrier remains ``_MAX_WHOLE_SCREEN_RECOMPOSES``.
+
+**Mounts are not the same as restyle cost, and this pin only claims mounts.**
+Measured on the same runs: the 1st Notes switch does 26 mounts and no canvas
+rebuild at all, yet runs **459** ``Stylesheet.apply`` calls, while a Media
+switch-back does 77-81 mounts and runs **405-421**. Apply count is therefore
+NOT proportional to mounts, and a large part of the restyle is full-tree work
+this pin does not measure and residency does not remove. Do not read a green
+result here as "the switch is cheap".
 
 ## Every count here is an upper bound, so the liveness assertions are load-bearing
 

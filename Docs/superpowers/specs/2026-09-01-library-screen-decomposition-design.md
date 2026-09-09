@@ -598,7 +598,9 @@ The decision above named the shell split as "the largest single piece of Task
     projected from state at one seam IS the state check, written once. The
     hazard the record names is a proxy that goes permanently true, not a proxy
     as such; a marker with a single writer cannot. It also kept the census
-    mechanical (`#` -> `.`) across ~99 test references, which is the
+    mechanical (`#` -> `.`) across 100 test-side occurrences of the retired
+    id tokens (measured with `git grep -h -o` at the base commit — occurrences,
+    not lines), which is the
     difference between a reviewable diff and an unreviewable one.
   * The two **ancestor-walk equality sites** the record warned would score
     zero on a selector grep (`widget.id == "library-media-canvas"`,
@@ -659,12 +661,21 @@ zero-mount floor, because the canvas it switches TO has been off-route since
 the last visit — and, under the route-ownership guard this task added,
 deliberately un-synced while it was there — so switching back MUST repaint it.
 That repaint is `sync_state` -> `refresh(recompose=True)`, a rebuild of the
-canvas's own 28 children, and it happens twice per media switch: once in the
-synchronous group (the swap's sync, the browse request's immediate sync, the
-facets request's immediate sync — one frame, so they coalesce) and once when
-the browse worker's result lands a frame later. The second is not redundant:
-it paints results the first did not have. Six interleaved round trips in one
-process gave identical counts every iteration.
+canvas's own children.
+
+**Attribution, measured (three runs; mount and apply counts identical on all
+three).** Every `sync_state` call was instrumented with the canvas's `display`
+at call time, and mounts attributed to the interval after it:
+
+| switch | mounts | composition |
+|---|---|---|
+| media (switch-back) | 77–81 | **21 = the OUTGOING Notes canvas, rebuilt while still displayed**, + ~60 across **two** rebuilds of the destination Media canvas |
+| notes (switch), 1st | 26 | **zero canvas rebuilds** — the lazy first mount of the Notes route |
+| notes (switch), later | 62 | **24 = a rebuild that runs while the canvas is still HIDDEN** and is superseded before it is ever shown, + 37 across the rebuilds after it |
+
+So a media switch-back carries **three** canvas rebuilds, not two, and one of
+them belongs to the route being LEFT. The earlier text in this record said two
+and named only the destination; that was wrong in both respects.
 
 **Prediction 2, half wrong: the wall clock.** The record said the landed
 number would sit above the mechanism's 30 ms floor. It sits *at the old
@@ -681,19 +692,50 @@ runs per arm, medians:
 
 CPU falls 19–31% and mounts fall 55–77%; the longest main-thread BLOCK does
 not move (the 142 -> 147 ms on notes is inside this instrument's run-to-run
-spread, which was 128–149 ms on the base arm alone). The reason is
-in the bucket table and is not ambiguous: after residency, CSS restyle is
-**88 ms of the media switch's 154 ms (58%), across 423 `Stylesheet.apply`
-calls** — and every one of those calls is triggered by mounting one of the 81
-widgets the two canvas repaints produce. The freeze is now made of exactly one
-thing.
+spread, which was 128–149 ms on the base arm alone).
+
+**Where the remaining cost is NOT yet attributed, stated carefully.** After
+residency, CSS restyle is the largest measured CPU bucket on the media arm:
+88 ms of 154 ms, 58%. An earlier version of this paragraph went on to claim
+that every `Stylesheet.apply` call is triggered by mounting one of the 81
+widgets the repaints produce, and that the storm therefore owns 100% of the
+remaining freeze. **Both claims are false, and the other arm falsifies them.**
+Measured on the same runs, `Stylesheet.apply` calls per switch:
+
+| switch | mounts | canvas rebuilds | apply calls | restyle |
+|---|---|---|---|---|
+| notes (switch), 1st | 26 | **0** | **459** | 95–99 ms |
+| media (switch-back) | 77–81 | 3 | 405–421 | 85–93 ms |
+| notes (switch), later | 62 | 3 | 331 | 65–71 ms |
+
+The arm with the FEWEST mounts and NO canvas rebuild runs the MOST apply calls
+and the most restyle. Apply count is therefore not mount-proportional, a large
+share of the restyle is full-tree work that residency does not remove, and 58%
+of measured CPU is not 100% of the block in any case (`block` and `cpu` are
+different quantities — see the probe's own docstring).
 
 **So the honest summary of this task is: the structural cause is gone (no
 whole-screen recompose, no rail/nav/footer/chrome rebuild, mounts more than
-halved), and the freeze is not yet fixed.** What remains is the sync storm,
-which this task did not touch, and which now has a measurement pointing
-straight at it. That is the next motivated change, and the acceptance pin's
-mount ceilings are a ratchet: lower them when it lands.
+halved), and the freeze is not yet fixed — with the remaining cost only
+partly attributed.**
+
+**Leads for the storm task, in the order the measurement ranks them.**
+
+1. **The outgoing-canvas rebuild.** Every media switch-back rebuilds the
+   *Notes* canvas (21 mounts) while it is still displayed, immediately before
+   it is hidden. Nobody ever sees the result.
+2. **The pre-display hidden rebuild.** A resident Notes switch spends 24 of
+   its 62 mounts rebuilding the canvas while `display` is still `False` — the
+   route STATE flips before the swap shows the canvas, so syncs land in that
+   window and are superseded by the rebuilds that follow. This is the cheapest
+   lead: the work is provably discarded.
+3. **The restyle split, which is unknown.** How much of the 405–459 apply
+   calls per switch is mount-proportional and how much is full-tree is not
+   measured, and the two leads above only address the first part.
+
+**The storm task must OPEN with an attribution measurement — apply calls by
+trigger — not with a fix.** Ranking leads 1 and 2 by mounts and then assuming
+the restyle follows is exactly the inference this section had to retract.
 
 ### 4. Hazard rulings, as landed
 
@@ -705,7 +747,10 @@ mount ceilings are a ratchet: lower them when it lands.
   the button's own `disabled`/`display` and nothing above it, so the gate has
   to be a handler, not a style. It sits on the canvas that owns the residency
   state rather than on each of the screen's row handlers, and it covers every
-  button in the subtree rather than only rows.
+  button in the subtree rather than only rows. Its scope stops there:
+  `Input.Changed`/`Submitted` and `LibraryMediaRowGeometryChanged` are
+  ungated (not reachable today — a hidden widget is out of the focus chain,
+  and stale geometry is rejected screen-side by the return-settlement fence).
 * **Narrowing the blanket `except`: NOT landed, deliberately.** It was
   implemented and reverted. `test_library_canvas_sync_defects.py::
   test_strict_failure_retry_retains_original_semantic_focus` forces a

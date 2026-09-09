@@ -201,17 +201,26 @@ def _wrap_async(owner, name: str, phase: str) -> None:
 #: Region attribution, checked innermost-first while walking a new widget's
 #: ancestor chain. The DOM these match (measured on the media route, 119
 #: nodes) nests as: LibraryScreen > MainNavigationBar / Container#screen-content
-#: > Horizontal#library-shell-grid > LibraryMediaReaderShell > LibraryRail +
+#: > Horizontal#library-shell-grid > the route's reader shell > LibraryRail +
 #: Vertical#library-canvas > LibraryMediaCanvas + LibraryMediaViewer, plus
 #: AppFooterStatus#screen-footer-status. Bucketing on the OUTERMOST id instead
 #: would put the rail, the canvas and the header all in one "screen-content"
 #: heap, which is exactly the distinction the residency decision turns on.
+#:
+#: Phase C note: the browse routes' shell id is now
+#: ``library-browse-reader-shell`` (Media and Notes share ONE resident shell).
+#: Both ids are listed so a run against a PRE-phase-C commit and a run against
+#: a post-phase-C one bucket the same widgets into the same row -- this probe
+#: is the paired-comparison instrument, so a row that silently changes meaning
+#: between arms would be worse than useless. Only one of the two can ever be
+#: mounted in a single run.
 _REGION_RULES = (
     ("library-media-canvas", "canvas (media)"),
     ("library-notes-canvas", "canvas (notes)"),
     ("library-canvas", "canvas host"),
     ("library-media-viewer", "media viewer"),
     ("library-rail", "rail"),
+    ("library-browse-reader-shell", "reader shell (other)"),
     ("library-media-reader-shell", "reader shell (other)"),
     ("library-shell-grid", "shell grid (other)"),
     ("screen-footer-status", "footer"),

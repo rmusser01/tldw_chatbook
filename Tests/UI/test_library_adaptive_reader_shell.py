@@ -625,7 +625,16 @@ def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
     # #4 P2), not as focus. Focus is the accent recolour on the arrow glyph.
     assert "outline-top: solid $ds-action-focus;" not in source
     assert "outline-bottom: solid $ds-action-focus;" not in source
-    assert "#library-media-reader-shell > .library-media-pane-grip" not in source
+    # Phase C: the per-route shell ids are gone, so asserting the ABSENCE of
+    # one is now vacuous (nothing anywhere can spell it). What the original
+    # assertion protected -- that grip styling is expressed on the SHARED
+    # classes and never keyed to one route's shell -- is re-pinned positively
+    # against the ids that exist today.
+    assert "library-media-reader-shell" not in source
+    assert "library-notes-reader-shell" not in source
+    assert "#library-browse-reader-shell >" not in source
+    assert ".library-media-route >" not in source
+    assert ".library-notes-route >" not in source
 
 
 # ---------------------------------------------------------------------------

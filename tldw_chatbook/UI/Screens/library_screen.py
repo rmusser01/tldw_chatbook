@@ -22529,10 +22529,10 @@ class LibraryScreen(BaseAppScreen):
             # ``library-adaptive-reader-pane-grip`` is the SHARED base
             # class every destination's shell applies -- matching it
             # swallowed Space on the Notes/Prompts/Skills grips after an
-            # abandoned media selection. ``library-media-pane-grip`` is
-            # what ``LibraryBrowseReaderShell`` passes as ``grip_classes``
-            # (both grips get it); the surface guard mirrors the sibling
-            # ``library_media_toggle_select_mode`` branch above.
+            # abandoned media selection. ``library-media-pane-grip`` is what
+            # ``LibraryBrowseReaderShell.apply_route`` puts on both grips
+            # while Media owns the shared shell; the surface guard mirrors
+            # the sibling ``library_media_toggle_select_mode`` branch above.
             if not self._media_state.select_mode:
                 return False
             if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:

@@ -206,3 +206,42 @@ async def test_route_marker_class_tracks_the_selection_across_switches() -> None
             assert shell.has_class("library-notes-route") is not media_selected
             assert bool(screen.query(".library-media-route")) is media_selected
             assert bool(screen.query(".library-notes-route")) is not media_selected
+
+
+@pytest.mark.asyncio
+async def test_on_route_sync_is_not_refused_by_the_ownership_guard() -> None:
+    """The guard must refuse OFF-route syncs only -- pin both directions.
+
+    ``test_off_route_media_sync_is_refused_rather_than_repainting`` pins the
+    refusal. Nothing pinned the other direction, and the guard fails CLOSED:
+    ``_library_canvas_kind_owns_route`` refuses whenever the selected row is
+    not in the kind's owner set, so a row id that the map does not list would
+    silently stop the route's OWN canvas from ever repainting -- a dead canvas
+    rather than a loud error. That is exact today (every one of the
+    dispatcher's media/notes call sites runs with the matching row selected),
+    but "exact today" is precisely the kind of thing a test should hold still.
+
+    Mutation-verified: widening the guard to refuse the resident kinds
+    unconditionally leaves the off-route test green and reds this one.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=None, media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _enter_media_then_notes(host, pilot)
+
+        # On Notes: the Notes canvas is the one the route owns.
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert _sync_library_canvas(screen, "notes", allow_screen_fallback=False) is True
+        await _settle(pilot, passes=10)
+        assert screen.query_one("#library-notes-canvas").display
+
+        # And symmetrically on Media, so the pin is not notes-shaped.
+        await _press_rail_row(screen, pilot, LIBRARY_ROW_BROWSE_MEDIA)
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert _sync_library_canvas(screen, "media", allow_screen_fallback=False) is True
+        await _settle(pilot, passes=10)
+        assert screen.query_one("#library-media-canvas").display
