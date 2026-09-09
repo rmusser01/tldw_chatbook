@@ -177,6 +177,62 @@ async def test_folder_selection_is_exclusive_and_needs_no_destination() -> None:
         assert app.query_one("#note-import-check", Button).disabled is False
 
 
+async def test_folder_selection_summary_shows_absolute_path_with_basename_intact() -> (
+    None
+):
+    """task-32122 Step 3: the folder confirmation must show a real path, not a
+
+    basename -- and a long absolute path must middle-elide rather than lose
+    the trailing folder name a user actually recognizes their pick by.
+    """
+    long_path = (
+        "/Users/robert/Documents/deeply/nested/somewhere/notes-review-vault"
+    )
+    app = _CanvasApp(
+        _snapshot(
+            selected_names=(long_path,),
+            selection_kind="folder",
+            status_line="1 folder selected.",
+            can_check=True,
+            check_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        summary = _plain(app.query_one("#note-import-source-summary", Static))
+        assert summary.startswith("1 folder selected: ")
+        assert "notes-review-vault" in summary
+        assert "…" in summary
+        assert "/Users/robert/Documents/deeply/nested/somewhere" not in summary
+
+
+async def test_long_bare_filename_in_files_list_head_truncates_not_tail() -> None:
+    """Review round 2 escalated minor: a bare filename (no "/") has no
+
+    basename/prefix split for elide_path_middle to preserve, so it used to
+    silently fall through to keeping the *tail* instead of the *head* --
+    changing the pre-existing files-list truncation direction. Must still
+    head-truncate, matching every name a user actually recognizes a file by
+    (the start, not whatever happens to be 47 characters before the end).
+    """
+    long_name = "a" * 60 + ".md"
+    app = _CanvasApp(
+        _snapshot(
+            selected_names=(long_name,),
+            selection_kind="files",
+            destination="Inbox",
+            can_check=True,
+            check_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(80, 28)) as pilot:
+        await pilot.pause()
+        summary = _plain(app.query_one("#note-import-source-summary", Static))
+        assert summary == f"1 file selected: {long_name[:47]}…"
+
+
 async def test_select_controls_post_typed_physical_messages() -> None:
     app = _CanvasApp(
         _snapshot(

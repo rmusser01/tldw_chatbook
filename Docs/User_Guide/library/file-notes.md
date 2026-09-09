@@ -87,7 +87,7 @@ Using compact **Back to navigator** does not reset it.
 
 | Control | What it does |
 |---|---|
-| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml |
+| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. Type into the **Folder path** field and either press Enter (browses into it) or click **Select** (uses it right away, without needing Enter first); an invalid path shows an inline reason and leaves the picker open |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
 | **Cancel** (folder change) | Appears beside **Change…** only while a folder change is running. Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
@@ -462,3 +462,10 @@ there; a slow scan reports its entry count and offers Keep waiting / Choose
 another. task-32136: Folder files keeps the Library rail and the source
 strip at wide sizes, and its empty state explains the mode and offers the
 configured `[notes] sync_directory` folder.)*
+*Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
+"Choose File Notes Folder" picker used to commit the directory being
+browsed and silently ignore a typed-but-unsubmitted path when **Select**
+was pressed. It now resolves the **Folder path** field first — Enter still
+browses into it, and Select uses it immediately, with an inline error and
+the picker left open for an invalid path. Pinned in
+`Tests/UI/test_select_directory_typed_path.py`.)*

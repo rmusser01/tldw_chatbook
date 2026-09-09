@@ -261,6 +261,40 @@ def truncate_content(content: Optional[str], max_length: int = 200) -> Optional[
     return content[: max_length - 3] + "..."
 
 
+def elide_path_middle(path: str, budget: int = 48) -> str:
+    """Middle-elide a filesystem path, keeping the basename intact.
+
+    Unlike a plain tail-truncate, this never hides the last path component
+    (the part after the final "/") -- the fragment a user actually
+    recognizes their file/folder pick by (task-32122 Step 3: "1 folder
+    selected: /Users/.../vault" beats "1 folder selected: notes-review",
+    which silently discarded the rest of the path, and beats a naive
+    "...robert/Doc..." head-truncate, which discards the very name the
+    user just picked).
+
+    Args:
+        path: The path to display.
+        budget: Maximum character length; falls back to a bare basename
+            (further tail-truncated if needed) when even that overflows.
+
+    Returns:
+        ``path`` unchanged when it already fits, else an elided string of
+        at most ``budget`` characters.
+    """
+    if len(path) <= budget:
+        return path
+    ellipsis = "…"
+    basename = path.rsplit("/", 1)[-1]
+    head_budget = budget - len(ellipsis) - len(basename)
+    if head_budget > 0:
+        return f"{path[:head_budget]}{ellipsis}{basename}"
+    # Even the basename alone doesn't fit the budget; keep its own tail
+    # (extensions/distinguishing suffixes live at the end) instead of an
+    # unreadable head fragment.
+    tail_budget = max(budget - len(ellipsis), 0)
+    return f"{ellipsis}{basename[-tail_budget:]}" if tail_budget else ellipsis
+
+
 #
 # End of Misc-Functions
 #######################################################################################################################
