@@ -1734,3 +1734,79 @@ and empty SQLite paths. Runtime source remains frozen during these runs.
 At this checkpoint the published PR head is still `83f48123fcabcb0b00ae8291f36602dc47aee94d`;
 publication, fresh final-head Qodo completion, latest-base reconciliation and
 normal required checks remain open. No further approval is pending.
+
+### Wave-eleven publication and first complete retry (2026-09-09 UTC)
+
+The reviewed checkpoint is now published at
+`6b28349df17308bf1483b99fe3b010ec711bc995`, confirmed remotely after an exact
+force-with-lease against `83f48123fcabcb0b00ae8291f36602dc47aee94d`.
+Manual Qodo request `5595442919` received fresh exact-head completion
+`5595471395`. It reports zero bugs and one new transaction-rule finding
+(`3964446586`), now under technical review; earlier resolved/dismissed entries
+are historical, not new failures.
+
+Complete retry cohort A finished **754 passed, 2 skipped, 4 warnings in
+455.68 seconds**. JUnit confirms 756 cases, zero errors and zero failures.
+The skips are the Windows spawn/resource-tracker boundary and the explicitly
+deferred TASK-32070 Search/RAG keyboard case. Cohort B subsequently finished
+**518 passed, 3 warnings in 445.64 seconds**. Cohort C and native qualification
+remain active; D has not yet started. Source is still frozen.
+
+The two complete resource-control files relevant to the new Qodo finding passed
+**25 tests, 2 warnings in 2.83 seconds**, exit zero
+(`/private/tmp/pr2427-wave11-qodo-borrowed.log`). The flagged raw SQLite setup
+intentionally creates a caller-owned transaction which must remain open across
+executor submission and drain. `ThreadDatabase` is a minimal real-SQLite double,
+not the production transaction API; separate real-database lifecycle controls
+already use `database.transaction()`. The production transaction manager also
+explicitly documents native caller-owned transactions at managed depth zero.
+Do not remove that borrowed-work sentinel merely to satisfy a blanket rule.
+Independent assessment agreed that no fix is warranted. Thread reply
+`3964470606` records the preserved ownership invariant and fresh 25-test
+evidence; thread `PRRT_kwDOOcyyl86gfuKh` was then resolved. This was an
+evidence-backed rejection of an inapplicable recommendation, not a code fix.
+
+GitHub reports the published head DIRTY against newer dev. Reconcile the
+actual new base only after the frozen qualification finishes; no normal merge
+is yet authorized by the verification results.
+
+### Wave-eleven terminal results and next integration (2026-09-09 UTC)
+
+Native Library qualification ended **850 passed, 1 failed, 10 warnings in
+1425.41 seconds**, with final `exit_code: 1` and `sqlite_paths: []`. The failure
+was `test_library_media_initial_error_is_unknown_and_retry_is_unique`; its
+diagnostic showed the expected type-filter focus, so another conjunct in the
+readiness predicate failed. This establishes clean native resource retirement,
+not a green suite. Cohort C ended **355 passed, 3 failed, 3 warnings in
+441.69 seconds**: analysed-secondary floor width, Trash Back toolbar focus,
+and the Skills status fake's missing real helper. The chained D did not start
+after that failure; its separate complete-file run then passed **160 tests,
+3 warnings in 63.18 seconds**.
+
+The exact C failure rerun reproduced the floor and status failures while Trash
+passed (**2 failed, 1 passed in 20.44 seconds**). The native Retry case passed
+alone (**1 passed in 3.17 seconds**). Ten fresh-process repetitions of the
+Retry/Trash pair each passed both cases (20 passes total); these isolated
+passes do not explain or repair the intermittent full-run failures. The Retry
+failure message now includes total, Retry count and error presence alongside
+focus, without exposing error bodies or weakening the predicate. Evidence:
+`/private/tmp/pr2427-wave11-{c-failures-red,native-failure-red,focus-1,focus-2,focus-3,focus-4,focus-5,focus-6,focus-7,focus-8,focus-9,focus-10}.log`.
+
+Step 74 aligns the two reproduced fixtures with accepted upstream behavior.
+The floor test pins resolved Items width 36 and actual canvas content width 32
+(TASK-32060), retaining complete painted analysed text and no-ellipsis checks.
+The Skills fake binds four real status/wait helpers with empty wait state,
+retaining visible/hidden-row and no-recompose assertions. Both repaired cases
+pass (**2 passed, 3 warnings in 5.10 seconds**), and all three edited Python
+files are Ruff-clean; diff-check passes. Complete affected-file qualification
+and the two intermittent failures remain open.
+
+Fresh fetch after all frozen cohorts finished found dev
+`733f7a628c064005d27bed8bbcf53aae01b5dd45`: PR #2526, 136 changed files,
+including accepted independent Buddy ownership/schema 70 and scheduler startup
+deferral. ADR-139 was read and governs the retained incoming behavior. The
+Library runtime delta is one existing WorkspaceCreateModal persona-service
+argument; broader app/Console/schema/CSS changes still require affected offline
+qualification and diagnostic-delta review. Preserve current work before rebasing
+the exact reviewed range onto this base; do not raise ratchets or reinterpret
+upstream explicit target/approval/ownership rules.
