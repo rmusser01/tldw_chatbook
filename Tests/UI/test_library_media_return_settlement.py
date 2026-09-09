@@ -1059,10 +1059,18 @@ async def test_route_change_rejects_later_geometry_settlement(
             lambda: screen._library_selected_row_id != "library-row-browse-media",
             message="Route did not leave Media.",
         )
+        # Phase C (resident browse canvas): leaving Media no longer DETACHES
+        # its owner -- the media canvas stays mounted and is hidden, which is
+        # the whole point of the residency change. The precondition this line
+        # is standing in for is "the departed route no longer shows its Media
+        # presentation", and the assertions below are unchanged: a geometry
+        # settlement arriving after the route change must still be rejected,
+        # and focus must still not land on a media row.
         await _wait_for_condition(
             pilot,
-            lambda: not owner.is_attached,
-            message="Departed route did not detach its Media owner.",
+            lambda: not owner.is_attached
+            or not screen.query_one("#library-media-canvas").display,
+            message="Departed route still shows its Media owner.",
         )
         monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
         owner.on_resize(
