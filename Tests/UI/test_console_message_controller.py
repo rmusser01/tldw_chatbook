@@ -50,7 +50,10 @@ from tldw_chatbook.Canvas.compiler import CanvasCompileError
 from tldw_chatbook.Canvas.gateway import CanvasGatewayScope
 from tldw_chatbook.Canvas.models import CanvasCompatibilityIssue
 from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import ConsoleTranscriptStyle
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -546,6 +549,97 @@ def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
 
     store.create_session(ephemeral=True)
     assert screen._message._console_canvas_publication_is_current(publication) is False
+
+
+def test_canvas_publication_guard_accepts_restored_native_and_persisted_origins() -> None:
+    """A restored branch accepts either identity for the same saved message."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    root = ConsoleChatMessage(
+        id="native-root",
+        persisted_message_id="persisted-root",
+        role=ConsoleMessageRole.USER,
+        content="root",
+    )
+    left = ConsoleChatMessage(
+        id="native-left",
+        persisted_message_id="persisted-left",
+        parent_message_id="persisted-root",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="left",
+    )
+    right = ConsoleChatMessage(
+        id="native-right",
+        persisted_message_id="persisted-right",
+        parent_message_id="persisted-root",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="right",
+    )
+    first = store.restore_persisted_session(
+        title="Saved Canvas branch",
+        workspace_id=None,
+        persisted_conversation_id="persisted-conversation",
+        all_nodes=(root, left, right),
+        active_leaf_persisted_id="persisted-left",
+    )
+
+    def publication(*origin_ids: str, conversation_id: str = "persisted-conversation"):
+        return SimpleNamespace(
+            scope=SimpleNamespace(
+                session_id=first.id,
+                conversation_id=conversation_id,
+            ),
+            revisions=tuple(
+                SimpleNamespace(origin=SimpleNamespace(message_id=origin_id))
+                for origin_id in origin_ids
+            ),
+        )
+
+    native_publication = publication(left.id)
+    persisted_publication = publication("persisted-left")
+    assert left.id != left.persisted_message_id
+    assert (
+        screen._message._console_canvas_publication_is_current(native_publication)
+        is True
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(persisted_publication)
+        is True
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(
+            publication(left.id, right.id)
+        )
+        is False
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(
+            publication(left.id, conversation_id="other-conversation")
+        )
+        is False
+    )
+
+    store.set_active_leaf(first.id, right.id)
+    assert (
+        screen._message._console_canvas_publication_is_current(native_publication)
+        is False
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(persisted_publication)
+        is False
+    )
+
+    store.set_active_leaf(first.id, left.id)
+    store.create_session(ephemeral=True)
+    assert (
+        screen._message._console_canvas_publication_is_current(native_publication)
+        is False
+    )
+    assert (
+        screen._message._console_canvas_publication_is_current(persisted_publication)
+        is False
+    )
 
 
 def test_canvas_composer_sink_validates_exact_session_and_branch_target():

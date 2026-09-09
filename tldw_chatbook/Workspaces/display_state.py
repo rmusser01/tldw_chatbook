@@ -309,7 +309,22 @@ def library_workspace_handoff_action_state(
     recovery_tooltip: str | None,
     has_local_sources: bool,
 ) -> tuple[bool, str]:
-    """Return the Library handoff blocked flag and its current policy tooltip."""
+    """Return the Library handoff blocked flag and its current policy tooltip.
+
+    Args:
+        workspace_depth_state: Current workspace's source-handoff eligibility
+            and explanation, used after lookup and local-source checks pass.
+        lookup_error: Whether source lookup failed; this blocks the action
+            before considering source availability or workspace policy.
+        recovery_tooltip: Lookup-failure explanation, or None for the default
+            service-unavailable recovery copy.
+        has_local_sources: Whether notes, media, or conversations are available
+            to stage; an empty source set blocks handoff with setup guidance.
+
+    Returns:
+        A pair of the disabled flag and tooltip explaining the block or the
+        available action. False means local sources may be staged in Console.
+    """
     handoff_disabled = True
     handoff_tooltip = "Stage Library source context after Library finishes loading."
     if lookup_error:
