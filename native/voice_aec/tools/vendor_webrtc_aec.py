@@ -104,7 +104,11 @@ COMPILE_TARGET_ALLOWLIST = (
     "//system_wrappers:field_trial",
     "//system_wrappers:metrics",
 )
-COMPILE_SOURCE_ALLOWLIST = ("rtc_base/race_checker.cc",)
+COMPILE_SOURCE_ALLOWLIST = (
+    "rtc_base/race_checker.cc",
+    # Owned by //system_wrappers:system_wrappers; cpu_features_api is header-only.
+    "system_wrappers/source/cpu_features.cc",
+)
 METADATA_FILES = frozenset(
     {
         "COMPILER_DEFINES.cmake",
@@ -119,7 +123,7 @@ METADATA_FILES = frozenset(
 MANIFEST_NAME = "FILES.sha256"
 PRISTINE_MANIFEST_NAME = "PRISTINE_FILES.sha256"
 PRISTINE_MANIFEST_SHA256 = (
-    "e9a42c702eea0c1b0faa6aa0d11ba8b501c7c052f18ee837a77923f81e12314c"
+    "596ddbb3291fc5fd432376ef4bdfee6fed67bd999709638d68436f2b1ef041a4"
 )
 PATCH_NAME = "0001-expose-delay-health-evidence.patch"
 PATCH_SHA256 = "94f2a8dad384194c8b3ffb63695287ae7a046e1136b4357b9b3d048579ad3a1c"
@@ -139,7 +143,7 @@ PATCH_SERIES = "# WebRTC AEC3 patch series\n\n" + "".join(
     for number, (name, digest) in enumerate(PATCHES, 1)
 )
 NOTICE_GENERATION_VERSION = 2
-COMPILE_CLOSURE_FILE_COUNT = 315
+COMPILE_CLOSURE_FILE_COUNT = 316
 WEBRTC_LICENSE_SHA256 = (
     "ab00a482b6a3902e40211b43c5d0441962ea99b6cc7c25c0f243fa270b78d482"
 )

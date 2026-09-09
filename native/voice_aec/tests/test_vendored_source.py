@@ -124,7 +124,7 @@ def test_upstream_metadata_pins_exact_official_revision() -> None:
     assert metadata["import_timestamp"] == COMMIT_TIMESTAMP
     assert metadata["roots"] == BROAD_ROOTS
     assert metadata["file_allowlist"] == FILE_ALLOWLIST
-    assert metadata["compile_closure_file_count"] == 315
+    assert metadata["compile_closure_file_count"] == 316
     assert metadata["compiler_defines"] == DEFINES
     assert metadata["license_path"] == "LICENSE"
     assert metadata["patent_notice_path"] == "PATENTS"
@@ -547,7 +547,7 @@ def test_custom_vendor_output_uses_an_adjacent_notices_path(
     }
 
 
-def test_compile_closure_contains_exactly_315_files() -> None:
+def test_compile_closure_contains_exactly_316_files() -> None:
     metadata = _metadata()
     entries = {relative_path for _, relative_path in _manifest()}
     non_closure = {
@@ -561,7 +561,7 @@ def test_compile_closure_contains_exactly_315_files() -> None:
         "third_party/abseil-cpp/LICENSE",
     }
 
-    assert len(entries - non_closure) == 315
+    assert len(entries - non_closure) == 316
     assert metadata["compile_closure_file_count"] == len(entries - non_closure)
 
 
@@ -583,6 +583,31 @@ def test_native_link_implementations_are_in_compile_closure(relative_path: str) 
 def test_compile_closure_excludes_unapproved_api_implementations() -> None:
     assert not (VENDOR_ROOT / "api/rtp_packet_info.cc").exists()
     assert not (VENDOR_ROOT / "api/task_queue").exists()
+
+
+def test_cpu_feature_implementation_is_exact_pinned_compile_source() -> None:
+    relative = "system_wrappers/source/cpu_features.cc"
+    tool = _load_tool()
+    assert relative in tool.COMPILE_SOURCE_ALLOWLIST
+    source = (VENDOR_ROOT / relative).read_bytes()
+    assert len(source) == 2044
+    assert hashlib.sha256(source).hexdigest() == (
+        "e4bac0600ca4a36436431db0e1377886c98a5362eb2a403a40c83dc53b85f643"
+    )
+    assert hashlib.sha1(b"blob 2044\0" + source).hexdigest() == (
+        "ebcb48c15fb20ddeda6c5844e097d7b2835cbd81"
+    )
+    assert tool._pristine_manifest_entries(VENDOR_ROOT)[relative] == _sha256(
+        VENDOR_ROOT / relative
+    )
+    old_ledger = b"".join(
+        line
+        for line in PRISTINE_MANIFEST_PATH.read_bytes().splitlines(keepends=True)
+        if not line.endswith(f"  {relative}\n".encode())
+    )
+    assert hashlib.sha256(old_ledger).hexdigest() == (
+        "e9a42c702eea0c1b0faa6aa0d11ba8b501c7c052f18ee837a77923f81e12314c"
+    )
 
 
 def test_every_quoted_include_resolves_inside_vendor_tree() -> None:
@@ -788,16 +813,20 @@ def test_pristine_manifest_is_independently_anchored_and_complete() -> None:
 
     assert PRISTINE_MANIFEST_PATH.is_file()
     assert _sha256(PRISTINE_MANIFEST_PATH) == tool.PRISTINE_MANIFEST_SHA256
-    assert len(tool._pristine_manifest_entries(VENDOR_ROOT)) == 315
+    assert len(tool._pristine_manifest_entries(VENDOR_ROOT)) == 316
 
 
+@pytest.mark.parametrize(
+    "relative_path", ["rtc_base/checks.h", "system_wrappers/source/cpu_features.cc"]
+)
 def test_vendor_verifier_rejects_rehashed_undeclared_source_edit(
     tmp_path: Path,
+    relative_path: str,
 ) -> None:
     copied = tmp_path / "webrtc"
     shutil.copytree(VENDOR_ROOT, copied)
-    checks = copied / "rtc_base" / "checks.h"
-    checks.write_bytes(checks.read_bytes() + b"\n// undeclared source edit\n")
+    source = copied / relative_path
+    source.write_bytes(source.read_bytes() + b"\n// undeclared source edit\n")
     tool = _load_tool()
     tool._write_manifest(copied)
 

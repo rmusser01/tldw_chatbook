@@ -470,6 +470,7 @@ native/voice_aec/vendor/webrtc/rtc_base/units/unit_base.h
 native/voice_aec/vendor/webrtc/system_wrappers/include/cpu_features_wrapper.h
 native/voice_aec/vendor/webrtc/system_wrappers/include/field_trial.h
 native/voice_aec/vendor/webrtc/system_wrappers/include/metrics.h
+native/voice_aec/vendor/webrtc/system_wrappers/source/cpu_features.cc
 native/voice_aec/vendor/webrtc/system_wrappers/source/field_trial.cc
 native/voice_aec/vendor/webrtc/system_wrappers/source/metrics.cc
 native/voice_aec/vendor/webrtc/third_party/abseil-cpp/LICENSE

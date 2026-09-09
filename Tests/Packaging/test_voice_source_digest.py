@@ -19,6 +19,7 @@ from tldw_chatbook.Audio import voice_process_lifetime
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_PATH_LIST = _PROJECT_ROOT / "Packaging/speculative_voice_source_paths.txt"
 _REQUIRED_CURRENT_SCOPE = {
+    "native/voice_aec/vendor/webrtc/system_wrappers/source/cpu_features.cc",
     "tldw_chatbook/DB/migrations/chachanotes_v68_to_v69_console_trace_source_pin.sql",
     "Tests/Chat/test_console_runtime_lazy_voice.py",
     "native/voice_aec/patches/0002-include-stddef-for-clockdrift-detector.patch",

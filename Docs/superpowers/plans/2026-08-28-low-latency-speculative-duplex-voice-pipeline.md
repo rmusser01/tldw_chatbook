@@ -302,7 +302,10 @@ allowlisted roots `api/audio`, `common_audio`, `modules/audio_processing`, `rtc_
 `api/video/video_rotation.h`, `api/video/video_timing.h`, and `common_types.h`. It
 rejects every other path, including other files under `api`; the allowlist must not be
 broadened to the entire directory. After adding the exact support implementations
-required at native link time, the verified source and link closure contains 315 files.
+required at native link time, the verified source and link closure contains 316 files.
+The additional exact `system_wrappers/source/cpu_features.cc` supplies the CPU API
+definition omitted from the earlier 315-file closure; select that source alone,
+preserving every original pristine entry and the existing integration patches.
 Abseil comes from WebRTC's exact Chromium `src/third_party` DEPS pin
 `ac875ae5393d0516243cfd5d078cd4b098388f6b`, and both upstream revisions must be
 recorded in provenance. No additional external dependency or source patch is required;

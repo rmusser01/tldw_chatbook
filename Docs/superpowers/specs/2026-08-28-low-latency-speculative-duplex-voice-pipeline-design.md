@@ -226,7 +226,10 @@ The native package vendors a verified compile closure from WebRTC commit
 The allowlist must not be broadened to all of `api`. These exceptions are the minimal
 recursive include closure required by `AudioBuffer` through `AudioFrame`; after adding
 the exact support implementations required at native link time, the verified source and
-link closure contains 315 files and introduces no additional external dependency.
+link closure contains 316 files and introduces no additional external dependency.
+This includes the exact pinned `system_wrappers/source/cpu_features.cc` implementation
+omitted from the earlier 315-file closure; it is selected individually, without the
+rest of its owning `//system_wrappers:system_wrappers` target.
 Abseil is copied from WebRTC's exact Chromium `src/third_party` DEPS pin
 `ac875ae5393d0516243cfd5d078cd4b098388f6b`. Both upstream revisions are recorded in
 package provenance. The imported source initially has no patches. Integration testing
@@ -236,7 +239,7 @@ through the public metrics seam. A second patch adds `<stddef.h>` directly to th
 clock-drift header for its global `size_t`. A third adds `<memory>` directly to the
 reverb-model header for its `std::unique_ptr`. All three patches and their SHA-256 hashes are
 checked in, applied by the deterministic vendoring recipe, and covered by the source
-manifest; the 315-file pristine closure and pinned
+manifest; the 316-file pristine closure and pinned
 upstream commit and tree remain the provenance root.
 
 AEC health states are `warming`, `healthy`, and `degraded`. Health uses residual echo,
