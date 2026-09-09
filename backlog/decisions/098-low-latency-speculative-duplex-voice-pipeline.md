@@ -129,6 +129,10 @@ file-descriptor protection with a small session-owned spawn worker.
    the existing target-scoped provenance definition mapping, preventing legacy
    Winsock declarations from colliding with explicit Winsock 2 includes. This
    configuration correction adds no upstream patch and changes no pristine byte.
+   The Windows target also declares its existing `timeGetTime` dependency through
+   transitive `winmm` linkage, matching the pinned upstream timeutils target.
+   Winmm remains an operating-system library, not a bundled wheel payload or a
+   new third-party dependency; no DLL/archive validation rule is relaxed.
    No synthetic probabilistic confidence is
    treated as native evidence.
 

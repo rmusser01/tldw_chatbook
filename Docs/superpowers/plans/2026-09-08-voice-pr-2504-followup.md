@@ -133,6 +133,19 @@ The constructor audit also required lazy creation behind the existing gateway re
     the complete upstream subtree pin stays unchanged. Existing old-315 and
     CPU-addition controls remain, and removing precisely these six additions
     must recover the old-316 ledger byte-for-byte. No whole GN target import.
+12. Run `34302675575` at `4effec1421` compiles Windows sources successfully but
+    fails linking the existing `time_utils.cc` reference to `timeGetTime`.
+    The pinned upstream timeutils target declares `winmm.lib`; restore this
+    existing platform dependency with a WIN32-only
+    `target_link_libraries(webrtc_aec3 PUBLIC winmm)` so the static library's
+    consumer receives it. Add a focused file-only RED/GREEN guard for exact
+    Windows-only transitive target linkage, not compiler execution. Keep all
+    source, patch, definition, legal, qualification and version bytes unchanged.
+    The existing repair tool treats Winmm as a Windows system library; do not
+    bundle a DLL or relax archive checks. Existing ADR-098 covers the platform
+    boundary; this restores the upstream system link, not a new runtime choice.
+    Obtain a focused review, then use only normal automatic PR CI for native
+    link/import proof. No local build/load, manual workflow or merge.
 
 ## Final root-owned handoff
 
@@ -259,3 +272,23 @@ all three patches and the Windows definition remain intact; scoped lint/format
 and the actual full offline verifier pass. These are file-level results, not
 local native execution or final hosted-platform evidence. The complete repair
 requires its focused combined review and automatic CI before handoff.
+
+## Third automatic CI follow-up — 2026-09-08
+
+The focused x86 repair review approved with no findings. A clean, no-overlap
+rebase onto dev `80f29a9a1dcd9307662714233c65605e4c517b11` produced published
+`4effec1421`; the entire incoming binary diff equals the resulting tree delta.
+Eight selected new-dev/boot cases passed with UI-ready unchanged at 972/973.
+Automatic run `34302675575` passes Linux x86, Linux ARM and macOS ARM completely;
+Intel macOS is still running at this checkpoint. Every non-native check passes.
+All six original review threads remain addressed, with auto-merge disabled.
+
+Windows compiled all sources but exposed the missing upstream Winmm system link
+at final linking. Step 12 restores only that target-owned transitive dependency.
+Commit `e57c28b58a` contains CMake and one static regression: the new guard failed
+before the fix, then four exact file-level guards passed, with scoped lint/format
+and diff checks passing. No source, patch, definition, inventory, legal, version,
+qualification or archive-policy bytes changed. These are file-level proofs;
+normal automatic Windows CI must establish native link/import success. The
+focused review and next automatic run remain required before final handoff.
+No local native execution, full suite, live audio, manual workflow or merge ran.
