@@ -91,4 +91,23 @@ completion_toast_reports_dedup_as_already_in_library): 4 passed. The parts
 order deliberately leads with failures ('N failed · M skipped', matching the
 task's own copy spec) and is now pinned by
 test_completion_toast_orders_failed_before_skipped.
+REVIEW ROUND 2 (PR #2523, Qodo — two Correctness findings):
+
+1. "Link to workspace" now sits behind the SAME loaded_actions_eligible
+fence as the hand-off, and _link_selected_conversation_to_workspace
+re-checks it before writing. The remedy persists membership for the
+RETAINED loaded_id, so while a newly selected conversation was still
+loading the link would have written the conversation the user had just
+navigated away from.
+
+2. The disabled hand-off no longer names a control it is not showing. The
+tooltip answers the load fence first, and for a block linking cannot
+resolve it repeats the eligibility rule's own recovery sentence (with no
+active workspace: "Select an active workspace before using this item in
+Console.") instead of "Press 'Link to workspace'". That sentence reaches
+the pure widget as a third computed-metadata key, _workspace_block_detail;
+_library_conversation_workspace_block returns (reason, link_resolves_it,
+detail) and had been discarding the copy it already computed. AC#3's
+recorded exception is therefore narrower than shipped: the no-workspace
+case now carries its remedy on the control, not only in a message.
 <!-- SECTION:NOTES:END -->

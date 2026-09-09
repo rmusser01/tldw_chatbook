@@ -11898,7 +11898,7 @@ class LibraryScreen(BaseAppScreen):
 
 
 
-    def _library_conversation_workspace_block(self) -> tuple[str, bool]:
+    def _library_conversation_workspace_block(self) -> tuple[str, bool, str]:
         """Return the reader's inline workspace refusal (task-32056).
 
         The DECISION is the very call the press makes --
@@ -11910,31 +11910,35 @@ class LibraryScreen(BaseAppScreen):
         reason code has no short label still blocks, under a generic one.
 
         Returns:
-            ``(reason, link_resolves_it)`` -- ``("", False)`` when the
-            conversation is eligible or nothing is loaded. ``reason`` is a
-            short phrase for the blocked control ("not in this workspace");
-            ``link_resolves_it`` is True only for the reason codes
-            "Link to workspace" actually fixes, so the remedy is never
-            offered where it would not work.
+            ``(reason, link_resolves_it, detail)`` -- ``("", False, "")``
+            when the conversation is eligible or nothing is loaded.
+            ``reason`` is a short phrase for the blocked control ("not in
+            this workspace"); ``link_resolves_it`` is True only for the
+            reason codes "Link to workspace" actually fixes, so the remedy
+            is never offered where it would not work; ``detail`` is the
+            eligibility rule's own recovery sentence, which the tooltip
+            keeps for the blocks linking cannot resolve (review round 2 --
+            the generic label alone dropped "Select an active workspace").
         """
         conversation_id = str(
             self._conversations_state.reader_state.loaded_id or ""
         ).strip()
         if not conversation_id:
-            return "", False
+            return "", False, ""
         state = self._library_workspace_depth_state()
-        eligible, _reason_copy = library_item_context_handoff(
+        eligible, reason_copy = library_item_context_handoff(
             state, item_type="conversation", item_id=conversation_id
         )
         if eligible:
-            return "", False
+            return "", False, ""
+        detail = str(reason_copy or "").strip()
         for row in state.source_rows:
             if row.item_type == "conversation" and row.item_id == conversation_id:
                 label = linkable_ineligibility_label(row.reason_code)
                 if label:
-                    return label, True
+                    return label, True, detail
                 break
-        return LIBRARY_GENERIC_WORKSPACE_BLOCK, False
+        return LIBRARY_GENERIC_WORKSPACE_BLOCK, False, detail
 
     def _library_conversation_handoff_ready(self) -> bool:
         """Whether the Conversations Console hand-off may run right now.
@@ -11957,6 +11961,12 @@ class LibraryScreen(BaseAppScreen):
         the registry, the active workspace, or the loaded conversation is
         missing -- each of those already blocks the action's own affordance.
         """
+        # (review round 2) This writes membership for the RETAINED
+        # ``loaded_id``. The same fence that hides the button re-checks here,
+        # so no sync window can persist the conversation the user already
+        # navigated away from.
+        if not self._conversations_state.reader_state.loaded_actions_eligible:
+            return
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         notify = getattr(self.app_instance, "notify", None)
         conversation_id = str(
@@ -13282,6 +13292,7 @@ class LibraryScreen(BaseAppScreen):
             (
                 reader_metadata["_workspace_block"],
                 reader_metadata["_workspace_block_linkable"],
+                reader_metadata["_workspace_block_detail"],
             ) = self._library_conversation_workspace_block()
             reader = LibraryConversationReader(
                 self._conversations_state.reader_state,
@@ -32069,7 +32080,13 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversation-link-workspace")
     def link_selected_conversation_to_workspace(self, event: Button.Pressed) -> None:
-        """Perform the remedy the blocked hand-off names (task-32056)."""
+        """Perform the remedy the blocked hand-off names (task-32056).
+
+        Args:
+            event: The "Link to workspace" press, stopped here so the
+                Library shell's generic canvas-button handlers do not also
+                act on it.
+        """
         event.stop()
         self._link_selected_conversation_to_workspace()
 

@@ -73,10 +73,23 @@ class LibraryConversationReader(Vertical):
         """
         return str(self.loaded_metadata.get("_workspace_block") or "").strip()
 
+    def _workspace_block_detail(self) -> str:
+        """Return the eligibility rule's own sentence for this block, if any."""
+        return str(self.loaded_metadata.get("_workspace_block_detail") or "").strip()
+
     def _workspace_link_offered(self) -> bool:
-        """Whether "Link to workspace" would actually resolve the block."""
-        return bool(self._workspace_block()) and bool(
-            self.loaded_metadata.get("_workspace_block_linkable")
+        """Whether "Link to workspace" would actually resolve the block.
+
+        (review round 2) Fenced by ``loaded_actions_eligible`` like every
+        other action here: the remedy writes membership for the RETAINED
+        ``loaded_id``, so while a newly selected conversation is still
+        loading the visible-but-stale transcript would otherwise be the one
+        linked.
+        """
+        return (
+            self.state.loaded_actions_eligible
+            and bool(self._workspace_block())
+            and bool(self.loaded_metadata.get("_workspace_block_linkable"))
         )
 
     def _actions_enabled(self) -> bool:
@@ -99,14 +112,27 @@ class LibraryConversationReader(Vertical):
         )
 
     def _open_console_tooltip(self) -> str | None:
-        """Return the current reason the hand-off cannot run."""
+        """Return the current reason the hand-off cannot run.
+
+        (review round 2) The load fence answers first -- while it holds, the
+        workspace block is not the reason the press is unavailable -- and the
+        remedy is only NAMED when it is actually on screen. A block linking
+        cannot resolve keeps the eligibility rule's own recovery sentence
+        ("Select an active workspace...") instead of pointing at a hidden
+        button.
+        """
+        load_block = _open_console_disabled_tooltip(self.state)
+        if load_block:
+            return load_block
         blocked = self._workspace_block()
-        if blocked:
+        if not blocked:
+            return None
+        if self._workspace_link_offered():
             return (
                 f"This conversation is {blocked}. Press 'Link to workspace' "
                 "to add it to the active workspace."
             )
-        return _open_console_disabled_tooltip(self.state)
+        return self._workspace_block_detail() or f"This conversation is {blocked}."
 
     def compose(self) -> ComposeResult:
         """Compose stable controls and the initially available transcript."""

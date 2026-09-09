@@ -801,10 +801,11 @@ Escape's return to the list live at 100x30).*
   disabled, and a **"Link to workspace"** button beside it performs the
   remedy. The `c` accelerator refuses in exactly the same cases, so the key
   never reaches a refusal the button already explains. A block that linking
-  cannot resolve reads "· blocked for this workspace" and offers no link.
-  The one case still answered only by a message is having no active
-  workspace at all — select one first. The same gate guards the other
-  "Use in Console" actions.
+  cannot resolve reads "· blocked for this workspace" and offers no link —
+  hovering the disabled action gives that block's own remedy (with no active
+  workspace: "Select an active workspace before using this item in
+  Console."), never a link button that is not on screen. The same gate
+  guards the other "Use in Console" actions.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent

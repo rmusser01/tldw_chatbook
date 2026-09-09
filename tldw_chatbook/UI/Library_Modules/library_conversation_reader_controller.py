@@ -147,7 +147,7 @@ class LibraryConversationReaderController:
         notes_focus_intent_generation_accessor: Callable[[], int],
         selected_row_id_accessor: Callable[[], str],
         selected_conversation_id_accessor: Callable[[], str],
-        library_conversation_workspace_block: Callable[[], str],
+        library_conversation_workspace_block: Callable[[], tuple[str, bool, str]],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -212,9 +212,10 @@ class LibraryConversationReaderController:
                 ``library_screen.py`` falls outside this cluster's 21
                 methods.
             library_conversation_workspace_block: ``LibraryScreen.
-                _library_conversation_workspace_block`` -- the short inline
-                reason the open conversation cannot be staged into the
-                active workspace, or "" when it can (task-32056).
+                _library_conversation_workspace_block`` -- ``(reason,
+                link_resolves_it, detail)`` for the open conversation's
+                workspace refusal, or ``("", False, "")`` when it can be
+                staged (task-32056).
             selected_conversation_id_accessor: Reads ``LibraryScreen.
                 _selected_conversation_id`` -- a per-source "currently
                 selected" field parallel to ``_media_state.selected_media_id``/
@@ -383,6 +384,7 @@ class LibraryConversationReaderController:
         (
             metadata["_workspace_block"],
             metadata["_workspace_block_linkable"],
+            metadata["_workspace_block_detail"],
         ) = self._library_conversation_workspace_block()
         reader.sync_state(
             self._library_conversation_reader_state,

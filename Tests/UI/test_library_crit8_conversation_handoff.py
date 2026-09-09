@@ -321,3 +321,101 @@ async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None
             is False
         )
         assert screen.check_action("library_conversation_open_console", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_link_is_withheld_while_the_selection_outruns_the_transcript(
+    widget_pilot,
+) -> None:
+    """Review round 2: the remedy writes ``loaded_id``, so it obeys the load fence.
+
+    Selecting another conversation leaves the previous transcript on screen
+    until the new one loads; offering "Link to workspace" there would link
+    the conversation the user just navigated away from.
+    """
+    from dataclasses import replace
+
+    state = replace(
+        _loaded_reader_state(),
+        selected_id="chat-b",
+        selected_version=7,
+        loading=True,
+    )
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=state,
+        loaded_metadata={
+            "title": "Alpha planning",
+            "_workspace_block": "not in this workspace",
+            "_workspace_block_linkable": True,
+        },
+        id="library-conversation-reader",
+    ) as pilot:
+        link = pilot.app.query_one("#library-conversation-link-workspace", Button)
+        assert link.display is False
+
+
+@pytest.mark.asyncio
+async def test_non_linkable_block_keeps_its_own_recovery_copy(
+    widget_pilot,
+) -> None:
+    """Review round 2: never name a control the block does not offer.
+
+    A block linking cannot resolve (no active workspace) hides the link, so
+    the disabled hand-off must repeat the eligibility rule's own remedy
+    instead of pointing at a button that is not on screen.
+    """
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=_loaded_reader_state(),
+        loaded_metadata={
+            "title": "Alpha planning",
+            "_workspace_block": "blocked for this workspace",
+            "_workspace_block_linkable": False,
+            "_workspace_block_detail": (
+                "Select an active workspace before using this item in Console."
+            ),
+        },
+        id="library-conversation-reader",
+    ) as pilot:
+        open_console = pilot.app.query_one(
+            "#library-conversation-open-console", Button
+        )
+        link = pilot.app.query_one("#library-conversation-link-workspace", Button)
+        assert link.display is False
+        assert open_console.disabled is True
+        tooltip = str(open_console.tooltip)
+        assert "Link to workspace" not in tooltip
+        assert "Select an active workspace" in tooltip
+
+
+def test_link_remedy_refuses_a_stale_retained_transcript() -> None:
+    """Review round 2: the persisting seam re-checks the fence it renders."""
+    from dataclasses import replace
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        LibraryScreen,
+    )
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    registry.set_active_workspace("workspace-a")
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
+    )
+    screen._local_source_records["conversations"] = [
+        {"id": "chat-a", "title": "Alpha planning"}
+    ]
+    screen._conversations_state.reader_state = replace(
+        _loaded_reader_state(), selected_id="chat-b", selected_version=7, loading=True
+    )
+
+    screen._link_selected_conversation_to_workspace()
+
+    assert not registry.get_item_memberships(
+        item_type="conversation", item_id="chat-a"
+    )
