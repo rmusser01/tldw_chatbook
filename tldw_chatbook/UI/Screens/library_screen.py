@@ -11681,7 +11681,25 @@ class LibraryScreen(BaseAppScreen):
     def _seed_local_source_snapshot_from_cache(
         self, *, now: float | None = None
     ) -> bool:
-        """Apply a recent detached cache snapshot before first composition."""
+        """Apply a recent detached cache snapshot before first composition.
+
+        Called from both ``__init__`` and ``restore_state`` (task-15459) on a
+        freshly constructed, not-yet-mounted instance, so a warm revisit's
+        FIRST ``compose_content`` already renders the previous visit's data
+        instead of the "Loading…" placeholder. Safe to call this early, and
+        twice: ``_apply_local_source_snapshot`` only touches the DOM when
+        ``self.is_mounted``, which neither call site is, so a hit is a pure
+        attribute assignment and a miss is a no-op. ``on_mount`` still owns
+        the cache-miss/expired case and the mount-time reconciliation.
+
+        Args:
+            now: Monotonic reading to age the cache against, for tests;
+                defaults to ``time.monotonic()``.
+
+        Returns:
+            True when a fresh snapshot was applied, False on a miss or on a
+            cache older than ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``.
+        """
         stamp = getattr(self.app_instance, "_library_source_snapshot_cache_stamp", None)
         if not isinstance(stamp, (int, float)) or not math.isfinite(float(stamp)):
             return False

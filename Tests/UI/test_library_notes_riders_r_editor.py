@@ -166,3 +166,77 @@ def test_seed_local_source_snapshot_from_cache_is_defined_exactly_once():
         "The surviving definition must be the real cache-applying "
         "implementation (accepts `now`), not the dead no-arg stub"
     )
+
+
+# --- task-32177 AC#1, PR #2555 review: the wording must survive a resize ----
+#
+# Both views pick their Back wording at compose time. Crossing the compact
+# breakpoint on an already-open view re-runs ``apply_compact_presentation``
+# instead of recomposing, so a label that is only chosen in ``compose`` keeps
+# the previous width's wording -- the initial-viewport tests above cannot see
+# that. These cross the breakpoint in both directions.
+
+
+@pytest.mark.asyncio
+async def test_new_note_view_back_cue_follows_the_compact_breakpoint():
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).focus()
+        await pilot.pause()
+
+        await pilot.press("n")
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        assert (
+            str(screen.query_one("#library-notes-create-back", Button).label)
+            == "‹ Notes"
+        )
+
+        await pilot.resize_terminal(60, 24)
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            str(screen.query_one("#library-notes-create-back", Button).label)
+            == "‹ Back to list"
+        ), "New note kept the wide wording after shrinking"
+
+        await pilot.resize_terminal(*LIBRARY_TEST_SIZE)
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            str(screen.query_one("#library-notes-create-back", Button).label)
+            == "‹ Notes"
+        ), "New note kept the compact wording after widening"
+
+
+@pytest.mark.asyncio
+async def test_load_retry_back_cue_follows_the_compact_breakpoint():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = _FailingLibraryNoteDetailService(_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        _first_note_row(screen).press()
+        await _wait_for_selector(screen, pilot, "#library-note-load-retry")
+        assert str(screen.query_one("#library-note-back", Button).label) == "‹ Notes"
+
+        await pilot.resize_terminal(60, 24)
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            str(screen.query_one("#library-note-back", Button).label)
+            == "‹ Back to list"
+        ), "Load-retry kept the wide wording after shrinking"
+
+        await pilot.resize_terminal(*LIBRARY_TEST_SIZE)
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            str(screen.query_one("#library-note-back", Button).label) == "‹ Notes"
+        ), "Load-retry kept the compact wording after widening"

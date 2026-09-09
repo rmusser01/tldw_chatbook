@@ -1866,6 +1866,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             discard_new.first(Button).label = (
                 "Discard" if compact else "Discard new note"
             )
+        # PR #2555 review (Qodo finding 2): the New-note and load-retry views
+        # pick their Back wording at compose time only, and crossing the
+        # compact breakpoint re-runs this method instead of recomposing them
+        # -- so without this they keep the previous width's wording. (The
+        # editor's own #library-note-back/#library-note-context-back are
+        # rewritten from the snapshot in ``apply_session_state``, which calls
+        # this method first, so a stale value there is corrected either way.)
+        back_label = _library_note_back_label(compact)
+        for selector in ("#library-note-back", "#library-notes-create-back"):
+            found = self.query(selector)
+            if not found:
+                continue
+            button = found.first(Button)
+            if str(button.label) != back_label:
+                button.label = back_label
 
     @staticmethod
     def _static_text(widget: Static) -> str:

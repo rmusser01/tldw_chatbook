@@ -91,6 +91,16 @@ def parse_browser_timestamp(value: str) -> datetime | None:
     Public (task-32177): ``Library/library_notes_state.py`` needs this same
     parse for its own absolute-timestamp label and previously imported the
     underscore-prefixed name directly out of this module.
+
+    Args:
+        value: An ISO-8601 timestamp as stored on a browser row, with either
+            a ``+00:00`` or a trailing ``Z`` offset, or none at all.
+            Surrounding whitespace is ignored.
+
+    Returns:
+        The parsed timestamp, made timezone-aware in UTC when the value
+        carried no offset of its own; ``None`` when the value is empty or
+        is not an ISO-8601 timestamp.
     """
     text = str(value or "").strip()
     if not text:
