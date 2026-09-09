@@ -1,11 +1,18 @@
 """ADR-097: discovering the Lab route must not load its unvisited actions."""
 
+from pathlib import Path
+
 from Tests.Packaging.test_chat_persistence_import_closure import _run_isolated_python
 
 
 def test_lab_route_preimport_defers_actions_but_retains_canonical_region_events(
-    tmp_path,
-):
+    tmp_path: Path,
+) -> None:
+    """Keep Lab actions deferred while preserving canonical event identities.
+
+    Args:
+        tmp_path: Scratch root for the subprocess's isolated config and data.
+    """
     result = _run_isolated_python(
         tmp_path,
         """

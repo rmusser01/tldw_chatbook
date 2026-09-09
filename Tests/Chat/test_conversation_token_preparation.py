@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import replace
 from threading import Event
 from types import SimpleNamespace
+from typing import Literal
 
 import pytest
 
@@ -21,8 +22,15 @@ from tldw_chatbook.UI.Console_Modules.conversation_token_preparation import (
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ("none", "provider_owner", "payload"))
 async def test_token_preparation_uses_current_owner_and_rechecks_snapshot(
-    monkeypatch, change
-):
+    monkeypatch: pytest.MonkeyPatch,
+    change: Literal["none", "provider_owner", "payload"],
+) -> None:
+    """Accept an unchanged token snapshot and reject an intervening owner/edit.
+
+    Args:
+        monkeypatch: Replaces token estimation with the controlled worker seam.
+        change: Mutation applied while estimation waits, or none for acceptance.
+    """
     store = ConsoleChatStore()
     session = store.create_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="Saved text")

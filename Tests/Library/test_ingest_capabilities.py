@@ -492,7 +492,8 @@ def test_install_hint_audio_processing_uses_audio_extra() -> None:
     assert "pip install" in hint["command"]
 
 
-def test_core_diarization_install_hint_preserves_the_capability():
+def test_core_diarization_install_hint_preserves_the_capability() -> None:
+    """Keep the core install command and torch-free diarization capability copy."""
     hint = _install_hint("diarization_onnx")
     assert hint == {
         "hint": "Live speaker labels without torch",
@@ -510,8 +511,15 @@ def test_core_diarization_install_hint_preserves_the_capability():
     ],
 )
 def test_core_diarization_readiness_requires_both_packages(
-    monkeypatch, available, expected
-):
+    monkeypatch: pytest.MonkeyPatch, available: set[str], expected: bool
+) -> None:
+    """Require both diarization packages and preserve short-circuit probing.
+
+    Args:
+        monkeypatch: Replaces module discovery with the controlled package set.
+        available: Module names reported as installed by the discovery stub.
+        expected: Whether the installed package combination supports diarization.
+    """
     calls = []
 
     def find_spec(name):

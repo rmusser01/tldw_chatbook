@@ -5,7 +5,8 @@ import subprocess
 import sys
 
 
-def test_command_controllers_defer_style_rewind_and_video_capacity_modals():
+def test_command_controllers_defer_style_rewind_and_video_capacity_modals() -> None:
+    """Keep command modals unloaded until their implementations are requested."""
     result = subprocess.run(
         [
             sys.executable,

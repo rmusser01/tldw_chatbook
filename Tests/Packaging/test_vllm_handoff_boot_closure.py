@@ -5,7 +5,8 @@ import subprocess
 import sys
 
 
-def test_handoff_import_defers_target_types_until_first_validation():
+def test_handoff_import_defers_target_types_until_first_validation() -> None:
+    """Defer vLLM target types while retaining strict identity/generation checks."""
     result = subprocess.run(
         [
             sys.executable,
