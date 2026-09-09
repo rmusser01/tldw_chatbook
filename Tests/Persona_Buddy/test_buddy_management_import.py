@@ -70,6 +70,66 @@ async def test_pasted_path_imports_independent_artwork(imports, style):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("retry_style", ["absolute", "home", "double-quoted-home"])
+async def test_equivalent_retry_paths_reuse_installed_buddy_after_save_failure(
+    imports, monkeypatch, retry_style
+):
+    from tldw_chatbook import config
+
+    manager, archive, previous = imports
+    cached_imports = {}
+    monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: False)
+    with pytest.raises(ValueError, match="Could not save Buddy settings") as failed:
+        await manager.apply_choice(
+            BuddyManagementChoice(import_path="'" + str(archive) + "'"),
+            expected_revision=0,
+            imports=cached_imports,
+        )
+    installed = manager.library.list_buddies()
+    assert len(installed) == 1
+    assert manager.controller.current_preferences() == previous
+    retry_path = {
+        "absolute": str(archive),
+        "home": "~/" + archive.name,
+        "double-quoted-home": '"~/' + archive.name + '"',
+    }[retry_style]
+    monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: True)
+    await manager.apply_choice(
+        BuddyManagementChoice(import_path=retry_path),
+        expected_revision=failed.value.buddy_retry_revision,
+        imports=cached_imports,
+    )
+    assert manager.library.list_buddies() == installed
+    assert manager.controller.current_preferences().selection == BuddySelection(
+        installed[0].id
+    )
+    assert cached_imports == {str(archive): installed[0].id}
+
+
+@pytest.mark.parametrize(
+    "value", [None, 7, b"pack.zip", [], {"path": "private-input"}, "x" * 4097]
+)
+def test_shared_import_path_boundary_rejects_invalid_values_without_echoing_them(value):
+    from tldw_chatbook.Utils.input_validation import validate_buddy_import_path
+
+    with pytest.raises(ValueError) as failed:
+        validate_buddy_import_path(value)
+    assert str(failed.value) == "Check the path. Enter a local Buddy pack filename."
+
+
+def test_shared_import_path_key_keeps_a_link_distinct_from_its_target(imports):
+    from tldw_chatbook.Utils.input_validation import validate_buddy_import_path
+
+    _, archive, _ = imports
+    link = archive.with_name("linked.zip")
+    link.symlink_to(archive)
+    assert validate_buddy_import_path('"~/' + link.name + '"') == str(link)
+    assert validate_buddy_import_path(str(link)) != validate_buddy_import_path(
+        str(archive)
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("kind", "message"),
     [

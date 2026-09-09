@@ -15,37 +15,14 @@ from tldw_chatbook.Persona_Buddy.interaction import (
 )
 
 
-def _review_buddy_import(library: Any, entered_path: str) -> Any:
-    """Interpret pasted local paths on the import worker, retaining no-follow review."""
-    import os
+def _review_buddy_import(library: Any, archive_path: str) -> Any:
+    """Review a lexically validated path on the worker, retaining no-follow checks."""
     import stat
     from pathlib import Path
 
     from tldw_chatbook.Persona_Visual.importer import PersonaVisualImportError
-    from tldw_chatbook.Utils.path_validation import validate_path_simple
 
-    invalid_path = "Check the path. Enter a local Buddy pack filename."
-    if type(entered_path) is not str or not 1 <= len(entered_path) <= 4096:
-        raise ValueError(invalid_path)
-    value = entered_path.strip()
-    if len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]:
-        value = value[1:-1]
-    if value.lower().startswith(("http://", "https://", "file://")):
-        raise ValueError(
-            "Download the pack first, then enter its local filesystem path."
-        )
-    # Expand only the current user's home shorthand. Never evaluate shell text or
-    # resolve links: the importer must still inspect the exact selected file.
-    if value.startswith("~/") or (os.name == "nt" and value.startswith("~\\")):
-        value = str(Path.home()) + value[1:]
-    try:
-        path = validate_path_simple(value, probe_existing=False)
-    except ValueError:
-        raise ValueError(invalid_path) from None
-    if not path.is_absolute():
-        raise ValueError(
-            "Enter an absolute path or a path starting with ~/ to the downloaded pack."
-        )
+    path = Path(archive_path)
     # This preflight supplies recovery copy only. The review below independently
     # pins/revalidates the file, so a successful stat never grants read authority.
     try:
@@ -539,6 +516,23 @@ class BuddyManagementCoordinator:
 
         Import failure cannot change selection. A failed preference write rolls back
         only this exact in-memory revision, preserving any newer user changes.
+
+        Args:
+            choice: Staged artwork, binding, Persona and presentation choices.
+                Import paths accept absolute or current-home-relative local paths
+                with optional matching outer quotes.
+            expected_revision: Preference generation observed by the caller; a
+                changed generation blocks applying stale choices.
+            imports: Optional dialog-scoped map of normalized lexical paths to
+                already installed Buddy IDs. Retain it across retries after a
+                settings-write failure to reuse the installed artwork copy.
+
+        Raises:
+            ValueError: A selection or binding is invalid or stale; the import
+                path is missing, unsafe or unreadable; pack validation or source
+                revalidation fails; artwork installation, preference persistence
+                or the requested Persona assignment fails. Messages describe
+                recovery without exposing private paths or raw backend errors.
         """
         from tldw_chatbook.Persona_Buddy.preferences import BuddySelection
         from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
@@ -572,12 +566,18 @@ class BuddyManagementCoordinator:
                 assignment = None
             selected_id = choice.buddy_id
             if choice.import_path:
-                selected_id = (
-                    imports.get(choice.import_path) if imports is not None else None
+                from tldw_chatbook.Utils.input_validation import (
+                    validate_buddy_import_path,
                 )
+
+                archive_path = await asyncio.to_thread(
+                    validate_buddy_import_path, choice.import_path
+                )
+                require_current()
+                selected_id = imports.get(archive_path) if imports is not None else None
                 if selected_id is None:
                     review = await asyncio.to_thread(
-                        _review_buddy_import, self.library, choice.import_path
+                        _review_buddy_import, self.library, archive_path
                     )
                     require_current()
                     try:
@@ -597,7 +597,7 @@ class BuddyManagementCoordinator:
                         ) from exc
                     selected_id = record.id
                     if imports is not None:
-                        imports[choice.import_path] = selected_id
+                        imports[archive_path] = selected_id
                 elif (
                     await asyncio.to_thread(self.library.get_buddy, selected_id) is None
                 ):
