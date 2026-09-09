@@ -625,7 +625,16 @@ def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
     # #4 P2), not as focus. Focus is the accent recolour on the arrow glyph.
     assert "outline-top: solid $ds-action-focus;" not in source
     assert "outline-bottom: solid $ds-action-focus;" not in source
-    assert "#library-media-reader-shell > .library-media-pane-grip" not in source
+    # Phase C: the per-route shell ids are gone, so asserting the ABSENCE of
+    # one is now vacuous (nothing anywhere can spell it). What the original
+    # assertion protected -- that grip styling is expressed on the SHARED
+    # classes and never keyed to one route's shell -- is re-pinned positively
+    # against the ids that exist today.
+    assert "library-media-reader-shell" not in source
+    assert "library-notes-reader-shell" not in source
+    assert "#library-browse-reader-shell >" not in source
+    assert ".library-media-route >" not in source
+    assert ".library-notes-route >" not in source
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +775,7 @@ async def test_media_items_pane_grows_with_the_terminal_once_reader_is_comfortab
             await pilot.pause()
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryAdaptiveReaderShell
+            ".library-media-route", LibraryAdaptiveReaderShell
         )
         row = next(
             candidate
@@ -825,7 +834,7 @@ async def test_no_dead_gutter_flanks_the_media_items_pane_at_235x52() -> None:
             await pilot.pause()
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryAdaptiveReaderShell
+            ".library-media-route", LibraryAdaptiveReaderShell
         )
         assert shell.library.display, "the rail pane is closed at 235x52"
         left_gutter, right_gutter = _dead_gutters(host, screen, shell)

@@ -12759,6 +12759,128 @@ unchanged text. Persist first, assert transformed wire content, and verify the
 origin's `active_request` row and exact source pin before claiming transform
 coverage. Both corrected controls passed with the discard fix.
 
+## A stale first assertion can hide a test that stopped running its own path (TASK-31880, 2026-09-08)
+
+`test_row_toggle_patcher_rebuilds_marker_label_both_directions` failed on
+`assert '○ Export' == '○ Export selected'` — a label spelling task-30043 changed
+on 2026-09-03 without updating the test. Correcting the spelling did NOT make it
+pass: one day later, task-28007 had added an in-place "Analyze" flip to
+`_apply_library_row_toggle` that calls a SCREEN method the test's duck-typed app
+stand-in never had, so the dispatcher's blanket `except Exception` swallowed the
+`AttributeError` and rerouted every toggle onto `screen.refresh(recompose=True)`.
+The test had been red for one reason and non-covering for a different, invisible
+one. Instrumenting the dispatcher's own `logger.debug` in a scratch Pilot probe
+was what surfaced it: 2 toggles, 2 fallbacks.
+
+Two rules. **When you fix a stale assertion, prove the body after it actually ran
+the path under test** — here, asserting that `query_one(...)` still returns the
+SAME widget object after the toggle, since the fallback recomposes and swaps in
+fresh ones; a mutation that forces the fallback now fails loudly instead of
+producing a plausible end state. **And a shared dispatcher with a blanket
+`except` degrades duck-typed harnesses silently every time it grows a new
+receiver call** — census the harnesses when you add one, or they keep passing
+while covering nothing.
+
+## Rank a performance fix by the metric you MEASURED the cost in, not the one you already have
+
+A profile that reports one quantity well (here: widget mounts) invites ranking
+fixes by that quantity and assuming everything else follows it. It does not,
+and the assumption is invisible in a green result.
+
+**The incident.** Library phase C task 2 measured a rail switch's mounts by
+region and correctly identified three redundant canvas rebuilds. It then
+ranked the remaining work by those mounts, and its first draft claimed the
+rebuilds owned the whole remaining freeze. The other arm falsified it: the
+switch with the FEWEST mounts (26, no canvas rebuild at all) ran the MOST
+`Stylesheet.apply` calls (459) — so apply count was not mount-proportional and
+the ranking was unfounded. The report retracted the claim and the follow-up
+task was ordered to OPEN with an attribution measurement instead of a fix.
+
+It did, and the table inverted the plan's own lead list: mounts were 6–22% of
+the applies, while two class flips nobody had suspected were 41–62%. Fixing
+the leads in their planned order would have spent the task on the smaller half
+and reported a real improvement while missing the larger one.
+
+**What the attribution instrument needs to be useful.** Wrap every entry point
+into the expensive primitive and attribute each call to (a) which entry point,
+and (b) **the first stack frame outside the framework** — the second half is
+what turns "restyle is 86 ms" into "this line is 43 ms of it". Add a per-fire
+trace as well as aggregates: the aggregate says a flip is expensive, the trace
+is what shows the same flip happening twice per interaction and therefore
+being removable. `Helper_Scripts/library_restyle_attribution_probe.py` is the
+worked example.
+
+## Four straight failures are not attribution — run the revert control (phase C task 3, 2026-09-09)
+
+The media battery came back 25 failed / 684 passed on both arms, with exactly
+one name differing in each direction. The mine-only name,
+`test_focus_traversal_builds_zero_bodies_for_pass_through_rows`, then failed
+FOUR consecutive times in isolation on the changed branch while passing twice
+in isolation at the base commit. Two prior task reports had already called that
+test a "load flake", and the temptation was to dismiss it on that precedent —
+or, in the other direction, to start hunting a regression that four failures
+seemed to prove.
+
+Both would have been wrong, and the cheap experiment said so in one command:
+
+    git checkout <commit>~1 -- tldw_chatbook/   # revert PRODUCTION only
+    pytest <the one test>                       # still failed
+
+With the production change reverted the test still failed, which no
+production-caused regression can survive. Re-running the base commit then gave
+fail, pass, pass — the earlier base passes had been luck too. Eight runs per
+arm settled it: **7 passed / 1 failed on BOTH arms**, an identical rate.
+
+Two things to take from it. First, an isolation run is not a control; a control
+holds everything constant except the thing you are attributing to, and for a
+code change that means reverting the code. Second, `p(4 fails in a row)` at a
+1-in-8 flake rate is ~1/4000 — improbable enough to be worth investigating, and
+still not evidence. Sample size is what separates "this branch broke it" from
+"this test is flaky"; a serial streak is neither.
+
+The prior reports' "load flake, passes in isolation" was also too generous a
+characterisation: this test fails in isolation too, roughly one run in eight,
+on an unchanged tree.
+
+## A probe column that reads zero is not evidence of zero — a counter that has never been non-zero has never been tested (phase C task 1, landed task 4, 2026-09-09)
+
+`Helper_Scripts/library_click_probe.py` printed `recompose 0` and `0 removes`
+on every Library rail-mode switch for FOUR decomposition waves. Recipe §25
+promoted `recompose 0` to a load-independent verdict column and wrote "recompose
+still 0" into phase C's success condition. Both zeros were instrument blind
+spots, not findings — and they were blind in DIFFERENT degrees, which is the
+part worth keeping:
+
+* **The `removes` counter could never fire at all.** It hooked
+  `App._unregister`, which is **not** Textual 8.2.8's prune path — a node
+  finalises its own removal in `Widget._message_loop_exit`
+  (`self.app._registry.discard`). `App._unregister` has zero callers anywhere.
+  A media switch actually unmounts ~176 widgets; the probe reported 0 forever.
+* **The `recompose` counter was right almost everywhere and wrong exactly where
+  it mattered.** It hooks `refresh(recompose=True)` and correctly counts every
+  refresh-driven recompose — but the rail-switch path awaits `Widget.recompose()`
+  DIRECTLY (`_select_library_rail_row_after_source_admission`, the `if not
+  replaced:` arm), bypassing `refresh`, so the hook cannot see it. Every rail
+  switch ran exactly one whole-screen recompose while the column read 0. This is
+  the more dangerous defect precisely because the counter is trustworthy on
+  every other path.
+
+Discovered only by writing a SECOND instrument
+(`Helper_Scripts/library_switch_teardown_probe.py`) that measured the same two
+quantities a different way — hooking `_message_loop_exit` and counting
+`Widget.recompose()` directly — and got a different answer (1 recompose, 176
+unmounts). Task 1's review confirmed it three ways; phase C task 4 annotated
+recipe §25's baseline in place (a `†` correction, not a rewrite) so the blind
+spot stays visible, and closed the founding freeze against the corrected
+instrument (recipe §26, spec graduation record).
+
+The rule: **before trusting a counter, provoke the event it claims to count and
+confirm the counter moves.** A column that has only ever printed the same value
+across every run it was cited in has not been validated — it has been assumed.
+And when one counter of a probe is proven blind, audit the others: the same
+probe's two zero-columns were blind for two different reasons, and only one was
+caught by noticing the other.
+
 ## Native Console speech tests must resolve the destination first
 
 **Incident (TASK-32096, 2026-09-08).** Real Supertonic inference through the
