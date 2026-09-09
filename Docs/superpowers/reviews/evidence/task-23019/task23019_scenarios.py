@@ -1529,7 +1529,7 @@ async def run_prompts_capability() -> dict[str, Any]:
                 ),
                 message="Prompt detail retry did not settle selected identity",
             )
-            basic_reason = screen._library_prompt_basic_unavailable_reason(
+            basic_reason = screen._prompts_controller._library_prompt_basic_unavailable_reason(
                 screen._current_library_prompt_editor_state(),
                 conflict=screen._library_prompt_conflict_snapshot is not None,
             )

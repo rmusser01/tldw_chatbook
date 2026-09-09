@@ -51,7 +51,8 @@ depended on the screen), ``test_every_shim_reads_and_writes_its_own_state_
 field`` was re-aimed at the controller's own permanent shim loop rather than
 deleted, ``test_the_screen_no_longer_carries_a_media_state_shim`` was added
 asserting ABSENCE, and ``_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED`` was filled
-with the 22 zero-reference delegator names it deleted.
+with the 22 zero-reference delegator names it deleted. TASK-31932 step 68
+adds one after retargeting its test caller to the existing owner (23 total).
 
 **Phase C, task 3 (region ownership)** removed a further 16 delegators for a
 different reason -- not deadness but OWNERSHIP: their messages originate
@@ -436,19 +437,20 @@ _MEDIA_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: at the controller PR, exactly as every prior series' own wiring test
 #: carried it between its task 2 and task 3.
 #:
-#: **22 of the 140**, from an ``ast``-based census (never a call-shaped
+#: **23 of the 140** (original 22 plus TASK-31932 step 68), from an ``ast`` census (never a call-shaped
 #: regex -- a bare callable passed as an argument is an ``ast.Attribute``
 #: too, and the prompts series lost three names to exactly that blind spot)
 #: over ``tldw_chatbook/`` + every ``Tests/`` root + ``Docs/`` + ``scripts/``
 #: + ``Helper_Scripts/``, excluding only the controller module, each name's
 #: own delegator body, and this file's own literal pin tuple above. The
-#: other 118 KEEP: **53 unconditionally** per the recipe §4 whitelist (48
+#: other 117 KEEP: **53 unconditionally** per the recipe §4 whitelist (48
 #: ``@on`` + 5 ``action_*``; media owns ZERO ``on_<message>``
 #: name-dispatched handlers, so that whitelist's third member is inert
-#: here) and **65 with a genuine external caller**. Prune fraction
-#: 22/140 = 15.71%.
+#: here) and **64 with a genuine external caller**. Prune fraction
+#: 23/140 = 16.43%.
 _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        "_cache_library_media_preview",
         "_add_library_media_highlight",
         "_build_library_media_viewer_display_state",
         "_consume_library_media_find_focus",

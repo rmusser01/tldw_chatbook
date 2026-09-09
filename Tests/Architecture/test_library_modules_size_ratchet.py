@@ -390,18 +390,9 @@ _BUDGETS: dict[str, int] = {
     # `Tests/UI/test_library_crit8_keyboard.py::
     # test_ctrl_n_into_new_note_also_focuses_blank_note` -- reverting the
     # guard reds it (focus lands on a notes-tree row, not Blank note).
-    #
-    # 2026-09-09, task-32129 (Obsidian mode for Import once): 5284 -> 5300
-    # (+16), a BEHAVIOUR ADD, not a move -- one new `@on` handler
-    # (`handle_library_note_import_obsidian_mode`) that re-runs the read-only
-    # check when the review's Obsidian-vault toggle changes. The row was
-    # already 1 line under the file when this branch started (5284 measured
-    # against a 5283 pin), so this re-pin also corrects that drift. Pinned by
-    # `Tests/UI/test_library_note_import_flow.py::
-    # test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault`
-    # -- without the handler the toggle press never re-checks and the test reds
-    # on "Turning Obsidian vault off never re-ran the check."
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5300,
+    # TASK-31932: retain that guard, but pay down redundant documentation
+    # instead of accepting the upstream ceiling increase.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5276,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

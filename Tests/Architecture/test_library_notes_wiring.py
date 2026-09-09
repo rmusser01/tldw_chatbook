@@ -55,7 +55,8 @@ state_field``, aimed at ``LibraryNotesController``'s own permanent copy of the
 identical loop -- which carries the identical closure-binding trap and is what
 keeps the 185 moved bodies byte-for-byte. It also filled
 ``_NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED`` with the 26 names whose screen
-delegator had zero references across all SIX census spellings.
+delegator had zero references across all SIX census spellings. TASK-31932
+step 68 retargets one test-only caller to the existing owner (27 total).
 """
 from __future__ import annotations
 
@@ -311,9 +312,10 @@ def test_the_four_member_list_entry_focus_family_stays_screen_owned() -> None:
 #: + 4 ``action_*``) are exempt from the census outright; SS4's third member,
 #: ``on_<message>`` NAME dispatch, contributes ZERO for notes and
 #: ``test_no_notes_handler_is_name_dispatched_by_textual`` keeps that proven.
-#: 26 of 185 = 14.05%.
+#: Original 26 plus TASK-31932 step 68: 27 of 185 = 14.59%.
 _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     (
+        "_library_notes_work_session_reader_width",
         "_apply_library_note_saved_presentation",
         "_apply_library_notes_operation_state",
         "_defer_library_notes_settled_focus_restore",

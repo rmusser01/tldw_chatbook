@@ -887,7 +887,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # here keeps the merged tree green without hiding whose lines they are.
     # PR-2427 after wave-8 reconciliation: ordered assembly/private cleanup and
     # removal of the superseded unreachable placement block retain tighter pins.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31901, 1229),
+    # TASK-31932 wave 9: seven dead/obsolete helpers removed; keyboard kept.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31868, 1229),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
