@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path, PurePosixPath
-from threading import Lock, RLock
+from threading import Event, Lock, RLock
 from time import monotonic
 from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
@@ -88,6 +88,7 @@ from tldw_chatbook.Notes.file_notes_service import (
     OpenedFileNote,
     OperationResult,
     ReconcileResult,
+    ScanCancelled,
     ScanResult,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
@@ -270,7 +271,22 @@ ROOT_CHANGE_LANDED_COPY = (
     "Folder change finished before it could be stopped · now linked to the "
     "new folder."
 )
+#: task-32136: the empty state has to say what this MODE of Notes is before
+#: it asks for a folder -- "Choose a notes folder." explained nothing.
+FOLDER_FILES_EMPTY_COPY = (
+    "Folder files edits Markdown files in a folder on disk, in place. "
+    "Nothing is copied into the Library."
+)
 FILE_TREE_BATCH_SIZE = 100
+
+
+class _ServiceLockBusy(Exception):
+    """An earlier File Notes operation still owns the service lock."""
+
+
+def _folder_label(path: Path) -> str:
+    """Name one folder for a status line or a button (``/`` has no name)."""
+    return path.name or path.anchor or str(path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1152,6 +1168,17 @@ class LibraryFileNotesWorkspace(Vertical):
         self._structural_wait: StructuralWait | None = None
         self._structural_wait_task: asyncio.Task[bool] | None = None
         self._structural_wait_timer: Timer | None = None
+        # task-32121: cancelling the asyncio task left the SCAN THREAD
+        # running under ``_service_lock``, so every later folder change
+        # queued behind it. Each attempt now carries its own cancel Event
+        # (created in ``_change_root_with_deadline``, handed to the thread
+        # and to the abandon seam) -- deliberately NOT widget state, so a
+        # superseding attempt can neither cancel itself nor miss its own
+        # flag. The count and the extension drive the busy row's line.
+        self._root_scan_entries = 0
+        self._root_change_extension: float | None = None
+        self._root_change_extension_used = False
+        self._root_action_reason = ""
 
         self._entries: dict[str, FileNoteEntry] = {}
         self._deleted_paths: tuple[str, ...] = ()
@@ -1913,6 +1940,28 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             structural_cancel.display = False
             yield structural_cancel
+            # task-32121: the two decisions a slow scan actually leaves the
+            # user. task-32136: and the folder they already configured.
+            # All display-toggled, like the Cancel above them.
+            for label, button_id in (
+                ("Keep waiting", "file-notes-root-keep-waiting"),
+                ("Choose another", "file-notes-root-choose-another"),
+                ("Use folder", "file-notes-use-sync-folder"),
+            ):
+                optional = Button(label, id=button_id, compact=True)
+                optional.display = False
+                yield optional
+        # task-32136: what this mode of Notes IS, on its own wrapping line
+        # -- the folder row is a single nowrap line that leaves the status
+        # 46 cells at 120 columns, far too narrow to carry a sentence.
+        purpose = Static(
+            FOLDER_FILES_EMPTY_COPY,
+            id="file-notes-empty-purpose",
+            classes="destination-purpose",
+            markup=False,
+        )
+        purpose.display = self._root is None
+        yield purpose
         with Horizontal(id="file-notes-body"):
             yield self._ensure_standalone_reader_shell()
 
@@ -2495,6 +2544,56 @@ class LibraryFileNotesWorkspace(Vertical):
             rebuild_tree=navigator_changed,
         )
 
+    def _show_root_row_button(
+        self,
+        selector: str,
+        visible: bool,
+        *,
+        label: str | None = None,
+    ) -> None:
+        """Toggle one optional folder-row control without assuming it exists."""
+        try:
+            button = self.query_one(selector, Button)
+        except NoMatches:
+            return
+        if label is not None and str(button.label) != label:
+            button.label = label
+        button.display = visible
+
+    def _structural_wait_line(self, wait: StructuralWait) -> str:
+        """Return the busy row's line for one in-flight folder change.
+
+        task-32121: past the patience window the shared helper's line ends
+        in ``· Cancel``, which sat beside the actual Cancel button and read
+        as a second control with the same label. This surface reports how
+        far the scan has actually got instead, and the decisions are the
+        buttons in the same row -- measured, not stylistic: at 120 columns
+        the row leaves the status 46 cells, so a line naming both choices
+        as well elides to ``Changing folder… · sti...ting · Choose another``.
+        """
+        now = monotonic()
+        if not wait.is_slow(now):
+            return wait.status_line(now)
+        entries = self._root_scan_entries
+        progress = f"{entries:,} entries so far" if entries else "still working"
+        return f"{wait.label}… · {progress}"
+
+    def _configured_sync_folder(self) -> Path | None:
+        """Return the folder ``[notes] sync_directory`` names, when usable.
+
+        task-32136: a user who already configured a notes folder should be
+        offered it by name instead of being sent to a file picker that
+        opens on their home directory.
+        """
+        raw = get_cli_setting("notes", "sync_directory", None)
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        try:
+            candidate = Path(raw).expanduser()
+            return candidate if candidate.is_dir() else None
+        except (OSError, ValueError):
+            return None
+
     def _update_root_surface(self, *, offline: bool | None = None) -> None:
         if not self._active or not self.is_mounted or not self.children:
             return
@@ -2521,11 +2620,29 @@ class LibraryFileNotesWorkspace(Vertical):
             structural_cancel = None
         if structural_cancel is not None:
             structural_cancel.display = wait is not None and wait.cancel is not None
+        slow = wait is not None and wait.is_slow(monotonic())
+        self._show_root_row_button(
+            "#file-notes-root-keep-waiting",
+            slow and not self._root_change_extension_used,
+        )
+        self._show_root_row_button("#file-notes-root-choose-another", slow)
+        sync_folder = None if self._root is not None else self._configured_sync_folder()
+        self._show_root_row_button(
+            "#file-notes-use-sync-folder",
+            wait is None and sync_folder is not None,
+            label=None if sync_folder is None else f"Use {_folder_label(sync_folder)}",
+        )
+        try:
+            self.query_one("#file-notes-empty-purpose", Static).display = (
+                self._root is None
+            )
+        except NoMatches:
+            pass
         if wait is not None:
             # task-32055: the wait owns this slot while it runs -- the line
             # says what is happening, then that it is still working, and the
             # button beside it is the way out.
-            self._root_status_detail = wait.status_line(monotonic())
+            self._root_status_detail = self._structural_wait_line(wait)
             self._root_status_summary = self._root_status_detail
             status.tooltip = None
             status.update(self._root_status_summary)
@@ -2537,11 +2654,16 @@ class LibraryFileNotesWorkspace(Vertical):
             self.call_after_refresh(self._fit_root_status)
             return
         if self._root is None:
+            reason = self._root_action_reason
             self._root_status_detail = "Choose a notes folder."
-            self._root_status_summary = self._root_status_detail
+            self._root_status_summary = reason or self._root_status_detail
             status.tooltip = None
             status.update(self._root_status_summary)
-            status.set_class(True, "-empty-root")
+            # task-2850's hug-your-own-width rule is right for the short
+            # prompt and wrong for a folder-change reason four times its
+            # length: that one has to elide rather than push Choose folder…
+            # off the end of a narrow row.
+            status.set_class(not reason, "-empty-root")
             status.set_class(False, "-warning")
             status.set_class(False, "-offline")
             body.display = False
@@ -2549,6 +2671,8 @@ class LibraryFileNotesWorkspace(Vertical):
             choose.label = "Choose folder…"
             choose.display = True
             self._render_status_channels()
+            if reason:
+                self.call_after_refresh(self._fit_root_status)
             return
         status.set_class(False, "-empty-root")
         is_offline = self._root_offline if offline is None else offline
@@ -2563,13 +2687,18 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._runtime_warning:
             detail = f"{detail} · {self._runtime_warning}"
         self._root_status_detail = detail
-        folder_name = self._root.name or self._root.anchor or str(self._root)
+        folder_name = _folder_label(self._root)
         display_state = (
             "Offline · Warning"
             if is_offline is True and self._runtime_warning
             else ("Warning" if self._runtime_warning else state)
         )
         self._root_status_summary = f"{display_state} · Local folder: {folder_name}"
+        if self._root_action_reason:
+            # task-32121: the reason a folder change ended owns the row the
+            # user was watching until they try again; the folder it kept
+            # stays in the tooltip and in Details.
+            self._root_status_summary = self._root_action_reason
         status.tooltip = Text(detail)
         status.update(self._root_status_summary)
         body.display = True
@@ -5218,7 +5347,73 @@ class LibraryFileNotesWorkspace(Vertical):
             or service is not self._service
         )
 
-    async def set_root(self, path: str | Path, *, persist: bool = True) -> bool:
+    def _scan_for_root(
+        self,
+        service: FileNotesService,
+        cancel_event: Event | None,
+    ) -> ScanResult:
+        """Scan a candidate root on a worker thread, cancellably and bounded.
+
+        Two halves of the same task-32121 wedge. The scan itself is now
+        cancellable, so an abandoned one lets go of ``_service_lock``
+        instead of holding it to the end of a home directory. And the wait
+        for that lock is bounded, so a scan stuck inside a single
+        uninterruptible syscall (a dead network mount) makes the NEXT
+        change report a timeout instead of queueing behind it silently.
+
+        Args:
+            service: Service bound to the candidate root.
+            cancel_event: This attempt's own cancel flag, or None when the
+                caller cannot abandon the scan.
+
+        Returns:
+            The candidate root's scan result.
+
+        Raises:
+            ScanCancelled: If this attempt was abandoned mid-scan.
+            _ServiceLockBusy: If an earlier operation still holds the lock
+                when the deadline for this one expires.
+        """
+        should_cancel = None if cancel_event is None else cancel_event.is_set
+        if not self._service_lock.acquire(timeout=ROOT_CHANGE_TIMEOUT_SECONDS):
+            raise _ServiceLockBusy()
+        try:
+            return service.scan(
+                should_cancel=should_cancel,
+                on_progress=self._record_root_scan_progress,
+            )
+        finally:
+            self._service_lock.release()
+
+    def _record_root_scan_progress(self, entries: int) -> None:
+        """Publish the running entry count from the scan thread.
+
+        A plain attribute store, deliberately: the busy row reads it on its
+        own repaint tick, so no cross-thread call is needed and a stale
+        read is at worst one tick behind.
+        """
+        self._root_scan_entries = entries
+
+    def _report_root_change_reason(self, reason: str) -> None:
+        """Keep one folder-change outcome visible until the next attempt.
+
+        task-32121: the timeout reason used to be written only into the
+        action-status line at the bottom of the editor pane, while the root
+        row -- the line the user is actually watching -- silently reverted
+        to the previously linked folder. The reason now owns the row until
+        another folder change starts.
+        """
+        self._root_action_reason = reason
+        self._set_action_status(reason)
+        self._update_root_surface()
+
+    async def set_root(
+        self,
+        path: str | Path,
+        *,
+        persist: bool = True,
+        cancel_event: Event | None = None,
+    ) -> bool:
         """Adopt one canonical root after the common draft leave guard."""
         if not self._active or self._path_transitioning or self._shutdown:
             return False
@@ -5248,6 +5443,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_generation += 1
         generation = self._root_generation
         self._root_transitioning = True
+        # task-32121: the previous attempt's outcome stops being reported
+        # the moment a new one starts.
+        self._root_scan_entries = 0
+        self._root_action_reason = ""
         self._update_root_surface()
         self._update_controls()
         try:
@@ -5273,7 +5472,22 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             if not self._active or generation != self._root_generation:
                 return False
-            result = await asyncio.to_thread(service.scan)
+            try:
+                result = await asyncio.to_thread(
+                    self._scan_for_root,
+                    service,
+                    cancel_event,
+                )
+            except ScanCancelled:
+                # Abandonment bumps the generation, so a still-current
+                # generation here means nobody has reported this yet.
+                if generation == self._root_generation:
+                    self._report_root_change_reason(ROOT_CHANGE_CANCELLED_COPY)
+                return False
+            except _ServiceLockBusy:
+                if generation == self._root_generation:
+                    self._report_root_change_reason(ROOT_CHANGE_TIMEOUT_COPY)
+                return False
             deleted = await self._load_deleted_paths(
                 replica=self._replica,
                 service=service,
@@ -5374,6 +5588,12 @@ class LibraryFileNotesWorkspace(Vertical):
                 f"read only: {opened.read_only_reason or 'unsupported content'}",
             )
         self._set_action_status(opened.replica_warning or "")
+        if self._root_action_reason:
+            # Review round 1: the folder-change reason owned the row until
+            # the next folder change, so one timeout hid the linked folder
+            # for the rest of the session. Opening a file ends it too.
+            self._root_action_reason = ""
+            self._update_root_surface()
         if self._narrow:
             self._narrow_view = "editor"
             self._apply_responsive_layout(self.size.width)
@@ -5890,6 +6110,10 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-choose-root")
     async def _choose_root(self, event: Button.Pressed) -> None:
         event.stop()
+        await self._open_root_picker()
+
+    async def _open_root_picker(self) -> None:
+        """Open the folder picker on the current root, or on home."""
         location = (
             self._root
             if self._root is not None and self._root_offline is False
@@ -5899,6 +6123,40 @@ class LibraryFileNotesWorkspace(Vertical):
             SelectDirectory(location, title="Choose File Notes Folder"),
             callback=self._root_selected,
         )
+
+    @on(Button.Pressed, "#file-notes-use-sync-folder")
+    def _use_configured_sync_folder(self, event: Button.Pressed) -> None:
+        """Link the folder ``[notes] sync_directory`` already names."""
+        event.stop()
+        folder = self._configured_sync_folder()
+        if folder is not None:
+            self._root_selected(folder)
+
+    @on(Button.Pressed, "#file-notes-root-keep-waiting")
+    def _keep_waiting_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.extend_root_change_deadline()
+
+    def extend_root_change_deadline(self) -> bool:
+        """Grant one in-flight folder change a second deadline.
+
+        Returns:
+            True when this call granted the extension; False when there is
+            no wait to extend or its one extension is already spent.
+        """
+        if self._structural_wait is None or self._root_change_extension_used:
+            return False
+        self._root_change_extension_used = True
+        self._root_change_extension = ROOT_CHANGE_TIMEOUT_SECONDS
+        self._update_root_surface()
+        return True
+
+    @on(Button.Pressed, "#file-notes-root-choose-another")
+    async def _choose_another_pressed(self, event: Button.Pressed) -> None:
+        """Abandon the slow change and go straight back to the picker."""
+        event.stop()
+        self.cancel_structural_wait()
+        await self._open_root_picker()
 
     @on(Button.Pressed, "#file-notes-root-details")
     def _show_root_details(self, event: Button.Pressed) -> None:
@@ -5928,22 +6186,46 @@ class LibraryFileNotesWorkspace(Vertical):
         place when it does not complete.
         """
         previous_root = self._root
-        change = asyncio.ensure_future(self.set_root(path))
-        wait = self._begin_structural_wait("Changing folder", change)
+        cancel_event = Event()
+        change = asyncio.ensure_future(
+            self.set_root(path, cancel_event=cancel_event)
+        )
+        self._root_change_extension = None
+        self._root_change_extension_used = False
+        wait = self._begin_structural_wait("Changing folder", change, cancel_event)
         try:
-            await asyncio.wait_for(change, ROOT_CHANGE_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            # ``wait_for`` already cancelled the task, but ``set_root``'s own
-            # ``finally`` only clears the transition once it unwinds -- release
-            # the canvas now, on the same seam an explicit Cancel uses.
-            self._abandon_root_change_task(change)
-            self._abandon_root_change(
-                wait,
-                ROOT_CHANGE_TIMEOUT_COPY
-                if self._root == previous_root
-                else ROOT_CHANGE_LANDED_COPY,
-            )
+            # task-32121: ``asyncio.wait`` rather than ``wait_for`` so the
+            # deadline can be extended once by Keep waiting without the
+            # first expiry killing the task.
+            budget = ROOT_CHANGE_TIMEOUT_SECONDS
+            while True:
+                done, _pending = await asyncio.wait({change}, timeout=budget)
+                if done:
+                    await change
+                    break
+                extension = self._root_change_extension
+                if extension is not None:
+                    self._root_change_extension = None
+                    budget = extension
+                    self._update_root_surface()
+                    continue
+                # ``set_root``'s own ``finally`` only clears the transition
+                # once the cancelled coroutine unwinds -- release the canvas
+                # now, on the same seam an explicit Cancel uses.
+                self._abandon_root_change_task(change, cancel_event)
+                self._abandon_root_change(
+                    wait,
+                    ROOT_CHANGE_TIMEOUT_COPY
+                    if self._root == previous_root
+                    else ROOT_CHANGE_LANDED_COPY,
+                )
+                break
         except asyncio.CancelledError:
+            # ``asyncio.wait`` leaves the change running when THIS coroutine
+            # is cancelled (a superseding folder pick, a screen teardown);
+            # abandoning it here is what stops its scan thread.
+            if not change.done():
+                self._abandon_root_change_task(change, cancel_event)
             if not wait.cancelled:
                 raise
             # The cancel receipt was written the moment Cancel was pressed;
@@ -5959,20 +6241,24 @@ class LibraryFileNotesWorkspace(Vertical):
         self,
         label: str,
         task: asyncio.Task[Any],
+        cancel_event: Event | None = None,
     ) -> StructuralWait:
         """Publish one cancellable wait and arm its patience repaint."""
         wait = StructuralWait(
             label=label,
             started_at=monotonic(),
-            cancel=partial(self._abandon_root_change_task, task),
+            cancel=partial(self._abandon_root_change_task, task, cancel_event),
             owner=WAIT_OWNER_FILE_NOTES,
         )
         self._structural_wait = wait
         self._structural_wait_task = task
         if self._structural_wait_timer is not None:
             self._structural_wait_timer.stop()
+        # task-32121: repeating, not one-shot -- the running entry count
+        # the busy row reports has to keep moving while a big folder is
+        # still being walked.
         self._structural_wait_timer = (
-            self.set_timer(
+            self.set_interval(
                 STRUCTURAL_WAIT_PATIENCE_SECONDS,
                 self._update_root_surface,
             )
@@ -5994,7 +6280,11 @@ class LibraryFileNotesWorkspace(Vertical):
         self._update_root_surface()
         self._update_controls()
 
-    def _abandon_root_change_task(self, task: asyncio.Task[Any]) -> None:
+    def _abandon_root_change_task(
+        self,
+        task: asyncio.Task[Any],
+        cancel_event: Event | None = None,
+    ) -> None:
         """Cancel the wait's task and release the canvas in the same beat.
 
         The transition flags are cleared HERE rather than in ``set_root``'s
@@ -6005,13 +6295,21 @@ class LibraryFileNotesWorkspace(Vertical):
         never commit the folder it was still scanning.
         """
         task.cancel()
+        # task-32121: the asyncio cancel never reached the scan THREAD,
+        # which kept ``_service_lock`` and wedged every later folder change
+        # for the rest of the session. This is the flag it watches -- THIS
+        # attempt's, passed in with its task: a superseding pick starts its
+        # own attempt before this one unwinds, so reading current widget
+        # state here cancelled the wrong scan (review round 1).
+        if cancel_event is not None:
+            cancel_event.set()
         self._root_generation += 1
         self._root_transitioning = False
 
     def _abandon_root_change(self, wait: StructuralWait, reason: str) -> None:
         """Report why a folder change ended and keep the current folder."""
         self._end_structural_wait(wait)
-        self._set_action_status(reason)
+        self._report_root_change_reason(reason)
 
     def cancel_structural_wait(self) -> bool:
         """Abandon the in-flight structural wait, keeping the current folder.

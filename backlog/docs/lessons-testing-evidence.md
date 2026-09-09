@@ -12629,3 +12629,24 @@ before its Select child labels were composed. Assigning Select.value at that poi
 raised NoMatches for the internal label. Settle the pilot after detecting the modal,
 then interact with its controls; the normal journey and compact controls passed
 together after that fixture correction.
+
+## Faking a decorated method deletes the decorator, and the bug can live there
+
+**task-32121, Library ▸ Folder files, 2026-09-09.** Critique #8's task-32055 gave
+the File Notes folder change a deadline, a Cancel and a status line, all covered
+by tests that patch `FileNotesService.scan` with a plain function that blocks on
+an `Event`. `scan` is `@_serialized` — it holds the workspace's shared
+`_service_lock` for its whole run. A plain function assigned onto the class
+replaces the decorated method, so **the fake never took that lock**. Every one of
+those tests passed while the real defect survived: cancelling the wait cancelled
+only the asyncio task, the abandoned scan THREAD kept the lock, and every later
+folder change queued behind it for the rest of the session. Two live assessors
+then reproduced it three times in a row.
+
+**What to do.** When you fake a slow method, ask what the decorators on it do and
+reproduce that in the fake — here, `with service._operation_lock:` around the
+block. If the fake cannot hold the real resource, say so in the test's docstring,
+because the contract that resource enforces is now untested. The replacement
+fixture (`_LockHoldingScan` in `Tests/UI/test_library_crit8_waits.py`) fails on
+the unfixed code and passes on the fixed code; the older one could not tell the
+two apart.
