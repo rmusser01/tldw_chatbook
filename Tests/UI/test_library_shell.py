@@ -5499,9 +5499,9 @@ async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() ->
             )
             rail = screen.query_one("#library-rail", LibraryRail)
             canvas = screen.query_one("#library-canvas")
-            assert str(rail.styles.width) == "3fr"
-            assert rail.styles.min_width.value == 24
-            assert rail.styles.max_width.value == 34
+            assert rail.styles.width.value == landing_width
+            assert rail.styles.min_width.value == landing_width
+            assert rail.styles.max_width.value == landing_width
             assert abs(rail.region.width - landing_width) <= 1
             assert abs(rail.region.right - canvas.region.x) <= 1
 
