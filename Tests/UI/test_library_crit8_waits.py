@@ -578,6 +578,20 @@ async def test_cancel_that_loses_to_the_commit_reports_the_folder_that_landed(
                 _static_text(workspace, "#file-notes-action-status")
                 == ROOT_CHANGE_LANDED_COPY
             )
+            # Review round 2 (Qodo finding 4): the folder row is the line
+            # the user is watching, and it survives repaints -- saying the
+            # previous folder was kept while the new one is linked is the
+            # one lie this branch exists to prevent.
+            assert (
+                _static_text(workspace, "#file-notes-root-status")
+                == ROOT_CHANGE_LANDED_COPY
+            )
+            workspace._update_root_surface()
+            await pilot.pause()
+            assert (
+                _static_text(workspace, "#file-notes-root-status")
+                == ROOT_CHANGE_LANDED_COPY
+            )
     finally:
         release_persistence.set()
         await workspace.shutdown()
@@ -922,6 +936,98 @@ async def test_a_scan_that_ignores_its_cancel_still_bounds_the_next_change(
                 attempts=200,
             )
             assert workspace.root == old_root.resolve()
+    finally:
+        blocked.release.set()
+        await workspace.shutdown()
+        replica.close()
+
+
+@pytest.mark.asyncio
+async def test_closing_folder_files_stops_the_progress_timer(
+    blocked_root_change,
+) -> None:
+    """Review round 2 (Qodo finding 7): teardown stops the patience timer.
+
+    The busy row's repaint is a repeating interval now, and only the wait
+    settling stops it -- which a scan parked in an uninterruptible syscall
+    never does. Closing Folder files must not leave it ticking against a
+    workspace nobody is looking at.
+    """
+    old_root, new_root, blocked = blocked_root_change
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
+    try:
+        async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
+            await _start_blocked_root_change(pilot, workspace, blocked, new_root)
+            assert workspace._structural_wait_timer is not None
+            await workspace.shutdown()
+            assert workspace._structural_wait_timer is None
+    finally:
+        blocked.release.set()
+        replica.close()
+
+
+@pytest.mark.asyncio
+async def test_keep_waiting_also_extends_the_wait_for_the_shared_lock(
+    lock_holding_root_change, monkeypatch
+) -> None:
+    """Review round 2 (Qodo finding 6): one clock for one wait.
+
+    The worker thread had a second, fixed deadline of its own on the
+    service lock. Keep waiting moved only the coroutine's deadline, so a
+    change queued behind a scan parked in an uninterruptible syscall --
+    the one case the extra budget exists for -- still died a moment after
+    the user asked for more time.
+    """
+    old_root, wedged_root, small_root, install_blocked_scan = (
+        lock_holding_root_change
+    )
+    blocked = install_blocked_scan(cooperative=False)
+    monkeypatch.setattr(workspace_module, "ROOT_CHANGE_TIMEOUT_SECONDS", 1.5)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
+    try:
+        async with _production_workspace_context(workspace, size=(235, 52)) as pilot:
+            workspace._root_selected(wedged_root)
+            await _wait_until(
+                pilot,
+                lambda: blocked.started.is_set(),
+                "the wedging scan never started",
+            )
+            await _wait_until(
+                pilot,
+                lambda: workspace._structural_wait is None,
+                "the first folder change never hit its deadline",
+                attempts=300,
+            )
+
+            # The wedged thread still owns the lock, so this change queues
+            # behind it -- and the user chooses to keep waiting.
+            workspace._root_selected(small_root)
+            await _wait_until(
+                pilot,
+                lambda: workspace._structural_wait is not None,
+                "the queued folder change never published its wait",
+            )
+            assert workspace.extend_root_change_deadline()
+            await _wait_until(
+                pilot,
+                lambda: workspace._root_change_extension is None,
+                "the first deadline never consumed the granted extension",
+                attempts=300,
+            )
+            # Past the original deadline (where the worker's own timeout
+            # used to fire) and still well inside the granted one.
+            for _ in range(15):
+                await pilot.pause(0.02)
+
+            blocked.release.set()
+            await _wait_until(
+                pilot,
+                lambda: workspace.root == small_root.resolve(),
+                "the extended folder change gave up on the lock anyway",
+                attempts=300,
+            )
     finally:
         blocked.release.set()
         await workspace.shutdown()

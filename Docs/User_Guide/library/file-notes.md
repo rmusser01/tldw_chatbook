@@ -98,7 +98,7 @@ Using compact **Back to navigator** does not reset it.
 | **Cancel** (folder change) | Appears beside **Change…** only while a folder change is running. Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
 | **Choose another** (folder change) | Appears with **Keep waiting**. Abandons the change, keeps the folder you already had, and reopens the folder picker in one step |
-| **Use \<folder\>** | Appears only before a folder is linked, and only when `[notes] sync_directory` is set in config.toml. Links that folder without opening the picker |
+| **Use \<folder\>** | Appears only before a folder is linked, and only when `[notes] sync_directory` names an existing folder by absolute path in config.toml. Links that folder without opening the picker |
 
 While a folder change runs, the folder line reads `Changing folder…`. If it
 is still going after about three seconds it starts reporting how far the
@@ -109,9 +109,9 @@ its own and the folder line itself reads "Folder change timed out · previous
 folder kept. Try again or choose a different folder." That reason stays on
 the folder line until you start another folder change or open a file.
 Either way the previously linked folder is untouched — unless the change had already
-finished saving when you cancelled, in which case the status says "Folder
-change finished before it could be stopped · now linked to the new folder."
-and the new folder is the one in use.
+finished saving when you cancelled, in which case the folder line says
+"Folder change finished before it could be stopped · now linked to the new
+folder." and the new folder is the one in use.
 
 Abandoning a folder change — by **Cancel**, by **Choose another**, or by
 letting it time out — also stops the folder scan itself. Picking a different
@@ -472,6 +472,7 @@ rail and the source strip at wide sizes; the empty state shown before any
 folder is linked explains the mode and offers the configured
 `[notes] sync_directory` folder, but is a full-width onboarding step without
 the Library rail until you link one.)*
+
 *Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
 "Choose File Notes Folder" picker used to commit the directory being
 browsed and silently ignore a typed-but-unsubmitted path when **Select**
@@ -485,3 +486,8 @@ sweep after the Notes critique wave; the linked-folder status line reads
 "Linked · Local folder: \<folder\>", not "Linked — \<folder\>"; corrected
 here and in [Database notes](notes.md)).*
 
+*Verified against fix/library-notes-file-notes — 2026-09-09 (task-32121
+review round 2: **Keep waiting** also extends a change queued behind an
+earlier folder's scan, and the "finished before it could be stopped" outcome
+is painted on the folder line rather than only in the editor's status line.
+`[notes] sync_directory` must be an absolute path to be offered.)*

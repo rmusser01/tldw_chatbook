@@ -100,6 +100,9 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     resolve_adaptive_reader_layout,
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Utils.path_validation import (
+    validate_existing_absolute_directory,
+)
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     AdaptiveReaderShellResized,
     LibraryAdaptiveReaderShell,
@@ -257,6 +260,10 @@ _SESSION_GIT_MUTATION_BUSY = "Git operation in progress; structural actions are 
 #: task-32055: a folder change waits this long before it gives up. Read at
 #: call time (never bound as a default argument) so tests can shorten it.
 ROOT_CHANGE_TIMEOUT_SECONDS = 30.0
+#: How often the scan thread looks up from waiting for the service lock to
+#: ask whether its attempt has been abandoned. Short enough to be invisible
+#: beside a folder change, long enough not to spin.
+SERVICE_LOCK_POLL_SECONDS = 0.05
 ROOT_CHANGE_CANCELLED_COPY = "Folder change cancelled · previous folder kept"
 ROOT_CHANGE_TIMEOUT_COPY = (
     "Folder change timed out · previous folder kept. "
@@ -2137,12 +2144,17 @@ class LibraryFileNotesWorkspace(Vertical):
             self._poll_timer,
             self._autosave_timer,
             self._git_refresh_timer,
+            # task-32121: the folder-change patience repaint repeats now,
+            # and only the wait settling stops it -- which a scan parked in
+            # an uninterruptible syscall never does (review round 2).
+            self._structural_wait_timer,
         ):
             if timer is not None:
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
         self._git_refresh_timer = None
+        self._structural_wait_timer = None
         self._poll_worker = None
         self._save_worker = None
         self._git_status_worker = None
@@ -2162,12 +2174,17 @@ class LibraryFileNotesWorkspace(Vertical):
             self._poll_timer,
             self._autosave_timer,
             self._git_refresh_timer,
+            # task-32121: the folder-change patience repaint repeats now,
+            # and only the wait settling stops it -- which a scan parked in
+            # an uninterruptible syscall never does (review round 2).
+            self._structural_wait_timer,
         ):
             if timer is not None:
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
         self._git_refresh_timer = None
+        self._structural_wait_timer = None
         save_task = self._save_task
         if save_task is not None and not save_task.done():
             try:
@@ -2584,13 +2601,19 @@ class LibraryFileNotesWorkspace(Vertical):
         task-32136: a user who already configured a notes folder should be
         offered it by name instead of being sent to a file picker that
         opens on their home directory.
+
+        The setting is config-derived input, so it goes through
+        ``path_validation`` (review round 2) rather than straight to
+        ``is_dir()``: a relative spelling would otherwise resolve against
+        whatever directory the app was launched from.
         """
         raw = get_cli_setting("notes", "sync_directory", None)
         if not isinstance(raw, str) or not raw.strip():
             return None
         try:
-            candidate = Path(raw).expanduser()
-            return candidate if candidate.is_dir() else None
+            return validate_existing_absolute_directory(
+                Path(raw).expanduser()
+            )
         except (OSError, ValueError):
             return None
 
@@ -5361,6 +5384,13 @@ class LibraryFileNotesWorkspace(Vertical):
         uninterruptible syscall (a dead network mount) makes the NEXT
         change report a timeout instead of queueing behind it silently.
 
+        That bound is the CALLER's deadline, not a second one down here
+        (review round 2): abandoning an attempt sets its cancel flag, and
+        ``Keep waiting`` extends the deadline that decides when to abandon.
+        A worker-side timeout of its own ended the change a moment after
+        the user asked for more time. A caller that passes no flag has
+        nobody to abandon it, so it keeps a bound of its own.
+
         Args:
             service: Service bound to the candidate root.
             cancel_event: This attempt's own cancel flag, or None when the
@@ -5370,13 +5400,20 @@ class LibraryFileNotesWorkspace(Vertical):
             The candidate root's scan result.
 
         Raises:
-            ScanCancelled: If this attempt was abandoned mid-scan.
+            ScanCancelled: If this attempt was abandoned, waiting for the
+                lock or mid-scan.
             _ServiceLockBusy: If an earlier operation still holds the lock
-                when the deadline for this one expires.
+                after ``ROOT_CHANGE_TIMEOUT_SECONDS``, for a caller that
+                cannot abandon this attempt.
         """
         should_cancel = None if cancel_event is None else cancel_event.is_set
-        if not self._service_lock.acquire(timeout=ROOT_CHANGE_TIMEOUT_SECONDS):
-            raise _ServiceLockBusy()
+        deadline = monotonic() + ROOT_CHANGE_TIMEOUT_SECONDS
+        while not self._service_lock.acquire(timeout=SERVICE_LOCK_POLL_SECONDS):
+            if should_cancel is not None:
+                if should_cancel():
+                    raise ScanCancelled()
+            elif monotonic() >= deadline:
+                raise _ServiceLockBusy()
         try:
             return service.scan(
                 should_cancel=should_cancel,
@@ -5414,7 +5451,25 @@ class LibraryFileNotesWorkspace(Vertical):
         persist: bool = True,
         cancel_event: Event | None = None,
     ) -> bool:
-        """Adopt one canonical root after the common draft leave guard."""
+        """Adopt one canonical root after the common draft leave guard.
+
+        Args:
+            path: Folder to link. Canonicalized here; a value that cannot
+                be canonicalized ends the attempt.
+            persist: Whether to write the adopted root to the config.
+            cancel_event: The caller's flag for THIS attempt, set to
+                abandon its scan (the deadline, Cancel, Escape and the back
+                cue all go through it). Cancellation belongs to the caller:
+                pass None and the scan runs to completion, bounded only by
+                its own wait for the service lock.
+
+        Returns:
+            True when the folder was adopted. False covers every other
+            outcome -- a refused leave guard, a busy session, a superseded
+            attempt, an abandoned or timed-out scan -- and the previously
+            linked folder is still in place. The reason a user needs is
+            reported on the folder row, not returned here.
+        """
         if not self._active or self._path_transitioning or self._shutdown:
             return False
         if not await self.flush_pending_work():
@@ -6233,7 +6288,11 @@ class LibraryFileNotesWorkspace(Vertical):
             # ROOT_CHANGE_LANDED_COPY). Both branches settle only once the
             # task is done, so ``self._root`` is now final either way.
             if self._root != previous_root:
-                self._set_action_status(ROOT_CHANGE_LANDED_COPY)
+                # Through the reason channel, not just the action status:
+                # the cancel receipt already owns the folder row, and
+                # leaving it there tells the user the previous folder was
+                # kept while the new one is linked (review round 2).
+                self._report_root_change_reason(ROOT_CHANGE_LANDED_COPY)
         finally:
             self._end_structural_wait(wait)
 
