@@ -288,7 +288,9 @@ destination, or leaving the Import canvas cancels pending consent.
    collection. Choose the rail's **Export** row for `Everything` when the bundle
    should also include media, conversations, and notes.
 7. **Retry a failed job** — Find the "✗ failed" row in the Queue and press
-   "Retry"; the new attempt shows a " · retry 1" suffix. No Retry button
+   "Retry"; the new attempt shows a **" · attempt 2"** suffix (then
+   " · attempt 3", and so on — the label counts attempts, not retries, so
+   the first retry reads 2). No Retry button
    means the failure is permanent (unsupported type or missing file) — fix
    the source and start a fresh import, and use "Dismiss" to drop the row.
    A URL your web-security settings refuse fails with a plain receipt:
@@ -429,8 +431,16 @@ imported items afterwards.
   timestamps, deleted rows, retained history, collections, and usage state;
   import assigns ordinary destination-owned identity and lifecycle state. Legacy
   single-`content` Prompt records remain accepted.
-- **"Show details" is your first stop on a confusing failure** — it opens
-  the full error behind the shortened reason on the row.
+- **"Show details" is your first stop on a confusing failure** — when it is
+  there. The row action appears **only when the failure carried a detail to
+  show**; a failure whose reason arrived with nothing behind it offers no
+  "Show details" at all. Infrastructure failures that stop the import
+  worker before it reads a single file are the case you are most likely to
+  meet: they surface as a raw system message on the row ("Parse pool could
+  not start: [Errno 28] No space left on device", which on macOS usually
+  means exhausted POSIX semaphores rather than a full disk) with no details
+  row and no plain-language remedy. Mapping those to a readable reason with
+  a next step is tracked as task-32054.
 
 —
 *Verified against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: the rail
@@ -856,6 +866,18 @@ collapsed **"Import behavior"** panel's own title carrying the toggle's
 state while the fold is closed ("Import behavior · analysis on" / "·
 analysis off", AC#6), previously undocumented. No behaviour changed on
 this page; verified by reading the current source strings.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): the Library import queue's retry
+suffix is **" · attempt N"** (`library_ingest_state.py`), not the
+" · retry 1" this page claimed — the " · retry N" form belongs to Home's
+Active work card, a different surface. And **"Show details"** ships but is
+conditional on the failed job carrying an error detail, so the pool-start
+failures critique #8 hit showed a raw errno with no details row; the copy
+fix for those is task-32054. Import could not be exercised end to end on
+the review host (every local import failed at process-pool start there),
+so both were verified against the shipping code paths rather than a live
+run; every other claim on this page is unchanged.)*
 
 *Verified against fix/library-crit8-recovery-copy — 2026-09-08 (task-32054:
 failed rows now state a plain-language reason with its next step instead of

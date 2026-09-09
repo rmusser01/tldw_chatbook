@@ -274,6 +274,30 @@ from including paths another process staged first.
 
 ---
 
+## The stash is repo-global — `git stash` in a worktree hands your work to another agent
+
+**task-32057, 2026-09-08.** Measuring whether a test failure was pre-existing, I ran the
+textbook A/B inside my own git worktree: `git stash -q`, run pytest, `git stash pop`. The
+pop restored two `library_media_*` files I had never touched, and both of my own edits were
+gone. `git stash list` then showed my entry present but, seconds later, `git log -1
+stash@{0}` named a completely different branch; a sweep of all 39 entries for either of my
+files found nothing. A peer agent working in a sibling worktree had pushed its own stash
+between my push and my pop, so my pop took theirs and — by the reflog shuffle — mine went
+to them. Stashes live in `.git/refs/stash` on the **shared** repository object store; a
+worktree gives you a separate working tree and index, not a separate stash stack. Nothing
+warns you, and `stash@{0}` is a moving target between any two commands.
+
+**What to do.** Never `git stash` in a repo other agents are working in — the numeric
+`stash@{N}` handle is unsafe the moment a second actor exists, and even `git stash push --`
+with explicit paths still pushes onto the shared stack. To A/B a change, either commit first
+and measure with `git checkout <sha> -- <files>`, or copy the files aside with `cp` and
+restore them with `cp` — plain file operations touch nothing shared. If you have already
+lost work this way: your untracked files survived (stash skips them by default), the
+foreign changes in your tree belong to someone else — save them to a patch and `git checkout
+--` them rather than committing them — and re-apply your own edits by hand.
+
+---
+
 ## A clean scoped rebase can still invalidate a repository-wide manifest
 
 **TASK-856, 2026-08-08.** Tasks 1–3 and their scoped reviews were clean when the

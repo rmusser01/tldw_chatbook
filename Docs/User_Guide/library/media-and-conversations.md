@@ -285,7 +285,9 @@ match instead of refusing.)
 ### Media Trash
 
 Press **"Trash"** on the Media toolbar to swap the list for the Trash
-view: "‹ Media" (back), a "Trash (N)" heading, and one two-line row per
+view: "‹ Media" (back), a **"Local Trash · N items"** heading ("· 1 item"
+for one; "· N matching" while a Trash search is active; the bare "Local
+Trash" at widths too narrow for the suffix), and one two-line row per
 deleted item — the title, then a dim "type · trashed 2h" line saying when
 it was deleted, newest first. Press a row to select it (the **▸** marker
 moves), then **"Restore"** to put it back: the row leaves the Trash, the
@@ -651,10 +653,25 @@ requested load.
 |---|---|
 | "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
-| Row press | Selects the row and shows the preview (title, "Messages: N", "Updated: age"). |
+| Row press | Selects the row and loads it into the **Conversation reader** — not a preview. See below. |
 | "Open in Console" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Stages the conversation as **source context** in Console — see below. |
 | "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. One press links it, and "Open in Console" enables in place. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
+
+**The detail pane is a transcript reader.** Pressing a row loads the whole
+conversation into a pane headed **"Conversation reader"** with:
+
+- a **Read** / **Info** mode row (the same shape the media Reader uses);
+- a status line reading `Loaded <conversation id> · N of M messages ·
+  complete.`;
+- a **"Find in complete transcript…"** box; and
+- the transcript itself, one block per message, each headed
+  `user` / `assistant` and the message's timestamp.
+
+Two rough edges are known and tracked separately: the status line shows the
+raw conversation UUID and each message shows a full ISO timestamp rather
+than an age string, and **"Open in Console"** sits below the transcript
+rather than in the reader header.
 
 Empty state: "No conversations yet. Chat in Console and it appears here."
 There is no create, rename, or delete here — this panel treats your chats
@@ -710,8 +727,9 @@ setting**; it supplies one bundle of **staged context** for the next send.
 
 ### Recover something you deleted last week
 1. In **Media**, click "Trash" on the toolbar.
-2. Find the item ("Trash (N)" lists everything deleted, newest first, each
-   row saying "type · trashed 3d"), press its row, then "Restore".
+2. Find the item ("Local Trash · N items" lists everything deleted, newest
+   first, each row saying "type · trashed 3d"), press its row, then
+   "Restore".
 3. "Restored 'Title'." confirms it; "‹ Media" (or Escape) takes you back to
    the list, where the item — and the rail's "Media N" count — are back.
 
@@ -958,6 +976,24 @@ including the receipt string above. Added the Analysis tab's
 description (AC#5) — it was previously undocumented. Verified in
 real-screen tests for the choice row's painted text and its scope-change
 invalidation.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8; live at 235x52 and 100x30 on a seeded
+profile):
+(1) the Trash heading is **"Local Trash · N items"**, not "Trash (N)" —
+corrected in both places it appeared;
+(2) the Conversations detail is a full **transcript reader** with a
+Read/Info mode row and a "Find in complete transcript…" box, not the
+"title / Messages: N / Updated: age" preview this page described;
+(3) the **F6 heavy-border** claim HOLDS and is unchanged — F6 onto the
+Reader's content box repainted its frame from `┌──┐` to `┏━━┓` in a
+plain-text capture, so critique #8's listing of it as contradicted was
+itself wrong;
+(4) the **select-strip labels** were re-measured at 235x52 and at 100x30
+with the Reader open — "0 selected", "Select all 11 shown", "Clear",
+"○ Export", "○ Review", "○ Analyze", "○ Delete" and "Done" all painted in
+full, with no clipping. Clipping of the bulk toolbar below 110 columns
+remains tracked as task-15140; this page makes no wider claim.)*
 
 *Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32060:
 **s** now enters Select mode from any focused Items row, in every layout

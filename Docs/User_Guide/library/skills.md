@@ -370,6 +370,12 @@ through (Esc also cancels the passphrase dialogs).
 
 ## Quirks & troubleshooting
 
+- **The "Chunking Lab | Try selected text" strip is not part of this
+  canvas.** It paints under the header on every Library canvas and opens a
+  full-screen developer tool for comparing chunking strategies; Escape does
+  not leave it. See [Library overview](../library.md); demoting it is
+  tracked as task-32064.
+
 - **Renaming isn't supported.** The Name field is locked on existing
   skills — create a new skill and delete the old one instead.
 - **Every import needs review**, even one you wrote yourself on another
@@ -419,6 +425,12 @@ gated prompt ledger, the quarantine/trust-review expectation, and the
 *Verified against fix/media-riders-n — 2026-09-07 (task-31951: the Skills
 reader's two pane grips are one column each, painting `‹`/`›` instead of the
 five-column `<---`/`--->` run; opened live at 235x52.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073: the
+Library-wide "Chunking Lab | Try selected text" header strip, which paints
+on this canvas too, was undocumented everywhere; it is described once on
+the [Library overview](../library.md) and cross-referenced here. No other
+claim on this page changed.)*
 
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a skill
 import that outlives the patience window offers Cancel and never blocks

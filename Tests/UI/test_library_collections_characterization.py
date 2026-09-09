@@ -335,12 +335,22 @@ async def test_page_and_detail_retry_buttons_recover_after_a_transient_failure()
             raise RuntimeError("controlled page load failure")
         return await real_list_page(request)
 
-    scope.list_page = failing_once_list_page
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        # task-32057: the rail reads its Collections count through the same
+        # ``list_page`` enumerator before the row is ever visited, so the
+        # row press is no longer the first call. Let that settle, THEN arm
+        # the one-shot failure for the load the row press itself issues --
+        # the behaviour pinned here (Retry recovers) is unchanged.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_prefetched_total is not None,
+            message="The Collections rail count prefetch never settled.",
+        )
+        scope.list_page = failing_once_list_page
         # Entering the Collections rail row issues the first (failing) page
         # load, landing directly in the page_error/Retry state.
         screen.query_one("#library-row-browse-collections", Button).press()

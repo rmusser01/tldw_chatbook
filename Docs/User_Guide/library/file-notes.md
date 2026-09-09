@@ -362,6 +362,12 @@ save shortcut. File edits save automatically.
 
 ## Quirks & troubleshooting
 
+- **The "Chunking Lab | Try selected text" strip is not part of this
+  canvas.** It paints under the header on every Library canvas and opens a
+  full-screen developer tool for comparing chunking strategies; Escape does
+  not leave it. See [Library overview](../library.md); demoting it is
+  tracked as task-32064.
+
 - **Per-file caps: 8 MB and 2,000,000 characters.** Edits that would push a
   file past either limit are refused at save time. A body above 200,000
   characters opens read-only with exact byte and character sizes and a labeled
@@ -414,6 +420,12 @@ shell; Escape returns to Library notes)*
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
 Folder files mode's canvas states in-app that it edits the folder directly,
 unlike a managed Library relationship).*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073: the
+Library-wide "Chunking Lab | Try selected text" header strip, which paints
+on this canvas too, was undocumented everywhere; it is described once on
+the [Library overview](../library.md) and cross-referenced here. No other
+claim on this page changed.)*
 
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a folder
 change shows "still working · Cancel" after three seconds, times out after

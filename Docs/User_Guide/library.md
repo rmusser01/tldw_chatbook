@@ -15,7 +15,7 @@ pages:
 - [File Notes](library/file-notes.md) — the folder-backed File Notes workspace and its Session Git panel.
 - [Prompts](library/prompts.md) — saved prompts: list, editor, import, and Console insert.
 - [Skills](library/skills.md) — skill packs: import, editing, and the trust/approval flow.
-- [Collections](library/collections.md) — local Collection records for saved content.
+- [Collections](library/collections.md) — the Quick Capture reading list: saved web captures, highlights, and the legacy-records recovery path.
 - [Search & RAG](library/search-and-rag.md) — the Library Search/RAG canvas, evidence, and the Console handoff.
 - [Import & export](library/import-and-export.md) — the Import media flow and the Export bundle (.zip) canvas.
 
@@ -36,6 +36,18 @@ pages:
   directly on the Skills row.
 
 ## Get started on a new profile
+
+> **You will probably never see this.** "New profile" here means a profile
+> whose `config.toml` was created **in the same run** — the first launch
+> that writes the file. If the config file already existed when the app
+> started, Library opens the **full rail** even on a completely empty
+> profile, and the Get started view below never appears. That includes the
+> ordinary case of quitting during first-run setup and relaunching: setup
+> writes the config, so the next launch is no longer "new". Verified live
+> on an empty profile with a pre-written config: full rail, every count
+> `(0)`, no Get started controls. Making a genuinely empty profile reach
+> Get started regardless of when its config was written is tracked as
+> task-32059.
 
 A new profile starts with a compact rail: **Import…**, **New note**, and
 **Explore all tools**. While Library checks its sources, it says
@@ -120,11 +132,18 @@ knows more than the source owners do:
 - **Quick actions** are **Import…**, **New note**, then **Search**. They use the
   same guarded destinations as the rail.
 
-At compact widths the landing canvas is hidden and the rail remains the
-navigation owner. If focus was on Continue, recovery, a cached summary, or a
-quick action when the terminal became compact, focus moves to that action's
-matching rail destination. Widening restores the landing control only if you
-did not choose a newer rail target in the meantime.
+"Compact" here means the **single-stage** layout below 64 columns, not
+merely a narrow terminal: at 100 columns the rail and the landing canvas
+still paint side by side, with the landing's counts line, **From your
+Library** and **Quick actions** all present (verified live at 100x30). Only
+once the screen drops to one stage does the rail become the sole navigation
+owner and the landing canvas go away. Whether the landing should yield
+earlier than 64 columns is tracked as task-32066.
+
+In that single-stage layout, if focus was on Continue, recovery, a cached
+summary, or a quick action when the terminal became compact, focus moves to
+that action's matching rail destination. Widening restores the landing
+control only if you did not choose a newer rail target in the meantime.
 
 ## Layout tour
 
@@ -150,6 +169,15 @@ the rail or the canvas. Activating a rail destination opens its canvas; use
 the co-present layout and prior focus/scroll position when no newer action has
 replaced it.
 
+- **Chunking Lab strip** — directly under the header, on *every* Library
+  canvas: a **Chunking Lab** button and a **Try selected text** button.
+  This is a developer tool for comparing chunking strategies, not part of
+  the destination you are on; **Chunking Lab** opens it full-screen (see
+  [Search & RAG](library/search-and-rag.md) for what chunking affects).
+  It is deliberately undocumented per-canvas because it is identical
+  everywhere. Escape does not currently leave the Lab — use the nav bar or
+  the command palette. Demoting this strip out of every canvas header is
+  tracked as task-32064.
 - **Header line** — reads **Library | Local**, or **Library | Server:
   \<label\>** when a server runtime is configured.
 - **Left rail**, top to bottom. A new empty profile first sees the compact
@@ -716,6 +744,18 @@ time) can be fixed in one action once a provider IS configured — "Analyze
 N skipped" above the import queue, over every skipped id currently in the
 queue. Details on the
 [import & export](library/import-and-export.md) page.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073, three
+corrections from critique #8's docs-vs-live pass, each re-tested live at
+235x52 and 100x30 on a seeded and an empty profile):
+(1) **Get started** is reached only by a profile whose config.toml was
+created in the same run — an empty profile with a pre-written config opens
+the full rail with `(0)` on every row and never sees it (task-32059);
+(2) the landing canvas is **not** hidden merely at narrow widths — at 100
+columns it still paints beside the rail; only the below-64-column
+single-stage layout drops it (task-32066);
+(3) the **Chunking Lab / Try selected text** strip under the header, which
+paints on every Library canvas, was undocumented (task-32064).)*
 
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: Library's
 structural waits report "still working · Cancel" past three seconds and never
