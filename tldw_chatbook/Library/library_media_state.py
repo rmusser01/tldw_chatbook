@@ -76,11 +76,26 @@ _REOPEN_RECOVERY = "reopen Chatbook to reconnect to the media database"
 # segment never merges -- nothing bounds how far that would run -- so it
 # stops at the first space, which is exactly where a real path ends and
 # trailing prose ("... is missing") begins.
-# ponytail: a final segment that itself contains a space with nothing
-# after it (no closing quote/separator) still under-redacts -- there's no
-# way to bound that merge without a real tokenizer. Not hit by any known
-# OSError/sqlite3 message shape; revisit if one shows up.
+# A quoted path has its own exact closing boundary, so the quoted matcher
+# consumes a spaced final segment first. An unquoted final segment that itself
+# contains a space still under-redacts: there is no boundary separating it
+# from trailing prose without a real tokenizer.
 _SEGMENT = r"[^\s/\\'\"]*(?:[ ][^\s/\\'\"]+)*[/\\]"
+_QUOTED_PATH_TOKEN_PATTERN = re.compile(
+    r"""(?:
+        (?P<double_quote>")
+        (?:file:|[A-Za-z]:\\|~/|/)
+        [^"\r\n]+
+        (?P=double_quote)
+      |
+        (?P<single_quote>')
+        (?:file:|[A-Za-z]:\\|~/|/)
+        [^'\r\n]+
+        (?P=single_quote)
+    )
+    """,
+    re.VERBOSE,
+)
 _PATH_TOKEN_PATTERN = re.compile(
     r"""(?P<prefix>^|[\s'"])
     (?:file:|[A-Za-z]:\\|~/|/)
@@ -103,6 +118,9 @@ def _redact_paths(text: str) -> str:
         replaced by the literal ``<path>``; text with no such token is
         returned unchanged.
     """
+    text = _QUOTED_PATH_TOKEN_PATTERN.sub(
+        lambda match: f"{match.group(0)[0]}<path>{match.group(0)[-1]}", text
+    )
     return _PATH_TOKEN_PATTERN.sub(lambda m: f"{m.group('prefix')}<path>", text)
 
 

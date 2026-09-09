@@ -2508,3 +2508,122 @@ starts native attribution with no forced GC, connection monkeypatches or host
 cleanup. The five verified review fixes may be checkpointed for exact-head
 review while attribution runs, but merge remains pending resource investigation
 and final review/CI. No complete-repository sweep is claimed.
+
+### Steps 94–99: final Settings resource attribution and new head findings
+
+Steps 92/93 were published as `e38cbb280496a675a9c7b6b1d7e95e44265abeaa`;
+all five previous Qodo threads received evidence replies and are resolved.
+Exact-head review request 5600013712 produced two new findings:
+3967103308 (persisted Console message probe transaction) and 3967103315
+(quoted media-error filenames containing spaces). Live dev remains
+`a36fc6133c69f77b8b14596a59918de34261f8ef` on this turn's check.
+
+The unchanged native SQLite observer confirmed the Settings warning: **248
+passed, 6 warnings in 204.34s**, exit 0, but **95 retained SQLite handles**
+(82 Chroma, 13 test-app databases). Evidence:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-settings-native.XcJ7xe`.
+The former passing test counts did not qualify cleanup.
+
+Two separate owners caused retention. Settings index-status reads construct
+one-shot Chroma clients through `collection_indexes.list_indexes`; that function
+and its adoption/deletion siblings never released the acquired clients.
+Capability-checked exact-client close now runs in their `finally` paths, without
+global cache/system shutdown or changed operation results. Older clients without
+close remain compatible. New lifecycle controls first failed **17 of 26 cases**;
+three complete relevant files then passed **45 tests in 0.96s**. The real control
+executes fifteen local operations while preserving a separate same-path client's
+system, reference count and usability, and explicitly closes all test-created
+clients even on RED. Evidence: per-user `pr2427-chroma-lifecycle.63zr9U/`.
+The single added diagnostic is a fixed warning string with no exception payload,
+path, secret or user content; its inventory delta was explicitly reviewed.
+
+The two Settings fixture modules also omitted the existing exact-app resource
+fixtures. Reusing them reduced the first attributable case's app SQLite handles
+**13 to zero**, while leaving its separate Chroma handles unchanged before the
+production fix. Tool-profile plus complete fault/foreign-owner controls pass
+**26 tests**, final SQLite inventory empty. Native all-FD observation after both
+fixes confirms the first Settings case has zero SQLite handles and removes three
+Chroma-associated kqueues; an unlinked test-app instance-lock handle remains and
+is separately assigned to step 98. No global cleanup, forced GC, threshold raise
+or foreign-owner close is used. Full combined native qualification is pending.
+
+Perf Guard run 34337486297 independently failed because its fixed one-second
+sample missed the ChaChaNotes FTS worker queued behind serial recovery. A
+controlled real-boot case holds the first real recovery job until two seconds
+after readiness and reproduces the same failure (**1 failed, 1 passed**).
+The probe now retains its minimum observation period and waits for its unchanged
+required-start identities under the unchanged 300-second subprocess deadline.
+All allowlists and anti-vacuity checks remain intact. Six complete boot/policy
+files pass **35 tests in 45.88s**, with independent review finding no blockers.
+That run also exposed two unawaited-timer warnings in synchronous unmounted
+policy fixtures; step 99 will repair that missing loop precondition without
+changing production scheduling. Logs: `/private/tmp/pr2427-boot-delay-{red,green}.log`.
+
+Task remains In Progress. The new review/resource repairs still need final
+complete-file/native/static qualification, publication, exact-head review and CI
+before normal protected merge. Earlier native Library 902-pass evidence remains
+for its unchanged Notes ownership; it does not substitute for these new gates.
+
+Step 98 closes only the exact app product's existing instance-lock handle on
+the already-owned auxiliary stack, after its database callbacks. Four real
+portalocker cases first failed with the owned handle retained, then passed
+normal/runtime/cancellation/auxiliary-failure teardown while foreign locks stayed
+held and lock files stayed on disk. Three complete fixture/instance-lock files
+pass **39 tests, 2 warnings in 5.30s**. The original native Settings case now
+passes with **zero SQLite and zero instance-lock handles**. Its two additional
+sockets also appear in an app-free Chroma-only control executing fifteen real
+operations with all clients explicitly closed; no app or lock is needed to
+produce that bounded installed-dependency footprint. No all-FD-zero claim is made.
+Evidence: `/private/tmp/pr2427-step98-{lock-red,lock-green,native}.log` and
+`/private/tmp/pr2427-step99-chroma-control{,-retention}.log`.
+
+Step 99's two synchronous timer-registration assertions first failed because
+the unmounted app could not schedule a timer. Each fixture now records only its
+own `set_interval` call and returns a stoppable token; assertions pin the real
+reconcile callback, unchanged interval, gate drain and exactly-once cancellation.
+The mounted real-timer test is unchanged. The complete policy file passes
+**16 tests in 4.85s** with no unawaited-coroutine warning. Final six-file boot
+qualification passes **35 tests, 7 dependency/deprecation/headroom warnings in
+50.53s**, retaining all original module/CSS/worker budgets. Independent reviews
+clear the census and timer changes. `/private/tmp/pr2427-boot-final.log`.
+
+Final derived preflight passes all seven checks, including the explicitly
+reviewed fixed-string Chroma diagnostic inventory update; 3,684 task files,
+115 tables, 282 index census rows and 67 plan pins match. Log:
+`/private/tmp/pr2427-step99-final-preflight.log`.
+
+Complete native Settings requalification is now terminal: **248 passed,
+5 warnings in 217.19s**, exit 0. Final native inventory has **zero SQLite and
+zero instance-lock handles**, with only standard streams plus one kqueue and
+four sockets—the same pytest (one kqueue/two sockets) and app-free Chroma
+(two sockets) footprint established by isolated controls. The former descriptor
+growth warning is gone; no threshold changed. The six frozen source hashes
+match after completion. Evidence:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-settings-final.wNGDbh/`
+(`pytest.log`, `fd_identity.jsonl`, `source.sha256`). This is a complete same-file
+comparison, not merely an individual passing case or a SQLite-only scan.
+
+Four complete provenance/Console architecture files additionally pass **103
+tests, 5 warnings in 17.27s** (`/private/tmp/pr2427-step97-census.log`).
+Changed-file Ruff and whitespace checks pass. Live dev remains `a36fc6133c` and
+is already an ancestor of this branch; no additional rebase is needed at this
+checkpoint. The two new Qodo repairs still await terminal owner-file results
+and publication before their review threads can be resolved.
+
+Step 97's final complete owner results are now green: **20 menu tests in
+50.37s**, **73 media-controller tests in 4.50s**, and **3 media-state tests in
+1.33s**. The persisted one-row probe uses the existing borrow-safe transaction;
+real SQLite controls verify both empty/nonempty eligibility and an already-open
+caller transaction, then quiesce the exact created DB in `finally`. The redactor
+handles single/double-quoted POSIX/Windows final filenames with spaces, including
+the opposite quote inside a path, while preserving delimiters and trailing
+prose. Its conservative bare-token matcher is unchanged. Independent review
+cleared production and the strengthened exact-test cleanup. Logs:
+`/private/tmp/pr2427-qodo97-menu-final2.log`,
+`/private/tmp/pr2427-qodo97-media-final.log`, and
+`/private/tmp/pr2427-media-state-final.log`.
+
+Fresh combined six-file resource qualification passes **84 tests, 2 dependency
+warnings in 5.45s** (`/private/tmp/pr2427-resources-final.log`). All scoped repairs
+are ready for publication; task completion still requires the published head's
+review/checks and verified normal merge.

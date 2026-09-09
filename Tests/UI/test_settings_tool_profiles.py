@@ -66,6 +66,10 @@ from Tests.UI.test_settings_configuration_hub import (
     _build_test_app,
     _open_settings_category,
 )
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 
 
 def _profile(

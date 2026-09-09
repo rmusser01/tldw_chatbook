@@ -14094,3 +14094,17 @@ focus and grip fallback. The deterministic late-callback control failed before
 the guard and passed afterward; a standalone successful Back was not sufficient
 evidence. Keep exact final focus and scroll assertions while fixing readiness
 and ownership independently.
+
+### PR 2427: passing Settings tests retained one-shot Chroma clients
+
+On 2026-09-09, 248 passing Settings tests reported descriptor growth of 262.
+An observation-only terminal snapshot found 82 Chroma SQLite handles and 13
+test-app database handles. Reusing the existing app-owner fixture removed only
+the latter: index-status reads bypassed the app's vector-store owner and created
+their own PersistentClient on every call. Installed Chroma 1.5.8 retains shared
+system references until exact client.close(), even when the Python local falls
+out of scope. Test disposal at the acquisition boundary, including exceptions
+and early returns, and keep another same-path client live to prove cleanup does
+not stop its system. Native all-FD identities also exposed an unlinked test-app
+lock missed by a SQLite-suffix-only scan. A passing suite, missing pathname or
+one empty SQLite snapshot does not establish that every resource was released.
