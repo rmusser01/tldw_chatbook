@@ -321,7 +321,7 @@ here."
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
 | **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
-| **Delete** (Info → Danger) | Asks inline, in place — Info stays open, the prompt renders where Delete was pressed: "Delete this note? Undo will be available in the Notes list." Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
+| **Delete** (Info → Danger) | Asks inline, in place — Info stays open, the prompt renders where Delete was pressed: "Delete this note? Undo will be available in the Notes list." Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). Every other Info action — including "‹ Notes" / "‹ Back to list" — is disabled until you choose Cancel or Delete. A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
 Opening a note shows "Loading note…" only while the note is being read. If a
 read takes longer than about three seconds the editor stops waiting and shows
@@ -718,3 +718,11 @@ wording, sized by terminal width. task-32142: Preview shows the title above
 the body, Info shows "Saved" once and an absolute timestamp beside each
 relative age, and a delete receipt no longer survives into Add from files or
 Folder files.)*
+
+*Verified against fix/library-notes-editor-keys — 2026-09-09 (PR #2547
+review round, task-32132/task-32133: "‹ Notes" / "‹ Back to list" is now
+disabled, not just the other Info actions, while a delete confirmation is
+open — pressing it used to silently displace the prompt into Edit; and a
+keyword typed only through Info's Properties field on a fresh blank note
+now clears the "Draft — not saved yet" status once it autosaves, matching
+the main keywords field.)*
