@@ -228,10 +228,11 @@ _SKILLS_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: -- e.g. `handle_library_skills_trust_action` calling
 #: `_begin_library_skill_trust_setup`) or a test that calls/patches the
 #: screen delegator directly, and 16 had none.
-#: TASK-31932 adds six private names: three now have no external caller and
+#: TASK-31932 adds seven private names: four now have no external caller and
 #: three canvas consumers can name their established owner directly.
 _SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        "_enter_library_skill_conflict",
         # TASK-31932: three owner-only names and three direct view consumers.
         "_library_skills_canvas_kwargs",
         "_consume_library_skill_scroll_pending",
@@ -301,7 +302,7 @@ def test_screen_delegates_skills_handlers() -> None:
     forwarding check, not a loose "the controller is referenced somewhere"
     substring check.
 
-    Skips `_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (16 from Task 3 and six
+    Skips `_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (16 from Task 3 and seven
     from TASK-31932's direct-owner cleanup) and
     instead asserts each such name is genuinely ABSENT from `LibraryScreen`,
     so a future accidental re-add would fail loudly here rather than

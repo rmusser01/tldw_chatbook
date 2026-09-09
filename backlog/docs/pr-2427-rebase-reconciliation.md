@@ -3363,3 +3363,58 @@ the rebase to preserving that accepted upstream behavior and qualifying its
 complete affected owners; prior frozen Settings evidence is not an active run
 or a reason to repeat unchanged code. Final merge remains gated on the rebased
 revision's verification and reviews/checks.
+
+### Notes import-UX rebase and unchanged-cap reconciliation
+
+Rebased 242 commits cleanly onto fetched dev `de6793b9f5`, producing
+`bbdd551d5e`. The 26 incoming files preserve the approved import source-reset,
+group review, skipped-source receipts and compact chooser behavior. The existing
+canvas-sync and browse-route-swap coordinators are unchanged; the incoming Notes
+canvas changes retain ADR-141's exact callback and editor ownership contract.
+All checks on the still-published `645126abf5` subsequently completed successfully
+or with their expected skips, but GitHub correctly reports that revision behind.
+
+The new three import handlers expose a combined Screen ratchet failure:
+31,706 lines / 1,216 methods against unchanged 31,689 / 1,213 caps. Step 137
+removes six redundant private forwarding wrappers and retargets their five live
+calls directly to the existing current Notes/ingest controllers. The unused skill
+conflict wrapper is also retired; `_library_prompt_can_update_original` remains
+because the live evidence runner uses it. Regression RED: nine failed, 28 passed.
+Complete wiring/private-owner/controller-assembly/caps GREEN: 51 passed, two
+warnings, 1.52s. Logs: `/private/tmp/pr2427-six-wrappers-{red,green}.log`.
+Final Screen is 31,688 lines / 1,210 methods; no limit changed. Independent
+whole-repository consumer census and exact AST transformation review verify that
+only those removals/receivers changed, preserving all three incoming handlers.
+Changed tests pass Ruff; the Screen retains exactly its 48 pre-existing findings.
+
+The complete import state/planner/controller files pass 443 tests, two warnings,
+in 3.73s without the diagnostic observer. Log:
+`$TMPDIR/pr2427-note-import-plain.j3bXDz/pytest.log`. The earlier native run had
+442 passes and one observer failure: a planner test deliberately patches
+`os.fstat`, which the after-call observer invokes before monkeypatch teardown.
+The five-case plain control passes. Its final native inventory is six descriptors
+(stdio, kqueue and two sockets), with no SQLite, regular-file or instance-lock
+retention; this does not turn the observer-interrupted run into 443 native passes.
+Receipt: `$TMPDIR/pr2427-note-import-native.8Fxhy2/fd_identity.jsonl`.
+
+The complete execution-model/executor/receipt/Windows-filesystem group passes
+409 tests with three native-Windows skips and two warnings in 66.36s. However,
+native observation retains 19 SQLite-family descriptors from four executor-test
+owners, plus the standard six descriptors. Functional success therefore does not
+close resource qualification. Attribution is in progress without production or
+cleanup changes. Log: `/private/tmp/pr2427-import-execution-native.log`; receipt:
+`$TMPDIR/pr2427-import-execution-native.8Tlqyh/fd_identity.jsonl`.
+The remaining six complete import UI/widget/Notes-reader files pass 176 tests,
+three warnings, in 112.06s; session 80321 is terminal. The final native inventory
+contains 59 descriptors: stdio, kqueue, two sockets, the established process-lifetime
+faulthandler stream and 52 SQLite-family handles from the two real file-backed
+import-flow tests. No new runtime/fixture changes have been made from this evidence;
+exact ownership attribution is the next gate. Log:
+`/private/tmp/pr2427-import-ui-native.log`; receipt:
+`$TMPDIR/pr2427-import-ui-native.ZDWkw9/fd_identity.jsonl`.
+
+Step 137's three additional complete Notes-session/Skills-browse/ingest
+characterization owners pass 58 tests, three warnings, in 14.10s
+(`/private/tmp/pr2427-six-wrappers-regression.log`). All selected functional
+tests pass; the newly attributed executor/import-flow resource qualification,
+final-head publication/review and normal protected merge remain open.
