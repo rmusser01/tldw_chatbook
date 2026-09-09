@@ -8,13 +8,24 @@ import aiofiles
 import pytest
 from loguru import logger
 
+from tldw_chatbook.UI.Console_Modules.row_actions import ConsoleRowActionsController
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_row_actions_controller
 from tldw_chatbook.Utils import path_validation
 
 
 @pytest.fixture
-def export_writer(monkeypatch):
-    """Observe actual IO while preserving the real validator and filesystem."""
+def export_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[ConsoleRowActionsController, Mock, list[Path], list[Path], list[Path]]:
+    """Observe actual IO while preserving the real validator and filesystem.
+
+    Args:
+        monkeypatch: Install observation wrappers restored after each test.
+
+    Returns:
+        Export controller, notification mock, and the ordered validated,
+        created-directory, and opened-file path observations.
+    """
     notify = Mock()
     controller = build_console_row_actions_controller(
         SimpleNamespace(app=SimpleNamespace(notify=notify))

@@ -1,6 +1,7 @@
 """Real cached-Console navigation for the CHAT handoff channel."""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -68,7 +69,16 @@ def _character_app(tmp_path):
 
 @pytest.mark.parametrize("new_handoff", [False, True], ids=["no-new", "new"])
 @pytest.mark.asyncio
-async def test_warm_chat_handoff_creates_one_character_session(tmp_path, new_handoff):
+async def test_warm_chat_handoff_creates_one_character_session(
+    tmp_path: Path,
+    new_handoff: bool,
+) -> None:
+    """A warm Console return consumes at most one newly staged handoff.
+
+    Args:
+        tmp_path: Isolated directory for the real character database.
+        new_handoff: Whether to stage a handoff before returning to Console.
+    """
     app, character_id, payload = _character_app(tmp_path)
     async with app.run_test(size=(180, 40)) as pilot:
         console = await _wait_for_production_chat_screen(app, pilot)
@@ -127,8 +137,15 @@ async def test_warm_chat_handoff_creates_one_character_session(tmp_path, new_han
 
 @pytest.mark.asyncio
 async def test_suspending_again_stops_the_pending_chat_resume_timer(
-    tmp_path, monkeypatch
-):
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second suspension must stop the pending warm-resume timer.
+
+    Args:
+        tmp_path: Isolated directory for the real character database.
+        monkeypatch: Scoped patch helper used to hold the resume timer.
+    """
     app, character_id, payload = _character_app(tmp_path)
     async with app.run_test(size=(180, 40)) as pilot:
         console = await _wait_for_production_chat_screen(app, pilot)
