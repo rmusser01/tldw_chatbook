@@ -603,6 +603,15 @@ def _sync_library_canvas(
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
             if _library_resident_canvas_awaits_display(canvas):
                 return False
+            # task-32127 (review round 2): BEFORE the kwargs are built. The
+            # canvas composes its toolbar from the Items width this resolves,
+            # and the caller has already flipped the notes view, so building
+            # first handed the new view the previous one's geometry (measured:
+            # the editor's 58 columns for a 77-column list after Back). It sits
+            # AFTER the residency refusal above: an off-route canvas has no
+            # `.library-notes-route` shell to resolve, and the route swap's
+            # adopt-sync re-enters here once the canvas is displayed.
+            screen._sync_library_notes_reader_layout_from_shell()
             sync_kwargs = screen._library_notes_list_canvas_kwargs()
             sync_kwargs["deferred_guard"] = deferred_guard
             # (wave-8 task 3) `focus_intent_generation` moved to
@@ -644,7 +653,6 @@ def _sync_library_canvas(
                     not note_work_surface_changed and note_work.editor_has_focus()
                 )
                 note_work.sync_state(**note_work_kwargs)
-            screen._sync_library_notes_reader_layout_from_shell()
         elif kind == "prompts":
             canvas = screen.query_one(
                 "#library-prompts-canvas", LibraryPromptsListCanvas
