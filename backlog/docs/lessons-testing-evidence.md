@@ -13082,3 +13082,18 @@ failed too (`#library-notes-row-0` is a flat-list id; the tree indexes its
 note rows across its folder rows). That line was already red at the wave base,
 which had never reached it — a test that fails early hides whatever fails
 later, so re-run to green rather than to "past my line".
+
+## Pane controls are intentional click targets, and width increases need narrow-view checks
+
+**PR #2550 follow-up, 2026-09-09.** The user reported broken Library layouts and
+rejected one-cell collapse controls. The controls had been narrowed by earlier
+changes that treated their five-cell regions as dead gutters. PR #2550 then made
+larger preferred pane widths into larger collapse thresholds; its tests were
+updated to accept earlier disappearance. Restoring five-cell controls alone would
+hide both navigation and Items at 100 columns. The correction reserves the full
+click targets and gives up only the added default space before collapsing panes.
+
+**What to do.** Verify the complete painted view and click the outer cells of
+controls before treating blank space as removable. Test resize and explicit
+reopening with a selected item as well as an empty reader. Do not turn a new
+collapse boundary into a test expectation without checking the user's workflow.
