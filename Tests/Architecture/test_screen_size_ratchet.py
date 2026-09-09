@@ -885,7 +885,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # independent trajectories, pinned to reality. dev's +1026 remains real
     # debt to be worked down on dev's own decomposition schedule; pinning it
     # here keeps the merged tree green without hiding whose lines they are.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33204, 1276),
+    # PR-2427 after wave-8 reconciliation: ordered assembly/private cleanup and
+    # removal of the superseded unreachable placement block retain tighter pins.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31901, 1229),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

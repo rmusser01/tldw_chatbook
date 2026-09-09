@@ -1742,11 +1742,8 @@ class LibraryMediaController:
     async def _apply_library_media_active_surface(self) -> None:
         """Synchronize the permanent Media Reader without replacing Items.
 
-        Shared completion seam for the media open click and the media
-        detail worker (task-21116). Skips entirely when the media surface
-        no longer owns the route -- the fetched detail is retained state,
-        and rebuilding an unrelated mounted surface is the TASK-15706
-        transition stomp.
+        Shared open/detail completion seam (task-21116). Skip unrelated routes
+        to prevent the TASK-15706 transition stomp; fetched detail stays retained.
 
         The Trash view is one of those "no longer owns it" cases (review
         round, M1): it is a distinct surface with its own updater
@@ -1779,16 +1776,18 @@ class LibraryMediaController:
             or self._library_media_view == "trash"
         ):
             return
+        prearmed = self._mounted_library_media_viewer() is None
+        if prearmed:
+            self._arm_library_list_entry_focus(media_return=media_return)
         await self._apply_library_open_item_surface(
             self._build_library_media_active_child,
-            then=partial(self._finish_library_media_list_return, media_return),
+            then=partial(self._finish_library_media_list_return, media_return, prearmed),
         )
 
     def _finish_library_media_list_return(
-        self,
-        media_return: _LibraryMediaReturnReceipt | None,
+        self, media_return: _LibraryMediaReturnReceipt | None, prearmed: bool
     ) -> None:
-        """Arm row/scroll/focus only after the normal Media child is mounted."""
+        """Sync chrome and arm only the retained viewer's replacement row owner."""
         if (
             self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
             or self._library_media_view != "list"
@@ -1798,7 +1797,8 @@ class LibraryMediaController:
         viewer = self._mounted_library_media_viewer()
         if viewer is not None:
             self._sync_library_media_viewer_state(viewer)
-        self._arm_library_list_entry_focus(media_return=media_return)
+        if not prearmed:
+            self._arm_library_list_entry_focus(media_return=media_return)
 
     def _selected_media_handoff_payload(self) -> ChatHandoffPayload | None:
         """Build the Console handoff payload for the open Library media item.

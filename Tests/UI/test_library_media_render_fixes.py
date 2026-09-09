@@ -2118,17 +2118,17 @@ async def test_select_mode_empty_refresh_does_not_ask_to_select_nothing():
         assert reason.styles.visibility == "visible"
 
         # A successful refresh empties the list while select mode survives.
-        controller = screen._library_media_browse_controller
+        browse = screen._library_media_browse_controller.state
         service.media_items = []
         screen._request_library_media_browse(
-            controller.mutation_refresh_scope,
+            browse.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_result is not None
-            and controller.applied_result.total == 0
-            and not controller.loading,
+            lambda: browse.applied_result is not None
+            and browse.applied_result.total == 0
+            and not browse.loading,
             message="Empty Media refresh never applied while in select mode.",
         )
         await pilot.pause()

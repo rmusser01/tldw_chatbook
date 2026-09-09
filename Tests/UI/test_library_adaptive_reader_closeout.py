@@ -95,7 +95,7 @@ DESTINATION_CONTRACT = {
     "notes": (
         "#library-row-browse-notes",
         ".library-notes-route",
-        "#library-notes-tree-note-2",
+        "#library-notes-row-0",
         # Wave-8 task 3: notes' own reader_preferences/reader_layout fields
         # moved to ``screen._notes_state.<field>`` -- the EIGHTH and last
         # destination to take the extra hop, so every entry in this contract

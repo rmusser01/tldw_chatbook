@@ -122,6 +122,23 @@ def _unmounted_console() -> ChatScreen:
     return ChatScreen(_build_test_app())
 
 
+def test_cached_row_actions_keep_late_bound_dependencies():
+    screen = _unmounted_console()
+    owner = screen._row_actions
+    app, store, files = object(), object(), object()
+    screen.app_instance = app
+    screen._ensure_console_chat_store = lambda: store
+    screen._workspace = SimpleNamespace(
+        activate_workspace_id=lambda value: ("activate", value),
+        _workspace_files_availability_by_id=files,
+    )
+    assert screen._row_actions is owner
+    assert owner.app_instance is app
+    assert owner._ensure_console_chat_store() is store
+    assert owner._files_availability_by_id is files
+    assert owner._activate_workspace("workspace") == ("activate", "workspace")
+
+
 def test_all_six_controllers_are_constructed_with_the_right_classes():
     screen = _unmounted_console()
 

@@ -1715,12 +1715,17 @@ async def test_lasting_attention_survives_a_fresh_screen_and_prioritizes_review(
             retarget = screen.query_one("#notes-sync-root-retarget-0", Button)
             assert retarget.disabled
             assert screen.query_one("#notes-sync-root-disconnect-0", Button).disabled
+            assert review in host.screen._compositor.visible_widgets
+            retarget.scroll_visible(animate=False)
+            await pilot.pause()
             _assert_legible_painted_text(
                 host,
                 retarget,
                 "○ Retarget",
                 theme_name="textual-dark",
             )
+            review.scroll_visible(animate=False)
+            await pilot.pause()
             assert review in host.screen._compositor.visible_widgets
             assert (
                 screen.query_one("#notes-sync-roots-back", Button)
@@ -1903,22 +1908,22 @@ async def test_folder_files_and_session_git_use_supported_40x20_navigator(
             session_git = workspace.query_one("#file-notes-session-changes", Button)
             assert "Folder files" in _painted_text(pilot.app)
             assert authority in pilot.app.screen._compositor.visible_widgets
-            # task-32294 AC#2: at 40x20 the adaptive shell gives the whole
-            # width to the navigator and collapses the WORK pane (measured:
-            # `#file-notes-work` sits at x=40 w=1, off the right edge), so
-            # Session Git -- a work-pane control -- is mounted but not
-            # composited. Reopening the pane through its grip does not help
-            # either: the button then lands on row 19 of a 20-row terminal,
-            # below the pane's own 12 rows. That reachability gap is a
-            # PRODUCT gap filed separately; what 40x20 is supposed to show
-            # is the navigator, and what this test then proves is that the
-            # Session Git route still works from here.
+            # The compact initial view shows navigation; open Manage before
+            # using its Session Git control and prove that control is painted.
             visible = pilot.app.screen._compositor.visible_widgets
             assert session_git.is_mounted and session_git not in visible
             assert (
                 workspace.query_one("#library-file-notes-items-grip", Button)
                 in visible
             ), "the grip that reopens the work pane must at least be on screen"
+            workspace.query_one("#file-notes-manage", Button).press()
+            await _wait_until(
+                pilot, lambda: workspace.work_mode == "manage",
+                "Folder Files Manage mode did not open at 40x20",
+            )
+            session_git.scroll_visible(animate=False)
+            await pilot.pause()
+            assert session_git in pilot.app.screen._compositor.visible_widgets
 
             session_git.focus()
             session_git.press()

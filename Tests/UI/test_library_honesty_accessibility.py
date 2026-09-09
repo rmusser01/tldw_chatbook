@@ -29,13 +29,14 @@ import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import ConsolidatedCSSApp, app_css_text
 from tldw_chatbook.Widgets.Library.library_emergency_return import (
     LibraryEmergencyReturn,
 )
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ACTION_LABEL_PAD,
     LIBRARY_DISABLED_ACTION_MARKER,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_SEARCH,
@@ -187,6 +188,9 @@ def _select_mode_state(selected_count: int) -> LibraryMediaCanvasState:
 
 
 class _SelectModeApp(ConsolidatedCSSApp):
+    def _library_media_analyze_reason(self) -> str:
+        return ""
+
     def __init__(self, selected_count: int):
         super().__init__()
         self._selected_count = selected_count
@@ -282,9 +286,7 @@ def test_library_disabled_contrast_rules_live_in_source_and_bundle():
     source = (_CSS_DIR / "components" / "_agentic_terminal.tcss").read_text(
         encoding="utf-8"
     )
-    bundle = (_CSS_DIR.parent / "css" / "tldw_cli_modular.tcss").read_text(
-        encoding="utf-8"
-    )
+    bundle = app_css_text()
     for haystack in (source, bundle):
         assert "Button.library-canvas-action:disabled" in haystack
         assert "Button.library-source-action:disabled" in haystack
@@ -811,27 +813,21 @@ def test_no_widget_module_still_builds_a_cycler_with_the_disclosure_glyph():
 
 
 @pytest.mark.asyncio
-async def test_media_canvas_actions_share_one_toolbar_row():
-    """AC#5: three toolbar layouts -- Media stacked its actions vertically
-    (one full-width button per line) while Notes/Prompts/Skills use
-    horizontal ds-toolbar rows. Media's type filter, Export… and Select now
-    share one ds-toolbar Horizontal like its siblings."""
+async def test_media_browse_actions_use_grouped_toolbar_rows():
+    """TASK-30043: readable chooser and action rows use shared toolbar styling."""
     from textual.containers import Horizontal
+    from Tests.UI.test_library_media_toolbar_adapt import _CanvasApp, _browse_state
 
-    async with _SelectModeApp(0).run_test() as pilot:
-        buttons = [
-            pilot.app.query_one(selector, Button)
-            for selector in (
-                "#library-media-type-filter",
-                "#library-media-export",
-                "#library-media-select-toggle",
-            )
-        ]
-        parents = {button.parent for button in buttons}
-        assert len(parents) == 1
-        (parent,) = parents
-        assert isinstance(parent, Horizontal)
-        assert parent.has_class("ds-toolbar")
+    async with _CanvasApp(_browse_state()).run_test() as pilot:
+        for selector, parent_id in (
+            ("#library-media-type-filter", "library-media-toolbar-choosers"),
+            ("#library-media-export", "library-media-toolbar-actions"),
+            ("#library-media-select-toggle", "library-media-toolbar-actions"),
+        ):
+            parent = pilot.app.query_one(selector, Button).parent
+            assert isinstance(parent, Horizontal)
+            assert parent.id == parent_id
+            assert parent.has_class("ds-toolbar")
 
 
 # ---------------------------------------------------------------------------
@@ -1072,12 +1068,14 @@ async def test_escape_works_on_export_and_staging_canvases():
     no return path). Escape now: Export -> back to the canvas that opened
     it (or the hub from the rail), while staging returns to the
     hub. The footer advertises each via the shared seam."""
-    from Tests.UI.test_product_maturity_phase39_library_collections import (
+    from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
-        _seed_library_sources,
         _wait_for_library_snapshot,
         _wait_for_selector,
+    )
+    from Tests.UI.test_product_maturity_phase3_library_contract_layout import (
+        _seed_library_sources,
     )
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Library.library_shell_state import (
@@ -1087,6 +1085,10 @@ async def test_escape_works_on_export_and_staging_canvases():
 
     app = _build_test_app()
     _seed_library_sources(app)
+    from Tests.UI.test_library_shell import StaticLibraryMediaScopeService
+    app.media_reading_scope_service = StaticLibraryMediaScopeService(
+        app.media_reading_scope_service.media_items
+    )
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(170, 50)) as pilot:
@@ -1306,12 +1308,14 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
     rail switch to another canvas must clear it, so a later fresh rail
     entry into Export is hub-origined -- footer says "back to hub" and
     Escape lands on the hub, never Media."""
-    from Tests.UI.test_product_maturity_phase39_library_collections import (
+    from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
-        _seed_library_sources,
         _wait_for_library_snapshot,
         _wait_for_selector,
+    )
+    from Tests.UI.test_product_maturity_phase3_library_contract_layout import (
+        _seed_library_sources,
     )
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Library.library_shell_state import (
@@ -1321,6 +1325,10 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
 
     app = _build_test_app()
     _seed_library_sources(app)
+    from Tests.UI.test_library_shell import StaticLibraryMediaScopeService
+    app.media_reading_scope_service = StaticLibraryMediaScopeService(
+        app.media_reading_scope_service.media_items
+    )
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(170, 50)) as pilot:

@@ -422,7 +422,10 @@ async def test_workspace_conversation_row_switches_to_its_already_open_session()
         console = await _mounted_console(host, pilot)
         store = console._ensure_console_chat_store()
         first_session_id = store.active_session_id
-        second = store.create_session()
+        # Real new-chat creation seeds settings before the row can be opened.
+        second = store.create_session(
+            settings=console._session._default_console_session_settings()
+        )
         store.switch_session(first_session_id)
         assert store.active_session_id == first_session_id
 

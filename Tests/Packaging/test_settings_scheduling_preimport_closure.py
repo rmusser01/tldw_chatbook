@@ -7,6 +7,18 @@ import pytest
 from Tests.Packaging.test_chat_persistence_import_closure import _run_isolated_python
 
 
+def test_console_settings_defers_failure_diagnostics(tmp_path):
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import sys
+from tldw_chatbook.UI.Console_Modules import settings_durability, settings_navigation
+assert 'tldw_chatbook.UI.Console_Modules.settings_diagnostics' not in sys.modules
+""",
+    )
+    assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-4000:]
+
+
 @pytest.mark.parametrize(
     ("route_module", "deferred", "first_use"),
     [

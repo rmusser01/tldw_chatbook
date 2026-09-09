@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -30,10 +31,36 @@ from textual.widgets import Button
 SIZES = ((160, 50), (120, 35), (100, 30), (80, 24))
 
 
-@pytest.mark.asyncio
-async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
-    """Exercise real SQLite, repository, scope service, and Notes canvas."""
+@pytest.fixture
+def live_notes_db(tmp_path):
+    """Own all connections to the walkthrough's single temporary database."""
     db = CharactersRAGDB(tmp_path / "notes-live.db", client_id="task-18917-live")
+    try:
+        yield db
+    finally:
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert db.registered_connection_count() == 0
+
+
+def test_live_notes_db_quiesces_worker_connections_on_failure(tmp_path):
+    fixture = live_notes_db.__wrapped__(tmp_path)
+    try:
+        db = next(fixture)
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            worker.submit(db._get_thread_connection).result()
+        assert db.registered_connection_count() >= 2
+        with pytest.raises(RuntimeError, match="failed walkthrough"):
+            fixture.throw(RuntimeError("failed walkthrough"))
+        assert db.registered_connection_count() == 0
+    finally:
+        fixture.close()
+
+
+@pytest.mark.asyncio
+async def test_live_real_repository_large_tree_walkthrough(tmp_path, live_notes_db) -> None:
+    """Exercise real SQLite, repository, scope service, and Notes canvas."""
+    db = live_notes_db
     repository = LocalNoteFolderRepository(db)
     primary = repository.create_folder(
         name="00 Primary research with a deliberately identifying long title",
