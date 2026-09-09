@@ -16290,7 +16290,23 @@ class LibraryScreen(BaseAppScreen):
         partial: bool = False,
         destination_membership: NoteFolderMembership | None = None,
     ) -> None:
-        """Patch committed truth, then reload only exact affected slices."""
+        """Patch committed truth, then reload only exact affected slices.
+
+        Every mutation below runs after an await, and unmounting the Notes
+        tree clears its branches and bumps the lifecycle generation. A
+        reconcile that outlives its visit would otherwise patch state and
+        start slice loads that capture the NEW generation, repopulating the
+        next visit's tree from the previous one's mutation, so the captured
+        generation is re-checked after each await point (review round 2;
+        undo is one of six callers reaching this seam).
+        """
+        lifecycle = getattr(self._notes_state, "tree_lifecycle_generation", 0)
+
+        def visit_is_current() -> bool:
+            return (
+                getattr(self._notes_state, "tree_lifecycle_generation", 0) == lifecycle
+            )
+
         folder = getattr(result, "folder", None)
         if folder is None and isinstance(result, NoteFolder):
             folder = result
@@ -16364,6 +16380,8 @@ class LibraryScreen(BaseAppScreen):
             )
         except Exception:
             after = None
+        if not visit_is_current():
+            return
 
         parents: set[str | None] = set()
         placement_parents: set[str | None] = set()
@@ -16648,6 +16666,8 @@ class LibraryScreen(BaseAppScreen):
             state = self._notes_state.tree_branches.get(key)
             if state is None:
                 continue
+            if not visit_is_current():
+                return
             await LibraryScreen._load_library_notes_tree_slice(
                 self,
                 key,

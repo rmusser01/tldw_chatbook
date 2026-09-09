@@ -49,4 +49,5 @@ AC#1 is pinned for BOTH halves of "in its folder (or Unfiled)": the projection t
 Live (AC#3): caps/03-delete-receipt.txt (Notes (9), row gone) then caps/05-undo-row-returns.txt (Notes (10), "Groceries (not work) · now" back under Unfiled, selected and focused).
 
 Files: tldw_chatbook/UI/Library_Modules/library_notes_controller.py, tldw_chatbook/UI/Screens/library_screen.py, Tests/UI/test_library_notes_wave_list.py.
+REVIEW ROUND 2 (PR #2544, Qodo finding 4): `_reconcile_library_notes_tree_mutation` -- the seam Undo now commits through, and five older callers with it -- mutated tree state and started slice loads after its awaits without re-checking the tree lifecycle. Unmounting Notes clears every branch and bumps that generation, and a load begun afterwards captures the NEW generation, so a reconcile outliving its visit could repopulate the next one. It now captures the generation on entry and abandons the reconcile after the mutation-context await and before each slice load. Pinned by `test_reconcile_abandons_a_tree_visit_that_ended_mid_flight`; without the guard it reports "the ended visit still loaded slices".
 <!-- SECTION:NOTES:END -->
