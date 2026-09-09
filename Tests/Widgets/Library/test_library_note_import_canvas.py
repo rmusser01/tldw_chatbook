@@ -177,6 +177,36 @@ async def test_folder_selection_is_exclusive_and_needs_no_destination() -> None:
         assert app.query_one("#note-import-check", Button).disabled is False
 
 
+async def test_folder_selection_summary_shows_absolute_path_with_basename_intact() -> (
+    None
+):
+    """task-32122 Step 3: the folder confirmation must show a real path, not a
+
+    basename -- and a long absolute path must middle-elide rather than lose
+    the trailing folder name a user actually recognizes their pick by.
+    """
+    long_path = (
+        "/Users/robert/Documents/deeply/nested/somewhere/notes-review-vault"
+    )
+    app = _CanvasApp(
+        _snapshot(
+            selected_names=(long_path,),
+            selection_kind="folder",
+            status_line="1 folder selected.",
+            can_check=True,
+            check_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        summary = _plain(app.query_one("#note-import-source-summary", Static))
+        assert summary.startswith("1 folder selected: ")
+        assert "notes-review-vault" in summary
+        assert "…" in summary
+        assert "/Users/robert/Documents/deeply/nested/somewhere" not in summary
+
+
 async def test_select_controls_post_typed_physical_messages() -> None:
     app = _CanvasApp(
         _snapshot(

@@ -10,13 +10,15 @@ from pathlib import Path
 
 ##############################################################################
 # Textual imports.
+from typing import Union
+
 from textual import on
 from textual.app import ComposeResult
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Label
 
 ##############################################################################
 # Local imports.
-from .base_dialog import ButtonLabel, FileSystemPickerScreen
+from .base_dialog import ButtonLabel, FileSystemPickerScreen, resolve_default_location
 from .parts import DirectoryNavigation
 from .path_maker import MakePath
 
@@ -59,7 +61,10 @@ class SelectDirectory(FileSystemPickerScreen):
             default button label as a parameter and return the label to use.
         """
         super().__init__(
-            location, title, select_button=select_button, cancel_button=cancel_button
+            resolve_default_location(location),
+            title,
+            select_button=select_button,
+            cancel_button=cancel_button,
         )
 
     def on_mount(self) -> None:
@@ -72,8 +77,52 @@ class SelectDirectory(FileSystemPickerScreen):
         # navigation.focus() # Focus is handled by super().on_mount or should be reconsidered
 
     def _input_bar(self) -> ComposeResult:
-        """Provide any widgets for the input before, before the buttons."""
+        """Provide the labelled path input for direct navigation.
+
+        A persistent "Folder path" label (task-32122 AC#2), not just a
+        placeholder that vanishes the moment the user types.
+        """
+        yield Label("Folder path:", id="path-input-label")
         yield Input(id="path_input", placeholder="Type path or select below")
+
+    def _hint_text(self) -> str:
+        """Directory-mode hint: Enter descends, Select confirms (task-32122)."""
+        select_label = self._label(self._select_button, "Select")
+        return f"Enter Open  ·  {select_label} use this folder"
+
+    def _resolve_typed_directory(self, value: str) -> Union[Path, str]:
+        """Resolve a typed field value to an absolute directory, or an error.
+
+        Shared by Enter-to-navigate (``_handle_path_input_submission``) and
+        Select-to-confirm (``_select_directory``) so both actions agree on
+        what the typed text means (task-32122 AC#1): Select used to ignore
+        the field entirely and return whatever directory was merely being
+        browsed.
+
+        Returns:
+            The resolved absolute ``Path`` when it names an existing
+            directory, or an error string ready for ``_set_error`` when it
+            does not.
+        """
+        value = value.strip()
+        current = self.query_one(DirectoryNavigation).location
+        if not value or value == str(current):
+            # Unchanged from the directory being browsed (the field is kept
+            # in step with it -- see ``_update_path_input_on_nav_change``):
+            # return that exact object rather than re-resolving its own
+            # string form. Symlinked locations (macOS "/tmp" ->
+            # "/private/tmp") would otherwise change the plain no-typing
+            # Select result.
+            return current
+        try:
+            target_path = MakePath.of(value).expanduser().resolve()
+        except RuntimeError as error:
+            return str(error)
+        if target_path.is_dir():
+            return target_path
+        if target_path.exists():
+            return f"Not a directory: {target_path.name}"
+        return f"Path not found: {value}"
 
     @on(DirectoryNavigation.Changed)
     def _update_path_input_on_nav_change(
@@ -91,40 +140,44 @@ class SelectDirectory(FileSystemPickerScreen):
     def _handle_path_input_submission(self, event: Input.Submitted) -> None:
         """Handle submission of the path Input widget."""
         event.stop()
-        path_value = event.value
-        dir_nav = self.query_one(DirectoryNavigation)
         try:
-            # Attempt to resolve the path
-            target_path = MakePath.of(path_value).expanduser().resolve()
-            if target_path.is_dir():
-                dir_nav.location = (
-                    target_path  # This will trigger DirectoryNavigation.Changed
-                )
-                # dir_nav.focus() # Optionally refocus directory navigation
-            else:
-                self._set_error(f"Not a directory: {target_path.name}")
-                self.query_one("#path_input", Input).focus()
-        except FileNotFoundError:
-            self._set_error(f"Path not found: {path_value}")
-            self.query_one("#path_input", Input).focus()
+            result = self._resolve_typed_directory(event.value)
         except PermissionError:
             self._set_error(self.ERROR_PERMISSION_ERROR)
             self.query_one("#path_input", Input).focus()
-        except RuntimeError as e:  # For MakePath.expanduser() issues
-            self._set_error(str(e))
-            self.query_one("#path_input", Input).focus()
+            return
+        if isinstance(result, Path):
+            # This will trigger DirectoryNavigation.Changed.
+            self.query_one(DirectoryNavigation).location = result
+            return
+        self._set_error(result)
+        self.query_one("#path_input", Input).focus()
 
     @on(Button.Pressed, "#select")
     def _select_directory(self, event: Button.Pressed) -> None:
-        """React to the select button being pressed.
+        """Resolve the typed field first, then the directory being viewed.
+
+        Used to always return ``DirectoryNavigation.location`` -- the
+        directory merely being browsed -- silently discarding a path the
+        user typed but never pressed Enter on (task-32122 AC#1).
 
         Args:
             event: The button press event.
         """
         event.stop()
-        # The location in DirectoryNavigation is the source of truth,
-        # whether set by list interaction or by the path_input.
-        self.dismiss(result=self.query_one(DirectoryNavigation).location)
+        try:
+            result = self._resolve_typed_directory(
+                self.query_one("#path_input", Input).value
+            )
+        except PermissionError:
+            self._set_error(self.ERROR_PERMISSION_ERROR)
+            self.query_one("#path_input", Input).focus()
+            return
+        if isinstance(result, Path):
+            self.dismiss(result=result)
+            return
+        self._set_error(result)
+        self.query_one("#path_input", Input).focus()
 
 
 ### select_directory.py ends here

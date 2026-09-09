@@ -110,7 +110,9 @@ class BaseFileDialog(FileSystemPickerScreen):
         # (task-3304, MI-15) Name the field: the bar's Input was unlabeled.
         # The label precedes the Input, so the task-1479 scoped lookup
         # (InputBar's first Input) still resolves the filename field.
-        yield Label("File name:", id="file-name-label")
+        yield Label(
+            self._field_label_text(self._default_file or ""), id="file-name-label"
+        )
         yield Input(Path(self._default_file or "").name, placeholder="File name")
         if self._filters:
             yield FileFilter(
@@ -119,6 +121,48 @@ class BaseFileDialog(FileSystemPickerScreen):
                 value=0,
                 allow_blank=False,
             )
+
+    def _field_label_text(self, value: str) -> str:
+        """"File name:", or "Folder path:" once the typed text is a folder.
+
+        Only ``FileOpen(offer_select_folder=True)`` sets ``_offer_select_
+        folder`` -- ``FileSave`` (also a ``BaseFileDialog``) never does, so
+        this always returns "File name:" there (task-32122 AC#2: the field
+        this swaps between is exactly the one "Select folder" now reads,
+        so the label should say so precisely when that action would use
+        it -- not for every keystroke of an ordinary filename).
+        """
+        if not getattr(self, "_offer_select_folder", False) or not value:
+            return "File name:"
+        try:
+            candidate = MakePath.of(value).expanduser()
+            if not candidate.is_absolute():
+                candidate = self.query_one(DirectoryNavigation).location / candidate
+            if candidate.is_dir():
+                return "Folder path:"
+        except (RuntimeError, OSError, ValueError):
+            pass
+        return "File name:"
+
+    @on(Input.Changed)
+    def _update_field_label(self, event: Input.Changed) -> None:
+        """Keep the field label in step with what "Select folder" would use."""
+        if not getattr(self, "_offer_select_folder", False):
+            return
+        try:
+            bar_input = self.query_one(InputBar).query_one(Input)
+        except Exception:
+            return
+        if event.input is not bar_input:
+            # This screen also carries a hidden Ctrl+L path bar and a
+            # search input (both Input widgets too); only the input bar's
+            # own field selects a filename/folder.
+            return
+        try:
+            label = self.query_one("#file-name-label", Label)
+        except Exception:
+            return
+        label.update(self._field_label_text(event.value))
 
     @on(Mount)
     def _initial_filter(self) -> None:

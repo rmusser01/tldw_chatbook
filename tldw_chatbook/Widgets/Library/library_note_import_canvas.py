@@ -15,6 +15,7 @@ from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
 )
+from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
 )
@@ -41,8 +42,13 @@ def _disabled_action_label(text: str, *, disabled: bool) -> str:
 
 
 def _bounded_source_name(name: str) -> str:
-    """Keep one selected filename useful without dominating compact layouts."""
-    return name if len(name) <= 48 else f"{name[:47]}…"
+    """Keep one selected source name useful without dominating compact layouts.
+
+    Middle-elides (task-32122 Step 3) rather than truncating the tail, so a
+    folder's absolute path keeps its basename -- the name a user actually
+    picked -- intact instead of showing an unrecognizable path prefix.
+    """
+    return elide_path_middle(name, budget=48)
 
 
 class _ImportBody(VerticalScroll):
