@@ -2180,3 +2180,63 @@ trust file **39 passed, 2 warnings in 1.44s**
 parameter-docstring addition **2 passed, 417 deselected, 3 warnings in 2.90s**
 (`/private/tmp/pr2427-roleplay-lease-final.log`). Scoped Ruff and whitespace
 checks pass on all changed Python files.
+
+### Wave-fourteen publication and new upstream churn (2026-09-09 UTC)
+
+Saved the fixes at `8ad6d238a6`, retained backup branch
+`codex/pr2427-before-wave14-rebase-20260909`, and rebased all 223 commits onto
+`9faf96d9f86b98916a54d7a895e3c0411fefc912` without conflicts. Published head is
+**`3fe94c842e0cead1720465dfc25598abd8d42a72`**, using an exact force-with-lease
+against the prior `acaa890250` head. Rebase comparison proves production files
+and `Tests/UI/test_library_shell.py` are byte-identical to the saved repairs.
+The complete incoming Buddy qualification file passes **16 tests, 5 warnings
+in 30.03s** (`/private/tmp/pr2427-wave14-buddy.log`); fresh derived preflight
+passes (`/private/tmp/pr2427-wave14-preflight.log`).
+
+All five Qodo findings were replied to with evidence and resolved on the
+published head: replies 3965798157/3965798334/3965798522/3965798731/3965798948.
+New exact-head review was requested by issue comment 5598000794. Native complete
+Library qualification is running with frozen production/shell-test bytes in
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave14-native.Tem3Nf`.
+
+After publication, live dev advanced again to
+`a36fc6133c69f77b8b14596a59918de34261f8ef`. This is substantial Canvas Mermaid,
+SQLite helper and TTS ownership work (202 files), not the preceding docs-only
+Buddy change. It is fetched for read-only conflict/scope analysis while the
+native run finishes. No rebase or runtime mutation has been attempted against
+this new base yet. Its accepted decisions, overlap and offline qualification
+must be reviewed before integration. The PR remains unmerged.
+
+Read-only integration review and main-agent ADR reading are complete; task step
+87 records the constraints before any new-base implementation. Main read ADR-124,
+ADR-125 and the character-TTS ADR-028 amendment in full. Canvas Screen methods
+already moved to `ConsoleMessageController` must receive incoming language and
+served-profile fallback changes at that controller, not be restored on Screen.
+The incoming compiler test doubles add snapshot/parent-profile keywords; browser
+fixtures must retain controller targets while accepting upstream readiness and
+profile identity. The bounded gateway JSON read remains necessary.
+
+SQLite upstream already includes trace-maintenance/legacy-recovery registrations,
+C55/C56 inventory and five backup-census controls. Keep them once, along with
+C48 retirement and helper/native-probe seams. Preserve its exact quiescent
+connection factory, lazy TTS ownership/close latch and Python 3.12 floor. Local
+semaphore failures are not permission to repair the host or relax the upstream
+lock, helper-capacity, terminal-retention or native-close contracts. The incoming
+Mermaid preflight downloads pinned inputs by default: inspect its scope and use
+an existing verified input cache where possible rather than silently skipping
+asset integrity. Browser and platform evidence remain distinct from offline tests.
+
+Current-head Qodo has one new documentation-only finding, comment3965835933,
+thread `PRRT_kwDOOcyyl86gjNh5`, covering both public Evals import-closure tests.
+Step 86 adds complete fixture/parameter types, return annotations and Google Args,
+without changing production or the running Library test. Complete packaging file
+**4 passed, 2 warnings in 2.16s**, scoped Ruff and whitespace checks pass
+(`/private/tmp/pr2427-wave14-evals-docs.log`). Fix publication/reply remains pending
+the next checkpoint; do not resolve the thread before publishing it.
+
+Wave-fourteen terminal native result on `3fe94c842e`: **856 passed, 10 warnings
+in 1313.32s**, exit 0, final **`sqlite_paths: []`**. Both pytest and native
+observer completed successfully; the directory above holds exact source identity
+and terminal evidence. No connection monkeypatches or forced collection were
+used. The source freeze is now lifted. This qualifies that checkpoint, not the
+new Canvas/SQLite base still awaiting integration.
