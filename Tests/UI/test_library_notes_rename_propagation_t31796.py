@@ -277,11 +277,13 @@ def _wiring_screen(
     screen = SimpleNamespace(
         _library_note_session=SimpleNamespace(snapshot=snapshot),
         _local_source_records={"notes": ({"id": "n1", "title": "Untitled"},)},
-        _library_notes_filter_records=None,
-        _library_notes_tree_branches=branches,
-        _library_notes_tree_filter_state=filter_state,
-        _library_notes_filter=filter_query,
-        _library_notes_filter_generation=0,
+        _notes_state=SimpleNamespace(
+            filter_records=None,
+            tree_branches=branches,
+            tree_filter_state=filter_state,
+            filter=filter_query,
+            filter_generation=0,
+        ),
     )
     # Bind the sibling methods the patch routine calls on ``self``.
     screen._cached_library_note_list_title = MethodType(
@@ -305,7 +307,7 @@ def test_save_patch_updates_tree_branch_row_without_requery() -> None:
 
     LibraryScreen._patch_library_note_list_from_session(screen)
 
-    assert _project(screen._library_notes_tree_branches) == ["Renamed Note Title"]
+    assert _project(screen._notes_state.tree_branches) == ["Renamed Note Title"]
     assert screen._local_source_records["notes"][0]["title"] == "Renamed Note Title"
 
 
@@ -330,10 +332,10 @@ def test_save_patch_clears_active_filter_when_shown_note_is_renamed() -> None:
     LibraryScreen._patch_library_note_list_from_session(screen)
 
     # The now-stale filter is dropped so no ghost / mis-titled row survives.
-    assert screen._library_notes_tree_filter_state is None
-    assert screen._library_notes_filter == ""
-    assert screen._library_notes_filter_records is None
-    assert screen._library_notes_filter_generation == 1
+    assert screen._notes_state.tree_filter_state is None
+    assert screen._notes_state.filter == ""
+    assert screen._notes_state.filter_records is None
+    assert screen._notes_state.filter_generation == 1
 
 
 def test_body_only_save_does_not_clear_active_filter() -> None:
@@ -358,5 +360,5 @@ def test_body_only_save_does_not_clear_active_filter() -> None:
 
     LibraryScreen._patch_library_note_list_from_session(screen)
 
-    assert screen._library_notes_tree_filter_state is filter_state
-    assert screen._library_notes_filter == "ren"
+    assert screen._notes_state.tree_filter_state is filter_state
+    assert screen._notes_state.filter == "ren"

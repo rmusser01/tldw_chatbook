@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 import math
 import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
-from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, sanitize_string
-
+from tldw_chatbook.Utils.log_sanitizer import (
+    REDACTION_MARKER,
+    sanitize_trace_credentials_v1,
+)
 
 CREDENTIAL_FILTER_VERSION = "credentials-v1"
 CREDENTIAL_SANITIZER_UNAVAILABLE = "credential_sanitizer_unavailable"
@@ -703,7 +705,9 @@ class CredentialSanitizer:
                 value = value.replace(credential, _OMITTED_TEXT)
         if _SECRET_TEXT.search(value):
             value = _SECRET_TEXT.sub(_OMITTED_TEXT, value)
-        return sanitize_string(value).replace(REDACTION_MARKER, _OMITTED_TEXT)
+        return sanitize_trace_credentials_v1(value).replace(
+            REDACTION_MARKER, _OMITTED_TEXT
+        )
 
     @staticmethod
     def _sanitize_url(value: str) -> str:

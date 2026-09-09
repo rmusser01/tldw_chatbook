@@ -142,6 +142,26 @@ class SimpleAudioPlayer:
             logger.error(f"Audio file not found: {file_path}")
             return False
 
+        if self._system == "Darwin":
+            # afplay can exit successfully without decoding Ogg/Opus audio.
+            # ffplay is already a supported player and handles these containers.
+            self._find_player()
+            if file_path.suffix.lower() in {".opus", ".ogg"}:
+                ffplay = shutil.which("ffplay")
+                if ffplay is None:
+                    logger.warning(
+                        "Opus playback requires ffplay; choose WAV output instead"
+                    )
+                    return False
+                self._player_cmd = [
+                    ffplay,
+                    "-nodisp",
+                    "-autoexit",
+                    "-loglevel",
+                    "error",
+                ]
+                self._player_name = "ffplay"
+
         # Check if we have a player
         if not self._player_cmd:
             logger.error("No audio player available")
@@ -219,7 +239,11 @@ class SimpleAudioPlayer:
                 self._current.position = 0.0
 
             # Start monitoring thread
-            monitor = threading.Thread(target=self._monitor_playback, daemon=True)
+            monitor = threading.Thread(
+                target=self._monitor_playback,
+                args=(self._current.process,),
+                daemon=True,
+            )
             monitor.start()
 
             logger.info(
@@ -489,17 +513,27 @@ class SimpleAudioPlayer:
         with self._lock:
             return self._current.file_path
 
-    def _monitor_playback(self) -> None:
+    def _monitor_playback(self, process: subprocess.Popen | None = None) -> None:
         """Monitor playback process"""
-        if self._current.process:
+        process = process if process is not None else self._current.process
+        if process is not None:
             try:
-                self._current.process.wait()
+                exit_code = process.wait()
                 with self._lock:
                     # Only mark as finished if we're still in playing state
                     # (could have been stopped/paused)
-                    if self._current.state == PlaybackState.PLAYING:
-                        self._current.state = PlaybackState.FINISHED
-                        logger.debug("Playback finished naturally")
+                    if (
+                        self._current.process is process
+                        and self._current.state == PlaybackState.PLAYING
+                    ):
+                        self._current.state = (
+                            PlaybackState.FINISHED
+                            if exit_code == 0
+                            else PlaybackState.ERROR
+                        )
+                        logger.debug(
+                            "Playback process finished (exit_code={})", exit_code
+                        )
             except Exception as e:
                 logger.debug(f"Monitor thread interrupted: {e}")
 

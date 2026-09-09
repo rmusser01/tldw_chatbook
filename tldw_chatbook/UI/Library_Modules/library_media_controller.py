@@ -844,6 +844,45 @@ class LibraryMediaController:
         return self._screen.size
 
 
+    # -- this cluster's OWN state, under the screen's own name -------------
+
+    @property
+    def _media_state(self) -> Any:
+        """This cluster's OWN state object, under the screen's own name.
+
+        (wave-8 close, a BEHAVIOUR FIX -- the wave's one deliberate behaviour
+        change.) No moved body spells ``self._media_state``: every one of the
+        140 of them reads a flat ``_library_media_<field>`` property from the
+        generated shim loop at the bottom of this file, and that is how the
+        byte-for-byte canon keeps them unedited. This accessor exists for the
+        SHARED dispatchers in ``canvas_sync.py``, which are handed a bare
+        ``self`` by this cluster's own methods and so have to resolve the
+        media state on EITHER receiver: the screen
+        (``LibraryScreen._media_state``) or this controller.
+
+        Without it the wave-7 dotted retarget was only half done, and the
+        missing half was live in production: ``_sync_library_canvas``'s media
+        leg assigns through ``screen._media_state.selected_media_id``
+        (``canvas_sync.py``), and ``handle_library_media_select_all`` /
+        ``handle_library_media_select_clear`` below call
+        ``_sync_library_canvas(self, "media")`` with a CONTROLLER ``self``, so
+        every media "Select all"/"Clear" press raised ``AttributeError`` into
+        that dispatcher's own ``except Exception`` and degraded into the
+        whole-screen recompose the Tier-1 targeted-sync design exists to
+        avoid -- with no exception surfaced and no red test. Found by the
+        wave-8 notes cleanup's receiver census (the notes controller declares
+        the same accessor for the same reason) and fixed here.
+
+        Mutation-verified: removing this property reds
+        ``test_media_row_toggle_resolves_the_dotted_state_path[controller]``
+        and leaves the ``[screen]`` leg green; reverting ``canvas_sync.py``'s
+        media branch to the computed flat name reds the ``[screen]`` leg and
+        leaves ``[controller]`` green (the flat name still resolves through
+        the shim loop below).
+        """
+        return self._media_state_accessor()
+
+
     # -- shared shell state, read-only (group (b)) -------------------------
 
     @property

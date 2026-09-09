@@ -129,6 +129,8 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # PCM wrapping belongs to requested playback, not Console first paint.
+    "tldw_chatbook.TTS.pcm_playback",
     # Inspect's Environment implementation is first-open work, not closed-rail boot.
     "tldw_chatbook.Chat.console_environment_state",
     "tldw_chatbook.UI.Console_Modules.environment",

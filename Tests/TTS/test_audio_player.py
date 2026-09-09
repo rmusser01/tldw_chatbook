@@ -17,15 +17,21 @@ legacy-path (the default response format for every provider except
 on Linux and Windows -- reply speech entirely silent on two of three
 platforms.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from tldw_chatbook.TTS.audio_player import SimpleAudioPlayer
+from tldw_chatbook.TTS.audio_player import (
+    AudioPlayerInfo,
+    PlaybackState,
+    SimpleAudioPlayer,
+)
 
 
 def test_play_does_not_raise_unbound_local_error_on_a_non_darwin_afplay_path(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Deterministic regardless of the host OS this test actually runs on:
     forces the player instance into a non-Darwin/afplay shape directly
@@ -57,3 +63,66 @@ def test_play_does_not_raise_unbound_local_error_on_a_non_darwin_afplay_path(
         "time` collision this pins (task-4 review N1)"
     )
     assert player.get_current_file() == audio_file
+
+
+def test_macos_opus_uses_a_compatible_player(tmp_path, monkeypatch):
+    player = SimpleAudioPlayer()
+    player._system = "Darwin"
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player.shutil.which",
+        lambda name: "/test/ffplay" if name == "ffplay" else None,
+    )
+    commands = []
+
+    def spawn(command, **kwargs):
+        commands.append(command)
+        process = MagicMock()
+        process.poll.return_value = 0
+        process.wait.return_value = 0
+        return process
+
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_player.subprocess.Popen", spawn)
+    for suffix in ("opus", "wav"):
+        path = tmp_path / f"reply.{suffix}"
+        path.write_bytes(b"fixture")
+        assert player.play(path)
+    assert commands[0][0] == "/test/ffplay"
+    assert "-autoexit" in commands[0] and "-nodisp" in commands[0]
+    assert commands[1][0] == "/usr/bin/afplay"
+    player.cleanup()
+
+
+def test_macos_opus_without_compatible_player_refuses_playback(tmp_path, monkeypatch):
+    player = SimpleAudioPlayer()
+    player._system = "Darwin"
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_player.shutil.which", lambda _: None)
+    popen = MagicMock()
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_player.subprocess.Popen", popen)
+    path = tmp_path / "reply.opus"
+    path.write_bytes(b"fixture")
+    assert not player.play(path)
+    popen.assert_not_called()
+
+
+def test_player_nonzero_exit_is_failure():
+    player = SimpleAudioPlayer()
+    failed = MagicMock()
+    failed.wait.return_value = 1
+    player._current = AudioPlayerInfo(process=failed, state=PlaybackState.PLAYING)
+    player._monitor_playback()
+    assert player.get_state() == PlaybackState.ERROR
+
+
+def test_previous_monitor_cannot_finish_next_clip():
+    player = SimpleAudioPlayer()
+    old, new = MagicMock(), MagicMock()
+    player._current = AudioPlayerInfo(process=old, state=PlaybackState.PLAYING)
+
+    def wait():
+        player._current = AudioPlayerInfo(process=new, state=PlaybackState.PLAYING)
+        return 0
+
+    old.wait.side_effect = wait
+    player._monitor_playback()
+    assert player.get_state() == PlaybackState.PLAYING
+    assert player._current.process is new

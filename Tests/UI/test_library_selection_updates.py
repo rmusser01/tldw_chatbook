@@ -340,7 +340,8 @@ async def test_toggle_preserves_markup_escaped_titles():
     assert "weird title" in rendered
 
 
-def test_media_row_toggle_resolves_the_dotted_state_path():
+@pytest.mark.parametrize("receiver_kind", ("screen", "controller"))
+def test_media_row_toggle_resolves_the_dotted_state_path(receiver_kind: str):
     """wave-7 task 3: the media row-selection object moved to
     ``screen._media_state.row_selection``, so the dispatcher's COMPUTED name
     (``f"_library_{kind}_row_selection"``) can no longer reach it and the
@@ -356,8 +357,26 @@ def test_media_row_toggle_resolves_the_dotted_state_path():
     that silent degradation into a red test (the
     ``test_toggle_preserves_markup_escaped_titles`` precedent above).
 
-    Notes is the next subsystem to move; it will inherit this shape.
+    **The ``controller`` leg was added at the wave-8 close, and it shipped
+    RED.** Wave-7's dotted retarget was written against the SCREEN receiver
+    only, and ``LibraryMediaController`` never declared a ``_media_state``
+    accessor property (it holds ``_media_state_accessor`` and nothing else).
+    Because ``handle_library_media_select_all`` /
+    ``handle_library_media_select_clear`` hand the sibling
+    ``_sync_library_canvas`` dispatcher a bare controller ``self`` -- and that
+    dispatcher's media leg assigns through ``screen._media_state.
+    selected_media_id`` -- every media "Select all"/"Clear" press raised
+    ``AttributeError`` into the dispatcher's own ``except Exception`` and took
+    the whole-screen recompose, live and silently. The notes series' own
+    dual-receiver guard (below) is what found it, one function along.
+
+    So: census a shared dispatcher's RECEIVERS, not just its spellings. A
+    dotted retarget is only correct for the receiver it was written against,
+    and a screen-only guard passes while the controller receiver degrades.
     """
+    from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+        LibraryMediaController,
+    )
     from tldw_chatbook.UI.Screens.library_screen import _apply_library_row_toggle
 
     class _Selection:
@@ -378,28 +397,162 @@ def test_media_row_toggle_resolves_the_dotted_state_path():
     class _MediaState:
         row_selection = _Selection()
 
-    class _Screen:
-        _media_state = _MediaState()
+    def _query_one(_selector, _cls=None):
+        return _Recorder()
 
-        @staticmethod
-        def query_one(_selector, _cls=None):
-            return _Recorder()
+    def _query(_selector):
+        # dev's task-32045 added `screen.query("#library-media-select-bulk-
+        # reason")` to this leg during the wave's review window, and it is
+        # guarded by `if bulk_reason:` -- so an EMPTY result is a state the
+        # production code already handles (the reason line simply absent).
+        # An empty tuple is therefore the minimal stub that keeps this test
+        # about the thing it guards: whether the DOTTED `_media_state` path
+        # resolves on this receiver. Without it the `AttributeError` for the
+        # missing `query` is swallowed by the dispatcher's own
+        # `except Exception`, `refresh` fires, and BOTH legs go red for a
+        # reason that has nothing to do with the state path.
+        return ()
 
-        @staticmethod
-        def _library_media_analyze_reason():
-            return ""
+    def _analyze_reason():
+        return ""
 
-        @staticmethod
-        def refresh(**_kwargs):
-            raise AssertionError("fallback recompose must not fire")
+    def _refresh(**_kwargs):
+        raise AssertionError("fallback recompose must not fire")
 
     label_rest = " Quarterly review\n    audio"
     button = Button(f"☐{label_rest}")
     button._library_row_label_rest = label_rest  # as the canvas stashes it
 
-    _apply_library_row_toggle(_Screen(), "media", button, "local:media:1")
+    if receiver_kind == "screen":
+
+        class _Screen:
+            _media_state = _MediaState()
+            query_one = staticmethod(_query_one)
+            query = staticmethod(_query)
+            refresh = staticmethod(_refresh)
+            _library_media_analyze_reason = staticmethod(_analyze_reason)
+
+        receiver = _Screen()
+    else:
+
+        class _Controller(LibraryMediaController):
+            # `_media_state` is deliberately NOT overridden -- the accessor
+            # property on the REAL `LibraryMediaController` is the thing under
+            # test. `query_one`/`query`/`refresh` are framework-service
+            # properties on that class, so they can only be stubbed by
+            # overriding them here, never by instance assignment.
+            def __init__(self, state):
+                self._media_state_accessor = lambda: state
+
+            query_one = staticmethod(_query_one)
+            query = staticmethod(_query)
+            refresh = staticmethod(_refresh)
+            _library_media_analyze_reason = staticmethod(_analyze_reason)
+
+        receiver = _Controller(_MediaState())
+
+    _apply_library_row_toggle(receiver, "media", button, "local:media:1")
 
     # Reached the real patch path: marker flipped in place, and the media-only
     # checked flag the canvas reads back was set.
     assert str(button.label).startswith("☑")
     assert button._library_media_checked is True
+
+
+@pytest.mark.parametrize("receiver_kind", ("screen", "controller"))
+def test_notes_row_toggle_resolves_the_dotted_state_path(receiver_kind: str):
+    """wave-8 task 3: the notes row-selection object moved to
+    ``screen._notes_state.row_selection``, so the dispatcher's COMPUTED name
+    (``f"_library_{kind}_row_selection"``) can no longer reach it and the
+    "notes" branch must take the DOTTED form -- the third and last kind to
+    need it, after "conversations" and "media" above.
+
+    This is the guard the fifth census spelling needs (recipe §3): a name
+    built at runtime appears nowhere in the source, so no reference census
+    can see it go stale, and the failure is SILENT -- the ``attrgetter``
+    raises, ``_apply_library_row_toggle``'s own ``except Exception`` swallows
+    it, and the targeted patch degrades into the full-screen recompose the
+    Tier-1 design exists to avoid. Making ``refresh`` raise is what turns
+    that silent degradation into a red test.
+
+    **Why this one is parametrized over the RECEIVER, unlike its two
+    siblings.** Notes' cluster hands the sibling ``_sync_library_canvas``
+    dispatcher a bare ``self`` from 26 moved bodies (31 call sites), so a
+    ``screen`` argument is a ``LibraryNotesController`` as often as it is a
+    ``LibraryScreen``. A dotted spelling that resolves only on the screen is
+    therefore only half a fix, and a screen-only guard would pass while the
+    controller leg silently took the fallback. The ``controller`` leg builds
+    the REAL ``LibraryNotesController`` class (subclassed only to stub the
+    three framework-service properties a double cannot assign over) so the
+    ``_notes_state`` accessor under test is the production one.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import _apply_library_row_toggle
+
+    class _Selection:
+        count = 1
+
+        @staticmethod
+        def is_selected(_row_id):
+            return True
+
+    class _Recorder:
+        disabled = True
+        tooltip = None
+
+        @staticmethod
+        def update(_text):
+            return None
+
+    class _NotesState:
+        row_selection = _Selection()
+
+    def _query_one(_selector, _cls=None):
+        return _Recorder()
+
+    def _query(selector):
+        # `.library-notes-row` -> the sibling rows sharing this note id;
+        # `#library-note-work-pane` -> absent, so the work-pane leg no-ops.
+        return (button,) if selector == ".library-notes-row" else ()
+
+    def _refresh(**_kwargs):
+        raise AssertionError("fallback recompose must not fire")
+
+    label_rest = " Shared note\n    today"
+    button = Button(f"☐ {label_rest}")
+    button._library_row_label_rest = label_rest  # as the canvas stashes it
+    button.note_id = "n1"
+
+    if receiver_kind == "screen":
+
+        class _Screen:
+            _notes_state = _NotesState()
+            query_one = staticmethod(_query_one)
+            query = staticmethod(_query)
+            refresh = staticmethod(_refresh)
+
+        receiver = _Screen()
+    else:
+
+        class _Controller(LibraryNotesController):
+            # `_notes_state` is deliberately NOT overridden -- the real
+            # accessor property on `LibraryNotesController` is the thing
+            # under test. `query_one`/`query`/`refresh` are framework-service
+            # properties on that class, so they can only be stubbed by
+            # overriding them here, never by instance assignment.
+            def __init__(self, state):
+                self._notes_state_accessor = lambda: state
+
+            query_one = staticmethod(_query_one)
+            query = staticmethod(_query)
+            refresh = staticmethod(_refresh)
+
+        receiver = _Controller(_NotesState())
+
+    _apply_library_row_toggle(receiver, "notes", button, "n1")
+
+    # Reached the real patch path: the notes glyph (marker + space, unlike
+    # media/conversations) was flipped in place on the matching row.
+    assert str(button.label).startswith("☑ ")

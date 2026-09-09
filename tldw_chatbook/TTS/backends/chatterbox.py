@@ -12,6 +12,7 @@ import re
 import json
 import base64
 from datetime import datetime
+from uuid import uuid4
 from difflib import SequenceMatcher
 from loguru import logger
 import tempfile  # Still needed for audio file handling
@@ -19,6 +20,9 @@ import contextlib
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+from tldw_chatbook.TTS.adapter_types import TTSOperationError
+from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase
 from tldw_chatbook.TTS.audio_service import get_audio_service
 from tldw_chatbook.config import get_cli_setting
@@ -195,6 +199,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
         # Process management for isolated execution
         self.process: Optional[subprocess.Popen] = None
         self._process_lock = asyncio.Lock()
+        self._generation_lock = asyncio.Lock()
         self._initialized = False
         self._initializing = False
 
@@ -340,7 +345,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
             response = json.loads(line.decode().strip())
             return response
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TimeoutError(f"No response from subprocess within {timeout} seconds")
         except json.JSONDecodeError as e:
             raise Exception(f"Invalid JSON response: {e}")
@@ -349,6 +354,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
         """Read chunked audio data from subprocess"""
         chunks = {}
         total_chunks = None
+        retained_bytes = 0
 
         while True:
             response = await self._read_response(timeout)
@@ -356,7 +362,8 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
             if msg_type == "audio":
                 # Single message with complete audio
-                return base64.b64decode(response["data"])
+                check_buffered_audio_size(len(response["data"]))
+                return base64.b64decode(response["data"], validate=True)
 
             elif msg_type == "audio_chunk":
                 # Part of a chunked transfer
@@ -364,6 +371,8 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 chunk_data = response.get("data")
 
                 if chunk_id is not None and chunk_data:
+                    retained_bytes += len(chunk_data) - len(chunks.get(chunk_id, ""))
+                    check_buffered_audio_size(retained_bytes)
                     chunks[chunk_id] = chunk_data
 
                     # Track total chunks from first message
@@ -383,14 +392,13 @@ class ChatterboxTTSBackend(TTSBackendBase):
                     )
 
                 # Reassemble chunks in order
-                audio_data = ""
                 for i in range(expected_total):
                     if i not in chunks:
                         raise Exception(f"Missing chunk {i}")
-                    audio_data += chunks[i]
+                audio_data = "".join(chunks[i] for i in range(expected_total))
 
                 # Decode base64 data
-                return base64.b64decode(audio_data)
+                return base64.b64decode(audio_data, validate=True)
 
             elif msg_type == "error":
                 error_msg = response.get("message", "Unknown error")
@@ -790,9 +798,28 @@ class ChatterboxTTSBackend(TTSBackendBase):
             audio_bytes = await self._read_chunked_audio(timeout=60)
             return audio_bytes
 
-        except Exception as e:
-            logger.error(f"Isolated generation failed: {e}")
+        except BaseException:
+            cleanup = asyncio.create_task(self._discard_process())
+            await join_retained_task(cleanup)
             raise
+
+    async def _discard_process(self) -> None:
+        """Reap the current worker before permitting another IPC exchange."""
+        process = self.process
+        if process is None:
+            return
+        if process.returncode is None:
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2.0)
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+        if self.process is process:
+            self.process = None
+            self.model = None
+            self._initialized = False
+            self._initializing = False
 
     async def _generate_single(
         self,
@@ -869,7 +896,9 @@ class ChatterboxTTSBackend(TTSBackendBase):
                         )
 
         # Run in thread with isolation
-        wav = await asyncio.to_thread(generate_with_isolation)
+        generation = asyncio.create_task(asyncio.to_thread(generate_with_isolation))
+        await join_retained_task(generation)
+        wav = generation.result()
 
         # Apply post-processing
         if self.normalize_audio_enabled:
@@ -917,6 +946,8 @@ class ChatterboxTTSBackend(TTSBackendBase):
                     # No validation, just add the candidate
                     candidates.append((audio_bytes, 1.0, ""))
 
+            except TTSOperationError:
+                raise
             except Exception as e:
                 logger.warning(f"Candidate {i + 1} generation failed: {e}")
 
@@ -937,6 +968,26 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
     async def generate_speech_stream(
         self, request: OpenAISpeechRequest
+    ) -> AsyncGenerator[bytes, None]:
+        """Deliver one utterance while retaining exclusive inference ownership.
+
+        Args:
+            request: Text, voice, speed, output format, and streaming preference.
+                Setting ``stream=False`` selects batch inference.
+
+        Yields:
+            One complete encoded file for container formats, or signed 16-bit
+            mono PCM chunks at 24 kHz when raw PCM streaming is requested.
+        """
+        async with (
+            self._generation_lock,
+            contextlib.aclosing(self._generate_speech_stream(request)) as stream,
+        ):
+            async for chunk in stream:
+                yield chunk
+
+    async def _generate_speech_stream(
+        self, request: OpenAISpeechRequest, *, allow_fallback: bool = True
     ) -> AsyncGenerator[bytes, None]:
         """
         Generate speech using Chatterbox and stream the response.
@@ -1014,6 +1065,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
             if predefined_path.exists():
                 reference_audio_path = str(predefined_path)
 
+        emitted = False
         try:
             # Get extra parameters if available
             exaggeration = self.exaggeration
@@ -1047,6 +1099,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
                 # Generate audio for each chunk
                 all_audio_bytes = []
+                retained_bytes = 0
                 for i, chunk in enumerate(chunks):
                     logger.info(f"Processing chunk {i + 1}/{len(chunks)}")
 
@@ -1064,6 +1117,8 @@ class ChatterboxTTSBackend(TTSBackendBase):
                             temperature,
                         )
 
+                    retained_bytes += len(audio_bytes)
+                    check_buffered_audio_size(retained_bytes)
                     all_audio_bytes.append(audio_bytes)
 
                 # Combine all chunks with crossfade if enabled
@@ -1073,42 +1128,57 @@ class ChatterboxTTSBackend(TTSBackendBase):
                         all_audio_bytes
                     )
                 else:
-                    combined_audio = b"".join(all_audio_bytes)
+                    combined_audio = await self._combine_audio_with_crossfade(
+                        all_audio_bytes, crossfade=False
+                    )
 
                 # Convert format if needed
-                if request.response_format != "wav":
-                    output_bytes = await self.audio_service.convert_audio_format(
-                        combined_audio, "wav", request.response_format
-                    )
-                else:
-                    output_bytes = combined_audio
-
+                output_bytes = await self._encode_audio(
+                    combined_audio, request.response_format
+                )
+                emitted = True
                 yield output_bytes
 
             else:
                 # Single chunk generation
                 if (
-                    self.streaming_enabled
+                    request.stream
+                    and self.streaming_enabled
                     and num_candidates <= 1
                     and not validate_with_whisper
                     and hasattr(self.model, "generate_stream")
                 ):
-                    async for audio_chunk, metrics in self._generate_stream_async(
-                        text,
-                        reference_audio_path,
-                        exaggeration,
-                        cfg_weight,
-                    ):
-                        chunk_bytes = self._tensor_to_wav_bytes(
-                            audio_chunk, self.model.sr
+                    audio_chunks = []
+                    retained_bytes = 0
+                    async with contextlib.aclosing(
+                        self._generate_stream_async(
+                            text, reference_audio_path, exaggeration, cfg_weight
                         )
-                        if request.response_format != "wav":
-                            chunk_bytes = await self.audio_service.convert_audio_format(
-                                chunk_bytes,
-                                "wav",
-                                request.response_format,
+                    ) as stream:
+                        async for audio_chunk, _metrics in stream:
+                            chunk_bytes = self._tensor_to_wav_bytes(
+                                audio_chunk, self.model.sr
                             )
-                        yield chunk_bytes
+                            if request.response_format == "pcm":
+                                # Raw samples concatenate safely; file containers do not.
+                                output = await self._encode_audio(chunk_bytes, "pcm")
+                                emitted = True
+                                yield output
+                            else:
+                                retained_bytes += len(chunk_bytes)
+                                check_buffered_audio_size(retained_bytes)
+                                audio_chunks.append(chunk_bytes)
+                    if not emitted and not audio_chunks:
+                        raise ValueError("Chatterbox returned no audio.")
+                    if request.response_format != "pcm":
+                        complete = await self._combine_audio_with_crossfade(
+                            audio_chunks, crossfade=False
+                        )
+                        output = await self._encode_audio(
+                            complete, request.response_format
+                        )
+                        emitted = True
+                        yield output
 
                     await self._report_progress(
                         progress=1.0,
@@ -1140,12 +1210,9 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 )
 
                 # Convert format if needed
-                if request.response_format != "wav":
-                    output_bytes = await self.audio_service.convert_audio_format(
-                        audio_bytes, "wav", request.response_format
-                    )
-                else:
-                    output_bytes = audio_bytes
+                output_bytes = await self._encode_audio(
+                    audio_bytes, request.response_format
+                )
 
                 # Report completion
                 await self._report_progress(
@@ -1156,19 +1223,43 @@ class ChatterboxTTSBackend(TTSBackendBase):
                     metrics={"format": request.response_format},
                 )
 
+                emitted = True
                 yield output_bytes
 
+        except TTSOperationError:
+            raise
         except Exception as e:
             logger.error(f"Chatterbox generation failed: {e}")
-            # Don't try fallback if this is already a fallback attempt
-            if hasattr(request, "_is_fallback") and request._is_fallback:
-                raise ValueError(f"Failed to generate speech: {str(e)}")
-            else:
-                # Try fallback strategy only once
-                logger.info("Attempting fallback generation strategy...")
-                request._is_fallback = True
-                async for chunk in self.generate_speech_stream_with_fallback(request):
+            if emitted or not allow_fallback:
+                raise
+            async with contextlib.aclosing(
+                self.generate_speech_stream_with_fallback(request)
+            ) as stream:
+                async for chunk in stream:
                     yield chunk
+
+    async def _encode_audio(self, wav_bytes: bytes, audio_format: str) -> bytes:
+        """Encode one complete utterance without retrying deterministic codec errors."""
+        check_buffered_audio_size(len(wav_bytes))
+        if audio_format == "wav":
+            return wav_bytes
+        try:
+            return await self.audio_service.convert_audio(
+                wav_bytes,
+                audio_format,
+                source_format="wav",
+                sample_rate=24000 if audio_format == "pcm" else None,
+            )
+        except TTSOperationError:
+            raise
+        except Exception:
+            raise TTSOperationError(
+                code="audio_response_invalid",
+                message="Unable to encode Chatterbox audio. Try WAV output.",
+                retryable=False,
+                operation_id=uuid4().hex,
+                recovery_action="use_wav",
+            ) from None
 
     async def _generate_stream_async(
         self,
@@ -1177,262 +1268,99 @@ class ChatterboxTTSBackend(TTSBackendBase):
         exaggeration: float,
         cfg_weight: float,
     ) -> AsyncGenerator:
-        """Async wrapper for streaming generation with proper thread handling"""
-        import threading
-        import queue
-
-        loop = asyncio.get_event_loop()
-        result_queue = queue.Queue()
-        exception_queue = queue.Queue()
-
-        def producer():
-            """Run sync generator in thread and put results in queue"""
-            try:
-                # Check if model has generate_stream method
-                if hasattr(self.model, "generate_stream"):
-                    if audio_prompt_path:
-                        generator = self.model.generate_stream(
-                            text,
-                            audio_prompt_path=audio_prompt_path,
-                            exaggeration=exaggeration,
-                            cfg_weight=cfg_weight,
-                            chunk_size=self.chunk_size,
-                        )
-                    else:
-                        generator = self.model.generate_stream(
-                            text,
-                            exaggeration=exaggeration,
-                            cfg_weight=cfg_weight,
-                            chunk_size=self.chunk_size,
-                        )
-
-                    # Iterate through generator and put chunks in queue
-                    for chunk, metrics in generator:
-                        result_queue.put((chunk, metrics))
-                else:
-                    # Fallback: generate full audio and chunk it
-                    logger.warning(
-                        "Chatterbox model doesn't support streaming, using chunked output"
-                    )
-
-                    # Run the blocking generate call with complete isolation
-                    # Try to import protect_file_descriptors
-                    try:
-                        from tldw_chatbook.Utils.fd_protection import (
-                            protect_file_descriptors,
-                        )
-
-                        has_protect_fd = True
-                    except ImportError:
-                        has_protect_fd = False
-
-                    # Generate with protection if available
-                    with suppress_output():
-                        if has_protect_fd:
-                            with protect_file_descriptors():
-                                if audio_prompt_path:
-                                    full_audio = self.model.generate(
-                                        text,
-                                        audio_prompt_path=audio_prompt_path,
-                                        exaggeration=exaggeration,
-                                        cfg_weight=cfg_weight,
-                                    )
-                                else:
-                                    full_audio = self.model.generate(
-                                        text,
-                                        exaggeration=exaggeration,
-                                        cfg_weight=cfg_weight,
-                                    )
-                        else:
-                            if audio_prompt_path:
-                                full_audio = self.model.generate(
-                                    text,
-                                    audio_prompt_path=audio_prompt_path,
-                                    exaggeration=exaggeration,
-                                    cfg_weight=cfg_weight,
-                                )
-                            else:
-                                full_audio = self.model.generate(
-                                    text,
-                                    exaggeration=exaggeration,
-                                    cfg_weight=cfg_weight,
-                                )
-
-                    # Chunk the audio
-                    chunk_size = self.chunk_size
-                    for i in range(0, len(full_audio), chunk_size):
-                        chunk = full_audio[i : i + chunk_size]
-                        metrics = {
-                            "chunk_index": i // chunk_size,
-                            "total_samples": len(full_audio),
-                        }
-                        result_queue.put((chunk, metrics))
-
-                # Signal completion
-                result_queue.put(None)
-
-            except Exception as e:
-                exception_queue.put(e)
-                result_queue.put(None)
-
-        # Start producer thread
-        thread = threading.Thread(target=producer)
-        thread.start()
-
-        # Consume from queue asynchronously
-        while True:
-            # Check for exceptions first
-            try:
-                exc = exception_queue.get_nowait()
-                raise exc
-            except queue.Empty:
-                pass
-
-            # Get result with timeout to allow for cancellation
-            try:
-                result = await loop.run_in_executor(
-                    None, lambda: result_queue.get(timeout=0.1)
-                )
-                if result is None:
+        """Advance inference only on demand and join a running step on cancellation."""
+        generator = self.model.generate_stream(
+            text,
+            audio_prompt_path=audio_prompt_path,
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+            chunk_size=self.chunk_size,
+        )
+        sentinel = object()
+        try:
+            while True:
+                step = asyncio.create_task(asyncio.to_thread(next, generator, sentinel))
+                await join_retained_task(step)
+                result = step.result()
+                if result is sentinel:
                     break
                 yield result
-            except queue.Empty:
-                # Check if thread is still alive
-                if not thread.is_alive():
-                    # Thread died unexpectedly
-                    break
-                continue
+        finally:
+            close = getattr(generator, "close", None)
+            if close is not None:
+                cleanup = asyncio.create_task(asyncio.to_thread(close))
+                await join_retained_task(cleanup)
 
-        # Ensure thread completes
-        thread.join(timeout=1.0)
+    async def _combine_audio_with_crossfade(
+        self, audio_chunks: List[bytes], *, crossfade: bool = True
+    ) -> bytes:
+        """Decode WAV chunks and encode one file; never concatenate containers."""
+        import io
+        import torch
+        import wave
+        import numpy as np
 
-    async def _combine_audio_with_crossfade(self, audio_chunks: List[bytes]) -> bytes:
-        """
-        Combine multiple WAV audio chunks with crossfade.
+        if not audio_chunks:
+            raise ValueError("Chatterbox returned no audio.")
+        if len(audio_chunks) == 1:
+            check_buffered_audio_size(len(audio_chunks[0]))
+            return audio_chunks[0]
+        tensors = []
+        sample_rate = None
+        retained_bytes = 0
+        for chunk in audio_chunks:
+            check_buffered_audio_size(len(chunk) * 2)
+            with wave.open(io.BytesIO(chunk), "rb") as wav:
+                rate = wav.getframerate()
+                channels = wav.getnchannels()
+                width = wav.getsampwidth()
+                if width != 2:
+                    raise ValueError("Chatterbox returned unsupported WAV samples.")
+                raw = wav.readframes(wav.getnframes())
+                if len(raw) != wav.getnframes() * channels * width:
+                    raise ValueError("Chatterbox returned truncated WAV audio.")
+            if sample_rate is not None and rate != sample_rate:
+                raise ValueError("Chatterbox returned inconsistent sample rates.")
+            sample_rate = rate
+            retained_bytes += len(raw) * 2
+            check_buffered_audio_size(retained_bytes)
+            samples = np.frombuffer(raw, dtype="<i2").astype("float32") / 32768.0
+            if channels > 1:
+                samples = samples.reshape(-1, channels).mean(axis=1)
+            tensor = torch.from_numpy(samples)
+            tensors.append(tensor)
+        if crossfade:
+            result = tensors[0]
+            for tensor in tensors[1:]:
+                result = self.crossfade_audio_chunks(
+                    result, tensor, self.crossfade_duration_ms
+                )
+        else:
+            result = torch.cat(tensors)
+        return self._tensor_to_wav_bytes(result, sample_rate)
 
-        Args:
-            audio_chunks: List of WAV audio bytes
-
-        Returns:
-            Combined WAV audio bytes with crossfade applied
-        """
+    def _tensor_to_wav_bytes(self, tensor, sample_rate: int) -> bytes:
+        """Encode finite mono PCM16 WAV without torchaudio's optional codecs."""
         import io
         import wave
         import torch
 
-        try:
-            import torchaudio
-        except ModuleNotFoundError:
-            torchaudio = None
-
-        if len(audio_chunks) <= 1:
-            return b"".join(audio_chunks)
-
-        try:
-            # Load all chunks as tensors
-            tensors = []
-            sample_rate = None
-
-            for chunk_bytes in audio_chunks:
-                # Load WAV from bytes
-                buffer = io.BytesIO(chunk_bytes)
-                if torchaudio is not None:
-                    tensor, sr = torchaudio.load(buffer)
-                else:
-                    import numpy as np
-
-                    with wave.open(buffer, "rb") as wav_file:
-                        sr = wav_file.getframerate()
-                        channels = wav_file.getnchannels()
-                        sample_width = wav_file.getsampwidth()
-                        raw_audio = wav_file.readframes(wav_file.getnframes())
-
-                    if sample_width == 1:
-                        audio = np.frombuffer(raw_audio, dtype=np.uint8).astype(
-                            "float32"
-                        )
-                        audio = (audio - 128.0) / 128.0
-                    elif sample_width == 2:
-                        audio = (
-                            np.frombuffer(raw_audio, dtype="<i2").astype("float32")
-                            / 32768.0
-                        )
-                    elif sample_width == 4:
-                        audio = (
-                            np.frombuffer(raw_audio, dtype="<i4").astype("float32")
-                            / 2147483648.0
-                        )
-                    else:
-                        raise ValueError(
-                            f"Unsupported WAV sample width: {sample_width}"
-                        )
-
-                    if channels > 1:
-                        audio = audio.reshape(-1, channels).T
-                    else:
-                        audio = audio.reshape(1, -1)
-                    tensor = torch.from_numpy(audio)
-
-                # Ensure mono
-                if tensor.shape[0] > 1:
-                    tensor = tensor.mean(dim=0, keepdim=True)
-
-                tensors.append(tensor.squeeze(0))
-                if sample_rate is None:
-                    sample_rate = sr
-
-            # Apply crossfade between consecutive chunks
-            result = tensors[0]
-            for i in range(1, len(tensors)):
-                result = self.crossfade_audio_chunks(
-                    result, tensors[i], self.crossfade_duration_ms
-                )
-
-            # Convert back to WAV bytes
-            result = result.unsqueeze(0)  # Add channel dimension
-            return self._tensor_to_wav_bytes(result, sample_rate)
-
-        except Exception as e:
-            logger.error(f"Failed to apply crossfade: {e}")
-            # Fallback to simple concatenation
-            return b"".join(audio_chunks)
-
-    def _tensor_to_wav_bytes(self, tensor, sample_rate: int) -> bytes:
-        """Convert PyTorch tensor to WAV bytes"""
-        import io
-
-        # Create a bytes buffer
+        check_buffered_audio_size(tensor.numel() * tensor.element_size())
+        if (
+            tensor.dim() not in (1, 2)
+            or tensor.numel() == 0
+            or not torch.isfinite(tensor).all()
+        ):
+            raise ValueError("Chatterbox returned invalid audio samples.")
+        audio = tensor.detach().cpu()
+        if audio.dim() == 2:
+            audio = audio.mean(dim=0)
+        pcm = (audio.clamp(-1.0, 1.0).numpy() * 32767.0).astype("<i2").tobytes()
         buffer = io.BytesIO()
-
-        # Ensure tensor is on CPU and has correct shape
-        if tensor.is_cuda:
-            tensor = tensor.cpu()
-
-        # Add batch dimension if needed
-        if tensor.dim() == 1:
-            tensor = tensor.unsqueeze(0)
-
-        try:
-            import torchaudio
-
-            torchaudio.save(buffer, tensor, sample_rate, format="wav")
-        except ModuleNotFoundError:
-            import wave
-
-            audio = tensor.detach().cpu()
-            if audio.dim() > 1:
-                audio = audio.mean(dim=0)
-            audio = audio.clamp(-1.0, 1.0).numpy()
-            pcm = (audio * 32767.0).astype("<i2").tobytes()
-            with wave.open(buffer, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)
-                wav_file.setframerate(int(sample_rate))
-                wav_file.writeframes(pcm)
-
-        # Get bytes
-        buffer.seek(0)
-        return buffer.read()
+        with wave.open(buffer, "wb") as output:
+            output.setparams((1, 2, int(sample_rate), 0, "NONE", "not compressed"))
+            output.writeframes(pcm)
+        return buffer.getvalue()
 
     async def list_voices(self) -> list[str]:
         """List available voices (predefined and custom)"""
@@ -1590,37 +1518,44 @@ class ChatterboxTTSBackend(TTSBackendBase):
             "num_candidates": self.num_candidates,
         }
 
-        for strategy_name, params in strategies:
-            try:
-                logger.info(f"Trying {strategy_name} generation strategy")
-
-                # Update parameters
-                self.exaggeration = params["exaggeration"]
-                self.cfg_weight = params["cfg_weight"]
-                self.num_candidates = params["num_candidates"]
-
-                # Attempt generation
-                async for chunk in self.generate_speech_stream(request):
-                    yield chunk
-
-                # Success - restore original params and exit
-                for key, value in original_params.items():
-                    setattr(self, key, value)
-                return
-
-            except Exception as e:
-                logger.warning(f"{strategy_name} strategy failed: {e}")
-                continue
-
-        # Restore original parameters
-        for key, value in original_params.items():
-            setattr(self, key, value)
-
-        # All strategies failed
+        try:
+            for strategy_name, params in strategies:
+                emitted = False
+                try:
+                    logger.info(f"Trying {strategy_name} generation strategy")
+                    for key, value in params.items():
+                        setattr(self, key, value)
+                    # Per-request overrides otherwise mask the fallback parameters.
+                    attempt = request.model_copy(
+                        update={
+                            "extra_params": {**(request.extra_params or {}), **params}
+                        }
+                    )
+                    async with contextlib.aclosing(
+                        self._generate_speech_stream(attempt, allow_fallback=False)
+                    ) as stream:
+                        async for chunk in stream:
+                            emitted = True
+                            yield chunk
+                    return
+                except TTSOperationError:
+                    raise
+                except Exception as e:
+                    if emitted:
+                        raise
+                    logger.warning(f"{strategy_name} strategy failed: {e}")
+        finally:
+            for key, value in original_params.items():
+                setattr(self, key, value)
         raise ValueError("All generation strategies failed")
 
     async def close(self):
-        """Clean up resources"""
+        """Wait for owned inference before releasing its model and process."""
+        async with self._generation_lock:
+            await self._close_resources()
+
+    async def _close_resources(self):
+        """Clean up resources after the active operation has stopped."""
         # Clean up subprocess if running
         if hasattr(self, "process") and self.process:
             try:
@@ -1636,7 +1571,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 self.process.terminate()
                 try:
                     await asyncio.wait_for(self.process.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self.process.kill()
                     await self.process.wait()
 

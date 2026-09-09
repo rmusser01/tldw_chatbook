@@ -9,6 +9,7 @@ import os
 import socket
 import struct
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,13 @@ import httpx
 import pytest
 
 from Tests.TTS.fixtures.fake_audiocpp_server import write_executable_wrapper
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSCompleteEvent,
+    TTSEventHandler,
+    TTSMessageSpeechRequestEvent,
+)
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_adapter_module
 from tldw_chatbook.TTS import audio_cpp_supervisor as supervisor_module
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
@@ -57,6 +65,7 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
 )
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
+    TTSEffectiveResolutionError,
     TTSSelectionOverrides,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
@@ -560,6 +569,7 @@ def _service(
     *,
     shutdown_timeout_seconds: float = 10.0,
     transport_handler: Callable[[httpx.Request], httpx.Response] | None = _handler,
+    preferences_snapshot: TTSPreferencesSnapshot | None = None,
 ) -> tuple[TTSService, list[dict[str, Any]]]:
     factory_configs: list[dict[str, Any]] = []
 
@@ -601,7 +611,7 @@ def _service(
     return (
         TTSService(
             registry,
-            preferences_snapshot=_preferences(),
+            preferences_snapshot=preferences_snapshot or _preferences(),
             audio_cpp_supervisor=supervisor,  # type: ignore[arg-type]
         ),
         factory_configs,
@@ -1193,6 +1203,205 @@ async def test_console_and_roleplay_admission_apply_stage_before_read_gate(
         assert (
             await service.registry.provider_configuration_snapshot("audio_cpp")
         ).staged_config is None
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("staged", [False, True])
+@pytest.mark.parametrize(
+    "preferences",
+    [
+        _preferences(),
+        replace(_preferences(), model_mode="exact", model_id="model"),
+        replace(
+            _preferences(),
+            model_mode="exact",
+            model_id="model",
+            voice_mode="exact",
+            voice_id="default",
+        ),
+    ],
+    ids=["first-available", "exact-server-default", "exact-voice"],
+)
+async def test_console_destination_prepares_stopped_managed_runtime(
+    tmp_path: Path,
+    staged: bool,
+    preferences: TTSPreferencesSnapshot,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    port = 19_153
+    managed = _managed_config(tmp_path, "console-destination", port)
+    requests: list[httpx.Request] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _handler(request)
+
+    service, _factory_configs = _service(
+        _external_config() if staged else managed,
+        supervisor,
+        transport_handler=capture,
+        preferences_snapshot=preferences,
+    )
+    if staged:
+        await _stage(service, managed)
+    handler = TTSEventHandler(default_profile_id_reader=lambda: None)
+    handler._tts_service = service
+
+    try:
+        assert supervisor.launches == 0
+        for generation in (1, 2):
+            destination = await handler.resolve_console_speech_destination(None, None)
+
+            assert destination is not None
+            assert destination.sanitized_destination == f"http://127.0.0.1:{port}"
+            assert destination.charges_may_apply is False
+            assert supervisor.launches == generation
+            assert (
+                await service.registry.provider_configuration_snapshot("audio_cpp")
+            ).staged_config is None
+            # Destination discovery may prepare the child, but never sends text.
+            assert all(request.method == "GET" for request in requests)
+            await supervisor.force_exit()
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_id", "voice_id", "axis"),
+    [("missing-model", "default", "model_id"), ("model", "missing-voice", "voice_id")],
+)
+async def test_console_destination_rejects_missing_managed_selection_after_start(
+    tmp_path: Path,
+    model_id: str,
+    voice_id: str,
+    axis: str,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "console-missing-selection", 19_154)
+    service, _factory_configs = _service(
+        managed,
+        supervisor,
+        preferences_snapshot=replace(
+            _preferences(),
+            model_mode="exact",
+            model_id=model_id,
+            voice_mode="exact",
+            voice_id=voice_id,
+        ),
+    )
+    handler = TTSEventHandler(default_profile_id_reader=lambda: None)
+    handler._tts_service = service
+
+    try:
+        with pytest.raises(TTSEffectiveResolutionError) as caught:
+            await handler.resolve_console_speech_destination(None, None)
+
+        assert caught.value.code == "missing_exact"
+        assert caught.value.axis == axis
+        assert supervisor.launches == 1
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["exit", "stage"])
+async def test_console_destination_rejects_native_change_after_preparation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "console-race", 19_155)
+    service, _factory_configs = _service(
+        managed,
+        supervisor,
+        preferences_snapshot=replace(
+            _preferences(), model_mode="exact", model_id="model"
+        ),
+    )
+    handler = TTSEventHandler(default_profile_id_reader=lambda: None)
+    handler._tts_service = service
+    original_snapshot = service.get_native_capability_snapshot
+
+    async def change_before_validation(provider_id, model_ids):
+        assert supervisor.launches == 1
+        if change == "exit":
+            await supervisor.force_exit()
+        else:
+            await _stage(service, _managed_config(tmp_path, "changed", 19_156))
+        return await original_snapshot(provider_id, model_ids)
+
+    monkeypatch.setattr(
+        service, "get_native_capability_snapshot", change_before_validation
+    )
+    try:
+        with pytest.raises(TTSEffectiveResolutionError) as caught:
+            await handler.resolve_console_speech_destination(None, None)
+
+        assert caught.value.code == "revision_incoherent"
+        assert supervisor.launches == 1
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_console_destination_port_change_rejects_previous_consent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "console-consent", 19_157)
+    requests: list[httpx.Request] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _handler(request)
+
+    service, _factory_configs = _service(managed, supervisor, transport_handler=capture)
+    handler = TTSEventHandler(default_profile_id_reader=lambda: None)
+    handler._tts_service = service
+    completions: list[TTSCompleteEvent] = []
+    monkeypatch.setattr(handler, "post_message", completions.append, raising=False)
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="This reply must not reach the changed destination.",
+    )
+    outcomes: list[bool] = []
+
+    try:
+        destination = await handler.resolve_console_speech_destination(None, None)
+        assert destination is not None
+        await supervisor.force_exit()
+        await _stage(service, _managed_config(tmp_path, "changed-consent", 19_158))
+
+        await handler.handle_tts_request(
+            TTSMessageSpeechRequestEvent(
+                store.issue_tts_message_speech_snapshot(message.id),
+                store.validate_tts_message_speech_snapshot,
+                outcome_callback=outcomes.append,
+                expected_destination_fingerprint=destination.fingerprint,
+            )
+        )
+
+        assert outcomes == [False]
+        assert supervisor.launches == 2
+        assert len(completions) == 1
+        assert "destination changed" in completions[0].error.lower()
+        assert all(request.method == "GET" for request in requests)
+        current = await handler.resolve_console_speech_destination(None, None)
+        assert current is not None
+        assert current.sanitized_destination == "http://127.0.0.1:19158"
+        assert current.fingerprint != destination.fingerprint
     finally:
         await service.close()
         await service.wait_closed()

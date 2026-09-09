@@ -361,7 +361,7 @@ class LibraryConversationsController:
             selected_conversation_id_accessor: Reads ``LibraryScreen.
                 _selected_conversation_id`` -- a per-source "currently
                 selected" field parallel to ``_media_state.selected_media_id``/
-                ``_selected_note_id``, shared shell state despite its
+                ``_notes_state.selected_note_id``, shared state despite its
                 name. The reader cluster (task 7) only ever reads it; THIS
                 cluster also writes it (row click, page-load reselection,
                 list normalization) -- hence the paired setter below.
