@@ -53,9 +53,12 @@ CSS restyle **111.0 ms / 39%** (534 `Stylesheet.apply` calls) · render/paint pr
 76.4 ms / 27% · widget construction 47.0 ms / 17% (182 `textual.compose` calls) ·
 DOM registration 38.2 ms / 13% · reflow 11.5 ms / 4%.
 
-Media switch-in, where the mounts go (by region):
-canvas (media) **87** · rail **52** · nav bar 19 · footer 6 · screen chrome 6 ·
-reader shell 3 · media viewer 2 = **177**.
+Media switch-in, where the mounts go (full breakdown, sums exactly):
+canvas (media) **87** · rail **52** · nav bar 19 (the bar + 16 destination
+buttons + 2 overflow hints) · footer 6 · screen chrome 6 · reader shell and its
+2 pane grips 3 · media viewer 2 · shell grid 1 · canvas host 1 = **177**.
+Notes (switch) the same way: rail 52 + canvas (notes) 19 + nav bar 19 + screen
+chrome 11 + footer 6 + shell grid 6 + canvas host 1 = **114**.
 
 ### Where §25's mount numbers come from — the arithmetic closes exactly
 
@@ -261,3 +264,28 @@ re-greened one test in — the rest of that file was already red and stayed so.
   a plain `uv pip install -e ".[dev]"` of the same commit.
 * Spike code (`spike_residency.py`, `dump_tree.py`) lives only in the scratch
   worktree and is not committed anywhere.
+
+## 7. Recommended lessons entry — for Task 4 to land, not this task
+
+This task's scope for the landed tree was "the spec addendum + the acceptance
+test + the probe sibling", so no `backlog/docs/lessons-*.md` edit was made here.
+One belongs in `lessons-testing-evidence.md` and Task 4 (which already owns the
+recipe §25 addendum) is the right place for it:
+
+> **A probe column that reads zero is not evidence of zero; check what the hook
+> actually intercepts.** `Helper_Scripts/library_click_probe.py` reported
+> `recompose 0` and `0 removes` on every Library rail click for four waves.
+> Both were instrument blind spots, not findings: the removes counter hooked
+> `App._unregister`, which is not Textual 8.2.8's prune path
+> (`Widget._message_loop_exit` is), and the recompose counter hooked
+> `refresh(recompose=True)` while the code under measurement awaited
+> `Widget.recompose()` directly. The `0` was promoted to a load-independent
+> verdict column in recipe §25 and then written into phase C's success
+> condition ("re-click rows go to ~0 mounts with recompose still 0") —
+> a doctrine-level acceptance target resting on a hook that could not fire.
+> Discovered only by writing a second instrument that measured the same
+> quantity a different way and got a different answer.
+
+The generalisable rule: **a counter that has never been non-zero has never been
+tested.** Before trusting one, provoke the event it claims to count and confirm
+it moves.

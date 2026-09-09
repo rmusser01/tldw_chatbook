@@ -296,14 +296,25 @@ Where the work goes, media switch-in (additive, self time):
 | DOM registration (`App._register`, 59 calls) | 38.2 | 13% |
 | compositor reflow | 11.5 | 4% |
 
-Where the mounts go, media switch-in, by region:
+Where the mounts go, media switch-in, by region (the full breakdown; it sums
+to the total, which is the point of the table):
 
-| region | mounts | | region | mounts |
-|---|---|---|---|---|
-| canvas (media) | **87** | | screen chrome | 6 |
-| rail | **52** | | reader shell | 3 |
-| nav bar (incl. its own 3 widgets) | 19 | | media viewer | 2 |
-| footer | 6 | | **total** | **177** |
+| region | mounts |
+|---|---|
+| canvas (media) | **87** |
+| rail | **52** |
+| nav bar (the bar, its 16 destination buttons, its 2 overflow hints) | 19 |
+| footer | 6 |
+| screen chrome (header line, chunking tools, lifecycle status) | 6 |
+| reader shell + its 2 pane grips | 3 |
+| media viewer | 2 |
+| shell grid | 1 |
+| canvas host | 1 |
+| **total** | **177** |
+
+Notes (switch) decomposes the same way and also sums exactly: rail 52 +
+canvas (notes) 19 + nav bar 19 + screen chrome 11 + footer 6 + shell grid 6 +
+canvas host 1 = **114**.
 
 #### Where §25's mount numbers come from — the arithmetic closes
 
