@@ -156,6 +156,11 @@ def rewrite_wikilinks(
         if note_id is None:
             return match.group(0)
         label = (match.group("alias") or "").strip() or target
+        # The grammar already excludes `[` and `]` from a target and an alias,
+        # so a label cannot close the link text early -- except through a
+        # trailing backslash, which would escape the `]` and let the link
+        # swallow the text after it. An escaped backslash renders the same.
+        label = label.replace("\\", "\\\\")
         return f"[{label}](note://{note_id})"
 
     content = WIKILINK_SCAN.sub(_link, payload.content)

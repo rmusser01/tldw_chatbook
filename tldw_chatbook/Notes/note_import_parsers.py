@@ -455,6 +455,10 @@ def _parse_text(
     if extension in {".txt", ".text", ".rst", ".md", ".markdown"}:
         markdown = extension in _MARKDOWN_EXTENSIONS
         metadata: Mapping[Any, Any] | None = None
+        # Links come from the note body only. For a frontmatter-only file the
+        # body is empty while the content stays the original YAML, so a
+        # `source: "[[README]]"` property is metadata and is never rewritten.
+        body = text
         if obsidian_mode and markdown:
             metadata, body = _split_frontmatter(text)
             # A note that is only frontmatter (an Obsidian Properties-only file,
@@ -472,7 +476,7 @@ def _parse_text(
                 title=title,
                 content=text,
                 keywords=_frontmatter_keywords(metadata, bounds),
-                wikilinks=_wikilinks(text) if obsidian_mode and markdown else (),
+                wikilinks=_wikilinks(body) if obsidian_mode and markdown else (),
             ),
         )
     if extension == ".json":

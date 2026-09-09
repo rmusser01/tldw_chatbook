@@ -82,7 +82,7 @@ def _build_vault(root: Path) -> Path:
     _write(
         root,
         "Journal/Properties only.md",
-        "---\ntitle: Properties only\ntags: [meta]\n---\n",
+        '---\ntitle: Properties only\ntags: [meta]\nsource: "[[README]]"\n---\n',
     )
     _write(
         root,
@@ -292,6 +292,31 @@ def test_a_frontmatter_only_note_still_imports_with_its_metadata(
     assert payload.title == "Properties only"
     assert payload.keywords == ("meta",)
     assert payload.content.startswith("---")
+
+
+def test_retained_frontmatter_metadata_is_never_a_link(vault: Path) -> None:
+    """A `[[target]]` inside retained Properties-only YAML is metadata, not a link."""
+    payload = _payloads(vault)["vault/Journal/Properties only.md"]
+
+    assert payload.wikilinks == ()
+    assert rewrite_wikilinks(payload, {"readme": "note-id-1"}).content == (
+        payload.content
+    )
+
+
+def test_a_link_label_cannot_widen_a_neighbouring_link() -> None:
+    """A trailing backslash in an alias is escaped, not left to eat the `]`."""
+    payload = ParsedNotePayload(
+        title="Escapes",
+        content="[[README|see\\]] then [docs](http://example.com).",
+        wikilinks=("README",),
+    )
+
+    rewritten = rewrite_wikilinks(payload, {"readme": "note-id-1"})
+
+    assert rewritten.content == (
+        "[see\\\\](note://note-id-1) then [docs](http://example.com)."
+    )
 
 
 def test_links_inside_code_spans_are_not_recorded(vault: Path) -> None:
