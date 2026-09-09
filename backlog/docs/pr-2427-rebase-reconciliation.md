@@ -3042,3 +3042,41 @@ preserving upstream adoption success/failure and route validation alongside the
 captured-focus repair. Complete affected-owner/native resource qualification,
 preflight and published-final-head review/CI remain required. No overall clean
 suite or merge-readiness claim is made by this checkpoint.
+
+### Latest-dev rebase and frozen qualification
+
+The repair checkpoint was saved as `9c525d818c`, then rebased onto dev
+`4192fbdc5e0e7fd545d978e6f6a2b5358ae28261`. Rebased runtime head is
+`d034c2d9c90acd55605dac8b8cece7c4e4f9f19c`. Conflict resolution preserves both
+independent testing-lesson additions and combines reviewed diagnostic-count
+deltas (final TASK-494 count 7660, verified by the inventory checker).
+
+Library adoption now retains upstream fresh-mount success and resident-failure
+propagation, forwarding the captured callback, Notes identity and generation
+guard. A fresh canvas restores captured focus after refresh; a failed resident
+sync reaches the existing whole-screen recovery. Upstream pre-mutation route
+validation and shared-shell selectors remain intact. Independent integration
+review found no actionable issues.
+
+Fresh complete guard verification: 54 passed, three warnings in 13.74s, including
+both healthy residency and failed-resident recovery
+(`/private/tmp/pr2427-rebased-guards.log`). All seven derived checks pass
+(`/private/tmp/pr2427-post-rebase-preflight.log`). Changed runtime modules and
+11 changed test files pass Ruff; the two remaining test files retain exactly
+their existing two F401/six E402 findings, and the Screen retains exactly its
+48 baseline findings. Whitespace checks pass. No cap increased.
+
+Sources are frozen at this runtime head for two observation-only native cohorts:
+
+- Four repaired resource-owner files, 237 tests: session 50549,
+  `/private/tmp/pr2427-approved-native-owners.log`, native receipt directory
+  `$TMPDIR/pr2427-approved-native-owners.qgdsoO`.
+- Twelve remaining affected Library/phase-C files, 1345 tests: session 35769,
+  `/private/tmp/pr2427-approved-native-library.log`, native receipt directory
+  `$TMPDIR/pr2427-approved-native-library.vs8f54`.
+
+Both are in progress, not passing evidence yet. Their final `fd_identity.jsonl`
+inventories and pytest exit statuses must be inspected before qualification is
+claimed. No whole-repository sweep or forced cleanup is used. The PR had zero
+unresolved review threads immediately before publication; new published-head
+reviews/checks and normal protected merge still remain.
