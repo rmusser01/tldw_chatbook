@@ -21284,17 +21284,23 @@ class LibraryScreen(BaseAppScreen):
         task-32063: this fired on ANY transition into GRADUATED, including the
         first source read of a returning, already-populated profile (which
         settles to EXPANDED and graduates immediately). Nothing became
-        available there, so the toast was noise. STARTER is the one settled,
-        user-visible state whose tools were genuinely hidden -- UNKNOWN is the
-        transient pre-evidence state nobody reads, and EXPANDED already shows
-        every tool.
+        available there, so the toast was noise. EXPANDED already shows every
+        tool; STARTER and UNKNOWN are the two lifecycles the rail paints
+        COMPACT (``LibraryRail._compose_rows``), so those are the two whose
+        tools were genuinely hidden a moment earlier.
+
+        UNKNOWN is not merely transient (review of PR #2531): task-32059
+        stamps it at profile creation, and evidence that finds content goes
+        straight from UNKNOWN to GRADUATED without passing through STARTER --
+        exactly the new user whose tools just appeared.
 
         The toast is the ONLY surface: an in-canvas line for the same event
         was two surfaces for one thing, and (task-32062) its arrival
         repainted the canvas the reader was typing into.
         """
         if (
-            previous_lifecycle is not LibraryLifecycle.STARTER
+            previous_lifecycle
+            not in (LibraryLifecycle.STARTER, LibraryLifecycle.UNKNOWN)
             or self._library_lifecycle is not LibraryLifecycle.GRADUATED
         ):
             return
