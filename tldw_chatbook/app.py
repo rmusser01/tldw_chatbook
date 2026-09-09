@@ -5442,6 +5442,22 @@ class LibraryIngestQueueMixin:
                     f"(job_id={job_id}, source={source_path})."
                 )
                 self._ingest_parse_pool = None
+                # (task-32054) An unsupported file was never going to be
+                # parsed: the worker would have recorded it SKIPPED. Losing
+                # the pool must not convert the pre-flight's own "will
+                # skip" forecast into a retryable failure carrying an
+                # unrelated pool error.
+                unsupported = self._unsupported_ingest_source_error(source_path)
+                if unsupported is not None:
+                    self.library_ingest_jobs.mark_skipped(
+                        job_id,
+                        reason=unsupported,
+                        error_detail={
+                            "category": "unsupported_file_type",
+                            "message": unsupported,
+                        },
+                    )
+                    return
                 self.library_ingest_jobs.mark_failed(
                     job_id,
                     error=_sanitize_library_ingest_error_text(
@@ -5476,6 +5492,32 @@ class LibraryIngestQueueMixin:
                 # and can't be trusted to ever complete either.
                 self._handle_broken_ingest_parse_pool(generation, job_id, exc)
                 return
+
+    @staticmethod
+    def _unsupported_ingest_source_error(source_path: str) -> Optional[str]:
+        """Return the unsupported-type reason for ``source_path``, if any.
+
+        The parse worker is what normally classifies a source, so a pool
+        that never starts leaves that verdict unmade. This asks the same
+        classifier the worker would (task-32054) so a file the pre-flight
+        forecast as "will skip" still records as a skip.
+
+        Args:
+            source_path: The queued source.
+
+        Returns:
+            The classifier's own message when the type is unsupported, or
+            ``None`` for anything the pipeline would have attempted.
+        """
+        try:
+            classify_ingest_source(source_path)
+        except FileIngestionError as exc:
+            message = str(exc).strip()
+            if message.startswith("Unsupported file type"):
+                return _sanitize_library_ingest_error_text(message) or message
+        except Exception:
+            return None
+        return None
 
     def _retire_idle_ingest_parse_pool(self) -> None:
         """Release an empty pool generation, then resume queued work.
