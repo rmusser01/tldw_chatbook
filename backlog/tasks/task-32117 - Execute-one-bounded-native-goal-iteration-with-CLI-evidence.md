@@ -1,11 +1,11 @@
 ---
 id: TASK-32117
 title: Execute one bounded native goal iteration with CLI evidence
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:17'
-updated_date: '2026-09-09 15:04'
+updated_date: '2026-09-09 15:48'
 labels:
   - agents
   - console
@@ -32,7 +32,7 @@ Users need goal iterations to use the existing Console execution path with relia
 - [x] #4 Actual script exit, timeout, identity and output evidence survives display formatting and cannot be forged by tool text.
 - [x] #5 Fresh goal requests omit prior settled iteration history and preserve provider continuation within the current iteration.
 - [x] #6 One runtime startup audit governs goal and fleet coordinators without revoking live owners when a view or service is attached.
-- [ ] #7 Selected additional read-only source bindings provide a bounded usable native read path; unselected siblings and all writes outside the primary writable binding remain refused under existing permissions.
+- [x] #7 Selected additional read-only source bindings provide a bounded usable native read path; unselected siblings and all writes outside the primary writable binding remain refused under existing permissions.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,4 +59,10 @@ Implementation commits: 0ad46264124ffd5bbb0e4621aeb03615d00f6e44 and review fix 
 Validation: final fix scope 146 passed; 5 manual regressions passed; 45 overlapping final script checks passed. Earlier broad run had 378 passes and one independently reproduced baseline missing-run_id review-hook failure. Existing requests warning remains. Scoped test lint/format and whitespace checks pass; no new differential production lint. Counts overlap and are not a unique aggregate. MCP tests prove local awaited-worker cleanup, not remote command termination. Live model qualification, checkpointing and UI remain subsequent tasks.
 
 ADR required: yes. Existing accepted backlog/decisions/141-native-console-goal-runs.md governs this runtime/authority boundary; no duplicate ADR. Detailed evidence and review artifacts are in the plan's local SDD workspace.
+
+Final whole-branch review fix 525c61a944 and independent scoped re-review at 052fd4b95f address all five final findings with no new issues. Selected source bindings now reach actual permission-gated fs_read/fs_list; native tests cover model-visible reads, primary-only writes, unselected siblings, instruction isolation and changed registry/filesystem authority.
+
+Verification: 279 affected passes, 1 intentional live skip and 1 proven unchanged missing-run_id test failure. The 20 strengthened setup/source passes and 2 geometry/2 cleanup followups overlap. Scoped static checks pass with zero added legacy diagnostics. Deterministic real CLI execution still exits 7→0 across 2 increments and 5 calls with an unchanged verifier and the inspected corrected file/diff. Three separate baseline diagnostic failures and unsuccessful historical local-model trials remain disclosed; no full suite or further model calls.
+
+ADR required: yes. Existing accepted backlog/decisions/141-native-console-goal-runs.md was clarified before this fix; no new stored fields, schema or execution/permission owner. Durable final review, exact evidence and limits: Docs/superpowers/reviews/2026-09-09-goal-runs-final-review.md and Docs/superpowers/reviews/2026-09-09-goal-runs-qualification.md, with QA under Docs/superpowers/qa/native-goals/task5/.
 <!-- SECTION:NOTES:END -->

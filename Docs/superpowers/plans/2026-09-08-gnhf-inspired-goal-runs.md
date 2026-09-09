@@ -10,7 +10,7 @@ wtf
 
 **Spec:** [Review and proposed design](../specs/2026-09-08-gnhf-inspired-goal-runs-design.md).
 
-**Status:** Implementation authorized by the user on 2026-09-08, following the requested [preimplementation review](../reviews/2026-09-08-goal-runs-preimplementation-review.md). The feature belongs inside Chatbook and includes existing CLI tools. All five slices have task-scoped specification and quality approval in the isolated native-goal-runs worktree. Whole-branch review found three functional gaps and two minor issues; the final fix wave is in progress. Qualification limits are recorded below.
+**Status:** Implementation complete in the isolated native-goal-runs worktree, following the user's 2026-09-08 authorization and requested [preimplementation review](../reviews/2026-09-08-goal-runs-preimplementation-review.md). The feature belongs inside Chatbook and includes existing CLI tools. All five slices have task-scoped specification and quality approval. The three functional gaps and two minor issues from whole-branch review were fixed in `525c61a944`; the final scoped re-review approved `052fd4b95f` with no open goal findings. TASK-32116 through TASK-32120 are Done. Qualification limits and the remaining integration prerequisite are recorded below.
 
 ADR required: yes
 ADR path: `backlog/decisions/141-native-console-goal-runs.md`
@@ -218,7 +218,7 @@ Expected result: no verified evidence or completed criterion; retain the report 
 - [x] Run the new integration/UI modules and the touched settings/runtime tests. Obtain an explicit local-model/live-provider test configuration before any real model demonstration; save the actual command/result/diff trace and inspect the final corrected artifact. If live configuration is unavailable, leave that acceptance criterion open. The deterministic test must still execute a real CLI process; a mocked process result is not CLI integration evidence.
 - [x] Run scoped Ruff/format and whitespace checks on modified files. Run applicable migration/private-data/diagnostic architecture checks because these owner kinds changed; do not run the full suite without permission. Finish self-review, update Backlog AC/notes and relevant docs, then commit the scoped slice.
 
-Task5 qualification: independent specification and quality review approved the slice after fixes for restart hydration, binding-dependent tool choices, submitted summary and older-history access. One nonblocking form-state finding is carried to the final fix wave. The configured local model did not produce the requested corrected live artifact: both bounded attempts yielded malformed reports and no tools, so the inspected final artifact remained invalid. The actual failed traces are retained; successful correction was demonstrated by the deterministic provider through the real CLI path. This deviation and all baseline check failures are recorded in the [qualification report](../reviews/2026-09-09-goal-runs-qualification.md), with no live-success claim.
+Task5 qualification: independent specification and quality review approved the slice after fixes for restart hydration, binding-dependent tool choices, submitted summary and older-history access. The carried form-state finding was fixed and approved in the final fix wave. The configured local model did not produce the requested corrected live artifact: both bounded attempts yielded malformed reports and no tools, so the inspected final artifact remained invalid. The actual failed traces are retained; successful correction was demonstrated by the deterministic provider through the real CLI path. This deviation and all baseline check failures are recorded in the [qualification report](../reviews/2026-09-09-goal-runs-qualification.md), with no live-success claim.
 
 ## Final whole-branch fix wave
 
@@ -226,13 +226,13 @@ ADR required: yes
 ADR path: backlog/decisions/141-native-console-goal-runs.md (Accepted; selected-resource and confirmation contract clarified before fixes)
 Reason: restore immutable setup and usable selected-resource integration within the existing native authority boundary; no new executor, grant or allowance owner.
 
-Affected Backlog tasks TASK-32117, TASK-32118 and TASK-32120 are reopened with explicit behavioral acceptance criteria before code. One implementer handles the five final-review findings and one scoped re-review checks the resulting diff.
+Affected Backlog tasks TASK-32117, TASK-32118 and TASK-32120 were reopened with explicit behavioral acceptance criteria before code. One implementer addressed the five final-review findings and one scoped re-review approved the resulting diff. All three tasks are now Done with their amended criteria checked and implementation notes retained.
 
-- [ ] Keep every displayed launch field identical to the submitted request across awaited validation; restore usable controls on failure, including tool choices.
-- [ ] Include bounded exact selected verifier invocations, execution root and checked inputs in actual initial/later model requests without objective duplication or fixture-only knowledge. Canonical executor owners provide the executable call details; execution-time verification remains authoritative. Keep the existing 128 KiB launch ceiling, 16 KiB checkpoint memory and complete prepared-request budget; refuse/pause explicitly if mandatory context cannot fit.
-- [ ] Make additional selected read-only source bindings usable through existing bounded context/file tools and permission gates. Test actual selected reads, unselected sibling refusal, primary-only writes, identity changes and real native request/tool behavior. Source data never becomes automatic project instructions or permission grants.
-- [ ] Remove the blank separator before ADR-141 in the existing index table.
-- [ ] Reproduce affected behavior before changes, run focused amended gates/static checks, update actual traces and user docs, then complete the single independent fix-wave re-review. Preserve existing live-model and baseline-diagnostic limitations honestly.
+- [x] Keep every displayed launch field identical to the submitted request across awaited validation; restore usable controls on failure, including tool choices.
+- [x] Include bounded exact selected verifier invocations, execution root and checked inputs in actual initial/later model requests without objective duplication or fixture-only knowledge. Canonical executor owners provide the executable call details; execution-time verification remains authoritative. Keep the existing 128 KiB launch ceiling, 16 KiB checkpoint memory and complete prepared-request budget; refuse/pause explicitly if mandatory context cannot fit.
+- [x] Make additional selected read-only source bindings usable through existing bounded context/file tools and permission gates. Test actual selected reads, unselected sibling refusal, primary-only writes, identity changes and real native request/tool behavior. Source data never becomes automatic project instructions or permission grants.
+- [x] Remove the blank separator before ADR-141 in the existing index table. The earlier separator before ADR-129 was also removed so all affected entries render in the table; entry contents are unchanged.
+- [x] Reproduce affected behavior before changes, run focused amended gates/static checks, update actual traces and user docs, then complete the single independent fix-wave re-review. Preserve existing live-model and baseline-diagnostic limitations honestly.
 
 Example targeted verification commands, once the new files exist and the dev environment is activated:
 
@@ -260,16 +260,16 @@ These are separate future plans rather than hidden acceptance requirements for t
 
 ## Review checklist
 
-- [ ] Every model/helper/tool call is behind the same accepted attempt and automatic budget, including the first increment.
-- [ ] Goal policy is independent of fleet enablement and each native iteration has finite sublimits and typed termination reasons.
-- [ ] Existing fleet wakes and ordinary manual chat retain their semantics; goal attempts have their own validated kind rather than fabricated survivor claims.
-- [ ] Catalog, runtime and progressively loaded tools obey the same immutable goal scope at actual dispatch; CLI authority is described accurately.
-- [ ] Completion and human review use typed verifier outcomes and the exact current artifact/checkpoint identity; quality approval cannot resolve interrupted effects.
-- [ ] Launch provisioning is idempotent across stores; checkpoint and attempt settlement share one FULL transaction; startup recovery runs once for both coordinators.
-- [ ] Pause/retry/restart cannot refill counters, change resource authority or overlap a still-owned effect.
-- [ ] Source/body privacy, bounded payload retention and fresh iteration context are verified at the persistence and actual provider-request boundaries.
-- [ ] Console controls invoke real actions, preserve ordinary drafts, and survive screen navigation.
-- [ ] The first local scenario works through the actual runtime, with limitations and remaining live checks stated accurately.
+- [x] Every model/helper/tool call is behind the same accepted attempt and automatic budget, including the first increment.
+- [x] Goal policy is independent of fleet enablement and each native iteration has finite sublimits and typed termination reasons.
+- [x] Existing fleet wakes and ordinary manual chat retain their semantics; goal attempts have their own validated kind rather than fabricated survivor claims.
+- [x] Catalog, runtime and progressively loaded tools obey the same immutable goal scope at actual dispatch; CLI authority is described accurately.
+- [x] Completion and human review use typed verifier outcomes and the exact current artifact/checkpoint identity; quality approval cannot resolve interrupted effects.
+- [x] Launch provisioning is idempotent across stores; checkpoint and attempt settlement share one FULL transaction; startup recovery runs once for both coordinators.
+- [x] Pause/retry/restart cannot refill counters, change resource authority or overlap a still-owned effect.
+- [x] Source/body privacy, bounded payload retention and fresh iteration context are verified at the persistence and actual provider-request boundaries.
+- [x] Console controls invoke real actions, preserve ordinary drafts, and survive screen navigation.
+- [x] The first local scenario works through the actual runtime and CLI with a deterministic provider; the unsuccessful live-model trials and their limits are stated accurately.
 - [ ] Backlog/ADR identifiers, migration version, concurrent work and documentation are reconciled before integration.
 
-The original review and plan were documentation-only. Execution evidence now lives in the [qualification report](../reviews/2026-09-09-goal-runs-qualification.md); unchecked final-review and integration items remain outstanding.
+Execution evidence lives in the [qualification report](../reviews/2026-09-09-goal-runs-qualification.md), and the [final review record](../reviews/2026-09-09-goal-runs-final-review.md) closes all five findings. The sole unchecked item is integration with independently owned prerequisites and concurrent work; the branch and worktree are preserved without a push or merge. The final local identifier scan found no conflicts, but it does not replace reconciliation at integration time. Four proven pre-existing test failures across two gates and unsuccessful live-model correction remain explicit qualification limits.

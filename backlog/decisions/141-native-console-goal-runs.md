@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-09-08
-Implementation status: Whole-branch review complete; final fixes in progress. See the [qualification report](../../Docs/superpowers/reviews/2026-09-09-goal-runs-qualification.md) for evidence and limitations.
+Implementation status: Complete; all five whole-branch findings fixed in `525c61a944` and independently approved at `052fd4b95f`. Integration with preserved prerequisites and concurrent work remains separate. See the [qualification report](../../Docs/superpowers/reviews/2026-09-09-goal-runs-qualification.md) for evidence, baseline test failures and unsuccessful live-model qualification.
 Tasks: TASK-32116 through TASK-32120 track the five-slice implementation.
 Design: [gnhf review and native goal runs](../../Docs/superpowers/specs/2026-09-08-gnhf-inspired-goal-runs-design.md)
 Plan: [First native goal-run milestone](../../Docs/superpowers/plans/2026-09-08-gnhf-inspired-goal-runs.md)

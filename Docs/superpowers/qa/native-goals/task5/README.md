@@ -141,11 +141,15 @@ These scopes overlap, and no production changes followed the 84-test gate.
 [Ruff](review-fix-ruff.txt) and [formatting](review-fix-format.txt) pass for the
 eight changed files. Independent scoped re-review approved all four fixes. It
 identified one nonblocking form-state issue when a binding changes during
-validation; this is carried into the final review and fix wave. The qualification
-report tracks the final disposition.
+validation. That issue was carried into the final review, fixed in `525c61a944`,
+and approved in the final scoped re-review at `052fd4b95f`.
 
 
 ## Final whole-branch fix wave
+
+All five final findings were addressed in `525c61a944`. The independent scoped
+re-review approved `052fd4b95f` with no new or deferred goal findings; see the
+[retained review](../../../reviews/2026-09-09-goal-runs-final-review.md).
 
 The final review fixes freeze every setup control before awaited validation,
 restore rejected forms after discovery, project exact selected verifier calls
