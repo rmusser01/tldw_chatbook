@@ -100,6 +100,9 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     resolve_adaptive_reader_layout,
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Utils.path_validation import (
+    validate_existing_absolute_directory,
+)
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     AdaptiveReaderShellResized,
     LibraryAdaptiveReaderShell,
@@ -2598,13 +2601,19 @@ class LibraryFileNotesWorkspace(Vertical):
         task-32136: a user who already configured a notes folder should be
         offered it by name instead of being sent to a file picker that
         opens on their home directory.
+
+        The setting is config-derived input, so it goes through
+        ``path_validation`` (review round 2) rather than straight to
+        ``is_dir()``: a relative spelling would otherwise resolve against
+        whatever directory the app was launched from.
         """
         raw = get_cli_setting("notes", "sync_directory", None)
         if not isinstance(raw, str) or not raw.strip():
             return None
         try:
-            candidate = Path(raw).expanduser()
-            return candidate if candidate.is_dir() else None
+            return validate_existing_absolute_directory(
+                Path(raw).expanduser()
+            )
         except (OSError, ValueError):
             return None
 
@@ -5442,7 +5451,25 @@ class LibraryFileNotesWorkspace(Vertical):
         persist: bool = True,
         cancel_event: Event | None = None,
     ) -> bool:
-        """Adopt one canonical root after the common draft leave guard."""
+        """Adopt one canonical root after the common draft leave guard.
+
+        Args:
+            path: Folder to link. Canonicalized here; a value that cannot
+                be canonicalized ends the attempt.
+            persist: Whether to write the adopted root to the config.
+            cancel_event: The caller's flag for THIS attempt, set to
+                abandon its scan (the deadline, Cancel, Escape and the back
+                cue all go through it). Cancellation belongs to the caller:
+                pass None and the scan runs to completion, bounded only by
+                its own wait for the service lock.
+
+        Returns:
+            True when the folder was adopted. False covers every other
+            outcome -- a refused leave guard, a busy session, a superseded
+            attempt, an abandoned or timed-out scan -- and the previously
+            linked folder is still in place. The reason a user needs is
+            reported on the folder row, not returned here.
+        """
         if not self._active or self._path_transitioning or self._shutdown:
             return False
         if not await self.flush_pending_work():

@@ -9,23 +9,22 @@ explain the mode before it asks for a folder.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-
-import Tests.UI._optional_module_stubs  # noqa: F401
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
-from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
-    FOLDER_FILES_EMPTY_COPY,
-    LibraryFileNotesWorkspace,
-)
+# Stubs first in the local group: it registers the optional MLX modules the
+# application imports below would otherwise probe.
+import Tests.UI._optional_module_stubs  # noqa: F401
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module
 from Tests.UI.test_library_file_notes_workspace import (
     _production_workspace_context,
     _static_text,
     _wait_until,
+)
+from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+    FOLDER_FILES_EMPTY_COPY,
+    LibraryFileNotesWorkspace,
 )
 
 WIDE = (235, 52)
@@ -120,6 +119,36 @@ async def test_empty_folder_files_explains_itself_and_offers_the_sync_folder(
             "the configured sync folder was never linked",
         )
         assert not workspace.query_one("#file-notes-empty-purpose").display
+        assert not workspace.query_one("#file-notes-use-sync-folder", Button).display
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_a_relative_configured_sync_folder_is_not_offered(
+    tmp_path, monkeypatch
+) -> None:
+    """Review round 2 (Qodo finding 1): the setting goes through validation.
+
+    A relative ``[notes] sync_directory`` resolves against whatever
+    directory the app happened to be launched from, so offering it by name
+    would link a folder the user never chose.
+    """
+    (tmp_path / "relative-notes").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        workspace_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            "relative-notes" if (section, key) == ("notes", "sync_directory")
+            else default
+        ),
+    )
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _production_workspace_context(workspace, size=WIDE) as pilot:
+        await pilot.pause()
+        assert workspace._configured_sync_folder() is None
         assert not workspace.query_one("#file-notes-use-sync-folder", Button).display
     await workspace.shutdown()
     replica.close()
