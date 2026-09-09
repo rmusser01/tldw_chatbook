@@ -57,9 +57,19 @@ _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 #: it rather than repeating the same sentence (task-32063).
 NOTES_AUTHORITY_PREFIX = "Library notes · Library database"
 
-#: The two controls a reader types a note into. A refresh that would recompose
+#: Every control a reader types a note into. A refresh that would recompose
 #: this canvas while one of them has focus is deferred instead (task-32062).
-_NOTE_EDITOR_INPUT_IDS = frozenset({"library-note-title", "library-note-body"})
+#: The keyword boxes belong here for the same reason the title does -- review
+#: of PR #2531: both are live ``Input``s, and only one of the two is mounted
+#: visible at a time (wide editor vs. context region).
+_NOTE_EDITOR_INPUT_IDS = frozenset(
+    {
+        "library-note-title",
+        "library-note-body",
+        "library-note-keywords",
+        "library-note-context-keywords",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -635,7 +645,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.refresh(recompose=True)
 
     def editor_has_focus(self) -> bool:
-        """Whether this canvas's own note title or body currently has focus."""
+        """Whether a field of THIS canvas's note editor currently has focus.
+
+        Returns:
+            ``True`` while the focused widget is one of this canvas's own
+            editable note fields (title, body, or either keyword box).
+        """
         try:
             focused = self.app.focused
         except Exception:
@@ -1684,10 +1699,19 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if body_input.text != snapshot.body and not body_input.has_focus:
             with body_input.prevent(TextArea.Changed):
                 body_input.text = snapshot.body
-        if wide_keywords.value != snapshot.keywords_text:
+        # Same rule as the title above: a keyword box the reader is typing in
+        # is its own authority, and the snapshot is built from its own Changed
+        # events anyway (review of PR #2531).
+        if (
+            wide_keywords.value != snapshot.keywords_text
+            and not wide_keywords.has_focus
+        ):
             with wide_keywords.prevent(Input.Changed):
                 wide_keywords.value = snapshot.keywords_text
-        if context_keywords.value != snapshot.keywords_text:
+        if (
+            context_keywords.value != snapshot.keywords_text
+            and not context_keywords.has_focus
+        ):
             with context_keywords.prevent(Input.Changed):
                 context_keywords.value = snapshot.keywords_text
 
