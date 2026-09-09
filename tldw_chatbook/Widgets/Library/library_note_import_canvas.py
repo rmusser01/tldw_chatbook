@@ -47,20 +47,33 @@ def _disabled_action_label(text: str, *, disabled: bool) -> str:
     return f"{text} unavailable" if disabled else text
 
 
+_SOURCE_NAME_BUDGET = 48
+"""Shared display-width budget for a selected source name (review round 4:
+
+was repeated as the literal 48 twice plus a hand-derived 47 in the
+head-truncate branch below -- one named constant keeps the folder-path and
+bare-filename branches from drifting to different limits independently).
+"""
+
+
 def _bounded_source_name(name: str) -> str:
     """Keep one selected source name useful without dominating compact layouts.
 
-    A folder's absolute path (contains "/") middle-elides (task-32122 Step
-    3) so it keeps its basename -- the name a user actually picked --
-    intact instead of showing an unrecognizable path prefix. A bare
-    filename (the files list; no "/") has no basename/prefix split to
-    preserve, so `elide_path_middle` would fall through to keeping its
-    *tail* instead -- a silent behavior change for the files list (review
-    round 2 escalated minor). Head-truncate those as before.
+    A folder's absolute path (contains "/" or "\\\\" -- a folder selection
+    is projected as a native ``str(Path)``, which is backslash-separated on
+    Windows; review round 4) middle-elides (task-32122 Step 3) so it keeps
+    its basename -- the name a user actually picked -- intact instead of
+    showing an unrecognizable path prefix. A bare filename (the files list;
+    no separator) has no basename/prefix split to preserve, so
+    `elide_path_middle` would fall through to keeping its *tail* instead --
+    a silent behavior change for the files list (review round 2 escalated
+    minor). Head-truncate those as before.
     """
-    if "/" in name:
-        return elide_path_middle(name, budget=48)
-    return name if len(name) <= 48 else f"{name[:47]}…"
+    if "/" in name or "\\" in name:
+        return elide_path_middle(name, budget=_SOURCE_NAME_BUDGET)
+    if len(name) <= _SOURCE_NAME_BUDGET:
+        return name
+    return f"{name[: _SOURCE_NAME_BUDGET - 1]}…"
 
 
 class _ImportBody(VerticalScroll):

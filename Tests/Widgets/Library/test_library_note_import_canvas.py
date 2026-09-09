@@ -233,6 +233,37 @@ async def test_long_bare_filename_in_files_list_head_truncates_not_tail() -> Non
         assert summary == f"1 file selected: {long_name[:47]}…"
 
 
+async def test_folder_selection_summary_middle_elides_windows_paths_too() -> None:
+    """Qodo review round 4 ("Windows users lose folder confirmation"): a
+
+    folder selection is projected as a native ``str(Path)``, which on
+    Windows uses backslash separators. The path/bare-filename branch (and
+    ``elide_path_middle``'s own basename extraction) must recognize those
+    too, or a long Windows folder path falls into the bare-filename
+    head-truncate branch and loses its basename instead of keeping it.
+    """
+    long_path = (
+        r"C:\Users\robert\Documents\deeply\nested\somewhere\notes-review-vault"
+    )
+    app = _CanvasApp(
+        _snapshot(
+            selected_names=(long_path,),
+            selection_kind="folder",
+            status_line="1 folder selected.",
+            can_check=True,
+            check_disabled_reason="",
+        )
+    )
+
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        summary = _plain(app.query_one("#note-import-source-summary", Static))
+        assert summary.startswith("1 folder selected: ")
+        assert "notes-review-vault" in summary
+        assert "…" in summary
+        assert r"Documents\deeply\nested\somewhere" not in summary
+
+
 async def test_select_controls_post_typed_physical_messages() -> None:
     app = _CanvasApp(
         _snapshot(

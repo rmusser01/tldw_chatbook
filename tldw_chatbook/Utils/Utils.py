@@ -265,7 +265,7 @@ def elide_path_middle(path: str, budget: int = 48) -> str:
     """Middle-elide a filesystem path, keeping the basename intact.
 
     Unlike a plain tail-truncate, this never hides the last path component
-    (the part after the final "/") -- the fragment a user actually
+    (the part after the final separator) -- the fragment a user actually
     recognizes their file/folder pick by (task-32122 Step 3: "1 folder
     selected: /Users/.../vault" beats "1 folder selected: notes-review",
     which silently discarded the rest of the path, and beats a naive
@@ -273,7 +273,12 @@ def elide_path_middle(path: str, budget: int = 48) -> str:
     user just picked).
 
     Args:
-        path: The path to display.
+        path: The path to display. Both "/" (POSIX) and "\\\\" (Windows)
+            are recognized as separators -- ``str(Path(...))`` uses
+            whichever the picker's host platform produces (PR #2542
+            review round 4: a Windows folder path has no "/" at all, so a
+            "/"-only split previously mistook the whole string for a
+            basename with no separator to elide around).
         budget: Maximum character length; falls back to a bare basename
             (further tail-truncated if needed) when even that overflows.
 
@@ -284,7 +289,8 @@ def elide_path_middle(path: str, budget: int = 48) -> str:
     if len(path) <= budget:
         return path
     ellipsis = "…"
-    basename = path.rsplit("/", 1)[-1]
+    sep_index = max(path.rfind("/"), path.rfind("\\"))
+    basename = path[sep_index + 1 :] if sep_index >= 0 else path
     head_budget = budget - len(ellipsis) - len(basename)
     if head_budget > 0:
         return f"{path[:head_budget]}{ellipsis}{basename}"
