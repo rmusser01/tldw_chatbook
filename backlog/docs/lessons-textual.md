@@ -739,3 +739,44 @@ Corollary worth knowing: `Stylesheet.rules_map` is keyed by each rule's
 RIGHTMOST selector only, so "is this class in `rules_map`?" does NOT answer
 "can this class affect anything" — a rule like `.marker Button {}` is filed
 under `Button`. Scan the whole selector text.
+
+## A node's `@on` handlers run BEFORE its `on_<message>` method — `event.stop()` cannot un-run either (phase C task 3, 2026-09-09)
+
+Phase C moved 16 canvas-origin `@on` rows from `LibraryScreen` onto
+`LibraryMediaCanvas`. That canvas already carried a residency gate from task 2:
+
+```python
+def on_button_pressed(self, event: Button.Pressed) -> None:
+    if not self.display:          # parked off-route: refuse
+        event.stop()
+        event.prevent_default()
+```
+
+The gate looked like it would cover the migrated rows too. It does not, and
+the reason is dispatch ORDER inside a single node. `MessagePump._get_dispatch_
+methods` walks the MRO and, per class, yields that class's `_decorated_handlers`
+FIRST and the naming-convention method (`on_button_pressed`) SECOND. So the
+`@on`-decorated handler runs before the gate. And `event.stop()` only sets
+`_stop_propagation`, which `_on_message` reads AFTER the whole dispatch loop —
+it stops BUBBLING, it cannot cancel another handler on the same node.
+`prevent_default()` is no better here: `_no_default_action` is only checked at
+the top of each `for cls in MRO` iteration, so it skips PARENT classes, never
+the rest of the current one.
+
+Verified with a 20-line spike before designing around it (a `Vertical` with one
+`@on(Button.Pressed, "#b")` and one `on_button_pressed`; the order list came
+back `['decorated', 'gate']`), then reproduced on the landed code: with the
+migration in place and the refusal removed, pressing Sort on the HIDDEN
+resident Media canvas opened its chooser while the user was reading Notes.
+
+**The rule:** a same-node guard implemented as `on_<message>` protects only
+handlers on ANCESTOR nodes. The moment a region widget starts catching its own
+messages with `@on`, the guard has to move inside those handlers — one shared
+seam they all call first, not a separate method that merely runs later.
+
+**And the trap inside the trap:** the existing pin for that gate
+(`test_hidden_resident_media_canvas_does_not_process_row_presses`) stayed GREEN
+through the whole hazard, because the row it presses (`.library-media-row`) was
+NOT one of the migrated handlers. A guard's pin only covers the handlers that
+route through the guard; migrating a handler out from under one silently
+narrows what the pin proves without changing the pin's result.

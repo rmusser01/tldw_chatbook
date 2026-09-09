@@ -12578,3 +12578,35 @@ trace as well as aggregates: the aggregate says a flip is expensive, the trace
 is what shows the same flip happening twice per interaction and therefore
 being removable. `Helper_Scripts/library_restyle_attribution_probe.py` is the
 worked example.
+
+## Four straight failures are not attribution — run the revert control (phase C task 3, 2026-09-09)
+
+The media battery came back 25 failed / 684 passed on both arms, with exactly
+one name differing in each direction. The mine-only name,
+`test_focus_traversal_builds_zero_bodies_for_pass_through_rows`, then failed
+FOUR consecutive times in isolation on the changed branch while passing twice
+in isolation at the base commit. Two prior task reports had already called that
+test a "load flake", and the temptation was to dismiss it on that precedent —
+or, in the other direction, to start hunting a regression that four failures
+seemed to prove.
+
+Both would have been wrong, and the cheap experiment said so in one command:
+
+    git checkout <commit>~1 -- tldw_chatbook/   # revert PRODUCTION only
+    pytest <the one test>                       # still failed
+
+With the production change reverted the test still failed, which no
+production-caused regression can survive. Re-running the base commit then gave
+fail, pass, pass — the earlier base passes had been luck too. Eight runs per
+arm settled it: **7 passed / 1 failed on BOTH arms**, an identical rate.
+
+Two things to take from it. First, an isolation run is not a control; a control
+holds everything constant except the thing you are attributing to, and for a
+code change that means reverting the code. Second, `p(4 fails in a row)` at a
+1-in-8 flake rate is ~1/4000 — improbable enough to be worth investigating, and
+still not evidence. Sample size is what separates "this branch broke it" from
+"this test is flaky"; a serial streak is neither.
+
+The prior reports' "load flake, passes in isolation" was also too generous a
+characterisation: this test fails in isolation too, roughly one run in eight,
+on an unchanged tree.

@@ -943,3 +943,15 @@ runs per side. **One visible change, and it is a removal**: the first time you
 open a route in a session, the Library and Items panes no longer collapse and
 snap back open a moment later. Nothing else on this page moves; the switch is
 cheaper and steadier, not different.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-09 (Library
+phase C, task 3: sixteen of the Media list's controls — the filter box and
+its Clear, Sort and its chooser, the pager's Previous/Next/Retry, select
+mode's All/None and **Review selected**, **Open in viewer**, **Export**,
+**Review these**, and the review-sets control — are now handled by the Media
+list itself rather than by the Library screen. **No on-screen copy, control,
+or layout changes**; this page is re-stamped rather than edited because
+nothing about how these controls look or behave moved. What changed is which
+part of the code answers the press, which also closes a phase-C hazard: a
+control on the Media list you have switched away from can no longer act on
+your behalf.)*

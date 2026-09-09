@@ -942,3 +942,86 @@ visit, and the class flips are the row widgets' own compose-time
 themselves painting in place rather than recomposing their whole child list —
 a canvas-widget design change, not a storm fix, and not required for this
 task's acceptance.
+
+---
+
+## Implementation addendum — phase C task 3, region ownership (2026-09-09)
+
+The spec's phase-C rule is an **origin** rule, and applying it to media
+produced a three-way census rather than the two-way one the rule's wording
+implies. All counts below were read from source (where each control is
+COMPOSED, and where each of the three message classes is POSTED), never from
+a handler's name.
+
+### The census: 79 media `@on` rows on `LibraryScreen`
+
+| bucket | rows | disposition |
+|---|---|---|
+| **canvas-origin, behaviour already in `LibraryMediaController`** | **16** | **migrated to `LibraryMediaCanvas`** |
+| canvas-origin, handler body still screen-native | 20 | **deferred**, blocker named below |
+| not canvas-origin | 43 | **permanent** |
+
+The 43 break down as 26 posted by the Reader (`LibraryMediaViewer`: 25
+controls plus its `SpeakerRenamed` message), 13 by `LibraryMediaTrashCanvas`,
+3 by `LibraryMediaContent` inside the Reader, and 1 — `MediaShellResized` —
+by the adaptive shell, which is the canvas's **ancestor**: a bubbling message
+travels from sender to screen, so an ancestor's message can never reach a
+descendant. The Reader and the Trash canvas are the media canvas's
+*siblings* under `#library-canvas` (`_build_library_media_active_child`
+returns one or the other; the Reader is the shell's work pane), so their
+messages never pass through it either. Those rows are permanent, and
+`Tests/UI/test_library_phase_c_region_ownership.py` now fails if one of them
+leaves the screen.
+
+**The deferred 20 are the honest finding.** They are canvas-origin — the
+control is composed by `LibraryMediaCanvas.compose` — but their handler
+BODIES are still on `LibraryScreen`, outside the media series'
+`_MEDIA_CLUSTER_METHOD_NAMES` (140 names). Moving the `@on` row alone would
+leave the canvas calling back through the screen, which the
+named-constructor-dependency canon retired; moving the bodies is a phase-A
+extraction, which phase C explicitly rides *after*. Phase C's graduation
+criterion "the subsystem's phase-A series is fully landed" turns out to be
+true of the series and **not** of every handler the series left behind. The
+20 are enumerated in the test file with that blocker recorded, so promoting
+one is a one-line edit when its body moves.
+
+**No bindings moved, and that is a decision.** The spec says bindings move
+with behaviour ownership; none of the 16 has an `action_*` counterpart, and
+Textual resolves bindings along the **focus chain** rather than by bubbling —
+so moving a screen binding onto the canvas would narrow where its key works.
+The 5 `action_*` names in the media cluster stay on the screen.
+
+### The mechanism, and the hazard it created
+
+The canvas takes a named constructor dependency, `actions:
+LibraryMediaController | None`, bound at both production construction sites
+(`library_media_controller.py`'s `_build_library_media_active_child` — which
+the route swap also uses — and `library_screen.py`'s `compose_content`
+branch). `None` is the harness default so a bare canvas built by a test keeps
+working; both production sites are pinned by source, because a missed one has
+no runtime symptom short of a silently dead control. The concrete controller
+type is named rather than hidden behind a bespoke protocol, per this
+document's own "visible coupling over a concealed facade" ruling; the import
+is `TYPE_CHECKING`-only because the controller imports the canvas at runtime.
+
+**Textual 8.2.8, verified rather than assumed (finding #7 for this record):
+a node's `@on`-decorated handlers run BEFORE that node's `on_<message>`
+convention method, and `event.stop()` cannot un-run a handler on the same
+node.** `MessagePump._get_dispatch_methods` yields each MRO class's
+`_decorated_handlers` first and the naming-convention method second;
+`_on_message` reads `_stop_propagation` only after the whole dispatch loop.
+Measured with a 20-line spike (`decorated` then `gate`), and then reproduced
+on the landed code: with the migration in place but the refusal removed, a
+press on the hidden resident Media canvas opened its sort chooser while the
+user was on Notes — `assert True == False`, "a press on the hidden resident
+canvas ran its migrated handler".
+
+So task 2's residency gate (`LibraryMediaCanvas.on_button_pressed`) protects
+nothing that moves onto the canvas. The 12 migrated `Button.Pressed` rows
+take the refusal themselves through one seam, `_media_actions_for_press`,
+whose scope mirrors that gate EXACTLY — presses only. The gate remains,
+because it is still the only thing refusing presses aimed at the 20
+canvas-origin rows the screen still owns. Notably, the existing pin
+`test_hidden_resident_media_canvas_does_not_process_row_presses` stayed GREEN
+throughout the hazard, because `.library-media-row` is one of the deferred
+20: the old pin could not have caught this.
