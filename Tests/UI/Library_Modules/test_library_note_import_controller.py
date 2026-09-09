@@ -827,6 +827,28 @@ async def test_group_action_outside_review_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_group_action_refuses_a_classification_it_cannot_name(
+    tmp_path: Path,
+) -> None:
+    """An unknown group is rejected, not silently applied to nothing."""
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    controller = _real_override_controller(_grouped_plan(source))
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+    await controller.check()
+    before = [item.selected_action for item in controller.snapshot.plan.items]
+
+    with pytest.raises(ValueError):
+        controller.set_group_action("not-a-classification", "skip")
+
+    assert [
+        item.selected_action for item in controller.snapshot.plan.items
+    ] == before
+
+
+@pytest.mark.asyncio
 async def test_clear_selection_resets_the_selection_and_cached_folder_names(
     tmp_path: Path,
 ) -> None:
