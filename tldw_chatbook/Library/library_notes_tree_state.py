@@ -36,7 +36,13 @@ UNFILED_PLACEMENT_ID = "virtual:unfiled"
 
 @dataclass(frozen=True)
 class LibraryNotesTreeRow:
-    """One visible folder, Unfiled, note-placement, or branch-pager row."""
+    """One visible folder, Unfiled, note-placement, or branch-pager row.
+
+    Every field is already rendered for display: the projection resolves
+    labels, breadcrumbs, ages and disabled states so a renderer only places
+    them. Fields not meaningful for a row kind keep their defaults (a folder
+    row has no ``note_id``, a pager row no ``age_label``).
+    """
 
     placement_id: str
     kind: LibraryNotesTreeRowKind
@@ -920,8 +926,20 @@ def build_paged_library_notes_tree(
 
     Only supplied branch slices are projected. Expanded identities control
     recursion, and every continuation remains at the boundary it extends.
-    ``now`` is the instant every row's relative age is measured against
-    (defaults to the current UTC time, as the flat list state does).
+
+    Args:
+        branch_states: Loaded slices, keyed by the branch each one covers.
+        expanded_folder_ids: Folder identities whose children are projected.
+        protected_folder_ids: Folders a sync root manages, marked read-only.
+        inactive_managed_folder_ids: Managed folders whose owner is inactive.
+        now: Instant every row's ``age_label`` is measured against; defaults
+            to the current UTC time, as the flat list state does.
+
+    Returns:
+        The visible rows, in order, with each row's age already rendered.
+
+    Raises:
+        ValueError: A slice is filed under a key other than its own.
     """
     now = now or datetime.now(timezone.utc)
     for key, state in branch_states.items():
@@ -1053,7 +1071,16 @@ def build_filtered_library_notes_tree(
     *,
     now: datetime | None = None,
 ) -> LibraryNotesTreeProjection:
-    """Project one exact filter page without touching browse branch state."""
+    """Project one exact filter page without touching browse branch state.
+
+    Args:
+        state: The settled filter page and the ancestors it renders under.
+        now: Instant every row's ``age_label`` is measured against; defaults
+            to the current UTC time, matching the paged projection.
+
+    Returns:
+        The visible rows for that page, with each row's age already rendered.
+    """
     now = now or datetime.now(timezone.utc)
     folders = {folder.folder_id: folder for folder in state.ancestor_folders}
     rows: list[LibraryNotesTreeRow] = []
