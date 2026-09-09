@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections.abc import Mapping
 from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -37,6 +38,7 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
 
 from tldw_chatbook.TTS import STTSGeneratedAudio, STTSPlaygroundResultProjection
 from tldw_chatbook.TTS.playground_types import PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS
+from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
 
 
 EXAMPLE_TEXTS = [
@@ -646,7 +648,15 @@ class SpeechPlaybackMixin:
 
             # Use the new audio player method
             # Store the worker task so we can check if it's running
-            playback = self._play_audio_async(audio_path, release_artifact)
+            artifact = self.current_audio_artifact
+            pcm_metadata = (
+                artifact.metadata
+                if artifact is not None and artifact.path == audio_path
+                else None
+            )
+            playback = self._play_audio_async(
+                audio_path, release_artifact, pcm_metadata=pcm_metadata
+            )
             try:
                 self._play_worker_task = self.run_worker(
                     playback,
@@ -665,11 +675,16 @@ class SpeechPlaybackMixin:
         self,
         audio_path: Path | None = None,
         release_artifact: Callable[[], None] | None = None,
+        *,
+        pcm_metadata: Mapping[str, object] | None = None,
     ) -> None:
         """Play audio asynchronously using the audio player"""
         try:
             if audio_path is None:
                 audio_path = self._current_generated_audio_path()
+                artifact = self.current_audio_artifact
+                if artifact is not None and artifact.path == audio_path:
+                    pcm_metadata = artifact.metadata
             if audio_path is not None:
                 if audio_path.exists():
                     # Get current player state before stopping
@@ -689,6 +704,48 @@ class SpeechPlaybackMixin:
                     # Check state after stop
                     state_after_stop = await self.app.audio_player.get_state()
                     logger.debug(f"Player state after stop: {state_after_stop}")
+
+                    if audio_path.suffix.lower() == ".pcm":
+                        from tldw_chatbook.TTS.pcm_playback import create_pcm16_wav_copy
+
+                        metadata = pcm_metadata or {}
+                        copy_task = asyncio.create_task(
+                            asyncio.to_thread(
+                                create_pcm16_wav_copy,
+                                audio_path,
+                                metadata.get("sample_rate"),
+                                metadata.get("channels", 1),
+                            )
+                        )
+                        try:
+                            audio_path = await asyncio.shield(copy_task)
+                        except asyncio.CancelledError:
+                            # The source lease outlives its off-thread read.
+                            # Join local artifact I/O before deleting either file.
+                            while not copy_task.done():
+                                try:
+                                    await asyncio.shield(copy_task)
+                                except asyncio.CancelledError:
+                                    continue
+                                except (OSError, ValueError):
+                                    break
+                            if (
+                                not copy_task.cancelled()
+                                and copy_task.exception() is None
+                            ):
+                                secure_delete_file(copy_task.result())
+                            raise
+                        original_release = release_artifact
+                        playback_copy = audio_path
+
+                        def release_copy() -> None:
+                            try:
+                                secure_delete_file(playback_copy)
+                            finally:
+                                if original_release is not None:
+                                    original_release()
+
+                        release_artifact = release_copy
 
                     # Attempt to play the audio file
                     logger.info(f"Attempting to play audio file: {audio_path}")
@@ -1103,6 +1160,7 @@ class SpeechPlaybackMixin:
         if not hasattr(self.app, "audio_player"):
             return
 
+        playback_failed = False
         while True:
             try:
                 state = await self.app.audio_player.get_state()
@@ -1127,7 +1185,12 @@ class SpeechPlaybackMixin:
                         progress_bar.remove_class("hidden")
                         time_display.remove_class("hidden")
                         self.query_one("#audio-player-transport").remove_class("hidden")
-                elif state in [PlaybackState.IDLE, PlaybackState.FINISHED]:
+                elif state in (
+                    PlaybackState.IDLE,
+                    PlaybackState.FINISHED,
+                    PlaybackState.ERROR,
+                ):
+                    playback_failed = state == PlaybackState.ERROR
                     self._release_playback_artifact()
 
                     if self._result_transition_operation_id is None:
@@ -1139,11 +1202,14 @@ class SpeechPlaybackMixin:
                         # Reset button states when playback finishes
                         self._sync_idle_transport_actions()
                         self.query_one("#audio-player-status", Static).update(
-                            self._current_result_status_copy()
+                            "Playback failed"
+                            if playback_failed
+                            else self._current_result_status_copy()
                         )
 
-                    # Notify that playback is complete
-                    if state == PlaybackState.FINISHED:
+                    if playback_failed:
+                        self.app.notify("Playback failed", severity="error")
+                    elif state == PlaybackState.FINISHED:
                         self.app.notify("Playback complete", severity="information")
 
                     break
@@ -1162,7 +1228,9 @@ class SpeechPlaybackMixin:
                 self._sync_idle_transport_actions()
                 self.query_one("#audio-player-transport").add_class("hidden")
                 self.query_one("#audio-player-status", Static).update(
-                    self._current_result_status_copy()
+                    "Playback failed"
+                    if playback_failed
+                    else self._current_result_status_copy()
                 )
         except Exception as e:
             logger.debug(f"Could not reset UI on progress timer exit: {e}")

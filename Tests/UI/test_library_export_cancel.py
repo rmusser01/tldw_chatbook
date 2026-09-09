@@ -48,6 +48,9 @@ def test_cancel_apply_current_run_sets_cancelled_status():
         ),
         _update_library_export_canvas_after_run=lambda: calls.append("update"),
         _end_library_structural_wait=lambda owner: None,
+        # The cancelled path also re-syncs the emergency guard; the stale-run
+        # fake above never reaches it because that run returns early.
+        _sync_library_emergency_guard_presentation=lambda: None,
     )
     LibraryScreen._apply_library_export_cancelled(fake, 9)
     assert fake._export_state.running is False

@@ -129,12 +129,12 @@ async def test_escape_leaves_files_while_a_folder_change_is_still_running(
     async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
         screen = pilot.app.screen
         await _start_blocked_root_change(pilot, workspace, blocked, new_root)
-        assert screen._library_notes_source == "files"
+        assert screen._notes_state.source == "files"
 
         await pilot.press("escape")
         await _wait_until(
             pilot,
-            lambda: screen._library_notes_source == "database",
+            lambda: screen._notes_state.source == "database",
             "Escape was swallowed while a folder change was running",
         )
         assert workspace.root == old_root.resolve()
@@ -194,7 +194,7 @@ async def test_cancelling_a_folder_change_keeps_the_previous_folder(
         assert workspace.root == old_root.resolve()
         assert "old.md" in workspace.entries
         assert not workspace.query_one(STRUCTURAL_WAIT_CANCEL, Button).display
-        assert screen._library_notes_source == "files"
+        assert screen._notes_state.source == "files"
         # The canvas is usable again: a second folder change is admitted.
         assert not workspace.query_one("#file-notes-choose-root", Button).disabled
     await workspace.shutdown()

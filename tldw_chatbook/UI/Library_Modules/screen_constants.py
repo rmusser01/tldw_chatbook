@@ -164,7 +164,7 @@ LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 # The literal title a just-created "Blank note" row is seeded with (LIB-14,
 # task-4021). The editor presents it placeholder-only (empty Input,
-# "Untitled" placeholder -- see ``_library_note_pending_blank_gc_id``), and
+# "Untitled" placeholder -- see ``_notes_state.pending_blank_gc_id``), and
 # the untouched-blank GC gate (``_flush_library_note_save``) treats a
 # snapshot title equal to this literal as blank too -- both call sites and
 # the create seed in ``handle_library_notes_create_blank`` must agree on
@@ -250,6 +250,13 @@ _LIBRARY_READER_SHELL_SELECTOR = (
 )
 LIBRARY_NOTES_SOURCE_DATABASE = "database"
 LIBRARY_NOTES_SOURCE_FILES = "files"
+# task-32050: a note load that never returns used to leave the canvas on
+# "Loading note…" for the rest of the session. Past this deadline the load
+# is abandoned into the existing failed state, which carries Retry.
+LIBRARY_NOTE_LOAD_DEADLINE_SECONDS = 3.0
+LIBRARY_NOTE_LOAD_TIMEOUT_COPY = (
+    "Unable to load note — timed out after 3 s. Press Retry."
+)
 LIBRARY_CANVAS_KIND_NOTES = "notes"
 LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS = frozenset(
     {LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE}
@@ -371,6 +378,12 @@ _LIBRARY_LIST_ROW_CLASSES = (
     "library-notes-row",
     "library-prompt-row",
     "library-skill-row",
+    # task-32052 AC#2: the New-note canvas's Blank note + template rows are
+    # a stacked list of full-width rows styled after ``library-notes-row``,
+    # so Up/Down must walk them like any other Library list. The "From a
+    # template" heading between them is a ``Static``, which this helper's
+    # own class filter already skips.
+    "library-notes-create-row",
 )
 
 _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID = {

@@ -245,6 +245,30 @@ turn, disclosure policy, surface, provider and model; removed artifacts must
 still belong to the verified source stream run. Artifact equality compares the frozen credential/PII projection
 without modifying the actual provider input.
 
+### Amendment recorded 2026-09-08: per-call rendered system rows
+
+TASK-32048 reproduces a llama.cpp discovery run that reaches two provider calls,
+then fails with `unsupported_surface_change` after `load_tools`. Its fenced tool
+protocol changes the leading system row while new tool traffic is appended.
+The following saved send can also change that row while replacing the completed
+tool suffix. Treating the system row as ordinary shared history cannot represent
+both legitimate changes with the existing bounded surface operation.
+
+Retain the immutable leading `rendered_system` artifact slot and record its
+current value in the call header as a `rendered_system_row` component. This is
+limited to the same first message slot with direct rendered-system artifact
+provenance and a system-role value. Saved system revisions, moved slots and
+other history remain subject to exact reference/value matching. Preparation and
+atomic dispatch binding verify slot identity, incoming frozen policy and the
+exact final sanitized row; raw provider values remain disposable. Reconstruction
+applies the header component only to that eligible slot. Older headers keep
+their existing reads, and earlier calls and artifact bytes never change.
+
+This uses the existing header artifact ownership, deduplication and collection
+paths. There is no schema migration, new retention policy, transcript-sized
+header or additional surface replacement permission. The provider receives the
+original message sequence and content.
+
 ### Clarification recorded 2026-09-05: retained soft-delete envelopes
 
 The accepted design's mutation-boundary section and TASK-23113.2 AC8 specify
@@ -522,3 +546,39 @@ runtime boundary without making a transitive regex engine a core dependency.
 - [TASK-24206](../tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
 - [DeepSeek Harness session model](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session.md)
 - [DeepSeek reconstructable requests](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.md)
+
+### Amendment recorded 2026-09-08: explicit discard after a tool-run capture failure
+
+TASK-32075 reproduces a third-request construction failure leaving previous calls
+at RESPONSE_STARTED. Reopening the conversation and explicitly discarding its
+pending assistant commits `assistant_generation_state=discarded` and removes the
+active dispatch checkpoint, but the previous tool/context surface remains.
+A following captured send may replace that bounded suffix using an optional exact
+discarded-assistant owner in the existing completed-turn witness. Recheck that the
+current saved user is a direct child of that live discarded assistant, the assistant
+is a direct child of the prior call's saved user in the attached conversation, and
+no active dispatch checkpoint remains for that prior user. Multiple assistant
+children (including soft-deleted siblings) make run ownership ambiguous and remain
+ineligible. The prior user's source
+must match the exact origin call and incoming retained history. The latest prior
+call must be response-bearing (RESPONSE_STARTED or a settled terminal outcome);
+dispatch-open/unknown calls remain ineligible.
+
+This explicit durable discard substitutes only for the completed assistant response
+proof. It does not synthesize an answer, a response link, or a successful trace
+outcome. Retain all existing owner, policy, tail, source, bounded tool/context range,
+and same-run lineage checks, and repeat the discard proof during final persistence
+and owned reservation recovery. Transformed sources retain their exact call-boundary
+pin. Historical call records and request heads remain unchanged. No schema or new
+ownership registry is needed. An absent, deleted, changed, unrelated or still-active
+response owner grants no replacement authority.
+
+Already-failed follow-up sends can have committed additional user messages
+without a provider call. Extend the same witness with a bounded ordered tuple of
+(saved user revision, discarded assistant message ID) pairs. Each pair must be an
+exact saved-user descriptor in the incoming replacement, and the direct-parent
+and unique-assistant proof must link the original traced user through every pair
+to the current admitted user. Validate all saved values and recheck the full chain
+at final binding. Missing, active, changed, cyclic, ambiguous or over-limit chains
+remain ineligible. This adds only bounded revision/owner identities to the existing
+in-memory witness; it does not store transcript copies or modify historical calls.

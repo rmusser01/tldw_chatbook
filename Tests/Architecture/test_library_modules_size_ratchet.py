@@ -324,7 +324,61 @@ _BUDGETS: dict[str, int] = {
     #        module's `__globals__` -- recipe SS3's module-globals-coupling
     #        shape, which no `self.<attr>` census can see. Imported here with
     #        a 4-line comment saying so.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4630,
+    #
+    # 2026-09-08, wave-8 close (BEHAVIOUR FIX, the wave's one deliberate
+    # behaviour change): 4630 -> 4669 (+39), and every one of those lines is
+    # ONE new binding property plus its docstring -- `_media_state`, this
+    # cluster's own state object under the screen's own name, the exact shape
+    # `library_notes_controller.py` already carries. No moved body was touched
+    # (all 140 movers unchanged, still byte-for-byte) and no moved body spells
+    # `self._media_state`: they read the flat `_library_media_<field>`
+    # properties from the generated shim loop. The accessor exists for the
+    # SHARED `canvas_sync.py` dispatchers, whose media leg assigns through
+    # `screen._media_state.selected_media_id` while
+    # `handle_library_media_select_all`/`_select_clear` hand them a bare
+    # controller `self` -- so before this, every media "Select all"/"Clear"
+    # press raised `AttributeError` into the dispatcher's own
+    # `except Exception` and silently took the whole-screen recompose.
+    # Mutation-verified BOTH ways: removing this property reds
+    # `test_media_row_toggle_resolves_the_dotted_state_path[controller]` and
+    # only that leg; reverting `canvas_sync.py`'s media branch reds only the
+    # `[screen]` leg.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4669,
+    # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
+    # born governed. 185 moved methods carrying 3,934 source lines of body,
+    # plus the module docstring, imports, the constructor's 93 keyword-only
+    # parameters (the state accessor plus 92 named dependencies), the 102
+    # binding properties and the generated state-shim loop.
+    # (Erratum, review round: this comment shipped as "the 93-dependency
+    # constructor, the 103 binding properties". 92 is the dependency count
+    # and 102 the property count -- both measured off the class body; the
+    # fix round that removed one dependency and one property corrected the
+    # wiring-test pin and this row's number, but not this sentence.)
+    #
+    # 2026-09-08, wave-8 task 3 (notes cleanup, notes series 3/3): 5254 ->
+    # 5276 (+22), and every one of those lines is ONE new binding property
+    # plus its docstring -- `_notes_state`, this cluster's own state object
+    # under the screen's own name. No moved body was touched (a cleanup PR
+    # prunes the SCREEN's delegators, never the controller's methods), and no
+    # moved body spells `self._notes_state` either: they all read the flat
+    # `_library_notes_<field>` properties from the generated shim loop, which
+    # is what keeps them byte-for-byte. The accessor exists for the SHARED
+    # `canvas_sync.py` dispatchers, which 26 of this cluster's methods hand a
+    # bare `self`, so their dotted spellings have to resolve on EITHER
+    # receiver. Mutation-verified: removing it reds
+    # `test_notes_row_toggle_resolves_the_dotted_state_path[controller]` and
+    # leaves the `[screen]` leg green.
+    #
+    # 2026-09-08, task-32052 AC#1 (critique-8 keyboard branch, PR #2533):
+    # 5276 -> 5283 (+7), a BEHAVIOUR FIX, not a move. The surface-mismatch
+    # guard at the top of `_restore_library_notes_after_targeted_sync` (5
+    # lines of comment + 2 of code) landed on the SCREEN's copy of that
+    # method before wave-8 moved the body here; the merge re-applied it at
+    # the body's new home, which is the only place it can run. Pinned by
+    # `Tests/UI/test_library_crit8_keyboard.py::
+    # test_ctrl_n_into_new_note_also_focuses_blank_note` -- reverting the
+    # guard reds it (focus lands on a notes-tree row, not Blank note).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5283,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
