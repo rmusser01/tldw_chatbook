@@ -427,3 +427,43 @@ async def test_goal_authorization_cannot_be_forged_or_moved_to_another_session(
             await asyncio.gather(task, return_exceptions=True)
     finally:
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_live_goal_disablement_at_resolution_refunds_before_acceptance(
+    stores, monkeypatch
+):
+    goal, _store, _session, controller, coordinator, gateway, calls = build_goal_rig(
+        stores, monkeypatch
+    )
+    helpers = []
+    original = controller._apply_skill_substitution
+
+    async def helper(*args, **kwargs):
+        helpers.append(True)
+        return await original(*args, **kwargs)
+
+    controller._apply_skill_substitution = helper
+
+    async def disable_on_resolution(_selection):
+        monkeypatch.setenv("TLDW_AGENTS_GOAL_RUNS_ENABLED", "false")
+        return resolution()
+
+    gateway.resolve_for_send = disable_on_resolution
+    try:
+        result = await coordinator.dispatch_once(goal.id)
+        snapshot = stores[0].automatic_work.snapshot(goal.chain_id)
+        assert snapshot.used["generation"] == 0
+        assert snapshot.reserved["generation"] == 0
+        assert calls == [] and helpers == []
+        assert result.native_run_id is None
+        assert (
+            stores[0]
+            .automatic_work.read_goal_attempt(
+                result.attempt_id, owner_id=coordinator._owner_id
+            )
+            .state
+            == "aborted"
+        )
+    finally:
+        await gateway.aclose()

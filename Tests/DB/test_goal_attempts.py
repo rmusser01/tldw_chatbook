@@ -9,6 +9,11 @@ from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
+@pytest.fixture(autouse=True)
+def enabled_goal_policy(monkeypatch):
+    monkeypatch.setenv("TLDW_AGENTS_GOAL_RUNS_ENABLED", "true")
+
+
 def ready_goal(db):
     goal = db.goal_runs.create(request(), launch_id="launch")
     return db.goal_runs.set_provisioning(goal, status="ready")
@@ -224,5 +229,27 @@ def test_goal_attempt_rejects_wrong_session_or_goal_link(tmp_path, corruption):
         with pytest.raises(ValueError, match="link"):
             db.automatic_work.accept_goal_iteration(attempt.id, owner_id="owner")
         assert db.automatic_work.snapshot(goal.chain_id).used["generation"] == 0
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("setting", ["false", "invalid"])
+def test_goal_acceptance_rechecks_live_enablement_inside_ledger(
+    tmp_path, monkeypatch, setting
+):
+    db = AgentRunsDB(tmp_path / "runs.db")
+    try:
+        goal = ready_goal(db)
+        attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="owner")
+        monkeypatch.setenv("TLDW_AGENTS_GOAL_RUNS_ENABLED", setting)
+        with pytest.raises(AutomaticWorkRefused, match="goal_runs_disabled"):
+            db.automatic_work.accept_goal_iteration(attempt.id, owner_id="owner")
+        assert db.automatic_work.snapshot(goal.chain_id).used["generation"] == 0
+        assert (
+            db.automatic_work.read_goal_attempt(attempt.id, owner_id="owner").state
+            == "prepared"
+        )
+        assert db.automatic_work.abort_goal_iteration(attempt.id, owner_id="owner")
+        assert db.automatic_work.snapshot(goal.chain_id).reserved["generation"] == 0
     finally:
         db.close()

@@ -388,3 +388,228 @@ async def test_restored_call_is_rechecked_against_live_goal_scope(stores, monkey
         release.set()
         await asyncio.gather(task, return_exceptions=True)
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    ["profile", "session", "definition", "transport", "cancelled", "outer_timeout"],
+)
+async def test_native_mcp_wrapper_preserves_refusal_and_uncertain_execution(
+    stores, monkeypatch, tmp_path, failure
+):
+    from types import SimpleNamespace
+
+    import tldw_chatbook.Agents.mcp_tool_provider as provider_module
+    from Tests.Agents.test_mcp_tool_provider import FakeMCPService, _catalog_record
+    from tldw_chatbook.Agents.agent_models import RunTerminationReason
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+    from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.MCP.tool_naming import llm_tool_name
+
+    entered, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    class Client:
+        def __init__(self):
+            self.sessions = {}
+            self.definition = {
+                "name": "check",
+                "description": "trusted check",
+                "inputSchema": {"type": "object"},
+            }
+            self.calls = []
+
+        async def connect_to_server(self, server_id, command, args, env):
+            self.sessions[server_id] = object()
+            return True
+
+        async def describe_server(self, server_id):
+            return {
+                "tools": self.get_server_tools(server_id),
+                "resources": [],
+                "prompts": [],
+            }
+
+        def get_server_tools(self, server_id):
+            return [self.definition]
+
+        async def call_tool(self, server_id, name, args):
+            self.calls.append((server_id, name, args))
+            entered.set()
+            try:
+                if failure == "transport":
+                    raise RuntimeError("transport lost after dispatch")
+                if failure == "cancelled":
+                    raise asyncio.CancelledError()
+                if failure == "outer_timeout":
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        # The remote executor still owns cleanup after cancellation.
+                        await release.wait()
+                return {"content": [{"type": "text", "text": "finished"}]}
+            finally:
+                finished.set()
+
+    client = Client()
+    local_store = LocalMCPStore(tmp_path / "goal-provider-mcp.json")
+    profile = LocalExternalMCPProfile(
+        profile_id="verifier", command="python", args=("trusted.py",)
+    )
+    local_store.save_profile(profile)
+    local = LocalMCPControlService(store=local_store, client=client)
+    await local.connect_profile("verifier")
+    tool_id = llm_tool_name("local:verifier", "check")
+    binding = local.goal_tool_binding("verifier", "check", tool_id=tool_id)
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("verifier", [dict(client.definition)])],
+        default_state=EffectiveToolState(state="allow", origin="global_default"),
+        tool_call_timeout=0.02 if failure == "outer_timeout" else 5,
+    )
+
+    async def execute(server_key, name, arguments, **kwargs):
+        return await local.execute_external_tool(
+            server_key.split(":", 1)[1], name, arguments
+        )
+
+    service.execute_hub_tool = execute
+    monkeypatch.setattr(provider_module, "_RESULT_WAIT_SLACK_SECONDS", 0.01)
+    runs, persistence, registry, req = stores
+    req = req.model_copy(
+        update={
+            "tool_scope": GoalToolScope(
+                catalog_tools=(tool_id,), mcp_bindings=(binding,)
+            )
+        }
+    )
+    count = 0
+
+    def provider(**kwargs):
+        nonlocal count
+        count += 1
+        if count == 1:
+            if failure == "profile":
+                local_store.save_profile(replace(profile, args=("retargeted.py",)))
+            elif failure == "session":
+                client.sessions["verifier"] = object()
+            elif failure == "definition":
+                client.definition = {**client.definition, "description": "changed"}
+            message = {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "check",
+                        "type": "function",
+                        "function": {"name": tool_id, "arguments": "{}"},
+                    }
+                ],
+            }
+        else:
+            message = {"content": "done"}
+        return {
+            "choices": [{"message": message}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+
+    goal, _store, _session, controller, coordinator, gateway, _calls = build_goal_rig(
+        (runs, persistence, registry, req), monkeypatch, provider
+    )
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+    task = asyncio.create_task(coordinator.dispatch_once(goal.id))
+    try:
+        if failure == "outer_timeout":
+            await asyncio.wait_for(entered.wait(), 2)
+            await asyncio.sleep(0.12)
+            assert not task.done(), (
+                "outer future cancellation released a live MCP executor"
+            )
+            assert controller._agent_bridge.runtime_capacity.snapshot().tool_workers > 0
+            release.set()
+        result = await task
+        expected = (
+            RunTerminationReason.AUTHORITY_CHANGED
+            if failure in {"profile", "session", "definition"}
+            else RunTerminationReason.UNKNOWN_EFFECT
+        )
+        assert result.termination_reason == expected
+        assert result.outcome.status == "stuck"
+        assert count == 1
+        assert len(client.calls) == (
+            0 if expected == RunTerminationReason.AUTHORITY_CHANGED else 1
+        )
+        assert controller._agent_bridge.runtime_capacity.snapshot().executions == ()
+        if client.calls:
+            assert finished.is_set()
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["authority", "unknown", "cancelled", "missing"])
+async def test_native_tool_thread_preserves_typed_exception(
+    stores, monkeypatch, failure
+):
+    from tldw_chatbook.Agents.agent_models import RunTerminationReason
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    runs, persistence, registry, req = stores
+    req = req.model_copy(
+        update={
+            "tool_scope": GoalToolScope(catalog_tools=("builtin:get_current_datetime",))
+        }
+    )
+    executions = []
+
+    def invoke(self, tool_id, args):
+        executions.append(tool_id)
+        if failure == "authority":
+            raise AutomaticWorkRefused("binding_changed")
+        if failure == "cancelled":
+            raise asyncio.CancelledError()
+        if failure == "missing":
+            return None  # noqa: RET501 - simulate a worker losing its result
+        raise RuntimeError("lost result after dispatch")
+
+    monkeypatch.setattr(BuiltinToolProvider, "invoke", invoke)
+    count = 0
+
+    def provider(**kwargs):
+        nonlocal count
+        count += 1
+        message = (
+            {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "check",
+                        "type": "function",
+                        "function": {"name": "get_current_datetime", "arguments": "{}"},
+                    }
+                ],
+            }
+            if count == 1
+            else {"content": "done"}
+        )
+        return {
+            "choices": [{"message": message}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+
+    goal, _store, _session, controller, coordinator, gateway, _calls = build_goal_rig(
+        (runs, persistence, registry, req), monkeypatch, provider
+    )
+    try:
+        result = await coordinator.dispatch_once(goal.id)
+        expected = (
+            RunTerminationReason.AUTHORITY_CHANGED
+            if failure == "authority"
+            else RunTerminationReason.UNKNOWN_EFFECT
+        )
+        assert result.termination_reason == expected
+        assert count == 1 and len(executions) == 1
+        assert controller._agent_bridge.runtime_capacity.snapshot().executions == ()
+    finally:
+        await gateway.aclose()

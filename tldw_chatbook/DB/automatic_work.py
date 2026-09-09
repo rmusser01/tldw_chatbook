@@ -980,6 +980,13 @@ class AutomaticWorkLedger:
                 ).fetchone()
                 if goal is None or goal["status"] != "ready":
                     raise AutomaticWorkRefused("goal_not_ready")
+                from tldw_chatbook.Agents.run_log import _setting
+                from tldw_chatbook.config import coerce_bool_setting
+
+                # Resolution/recovery may have awaited since the early gate.
+                # Refuse inside the durable fence before consuming a generation.
+                if not coerce_bool_setting(_setting("goal_runs_enabled", False), False):
+                    raise AutomaticWorkRefused("goal_runs_disabled")
             self._check_admission(conn, chain_id, kind="generation", limits=limits)
             reservation = self._reservation(
                 conn, attempt["generation_reservation_id"], owner_id

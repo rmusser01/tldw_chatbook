@@ -225,6 +225,10 @@ async def test_cancel_waits_for_real_script_cleanup_and_keeps_late_evidence(
         "approval_output",
         "missing_exit",
         "stale_callback",
+        "script_denied",
+        "policy_denied",
+        "trust_changed",
+        "approval_trust_changed",
     ],
 )
 async def test_script_outcomes_and_post_approval_changes_are_authoritative(
@@ -284,6 +288,32 @@ async def test_script_outcomes_and_post_approval_changes_are_authoritative(
     )
     controller._agent_bridge._skills_service = scope
     controller.set_pending_skill_script = lambda *args, **kwargs: None
+    if case == "script_denied":
+        trust.revoke_script_execution("verifier")
+        controller.request_skill_script_confirm = lambda *a, **k: {"allow": False}
+    if case == "policy_denied":
+        from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+        def denied():
+            raise PolicyDeniedError(
+                action_id="skills.scripts.execute.local",
+                reason_code="denied",
+                user_message="Script policy denied",
+                effective_source="local",
+                authority_owner="test",
+            )
+
+        monkeypatch.setattr(scope, "enforce_run_script", denied)
+    if case == "approval_trust_changed":
+        trust.revoke_script_execution("verifier")
+
+        def change_after_approval(*args, **kwargs):
+            path.write_text(script + "# changed during approval\n")
+            return {"allow": True}
+
+        controller.request_skill_script_confirm = change_after_approval
+    if case == "trust_changed":
+        path.write_text(script + "# changed without renewed trust\n")
     if case == "timeout":
         monkeypatch.setattr(
             local_module,
@@ -353,5 +383,98 @@ async def test_script_outcomes_and_post_approval_changes_are_authoritative(
         else:
             assert not marker.exists()
             assert result.tool_records == ()
+            if case in {
+                "script_denied",
+                "policy_denied",
+                "trust_changed",
+                "approval_trust_changed",
+            }:
+                from tldw_chatbook.Agents.agent_models import RunTerminationReason
+
+                expected = (
+                    RunTerminationReason.AUTHORITY_CHANGED
+                    if case in {"trust_changed", "approval_trust_changed"}
+                    else RunTerminationReason.PERMISSION_REFUSED
+                )
+                assert result.termination_reason == expected
+                assert result.outcome.status == "stuck"
+                assert count == 1
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["user_denied", "policy_denied", "execution_failed"])
+async def test_native_install_refusal_is_typed_and_denial_never_fetches(
+    stores, monkeypatch, tmp_path, case
+):
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as remote
+    from tldw_chatbook.Agents.goal_models import GoalToolScope
+    from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+    scope, _, _ = trusted_skill(tmp_path, 'print("unused")\n')
+    runs, persistence, registry, req = stores
+    req = req.model_copy(
+        update={"tool_scope": GoalToolScope(runtime_tools=("install_skill",))}
+    )
+    calls = []
+    fetches = []
+
+    async def fetch(*args, **kwargs):
+        fetches.append(args)
+        raise RuntimeError("fetch outcome unavailable")
+
+    monkeypatch.setattr(remote, "fetch_zip_bytes", fetch)
+    if case == "policy_denied":
+
+        def denied():
+            raise PolicyDeniedError(
+                action_id="skills.install.remote",
+                reason_code="denied",
+                user_message="Install policy denied",
+                effective_source="local",
+                authority_owner="test",
+            )
+
+        monkeypatch.setattr(scope, "enforce_install_remote", denied)
+
+    def provider(**kwargs):
+        calls.append(kwargs)
+        message = (
+            {"content": "done"}
+            if len(calls) > 1
+            else {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "install",
+                        "type": "function",
+                        "function": {
+                            "name": "install_skill",
+                            "arguments": json.dumps({"url": "https://github.com/o/r"}),
+                        },
+                    }
+                ],
+            }
+        )
+        return {
+            "choices": [{"message": message}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+
+    goal, _, _, controller, coordinator, gateway, _ = build_goal_rig(
+        (runs, persistence, registry, req), monkeypatch, provider
+    )
+    controller._agent_bridge._skills_service = scope
+    controller.request_skill_install_confirm = lambda *a, **k: case != "user_denied"
+    try:
+        result = await coordinator.dispatch_once(goal.id)
+        assert result.termination_reason.value == (
+            "unknown_effect" if case == "execution_failed" else "permission_refused"
+        )
+        assert result.outcome.status == "stuck"
+        assert len(calls) == 1
+        assert len(fetches) == (1 if case == "execution_failed" else 0)
+        assert controller._agent_bridge.runtime_capacity.snapshot().executions == ()
     finally:
         await gateway.aclose()

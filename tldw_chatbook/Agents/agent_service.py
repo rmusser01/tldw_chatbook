@@ -930,7 +930,16 @@ def _call_with_timeout(
             automatic_work.check()
         operation = owner.reserve_tool() if owner is not None else None
     except (CapacityRefused, AutomaticWorkRefused) as exc:
-        return ToolResult(ok=False, error=f"tool call refused: {exc}")
+        reason = None
+        if automatic_work is not None and automatic_work.goal is not None:
+            reason = (
+                exc.termination_reason
+                if isinstance(exc, AutomaticWorkRefused)
+                else RunTerminationReason.PREFLIGHT_REFUSED
+            )
+        return ToolResult(
+            ok=False, error=f"tool call refused: {exc}", termination_reason=reason
+        )
     box: dict = {}
 
     def _runner() -> None:
@@ -942,7 +951,7 @@ def _call_with_timeout(
                     automatic_work.check()
                 box["result"] = fn()
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
-            box["error"] = str(exc)
+            box["error"] = exc
         finally:
             if operation is not None:
                 operation.finish()
@@ -979,11 +988,25 @@ def _call_with_timeout(
             termination_reason=RunTerminationReason.UNKNOWN_EFFECT,
         )
     if "error" in box:
-        return ToolResult(ok=False, error=box["error"])
+        error = box["error"]
+        reason = None
+        if automatic_work is not None and automatic_work.goal is not None:
+            reason = (
+                error.termination_reason
+                if isinstance(error, AutomaticWorkRefused)
+                else RunTerminationReason.UNKNOWN_EFFECT
+            )
+        return ToolResult(ok=False, error=str(error), termination_reason=reason)
     result = box.get("result")
     if result is None:
         return ToolResult(
-            ok=False, error=f"tool call produced no result: {tool_name}"
+            ok=False,
+            error=f"tool call produced no result: {tool_name}",
+            termination_reason=(
+                RunTerminationReason.UNKNOWN_EFFECT
+                if automatic_work is not None and automatic_work.goal is not None
+                else None
+            ),
         )
     return result
 

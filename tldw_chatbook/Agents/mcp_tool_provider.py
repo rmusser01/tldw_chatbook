@@ -868,7 +868,7 @@ class MCPToolProvider:
             )
 
     def _execute(self, tool: HubTool, args: dict, *, decision: str) -> ToolResult:
-        """Run the tool via the main loop. NEVER raises, NEVER hangs unbounded.
+        """Run the tool via the main loop and convert failures to tool outcomes.
 
         Submits `service.execute_hub_tool(...)` to `self._main_loop` via
         `asyncio.run_coroutine_threadsafe` (the only I/O this provider
@@ -877,7 +877,10 @@ class MCPToolProvider:
         exception along this path (the submit itself on a dead/closed loop,
         `concurrent.futures.TimeoutError`, or any exception the coroutine
         raised) is caught here and converted to a truncated error
-        `ToolResult` -- this method must never propagate.
+        `ToolResult` -- this method must never propagate. For goals, a timed-out
+        call retains its worker until the actual client coroutine settles;
+        transport cleanup does not establish the outcome of remote effects.
+        Ordinary Console and fleet calls keep their bounded cancellation path.
 
         Args:
             tool: The resolved `HubTool` to execute.
@@ -895,6 +898,7 @@ class MCPToolProvider:
         """
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
+        automatic_work = None
         try:
             from .automatic_work_runtime import current_automatic_work
 
@@ -956,7 +960,7 @@ class MCPToolProvider:
                 self._main_loop,
             )
             raw_result = future.result(timeout=timeout)
-        except Exception as exc:  # noqa: BLE001 -- the never-raise/never-hang contract
+        except Exception as exc:  # noqa: BLE001 -- failures become typed tool outcomes
             if future is None and execution_coroutine is not None:
                 try:
                     execution_coroutine.close()
@@ -967,11 +971,21 @@ class MCPToolProvider:
             # loop) -- guard before cancelling rather than assuming the
             # submit succeeded.
             if future is not None:
-                # Finding 2: best-effort cancel lingering future on timeout/cancellation.
-                try:
-                    future.cancel()
-                except Exception:
-                    pass
+                if automatic_work is not None and automatic_work.goal is not None:
+                    # Retain this tool worker until the actual client coroutine
+                    # settles. Cancelling its concurrent Future would report done
+                    # before an asynchronous finally/cleanup path has finished.
+                    # This does not prove a remote server-side effect stopped.
+                    try:
+                        future.result()
+                    except BaseException:  # noqa: BLE001, S110 - preserve the original outcome
+                        pass
+                else:
+                    # Preserve ordinary Console/fleet cancellation semantics.
+                    try:
+                        future.cancel()
+                    except Exception:
+                        pass
             # Finding 1: TimeoutError/CancelledError have empty str(), so guarantee
             # non-empty error via (str(exc) or repr(exc)) so the model receives actual info.
             error = (str(exc) or repr(exc))[:_MAX_ERROR_CHARS]
@@ -1005,7 +1019,19 @@ class MCPToolProvider:
                     decision=decision,
                     error=f"bridge execution failed: {(str(exc) or repr(exc))[:200]}",
                 )
-            return ToolResult(ok=False, error=error)
+            reason = None
+            if automatic_work is not None and automatic_work.goal is not None:
+                from .agent_models import RunTerminationReason
+                from .automatic_work_budget import AutomaticWorkRefused
+
+                reason = (
+                    exc.termination_reason
+                    if isinstance(exc, AutomaticWorkRefused)
+                    else RunTerminationReason.PREFLIGHT_REFUSED
+                    if future is None
+                    else RunTerminationReason.UNKNOWN_EFFECT
+                )
+            return ToolResult(ok=False, error=error, termination_reason=reason)
         return self._format_result(raw_result)
 
     def _format_result(self, raw_result: Any) -> ToolResult:
