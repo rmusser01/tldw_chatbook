@@ -11,6 +11,10 @@ from unittest.mock import Mock, patch
 import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryGlobalKeyProductionCSSHarness,
@@ -1542,10 +1546,22 @@ async def test_bulk_mode_keeps_last_note_as_labelled_read_only_preview() -> None
         # tree's async reload (task-32126), racing the row it then
         # presses (confirmed by reproduction).
         await _open_note_editor(screen, pilot)
+        body = screen.query_one("#library-note-body", TextArea)
+        original_body = body.text
+        body.focus()
+        body.move_cursor((0, 0))
+        body.insert("Owned edit. ")
+        await pilot.pause()
+        assert host.focused is body
+        edited_body = body.text
+        edited_selection = body.selection
 
         screen.query_one("#library-notes-select-toggle", Button).press()
         await pilot.pause()
 
+        assert screen.query_one("#library-note-body", TextArea) is body
+        assert body.text == edited_body
+        assert body.selection == edited_selection
         bulk_status = screen.query_one("#library-note-bulk-status", Static)
         assert bulk_status.display is True
         assert "Read-only preview" in str(bulk_status.renderable)
@@ -1595,3 +1611,120 @@ async def test_bulk_mode_keeps_last_note_as_labelled_read_only_preview() -> None
 
         assert screen._notes_state.select_mode is False
         assert screen._notes_state.view == "editor"
+        assert screen.query_one("#library-note-body", TextArea) is body
+        work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+        assert work.has_pending_recompose_callback is False
+        body.undo()
+        assert body.text == original_body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("newer_editor_sync", [False, True])
+async def test_bulk_sync_retires_old_work_callback_before_a_later_recompose(
+    newer_editor_sync: bool,
+) -> None:
+    """In-place updates cannot leave obsolete Work callbacks for a later build.
+
+    Args:
+        newer_editor_sync: Apply another focused-editor sync before refresh.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _open_note_editor(screen, pilot)
+        body = screen.query_one("#library-note-body", TextArea)
+        body.focus()
+        await pilot.pause()
+        assert host.focused is body
+        work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+        calls: list[str] = []
+        work.queue_after_recompose(lambda: calls.append("obsolete"))
+
+        screen._notes_state.select_mode = True
+        assert library_screen_module._sync_library_canvas(screen, "notes")
+        if newer_editor_sync:
+            screen._notes_state.select_mode = False
+            assert library_screen_module._sync_library_canvas(screen, "notes")
+            assert library_screen_module._sync_library_canvas(screen, "notes")
+        await pilot.pause()
+        await work.recompose()
+        await pilot.pause()
+
+        assert calls == []
+        assert work.has_pending_recompose_callback is False
+
+
+@pytest.mark.asyncio
+async def test_bulk_in_place_sync_runs_explicit_followup_on_recomposed_list() -> None:
+    """An explicit bulk follow-up runs once without waiting for Work removal."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _open_note_editor(screen, pilot)
+        screen.query_one("#library-notes-row-0", Button).focus()
+        await pilot.pause()
+        work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+        body = screen.query_one("#library-note-body", TextArea)
+        calls: list[str] = []
+        screen._notes_state.select_mode = True
+        assert library_screen_module._sync_library_canvas(
+            screen, "notes", then=lambda: calls.append("current")
+        )
+        assert work.has_pending_recompose_callback is False
+        await pilot.pause()
+        assert calls == ["current"]
+        assert screen.query_one("#library-note-body", TextArea) is body
+        await work.recompose()
+        await pilot.pause()
+        assert calls == ["current"]
+
+
+@pytest.mark.asyncio
+async def test_new_work_intent_supersedes_bulk_list_followup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later explicit Work intent cancels an unpainted bulk-list intent.
+
+    Args:
+        monkeypatch: Hold automatic recomposes and project the next loading mode.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _open_note_editor(screen, pilot)
+        screen.query_one("#library-notes-row-0", Button).focus()
+        await pilot.pause()
+        work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+        canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        calls: list[str] = []
+        monkeypatch.setattr(canvas, "refresh", lambda *args, **kwargs: canvas)
+        monkeypatch.setattr(work, "refresh", lambda *args, **kwargs: work)
+        screen._notes_state.select_mode = True
+        assert library_screen_module._sync_library_canvas(
+            screen, "notes", then=lambda: calls.append("old-list")
+        )
+        assert canvas.has_pending_recompose_callback
+        loading = dict(screen._library_note_work_pane_kwargs(), mode="loading")
+        monkeypatch.setattr(screen, "_library_note_work_pane_kwargs", lambda: loading)
+        assert library_screen_module._sync_library_canvas(
+            screen, "notes", then=lambda: calls.append("new-work")
+        )
+        await work.recompose()
+        await canvas.recompose()
+        await pilot.pause()
+        assert calls == ["new-work"]

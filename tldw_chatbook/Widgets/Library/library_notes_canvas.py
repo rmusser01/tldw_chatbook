@@ -1110,7 +1110,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         load_message: str,
         deferred_guard: Callable[[], bool] | None = None,
         focus_intent_generation: Callable[[], int] | None = None,
-    ) -> None:
+    ) -> bool:
         """Apply a complete screen-owned snapshot within this canvas only.
 
         The method replaces every compose input before updating the visible
@@ -1144,8 +1144,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 scheduled by this exact sync.
             focus_intent_generation: Current screen focus-intent generation,
                 read before and after an awaited recompose.
+
+        Returns:
+            True only when a bulk presentation update preserved editor children;
+            the sync coordinator must route follow-ups through its list canvas.
         """
         previous_mode = self.mode
+        previous_presentation = self.presentation_state
         focused = self.app.focused
         self._tree_pager_focus_generation += 1
         self._tree_focus_intent_generation = focus_intent_generation
@@ -1204,7 +1209,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 child.queue_after_recompose(None)
                 if callback is not None:
                     self.call_after_refresh(callback)
-            return
+            return False
         lasting_canvases = self.query("#library-notes-lasting-add-canvas")
         if (
             previous_mode == mode == "lasting_add"
@@ -1217,7 +1222,24 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             lasting_canvases.first(LibraryNotesAddFromFilesCanvas).sync_state(
                 lasting_sync_snapshot
             )
-            return
+            return False
+        bulk_presentation_changed = (
+            previous_mode == mode == "editor"
+            and previous_presentation is not None
+            and presentation_state is not None
+            and (
+                previous_presentation.bulk_read_only,
+                previous_presentation.bulk_included,
+            )
+            != (presentation_state.bulk_read_only, presentation_state.bulk_included)
+            and (
+                previous_presentation.bulk_read_only
+                or presentation_state.bulk_read_only
+            )
+        )
+        if bulk_presentation_changed and self.query("#library-note-title"):
+            self._apply_post_compose_state()
+            return True
         if previous_mode == mode and self.editor_has_focus():
             # task-32062: a Notes refresh (a save landing, the first note
             # reaching the list, an evidence-driven reload) recomposed the
@@ -1241,8 +1263,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # guard in ``canvas_sync._sync_library_canvas``, without which the
             # Notes focus restore sat here and fired at the NEXT recompose,
             # dragging focus back out of whatever field the reader moved to.
-            return
+            return False
         self.refresh(recompose=True)
+        return False
 
     def editor_has_focus(self) -> bool:
         """Whether a field of THIS canvas's note editor currently has focus.

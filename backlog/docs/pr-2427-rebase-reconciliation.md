@@ -2848,3 +2848,197 @@ Frozen source SHA-256:
 - canvas_sync: `15207abfef2e31768894dfe2a5b12b263c56cec61c1275da5a66bff1831b9468`
 - Media canvas: `1626ad389a3c3242cfa6f26299576a5d81e03e6d7fe91b3f997a81a8586077af`
 - phase-C region test: `c224e0ba8fcc79836e23b8b5af922a689dd9384c69e7a06748c2228677b17be1`
+
+### Current-head review and frozen-run follow-up (2026-09-09)
+
+Qodo reviewed published head `2d10bd597c597af28e9482854275a04a3ae16954`
+at 12:14 UTC. All five unresolved threads concern missing test-callable
+docstrings and annotations: packaging closure tests (3968184427), token warmup
+(3968184434), diarization capability (3968184440), descriptor catalog
+(3968184446), and fake promotion refusal (3968184459). Read-only inspection
+confirms the omissions; task step 113 records the bounded documentation repair.
+No thread is represented as fixed before publication and verification.
+
+The native 2184-case run remains active. Its sources have not been edited.
+Independent reproductions identified two stale test contracts and one genuine
+Notes focus regression; step 114 records separate repairs after the freeze.
+TASK-31979 was read: empty-Reader width redistribution is intentional, and the
+comfortable loaded-Reader test must open an item rather than relax its width
+assertions. Same-route resident Notes sync currently restores focus before
+queued recompose; the existing entry-reconcile callback/identity/guard seam is
+the intended repair. The native run's final failures and terminal descriptor
+inventory remain required; intermediate live SQLite handles are not leak proof.
+
+At the current-head CI inspection, PR Fast Lane, Backlog, CSS, UI latency and
+all six GGUF jobs had succeeded; the derived-artifacts job was still running,
+and two conditional evidence jobs were skipped. This is not final merge
+qualification. PR remains open, with local failures and new review work pending.
+
+### Frozen Library qualification completed (2026-09-09)
+
+Session 98710 finished with exit 1: **15 failed, 2168 passed, 1 existing skip,
+15 warnings in 8415.48 seconds**. The source freeze has ended. The final native
+snapshot contains 174 handles, including retained SQLite and instance-lock
+handles; attribution and exact-owner cleanup remain open, not a clean result.
+The original log and JSONL evidence above are preserved unchanged.
+
+The first two stale-contract repairs under step 114 now pass all three focused
+cases (route cycle and both loaded-Reader sizes): 3 passed, 3 warnings in 17.84s,
+`/private/tmp/pr2427-known-oracles-green.log`. The geometry assertions were not
+relaxed. Complete affected-file verification remains due.
+
+Seven additional Media/Files failures were repeated in a bounded uninstrumented
+run (`/private/tmp/pr2427-media-followup-red.log`): 5 failed, 2 passed in 12.49s.
+Border glyph, two scroll-offset, empty-viewer Back and Files-return scroll
+failures reproduced. Media Retry focus and error-callout painted geometry passed
+in that rerun; the original larger-cohort failures remain open for ordering/race
+investigation. Notes focus/lifecycle and resource attribution proceed separately
+from the documentation-only Qodo fixes. No final-head merge claim is made.
+
+### Post-run repairs and remaining gates (2026-09-09)
+
+The complete native terminal inventory is 168 SQLite handles, two instance-lock
+handles, one legitimate process-lifetime faulthandler stream, and three stdio
+handles. Passing controls reproduced the fixture leaks independently of failure
+tracebacks. Existing exact-app teardown fixtures and same-database quiescence
+are reused; no global shutdown or forced collection was introduced. Native
+controls plus both complete shared-cleanup test files pass 33 cases in 12.39s,
+with zero final SQLite/instance-lock handles (`/private/tmp/pr2427-resource-green.log`,
+`$TMPDIR/pr2427-resource-green.dNxbRn/fd_identity.jsonl`). Complete affected UI
+files still require stable-source qualification.
+
+The five Qodo documentation findings now have local docstring/annotation repairs
+on twelve callables across ten files. Executable bodies, embedded scripts and
+assertions are equivalent after excluding documentation/annotation nodes and
+annotation-only imports. All ten complete files pass 602 tests, two warnings in
+76.65s (`$TMPDIR/pr2427-step113-docs.WNT2Lb/pytest.log`); equivalence and Ruff
+evidence are alongside that log. Threads remain unresolved until publication.
+
+Same-route resident Notes focus now travels through the existing post-recompose
+callback, captured Notes identity and generation guard. The original regression,
+new stale-generation control and four complete phase-C files pass 102 cases,
+90 deselected, three warnings in 71.05s
+(`/private/tmp/pr2427-phase-c-focus-green.log`). This is not the full affected
+Library cohort. Separate repairs hide outgoing Work before prune and apply
+bulk-preview state without replacing the focused editor; qualification is ongoing.
+
+The fifty-cycle test now requires exact retained Notes canvas identity and
+hidden/displayed state, plus exactly fifty Work mounts/removals, while retaining
+all save/conflict/discard/worker/timer/final-unmount checks. It passes in 39.02s
+(`/private/tmp/pr2427-resident-cycles-green.log`). The Files receipt test now
+uses y=5, explicitly checks capture, and retains exact final restoration: tracing
+proved y=7 was clamped to six by the preceding resize before receipt capture.
+It passes in 4.36s (`/private/tmp/pr2427-files-receipt-green.log`). The painted
+error test now waits for a positive compositor region before its unchanged
+painted-text assertion; it passes in 4.28s
+(`/private/tmp/pr2427-error-paint-green.log`). Complete files remain due.
+
+Retry's intermittent wrong target now has a controlled reproduction: release a
+real queued initial-entry callback after Retry has focused the filter and
+disarmed the entry arm, and it moves focus to row zero. Task step 122 records
+reuse of the existing generation-checked callback at both unguarded scheduling
+sites (`/private/tmp/pr2427-retry-stale-diagnostic.log`, one failure in 1.85s).
+
+The held-empty-result fixture now delivers real Back before the result clears
+the Reader, exposing a genuine missing Import recovery focus rather than merely
+pressing a removed Back button. The original focus assertion remains failing.
+Two scroll-offset expectations need viewport attribution. Reader border styles
+and its own painted chop are correct, but an earlier three-cell clear button
+produces five painted cells in the joined strip; padding is already zero, so a
+padding-only CSS change is not justified. These investigations remain open.
+
+A fresh GitHub check finds all published-head required jobs completed green
+(two conditional jobs skipped), but the PR now reports DIRTY against advancing
+dev. Preserve and qualify repairs before reconciling that churn; green published
+checks do not cover the uncommitted fixes or justify merge. Task AC3/4 stay open.
+
+### Published documentation checkpoint; lifecycle design pause
+
+Published and GitHub-verified head is now
+`68b05e81b2a9ed9cb02c2b5d50a74ff333a6f3bd`, containing only the ten verified
+Qodo documentation files. Fresh complete run: 602 passed, two existing warnings,
+75.50s (`/private/tmp/pr2427-docs-final.log`); scoped Ruff passes. All five
+documentation threads received published-evidence replies and were resolved
+(reply IDs 3969889842, 3969890231, 3969890660, 3969890995, 3969891376).
+Other repair changes remain local and uncommitted; they are not merge-ready.
+
+Fetched dev is `41c4a5858f4323a7e52d4c7c07d8c84099493cf9`, three commits
+past the previous base. It adds route validation, propagates resident adoption
+failures, treats fresh adoption as success, and fixes a stale shell probe.
+Rebase must union those contracts with the captured-focus repair. AC1 is
+reopened alongside AC3/4; the published PR remains OPEN/DIRTY.
+
+Additional bounded evidence: the two guarded-entry regressions plus original
+Retry now pass unobserved (3 passed, three warnings, 7.31s,
+`/private/tmp/pr2427-retry-ready.log`). The original test now waits for real
+mounted Retry focus before pressing; its recovered filter assertion is intact.
+Clear-button painted width, unchanged Reader glyphs, both exact scroll pins,
+empty Back recovery, cancellation and explicit-target precedence pass seven
+cases (14.56s, `/private/tmp/pr2427-media-focused-green.log`). Independent
+review found no blockers in those changes or the stale-oracle fixes. Screen
+comment-only paydown preserves executable AST hash
+`ce8f1a6be620a66141465d71728c55d115242668a17c5a6b411f8727e398e09a`;
+the line pin is lowered to 31689, with all five complete ratchet tests passing
+(`/private/tmp/pr2427-ratchet-checkpoint.log`).
+
+Two interacting lifecycle issues require a coordinated design decision before
+more implementation. The systematic-debugging escalation rule pauses further
+local fix attempts; no complete-file run is active.
+
+1. Hiding outgoing Work before mounting and deferring prune until refresh clears
+   all three reproduced TextArea gutter crashes. However, a rapid return before
+   prune tries to mount a fresh same-ID pane and raises DuplicateIds
+   (`/private/tmp/pr2427-work-rapid-red.log`, one failure). Reusing the old pane
+   is rejected: Media construction consumes/bakes arrival, Find and current
+   document state, while adoption synchronizes only Items. A replacement design
+   must preserve fresh-owner semantics and safe compositor retirement. No new
+   retiring-owner registry/cache is approved or present.
+2. The tentative bulk in-place helper preserves text/selection/undo, but a newer
+   focused-editor sync can invalidate its drain generation while leaving the old
+   callback queued. That callback may then run on an unrelated recompose. Exact
+   callback disposition belongs in the existing canvas-sync coordinator after
+   follow-up creation, not in a widget helper that reads future callback state.
+
+The focused five/seven-pass Notes logs do not cover these blockers. The rapid
+RED and tentative local fixes are preserved for follow-up. Broader qualification,
+latest-dev rebase and normal protected merge are paused pending approval of the
+coordinated pane-retirement/focus-synchronization repair.
+
+### Approved coordinated lifecycle repair checkpoint (2026-09-09)
+
+The user approved the coordinated repair; the preceding design pause is lifted.
+ADR-141 and `2026-09-09-pr2427-coordinated-lifecycle-repair.md` are committed in
+`f4625caec9`. The existing shell always mounts fresh Work, hides outgoing Work
+before awaits, and retires only an exact hidden non-current same-ID predecessor
+before mount. Ordinary retirement follows refresh with exact-parent/current-owner
+guards. No reuse cache, registry or global cleanup was added.
+
+Bidirectional mounted controls reproduce DuplicateIds before the repair (two
+failures, `/private/tmp/pr2427-work-bidirectional-red.log`) and pass afterward.
+The six focused lifecycle/gutter cases pass; complete reader-shell verification
+passes 42 tests, three warnings in 63.10s (`/private/tmp/pr2427-work-complete.log`).
+The wrapper failed afterward when assigning zsh's readonly `status`; pytest
+itself completed green. Complete architecture ratchets pass 47 tests.
+
+Notes `sync_state` returns a narrow retained-bulk disposition; the existing
+coordinator clears obsolete Work callbacks and places the current follow-up on
+the recomposing Items canvas. The tentative widget callback-drain helper is
+removed. Independent review also reproduced an old explicit Items action running
+after a newer Work action; new explicit intent now invalidates the other owner.
+Targetless sync and existing focus veto behavior remain unchanged.
+
+RED evidence is `/private/tmp/pr2427-followup-red.log` (two failures, one control
+pass) and `/private/tmp/pr2427-cross-owner-red.log` (old Items callback observed
+after the new Work callback). Final focused verification passes five tests,
+33 deselected, three warnings in 11.57s
+(`/private/tmp/pr2427-followup-final.log`), covering text, selection, undo,
+exact-once explicit follow-ups and later real recomposes. The complete Notes
+widget file separately passes 34 tests. Independent spec and correctness reviews
+clear both lifecycle changes; scoped Ruff and whitespace checks pass.
+
+Latest fetched dev is `4192fbdc5e` (adds TTS lifecycle/provider repairs beyond
+`41c4a5858f`). Save the focused-verified repair checkpoint, then rebase while
+preserving upstream adoption success/failure and route validation alongside the
+captured-focus repair. Complete affected-owner/native resource qualification,
+preflight and published-final-head review/CI remain required. No overall clean
+suite or merge-readiness claim is made by this checkpoint.

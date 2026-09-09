@@ -9,10 +9,14 @@ from types import MethodType, SimpleNamespace
 import pytest
 from textual.widgets import Button, Input, Static
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.library_media_rows import summary_row
 from Tests.UI.test_library_media_side_by_side import (
     WIDE_SIZE,
-    _build_media_test_app,
+    _build_media_test_app as _build_test_app,
     _many_media_items,
     _open_media_list,
 )
@@ -88,7 +92,7 @@ class ControlledDetailMediaService(StaticLibraryMediaScopeService):
 
 
 def _flow_app(count: int = 65):
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = _many_media_items(count)
     _seed_conversations(app, _two_conversations(), media=items)
     service = ControlledDetailMediaService(items)
@@ -113,7 +117,7 @@ async def test_media_global_f6_reaches_content_scroller() -> None:
     (live-verified 2026-09-02). The content scroller is now the first F6
     candidate; Find stays reachable via "/".
     """
-    app = _build_media_test_app()
+    app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items(3))
     host = LibraryGlobalKeyProductionCSSHarness(app)
 
@@ -481,7 +485,7 @@ async def test_more_strip_move_to_trash_is_danger_marked_and_separated(size):
 @pytest.mark.asyncio
 async def test_external_detail_without_original_exposes_no_empty_more_menu():
     """A server-only detail exposes only actions that it can actually perform."""
-    app = _build_media_test_app()
+    app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
 
@@ -540,7 +544,7 @@ async def test_stale_more_disclosure_paints_nothing_on_a_sourceless_detail():
     guard the Reader composes an empty actions row under a "More" button that
     is no longer there.
     """
-    app = _build_media_test_app()
+    app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
 
@@ -2133,7 +2137,7 @@ def test_capture_matching_fetched_progress_skips_the_write():
 @pytest.mark.asyncio
 async def test_thirty_step_traversal_settles_at_most_one_progress_write():
     """TASK-22210 probe: a held-key traversal must not stack SQLite writers."""
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = _many_media_items(40)
     _seed_conversations(app, _two_conversations(), media=items)
     service = CountingProgressMediaService(items)
@@ -2207,7 +2211,7 @@ async def test_thirty_step_traversal_settles_at_most_one_progress_write():
 @pytest.mark.asyncio
 async def test_unmount_drains_pending_and_ambiguous_inflight_progress_writes():
     """TASK-22210 teardown: the last captured offsets survive screen teardown."""
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = _many_media_items(3)
     _seed_conversations(app, _two_conversations(), media=items)
     service = CountingProgressMediaService(items)
@@ -2946,7 +2950,7 @@ _FIND_COPY_CONTENT = (
 
 def _article_host():
     """Two plain ``article`` items (no Markdown syntax) with 3 match lines."""
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = [
         {
             "id": f"media-{index}",
@@ -3115,7 +3119,7 @@ def _typed_host(media_type: str, content: str):
 
     Two, because ``_open_media_list`` waits for the second rendered row.
     """
-    app = _build_media_test_app()
+    app = _build_test_app()
     items = [
         {
             "id": f"media-{index}",

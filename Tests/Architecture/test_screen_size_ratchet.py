@@ -890,7 +890,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # TASK-31932 wave 9: seven dead/obsolete helpers removed; keyboard kept.
     # PR-2427 phase-C rebase retains its prior cleanup and the 16 canvas-owned
     # handler removals; measured 31692 lines / 1213 methods, no raised ceiling.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31692, 1213),
+    # Empty-return/focus repairs plus comment-only paydown: 31689 / 1213.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 31689, 1213),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

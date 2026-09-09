@@ -12881,6 +12881,10 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
                 # no longer implies the pager's own children are mounted,
                 # and the page-status read below raced the mount.
                 and bool(screen.query("#library-media-page-status"))
+                # Facets can still replace these children after they mount.
+                and not controller.state.facet_loading
+                and not screen.query_one("#library-media-canvas")._recompose_required
+                and screen.query_one("#library-media-retry", Button).region.area > 0
             ),
             message="Initial Media error never exposed one Retry action.",
         )
@@ -12896,7 +12900,15 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
 
         retry = screen.query_one("#library-media-retry", Button)
         retry.focus()
-        retry.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                getattr(screen.focused, "id", None) == "library-media-retry"
+                and not screen._library_pending_list_entry_focus
+            ),
+            message="Mounted Retry did not take focus from initial entry.",
+        )
+        screen.query_one("#library-media-retry", Button).press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -12917,6 +12929,94 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
             "Media (2)"
         )
         screen._media_controller._focus_library_media_page_control("#library-media-next")
+        assert getattr(screen.focused, "id", None) == "library-media-type-filter"
+
+
+@pytest.mark.parametrize("invalidation", ["disarm", "superseded"])
+@pytest.mark.asyncio
+async def test_stale_media_entry_callback_cannot_steal_recovered_retry_focus(
+    monkeypatch: pytest.MonkeyPatch, invalidation: str,
+) -> None:
+    """A delayed initial-entry callback cannot reclaim newer Retry focus.
+
+    Args:
+        monkeypatch: Hold only scheduled entry callbacks until explicit release.
+        invalidation: Whether the old entry is disarmed or superseded by a new arm.
+    """
+    held = []
+    original = LibraryScreen.call_after_refresh
+
+    def hold_entry_callback(screen, callback, *args, **kwargs):
+        if getattr(callback, "__name__", None) in {
+            "_focus_library_list_entry", "_focus_library_list_entry_if_current",
+        }:
+            held.append((callback, args, kwargs))
+            return True
+        return original(screen, callback, *args, **kwargs)
+
+    monkeypatch.setattr(LibraryScreen, "call_after_refresh", hold_entry_callback)
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    app.media_reading_scope_service = FailingFirstLibraryMediaScopeService(
+        _two_media_items()
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        controller = screen._library_media_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.state.error_copy
+                and bool(screen.query("#library-media-retry"))
+                and bool(screen.query("#library-media-page-status"))
+            ),
+            message="Initial Media failure did not expose Retry.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not controller.state.facet_loading
+                and not screen.query_one("#library-media-canvas")._recompose_required
+                and screen.query_one("#library-media-retry", Button).region.area > 0
+            ),
+            message="Initial failure and facet projections did not settle.",
+        )
+        assert held, "Initial entry did not schedule a focus callback."
+        stale_callbacks = tuple(held)
+        retry = screen.query_one("#library-media-retry", Button)
+        retry.focus()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                getattr(screen.focused, "id", None) == "library-media-retry"
+                and not screen._library_pending_list_entry_focus
+            ),
+            message=lambda: (
+                "Retry did not take focus from the initial-entry request; "
+                f"focus={getattr(screen.focused, 'id', None)!r}; "
+                f"pending={screen._library_pending_list_entry_focus}."
+            ),
+        )
+        screen.query_one("#library-media-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.state.applied_result is not None
+                and controller.state.applied_result.total == 2
+                and not screen.query("#library-media-retry")
+                and getattr(screen.focused, "id", None) == "library-media-type-filter"
+                and not screen._library_pending_list_entry_focus
+            ),
+            message="Retry did not recover to the filter and disarm entry focus.",
+        )
+        if invalidation == "superseded":
+            screen._arm_library_list_entry_focus()
+            assert screen._library_pending_list_entry_focus
+        for callback, args, kwargs in stale_callbacks:
+            callback(*args, **kwargs)
         assert getattr(screen.focused, "id", None) == "library-media-type-filter"
 
 
@@ -16909,7 +17009,9 @@ async def test_browse_row_error_callout_remounts_when_the_failure_shape_changes(
             pilot,
             lambda: screen._library_source_load_failure() is None
             and len(screen.query("#library-canvas-error")) == 1
-            and isinstance(screen.query_one("#library-canvas-error"), Static),
+            and isinstance(screen.query_one("#library-canvas-error"), Static)
+            and screen.query_one("#library-canvas-error").region.width > 0
+            and screen.query_one("#library-canvas-error").region.height > 0,
             message="The denied snapshot never remounted the bare error surface.",
         )
         node = screen.query_one("#library-canvas-error", Static)
@@ -35475,13 +35577,19 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
             for note in app.notes_scope_service.notes
         )
 
+        resident_notes_canvas = screen.query_one("#library-notes-canvas")
+        mounts_before_cycles = canvas_lifecycle["mounted"]
+        removals_before_cycles = canvas_lifecycle["removed"]
         for _ in range(50):
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
             await _wait_for_selector(screen, pilot, "#library-media-list")
-            assert len(screen.query("#library-notes-canvas")) == 0
+            assert screen.query_one("#library-notes-canvas") is resident_notes_canvas
+            assert resident_notes_canvas.display is False
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             await _wait_for_selector(screen, pilot, "#library-notes-filter")
             assert len(screen.query("#library-notes-canvas")) == 1
+            assert screen.query_one("#library-notes-canvas") is resident_notes_canvas
+            assert resident_notes_canvas.display is True
 
         await screen.workers.wait_for_complete()
         await pilot.pause()
@@ -35496,7 +35604,9 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         assert exercised_groups == note_worker_groups
         assert final_active_groups == baseline_active_groups
         assert screen._notes_state.autosave_timer is baseline_timer_ref
-        assert canvas_lifecycle["mounted"] > 100
+        # Phase C retains the list and replaces only its Work pane per visit.
+        assert canvas_lifecycle["mounted"] - mounts_before_cycles == 50
+        assert canvas_lifecycle["removed"] - removals_before_cycles == 50
         # The adaptive destination retains two LibraryNotesCanvas owners:
         # the list itself and its LibraryNoteWorkPane subclass.
         assert canvas_lifecycle["mounted"] == canvas_lifecycle["removed"] + 2

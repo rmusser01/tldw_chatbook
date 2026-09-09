@@ -3702,13 +3702,16 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         note_id = str(row.note_id)
         notes_list = screen.query_one("#library-notes-list")
         rail = screen.query_one("#library-rail")
-        notes_list.scroll_to(y=7, animate=False, force=True, immediate=True)
+        # Keep the receipt below both layouts' scroll maxima: the compact
+        # resize can legitimately clamp an end-of-list offset before capture.
+        notes_list.scroll_to(y=5, animate=False, force=True, immediate=True)
         rail.scroll_to(y=2, animate=False, force=True, immediate=True)
         screen._mark_library_notes_user_interaction()
         row.focus(scroll_visible=False)
         await pilot.pause()
         before_list_scroll = int(notes_list.scroll_y)
         before_rail_scroll = int(rail.scroll_y)
+        assert before_list_scroll == 5
         await pilot.resize_terminal(100, 30)
         await _wait_until(
             pilot,
@@ -3724,6 +3727,7 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         )
         browse_receipt = screen._notes_state.browse_return_receipt
         assert browse_receipt is not None
+        assert browse_receipt.scroll_offset == (0, before_list_scroll)
         assert screen._notes_state.browse_return_receipt is browse_receipt
         await pilot.resize_terminal(170, 24)
         await _wait_until(

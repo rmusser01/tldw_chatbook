@@ -593,7 +593,20 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
 
 
 @pytest.mark.asyncio
-async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -> None:
+@pytest.mark.parametrize("completion", ["recovery", "cancelled", "explicit"])
+async def test_compact_media_viewer_back_empty_page_focuses_recovery_control(
+    monkeypatch: pytest.MonkeyPatch,
+    completion: str,
+) -> None:
+    """Settle an empty page after Back without keeping a stale Reader alive.
+
+    Args:
+        monkeypatch: Holds the test service's empty reply until Back is admitted.
+        completion: Recovery, cancellation, or an explicit focus target to verify.
+    """
+    import asyncio
+    from threading import Event
+
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     service = app.media_reading_scope_service
@@ -604,28 +617,89 @@ async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -
             host, pilot
         )
         controller = screen._library_media_browse_controller
-        service.media_items = []
-        screen._request_library_media_browse(
-            controller.state.mutation_refresh_scope,
-            focus_identity=None,
-        )
-        await _wait_for_condition(
-            pilot,
-            lambda: controller.state.applied_result is not None
-            and controller.state.applied_result.total == 0
-            and not controller.state.loading,
-            message="Exact empty Media result never applied in the viewer.",
-        )
-        reads_before_back = len(service.search_calls)
+        entered, release = Event(), Event()
+        search_media = service.search_media
 
-        screen.query_one("#library-media-back", Button).press()
-        await _wait_for_condition(
-            pilot,
-            lambda: getattr(screen.focused, "id", None)
-            == "library-media-empty-import",
-            message="Empty viewer return did not focus the Import recovery action.",
+        async def held_empty_reply(**kwargs):
+            result = await search_media(**kwargs)
+            assert result["total"] == 0
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 5), "Empty reply not released."
+            return result
+
+        monkeypatch.setattr(service, "search_media", held_empty_reply)
+        pending_empty_focus = []
+        focus_entry = screen._focus_library_list_entry_if_current
+
+        def observe_empty_focus(generation):
+            result = controller.state.applied_result
+            if result is not None and result.total == 0:
+                pending_empty_focus.append(generation)
+                if completion == "cancelled":
+                    return
+            focus_entry(generation)
+
+        monkeypatch.setattr(
+            screen, "_focus_library_list_entry_if_current", observe_empty_focus
         )
-        assert len(service.search_calls) == reads_before_back
+        service.media_items = []
+        reads_before_request = len(service.search_calls)
+        worker = screen._request_library_media_browse(
+            controller.state.mutation_refresh_scope,
+            focus_identity=("#library-media-review-sets" if completion == "explicit" else None),
+        )
+        try:
+            await _wait_for_condition(
+                pilot, entered.is_set, message="Empty Media request did not start."
+            )
+            assert len(service.search_calls) == reads_before_request + 1
+            reads_before_back = len(service.search_calls)
+            assert controller.state.applied_result.total > 0
+            screen.query_one("#library-media-back", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._media_state.view == "list"
+                and screen._library_pending_list_entry_focus,
+                message="Back did not arm its return before the empty reply.",
+            )
+            release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: controller.state.applied_result is not None
+                and controller.state.applied_result.total == 0
+                and not controller.state.loading,
+                message="Exact empty Media result never applied after Back.",
+            )
+            if completion == "cancelled":
+                await _wait_for_condition(
+                    pilot, lambda: bool(pending_empty_focus),
+                    message="Empty return did not queue its guarded focus callback.",
+                )
+                screen._mark_library_notes_user_interaction()
+                sets = screen.query_one("#library-media-review-sets")
+                assert sets.region.area > 0
+                sets.focus()
+                await pilot.pause()
+                assert not screen._library_pending_list_entry_focus
+                assert pending_empty_focus[-1] != screen._library_list_entry_focus_generation
+                focus_entry(pending_empty_focus[-1])
+                assert screen.focused is sets
+            else:
+                expected = (
+                    "library-media-review-sets" if completion == "explicit"
+                    else "library-media-empty-import"
+                )
+                await _wait_for_condition(
+                    pilot, lambda: getattr(screen.focused, "id", None) == expected,
+                    message="Empty viewer return did not focus its recovery/explicit target.",
+                )
+                if completion == "explicit":
+                    assert pending_empty_focus == []
+            assert len(service.search_calls) == reads_before_back
+        finally:
+            release.set()
+            if worker is not None:
+                await worker.wait()
 
 
 @pytest.mark.asyncio
