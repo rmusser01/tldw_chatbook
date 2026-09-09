@@ -18,6 +18,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     normalize_folder_name,
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
+    _NON_IMPORTABLE_CLASSIFICATIONS,
     ImportAction,
     ImportMatchKind,
     ImportPreviewItem,
@@ -29,6 +30,9 @@ from tldw_chatbook.Notes.note_import_planner import apply_item_override
 
 
 MAX_IMPORT_REVIEW_PAGE_SIZE = 25
+
+MAX_RECEIPT_SKIPPED_ROWS = 50
+"""Rows the receipt lists by name before it falls back to the count alone."""
 
 
 class NoteImportPhase(str, Enum):
@@ -234,6 +238,8 @@ class LibraryNoteImportSnapshot:
     retry_available: bool = False
     retry_label: str = ""
     can_cancel: bool = False
+    skipped_count: int = 0
+    skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
 
 
 def _page(
@@ -311,6 +317,27 @@ def select_folder(
         destination_segments=(),
         destination_input="",
         destination_error="",
+        revision=state.revision + 1,
+    )
+
+
+def clear_selection(
+    state: NoteImportWorkflowSnapshot,
+) -> NoteImportWorkflowSnapshot:
+    """Drop the current source selection and return to an empty SELECT phase.
+
+    Args:
+        state: The workflow state whose selection should be discarded.
+
+    Returns:
+        A fresh selection state that retains this session's latest receipt.
+    """
+
+    return replace(
+        initial_note_import_snapshot(
+            page_size=state.page.page_size,
+            latest_receipt=state.latest_receipt,
+        ),
         revision=state.revision + 1,
     )
 
@@ -837,6 +864,12 @@ def project_library_note_import_snapshot(
             else ""
         ),
         receipt_detail=_receipt_detail(receipt),
+        skipped_count=receipt.skipped if receipt else 0,
+        skipped_items=(
+            _skipped_items(state, min(receipt.skipped, MAX_RECEIPT_SKIPPED_ROWS))
+            if receipt
+            else ()
+        ),
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
         retry_label=(
@@ -910,6 +943,34 @@ def _receipt_status(receipt: ImportExecutionReceipt | None) -> str:
     return "Import status unavailable."
 
 
+def _skipped_items(
+    state: NoteImportWorkflowSnapshot,
+    limit: int,
+) -> tuple[tuple[str, str], ...]:
+    """Name the reviewed sources this import left alone, with their reason.
+
+    The executor works the plan in order, so the first ``limit`` skips are the
+    ones a partial run actually reached. ``limit`` is the receipt's own skipped
+    count (bounded), which keeps the rendered rows and the disclosure heading
+    from disagreeing on a cancelled import.
+    """
+
+    if state.plan is None or limit <= 0:
+        return ()
+    return tuple(
+        (
+            item.source.display_path,
+            # A source the user skipped keeps no classification reason of its
+            # own -- "Ready to import as a new note." under Skipped is a lie.
+            item.reason
+            if item.classification in _NON_IMPORTABLE_CLASSIFICATIONS
+            else "Skipped by you.",
+        )
+        for item in state.plan.items
+        if item.selected_action is ImportAction.SKIP
+    )[:limit]
+
+
 def _receipt_detail(receipt: ImportExecutionReceipt | None) -> str:
     if receipt is None:
         return ""
@@ -917,4 +978,16 @@ def _receipt_detail(receipt: ImportExecutionReceipt | None) -> str:
         return "Cancelled. Finished items were not rolled back."
     if receipt.state is ImportSessionState.NEEDS_ATTENTION:
         return "Some items failed. Completed changes were kept."
-    return "All planned items settled."
+    # task-32130: "All planned items settled." named no outcome at all.
+    counts = (
+        (receipt.imported, "note", "created"),
+        (receipt.updated, "note", "updated"),
+        (receipt.skipped, "file", "skipped"),
+        (receipt.failed, "file", "failed"),
+    )
+    parts = [
+        f"{count} {noun if count == 1 else noun + 's'} {verb}"
+        for count, noun, verb in counts
+        if count
+    ]
+    return " · ".join(["Import finished", *(parts or ["nothing changed"])])
