@@ -59,7 +59,7 @@ differences instead of silently turning lexical mismatches into exact matches.
 
 ## Import deferral must pass both startup and screen-preload budgets
 
-**TASK-31942, 2026-09-08.** Deferring pure TTS profile-repository construction
+**TASK-32160, 2026-09-08.** Deferring pure TTS profile-repository construction
 reduced warm UI-ready modules from 979 to 963 against the unchanged 972 limit.
 The separate screen-preimport guard then rose from 500 to 516 against its 500
 limit: the Personas route imported voice-bundle types through the profile library
@@ -76,7 +76,7 @@ phase's limit to pay for the first phase's apparent improvement.
 
 ## Lifecycle tests must include startup and cleanup interruptions
 
-**TASK-31942, SQLite helper review, 2026-09-07.** A 118-pass helper selection
+**TASK-32160, SQLite helper review, 2026-09-07.** A 118-pass helper selection
 missed two real-child failures. Interrupting the first child's actual close path
 replaced an active `SystemExit`, left the second child alive, and retained all
 three reserved slots, including unused capacity. Delaying helper entry until its
@@ -304,7 +304,7 @@ and verify the behavior against a real file-backed SQLite database.
 
 ## Schema functions also belong on dedicated maintenance connections
 
-**TASK-31942, 2026-09-08.** Four physical trace-compaction/admission tests
+**TASK-32160, 2026-09-08.** Four physical trace-compaction/admission tests
 returned only the intentionally bounded `vacuum_failed` reason. An isolated
 real-schema probe exposed `no such function: canvas_revision_payload_valid`:
 ordinary ChaChaNotes connections registered the pure function, but the older
@@ -3071,7 +3071,7 @@ tree runs with none of the suite's safety and is functionally the same as a bare
 it measured into a real, permanently-checked-in test, as this incident did
 (`test_the_bare_word_will_appears_nowhere_in_the_corpus`).
 
-**Recurrence — TASK-31942, 2026-09-08.** An isolated-SQLite benchmark driver
+**Recurrence — TASK-32160, 2026-09-08.** An isolated-SQLite benchmark driver
 imported `TTS.profile_repository` before setting its scratch environment. That
 transitive import read the developer configuration and ensured an existing
 chat-dictionaries directory; the driver then opened its own temporary store and
@@ -10331,7 +10331,7 @@ that can recompose, await the mounted and visible target rather than only the fi
 state change. Include the scenario/root identity in bounded failure details so intermittent live
 failures remain attributable.
 
-**Recurrence — TASK-31942, 2026-09-08.** The actual Canvas-child recovery test
+**Recurrence — TASK-32160, 2026-09-08.** The actual Canvas-child recovery test
 acknowledged a successful saved-conversation load, then immediately invoked its
 synthetic F12 card action. Source-free stage markers reproduced the failure:
 load completion and F12 entry 46ms later both had zero mounted Canvas cards and
@@ -10343,7 +10343,7 @@ readiness from a production selection or database fault; do not treat a missing
 receipt alone as a crash diagnosis. Exact evidence and restored throwaway patch:
 `Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md`.
 
-## Page timeouts do not set Playwright assertion budgets (TASK-31942, 2026-09-08)
+## Page timeouts do not set Playwright assertion budgets (TASK-32160, 2026-09-08)
 
 **Incident.** The actual Canvas-child test configured a 45-second page timeout,
 then waited for the first-output body class with an unconfigured `expect()`.
@@ -11220,7 +11220,7 @@ and all of them failed identically without the change.
 * Paying for the baseline arm is the cost of an attributable answer. A cheaper
   run that cannot attribute is not cheaper — it is worthless.
 
-**Lint follow-up (TASK-31942, 2026-09-08).** Paired Ruff checks found six extra
+**Lint follow-up (TASK-32160, 2026-09-08).** Paired Ruff checks found six extra
 recommendations on identical baseline source solely from changing the explicit
 language target from py311 to the approved py312 floor. One affected alias had
 also moved modules, defeating an unchanged-location comparison. Use one target
@@ -12115,7 +12115,7 @@ Rule: identify the failing allocation and compare the unchanged baseline before
 interpreting an OS resource message. Retain environmental qualifications; do not
 delete unrelated files, weaken gates or infer resource ownership from errno alone.
 
-**Follow-up, TASK-31942, 2026-09-08.** One isolated stdlib spawn-lock allocation
+**Follow-up, TASK-32160, 2026-09-08.** One isolated stdlib spawn-lock allocation
 failed errno 28 both inside and outside the sandbox; the host exposed a 10,000-name
 semaphore limit and 21 GiB free disk. A read-only handle census found only 48 visible
 POSIX semaphore handles, and the inspected long-running orphaned Python processes

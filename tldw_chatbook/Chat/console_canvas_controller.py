@@ -295,6 +295,16 @@ class CanvasRunCoordinator:
         self.controller = controller
         self._run_owner = owner
 
+    @property
+    def profile_snapshot(self) -> ProfileSnapshot:
+        """Return the controller's exact process-lifetime profile snapshot.
+
+        Returns:
+            The immutable profile snapshot retained by the owning controller.
+        """
+
+        return self.controller.profile_snapshot
+
     def is_scope_current(self, scope: CanvasScope) -> bool:
         return self.controller.is_scope_current(scope, _run_owner=self._run_owner)
 

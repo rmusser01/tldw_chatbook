@@ -399,7 +399,7 @@ it now installs mandatory Chromium after Playwright dependencies and before
 pytest. Its contract test preserves collection and required-failure behavior;
 unrelated lanes/sharding remain unchanged. Hosted CI itself is not run locally.
 
-## TASK-31942 SQLite correction qualification — 2026-09-08
+## TASK-32160 SQLite correction qualification — 2026-09-08
 
 **Task 7 is delivered with concerns; the correction gate remains unqualified and
 Canvas V2 remains disabled.**
@@ -499,7 +499,7 @@ raw Canvas/baseline logs are preserved with the Task 7 evidence.
 
 ## Authorized startup-budget repayment — 2026-09-08
 
-TASK-31942 Task7b defers pure TTS profile-repository construction through the
+TASK-32160 Task7b defers pure TTS profile-repository construction through the
 existing app-owned first-use method. The configured path is still captured at
 app construction, concurrent callers share one owner/open task, and close latches
 even before first use. ADR-028 clarifies construction timing; ADR-097 budgets and
@@ -537,7 +537,7 @@ Task-scoped independent review approved spec compliance and quality with no
 Critical/Important findings. The startup-budget breach is
 repaid, but known semaphore/inventory gaps and Canvas V2 admission remain
 separate, incomplete gates. The subsequent whole-correction review and fix wave
-are recorded below. TASK-31942 remains In Progress and
+are recorded below. TASK-32160 remains In Progress and
 V2 remains disabled. Exact commands, RED/GREEN evidence and scoped static results
 are preserved in this plan's `task-7b-report.md` and controller verification.
 
@@ -598,7 +598,7 @@ Code-review completion does not close the broader qualification gaps. The
 three known strict-inventory failures, eleven pre-body SemLock ENOSPC cases,
 platform/optional coverage and final affected-selection/benchmark qualification
 remain unresolved. No full suite, host cleanup, dependency repair, external PR
-action or Canvas admission was performed in this wave. TASK-31942 remains
+action or Canvas admission was performed in this wave. TASK-32160 remains
 In Progress with all seven final acceptance criteria unchecked; V2 is disabled.
 
 ## Separately authorized inventory and host diagnosis — 2026-09-08
@@ -663,10 +663,10 @@ The eleven spawned tests remain unqualified. Resume them only after the isolated
 allocation control passes on a clean runner or after a user-coordinated host
 restart. No restart or cleanup is authorized here. Platform/optional coverage
 and final affected-selection/benchmark evidence remain outstanding; V2 stays
-disabled and TASK-31942 stays In Progress.
+disabled and TASK-32160 stays In Progress.
 
 Task9 and the read-only diagnosis close only the separately approved scope.
-TASK-31942 AC8 (three inventory checks) and AC9 (host diagnosis without resource
+TASK-32160 AC8 (three inventory checks) and AC9 (host diagnosis without resource
 mutation) are checked; the original seven final ACs remain unchecked. The 26
 baseline failures, eleven host-blocked cases, platform/optional qualification and
 final affected-selection/benchmark remain open. No full suite, cleanup, reboot,
@@ -726,7 +726,7 @@ earlier evidence remain preserved.
 No full suite, host-resource cleanup/restart, dependency change, external PR
 action or Canvas V2 admission was performed. The eleven host-blocked spawned
 tests, platform/optional evidence and final affected-selection/benchmark gates
-remain open. TASK-31942 stays In Progress and V2 stays disabled.
+remain open. TASK-32160 stays In Progress and V2 stays disabled.
 
 AC10 (helper-aware owner tests) and AC11 (physical compaction/admission repair)
 are checked alongside the prior scoped AC8/9. The original seven final acceptance
@@ -759,7 +759,7 @@ files); whitespace checks pass. No limits or dependencies changed.
 
 Exact commands, results, warning/skip attribution, benchmark/resource limits and
 diagnosis disposition: [final local qualification](../superpowers/reviews/2026-09-08-sqlite-final-local-qualification.md).
-TASK-31942 remains In Progress and V2 disabled. Host semaphore, platform/optional,
+TASK-32160 remains In Progress and V2 disabled. Host semaphore, platform/optional,
 nonzero static and fresh Canvas readiness gates remain explicit; no PR/external
 action, host cleanup or full repository sweep occurred.
 
@@ -795,7 +795,7 @@ for exact commands and the browser reporting-wrapper limitation.
 
 This closes the reproduced premature-card-action harness failure for the tested
 workflow, not the separate historical startup failure or other host/platform/
-static qualification gaps. TASK-31942 remains In Progress and Canvas V2 disabled.
+static qualification gaps. TASK-32160 remains In Progress and Canvas V2 disabled.
 
 ## Approved shared startup deadline — 2026-09-08
 
@@ -865,11 +865,11 @@ See the [full evidence](../superpowers/reviews/2026-09-08-sqlite-macos-concurren
 Task14/AC15 are satisfied for this fresh runner. Earlier failed setup evidence
 is preserved; no local host/Python changes, broad rerun, main/dev update or
 PR/merge occurred. Other platform/optional/static gates remain open, original
-final ACs remain unchecked, TASK-31942 stays In Progress and Canvas V2 disabled.
+final ACs remain unchecked, TASK-32160 stays In Progress and Canvas V2 disabled.
 
 ## SQLite correction closeout and Mermaid handback — 2026-09-08
 
-TASK-31942 is now Done. The reviewed acceptance matrix reconciles the affected
+TASK-32160 is now Done. The reviewed acceptance matrix reconciles the affected
 storage/actual-child results, separately qualified eleven macOS concurrency
 cases, final import-only coverage/unchanged startup budgets, and the explicitly
 approved baseline-static-debt/platform limits without inventing one aggregate

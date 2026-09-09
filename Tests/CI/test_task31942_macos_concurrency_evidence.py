@@ -1,4 +1,4 @@
-"""Behavioral contract for TASK-31942's narrow macOS evidence workflow."""
+"""Behavioral contract for TASK-32160's narrow macOS evidence workflow."""
 
 from __future__ import annotations
 

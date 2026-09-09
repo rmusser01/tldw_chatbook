@@ -1,6 +1,6 @@
 # SQLite baseline-failure diagnosis — 2026-09-08
 
-TASK-31942 continuation at `e1a2e859127eb83a100b22387e47a8ffbc95d424`.
+TASK-32160 continuation at `e1a2e859127eb83a100b22387e47a8ffbc95d424`.
 The user approved tackling the 26 baseline failures after the reviewed Task9
 inventory correction. The diagnosis below records the pre-repair evidence.
 The approved repair is now committed as `ad5c02e5a8`; implementation and current
@@ -78,5 +78,5 @@ git-ignored plan workspace:
 (`task-10-owner-diagnosis.md`, `task-10-compaction-diagnosis.md`, and
 `task-10-compaction-probe.py`). They record exact commands and scope. No full
 suite, Semaphore11rerun, host/account/dependency changes, external PR action or
-Canvas V2 admission was performed. TASK-31942 stays In Progress; scoped AC10/11
+Canvas V2 admission was performed. TASK-32160 stays In Progress; scoped AC10/11
 are now checked with AC8/9, while the original final criteria remain open.

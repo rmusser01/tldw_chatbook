@@ -1,7 +1,7 @@
 # SQLite correction no-new-static-debt gate — 2026-09-08
 
 Status: the owner-approved correction-specific static gate passes. Whole-file
-lint and formatting remain nonzero. TASK-31942 remains In Progress; this is
+lint and formatting remain nonzero. TASK-32160 remains In Progress; this is
 Task15/AC16 completion, not Canvas V2 admission or whole-task completion.
 
 Source-only change: `34891632589b123d2101e2551f0396fb97a679f0` →
@@ -136,4 +136,4 @@ Task14's fresh macOS concurrency evidence was not rerun. No local semaphore
 control, broad test sweep, benchmark replay, host/dependency change, new CI/push,
 PR/rebase/merge or V2 enablement occurred. Windows and unrelated platform/optional
 coverage remain explicitly unverified under their existing contracts. Original
-TASK-31942 AC1–7 remain unchecked pending final qualification reconciliation.
+TASK-32160 AC1–7 remain unchecked pending final qualification reconciliation.

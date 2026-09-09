@@ -19,7 +19,7 @@ in a dedicated, versioned SQLite database owned through one application-scoped
 `TTSProfileRepository`. The profile store is separate from character cards,
 provider configuration, and the main conversation database.
 
-Construction timing clarification (2026-09-08, TASK-31942, ADR-097): the app
+Construction timing clarification (2026-09-08, TASK-32160, ADR-097): the app
 captures the configured profile path and initializes lifecycle state during
 construction, but imports and constructs its one repository on first use through
 the existing ensure method. An app close request permanently prevents subsequent

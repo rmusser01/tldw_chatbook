@@ -22,7 +22,7 @@ Changed code is limited to:
 - `Tests/Canvas/browser/canvas_live_chatbook_child.py`
 - `Tests/Canvas/test_live_card_readiness.py`
 
-ADR required: no. This is a test-harness correction under TASK-31942, with
+ADR required: no. This is a test-harness correction under TASK-32160, with
 [ADR-125](../../../backlog/decisions/125-lock-safe-private-sqlite-validation.md)
 unchanged. There is no new runtime, storage or authority contract.
 
@@ -77,5 +77,5 @@ cannot establish. This is not whole-correction or Canvas admission approval.
 This run reaches and passes the previously failing restored-card boundary. It
 does not explain the separate historical first-byte startup failure or every
 native SQLite failure. Existing host semaphore, platform/optional and aggregate
-static-check gaps remain explicit. TASK-31942 remains In Progress, and Canvas V2
+static-check gaps remain explicit. TASK-32160 remains In Progress, and Canvas V2
 remains disabled. No PR, push, rebase, merge, host cleanup or dependency action.

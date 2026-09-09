@@ -1,7 +1,7 @@
 # SQLite orderly-exit qualification gate
 
 Date: 2026-09-07
-Task: TASK-31942, implementation Task5
+Task: TASK-32160, implementation Task5
 Product baseline: `e8f7ae2ce3c3b6b0b3be69992412d72f7d11d48e`
 Status: Implementation paused; independent gate review supports STOP. No alternative
 shutdown policy or production workaround is approved by this record.

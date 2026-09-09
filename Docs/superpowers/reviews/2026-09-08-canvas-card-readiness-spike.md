@@ -16,7 +16,7 @@ diagnostic code has been removed from those files and preserved as an encoded pa
 This is evidence of a failed test run, not passing qualification.
 
 ADR required: no. No architecture/authority contract changed; this diagnoses
-TASK-31942 AC1/3 under existing [ADR-125](../../../backlog/decisions/125-lock-safe-private-sqlite-validation.md).
+TASK-32160 AC1/3 under existing [ADR-125](../../../backlog/decisions/125-lock-safe-private-sqlite-validation.md).
 
 ## Observed sequence
 
@@ -119,6 +119,6 @@ plumbing, preserved prior captures and cleanup, and were removed with the spike.
 The reviewer independently checked the exact patch and raw records; no tests
 were rerun and no broader review was reopened.
 
-TASK-31942 remains In Progress, and Canvas V2 remains disabled with all previously
+TASK-32160 remains In Progress, and Canvas V2 remains disabled with all previously
 recorded gates still explicit. The approved diagnostic spike is complete; the
 recommended retained harness correction has not been implemented.

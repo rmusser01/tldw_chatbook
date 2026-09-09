@@ -3,7 +3,7 @@
 Status: Accepted
 Amendment status: Native-close integration and Python >=3.12 baseline approved
 Date: 2026-09-07
-Related Task: TASK-31942
+Related Task: TASK-32160
 Extends: ADR-029
 Preserves: ADR-028, ADR-051, ADR-121, ADR-124
 
@@ -172,7 +172,7 @@ This checkpoint is not whole-correction completion or Canvas admission.
 
 ## Owner-approved static qualification scope (2026-09-08)
 
-For TASK-31942 only, the user approved a no-new-static-debt acceptance gate.
+For TASK-32160 only, the user approved a no-new-static-debt acceptance gate.
 Whole-file lint/format results may retain documented baseline debt; they must
 remain reported as nonzero, not described as clean. Fix findings introduced by
 the correction, including unresolved ordering in its ten changed import blocks.
@@ -198,7 +198,7 @@ security-sensitive correction.
 
 - [Task15 static qualification evidence](../../Docs/superpowers/reviews/2026-09-08-sqlite-no-new-static-debt.md)
 - [Detailed design](../../Docs/superpowers/specs/2026-09-07-sqlite-lock-safe-private-validation-design.md)
-- [TASK-31942](<../tasks/task-31942 - Resolve-native-SQLite-crash-blocking-Canvas-qualification.md>)
+- [TASK-32160](<../tasks/task-32160 - Resolve-native-SQLite-crash-blocking-Canvas-qualification.md>)
 - [ADR-029](029-local-private-data-boundary.md)
 - [ADR-028](028-character-tts-generation-profile-ownership.md)
 - [ADR-051](051-private-tts-clone-reference-assets.md)

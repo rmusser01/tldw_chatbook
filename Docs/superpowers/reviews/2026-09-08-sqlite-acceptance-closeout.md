@@ -1,6 +1,6 @@
 # SQLite acceptance closeout — 2026-09-08
 
-Status: SQLite correction closeout approved; TASK-31942 is complete.
+Status: SQLite correction closeout approved; TASK-32160 is complete.
 The narrow independent review supported the seven-AC/platform mapping and found
 one missing paired actual Canvas-child measurement. Task16 supplied it with five
 passing samples per arm; fix-only review verified that finding ADDRESSED, spec
@@ -143,7 +143,7 @@ but no actual Canvas child workflow against baseline. Root verified this from
 the driver and the design. Task16 completed the measurement and the independent
 fix-only review confirmed ADDRESSED, spec compliance PASS, task quality PASS and
 SQLite closeout READY, with no new findings. Together with the previously
-reviewed original AC mapping, this supports marking TASK-31942 Done under the
+reviewed original AC mapping, this supports marking TASK-32160 Done under the
 explicit existing static/platform limits above. The complete scoped review is
 preserved as task-16-closeout-rereview.md in the SQLite SDD directory. No broad
 code review or completed benchmark was repeated, and no unmet gate was waived.

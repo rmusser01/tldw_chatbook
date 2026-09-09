@@ -22,6 +22,11 @@
 #
 # Usage:  ./scripts/preflight.sh          # picks an interpreter at the repo floor
 #         PYTHON=.venv/bin/python ./scripts/preflight.sh
+#         TLDW_CANVAS_MERMAID_INPUT_DIR=/verified/cache ./scripts/preflight.sh
+#
+# The Mermaid check downloads its declared hash/size-pinned public inputs by
+# default. Set TLDW_CANVAS_MERMAID_INPUT_DIR to reuse an existing offline cache;
+# missing or mismatched cached inputs fail closed rather than skipping the check.
 #
 # Exits 0 when every check passes, 1 otherwise. Every check runs even after one
 # fails, so a single pass reports all of the drift.
@@ -99,6 +104,8 @@ run_check() {
 
 run_check "generated stylesheets" \
   "$PYTHON" tldw_chatbook/css/check_bundle_sync.py
+run_check "Canvas Mermaid generated assets" \
+  "$PYTHON" scripts/check_canvas_mermaid_assets.py
 run_check "profile-owned path census" \
   "$PYTHON" scripts/check_profile_owned_path_inventory.py
 run_check "production diagnostic inventory" \

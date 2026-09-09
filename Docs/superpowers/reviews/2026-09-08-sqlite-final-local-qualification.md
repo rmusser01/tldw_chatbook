@@ -226,7 +226,7 @@ to unlink semaphores, terminate processes or restart the Mac. No new state chang
 has been reported at this checkpoint.
 
 Windows and other skipped platform/optional gates must be reported separately,
-not treated as successful local evidence. TASK-31942 remains In Progress and
+not treated as successful local evidence. TASK-32160 remains In Progress and
 Canvas V2 remains disabled while required gates are open.
 
 ## Subsequent approved diagnostic spike
@@ -295,7 +295,7 @@ identities and fixed metadata/control; the [attempt report](2026-09-08-sqlite-ma
 preserves run/job/SHA/artifact identity, raw-evidence retention and CI warnings.
 This satisfies Task14/AC15 only. It does not qualify the unchanged local Mac or
 Python3.12.11, erase the first setup failure, or waive remaining platform,
-optional or static gates. TASK-31942 remains In Progress; Canvas V2 is disabled.
+optional or static gates. TASK-32160 remains In Progress; Canvas V2 is disabled.
 
 ## Remaining qualification reconciliation after Task14
 
@@ -324,7 +324,7 @@ retaining the documented baseline debt. That would explicitly accept inherited
 nonzero whole-file results, not make them green. Such acceptance is proposed,
 not applied; broad inherited cleanup, gate waiver, Windows CI dispatch and V2
 admission remain unauthorized by this read-only reconciliation. Original final
-ACs remain unchecked and TASK-31942 stays In Progress.
+ACs remain unchecked and TASK-32160 stays In Progress.
 
 ## Subsequent approved static gate completion
 
@@ -342,7 +342,7 @@ and adjacent lines. The [Task15 report](2026-09-08-sqlite-no-new-static-debt.md)
 records exact commands, counts, review, warnings and scope. The approved gate
 passes, but whole-file lint/format remains nonzero. Historical results above
 remain evidence of their respective checkpoints. AC16 is checked; original
-AC1–7 remain unchecked, TASK-31942 In Progress and Canvas V2 disabled. No broader
+AC1–7 remain unchecked, TASK-32160 In Progress and Canvas V2 disabled. No broader
 test/benchmark/review replay, host/dependency action or new remote operation.
 
 ## Final acceptance reconciliation and actual-child measurement
@@ -358,6 +358,6 @@ fresh series are reported separately; no failure was silently discarded.
 
 Fix-only review verified the exact cases, inputs, hashes, aggregation and limits:
 ADDRESSED, spec compliance PASS, task quality PASS, closeout READY, no new issues.
-Original AC1–7 are checked and TASK-31942 is Done. This does not erase historical
+Original AC1–7 are checked and TASK-32160 is Done. This does not erase historical
 failures, make whole-file static debt green, qualify other platforms, or admit
 Canvas V2. Task8/TASK-31941 remains the separate candidate/admitted release gate.

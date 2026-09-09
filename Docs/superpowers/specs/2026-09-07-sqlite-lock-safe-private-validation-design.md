@@ -3,7 +3,7 @@
 Date: 2026-09-07
 Status: Approved, including the native-close amendment
 Runtime decision: Python >=3.12 approved by user on 2026-09-07; Task5a runtime floor and admission implemented and reviewed at c007b696d
-Task: TASK-31942
+Task: TASK-32160
 ADR: [ADR-125](../../../backlog/decisions/125-lock-safe-private-sqlite-validation.md)
 
 ## Purpose and evidence

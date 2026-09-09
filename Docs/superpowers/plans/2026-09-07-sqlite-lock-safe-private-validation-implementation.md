@@ -10,7 +10,7 @@
 
 **Spec:** [Approved design](../specs/2026-09-07-sqlite-lock-safe-private-validation-design.md).
 
-**Backlog:** [TASK-31942](<../../../backlog/tasks/task-31942 - Resolve-native-SQLite-crash-blocking-Canvas-qualification.md>), In Progress. Numbered tasks below are implementation/review units within this task, not new Backlog IDs.
+**Backlog:** [TASK-32160](<../../../backlog/tasks/task-32160 - Resolve-native-SQLite-crash-blocking-Canvas-qualification.md>), In Progress. Numbered tasks below are implementation/review units within this task, not new Backlog IDs.
 
 ADR required: yes
 ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md
@@ -19,7 +19,7 @@ Reason: This implements the accepted cross-process privacy/proof boundary, termi
 ## Global Constraints
 
 - Work only in `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/canvas-v1`, branch `codex/canvas-v2-mermaid-design`. Original baseline is `9bc73ffb3`; Tasks1–4 remain reviewed through `8b4e5c1d4`. The amendment resumes from documentation checkpoint `f202b8090` plus this plan update. Preserve unrelated changes.
-- Read the spec, TASK-31942, ADR-028/029/051/125, and `backlog/docs/lessons-testing-evidence.md`, `lessons-live-verification.md` and `lessons-backlog-hygiene.md` before implementation.
+- Read the spec, TASK-32160, ADR-028/029/051/125, and `backlog/docs/lessons-testing-evidence.md`, `lessons-live-verification.md` and `lessons-backlog-hygiene.md` before implementation.
 - Protocol version 1; length-prefixed JSON; maximum of 64 KiB per request or response; closed fields, one outstanding request per lease. No database contents, exception messages or raw traceback are returned.
 - General launch/control waits: five seconds maximum; initial fixed TTS validation: 30-second maximum. Close: one second, then a further two-second terminate/kill/reap bound. Earlier operation deadlines govern admission and IPC together; cleanup has its separately reported bound.
 - At most eight helpers: four retained TTS owners and four reserved transient slots. Normal preparation reserves one transient slot; source-pin backup/copy/restore reserves two. TTS admission reserves one retained permit plus one transient slot atomically. No nested wait for additional capacity while holding an insufficient reservation.
@@ -576,7 +576,7 @@ three-file attempt: 382 passed then failed before body at SemLock ENOSPC; 32 exp
 unaffected tail cases passed, but the failed node and 10 subsequent spawned cases
 remain unqualified. The unchecked combined-run gate transfers to Task7, not a
 waiver. Installed-wheel/platform proof and the remaining descriptor census stay
-Task6/7 obligations. Whole TASK-31942 remains In Progress; V2 stays disabled.
+Task6/7 obligations. Whole TASK-32160 remains In Progress; V2 stays disabled.
 
 ### Task 6: Correct exclusive descriptor-view finalizers
 
@@ -675,11 +675,11 @@ Strict inventory remains29passed/3known unrelated failures; inherited Ruff debt,
 Windows/live skips and earlier11SemLock-blocked cases remain open qualification
 limits. Changed-line lint, format and immutable diff checks pass. Task7 now owns
 the final installed-wheel, affected-selection, performance and Canvas gates;
-whole TASK-31942 remains In Progress, all final ACs unchecked, V2 disabled.
+whole TASK-32160 remains In Progress, all final ACs unchecked, V2 disabled.
 
 ### Task 7: Qualify installed isolation, storage behavior and actual Canvas children
 
-**Files:** Create `Tests/Packaging/test_private_sqlite_helper_distribution.py`; extend appropriate tests in `Tests/Performance/test_app_startup_performance.py`; run the existing import-weight, UI-ready census and screen-preimport budget guards without changing their ceilings; update `Docs/Canvas/V2_VERIFICATION.md`, TASK-31942 implementation notes and the preserved evidence/progress records. Modify `pyproject.toml` only if the wheel test proves a missing helper/leaf file.
+**Files:** Create `Tests/Packaging/test_private_sqlite_helper_distribution.py`; extend appropriate tests in `Tests/Performance/test_app_startup_performance.py`; run the existing import-weight, UI-ready census and screen-preimport budget guards without changing their ceilings; update `Docs/Canvas/V2_VERIFICATION.md`, TASK-32160 implementation notes and the preserved evidence/progress records. Modify `pyproject.toml` only if the wheel test proves a missing helper/leaf file.
 
 **Interfaces:** No new runtime API. Consume the actual launcher, fixed operations and repository lifecycle from Tasks 1–6. Preserve V2 disabled policy while running candidate fixtures.
 
@@ -744,8 +744,8 @@ The test defines `installed_entry` by inspecting the built wheel's installed fil
 ```
 
 Preserve the existing source-free child fault/lifecycle captures. Do not reinterpret a disconnect as successful refusal, weaken fail-closed transport, disable maintenance, or silently rerun a crash until it disappears. Diagnose each failure on its evidence.
-- [x] Run final static/format checks on the explicit changed files and `git diff --check`. Obtain independent review of the whole TASK-31942 correction, including terminal shutdown evidence and all source/descriptor owners, not only the last test commit.
-- [x] Add concise implementation notes and exact evidence to TASK-31942 only after implementation/review. Check each AC and mark Done via Backlog CLI only if all gates pass; otherwise keep In Progress and document the precise failing gate. Record relevant hard-won lessons with their incident. Commit qualification/docs as `test(db): qualify lock-safe SQLite helper integration`.
+- [x] Run final static/format checks on the explicit changed files and `git diff --check`. Obtain independent review of the whole TASK-32160 correction, including terminal shutdown evidence and all source/descriptor owners, not only the last test commit.
+- [x] Add concise implementation notes and exact evidence to TASK-32160 only after implementation/review. Check each AC and mark Done via Backlog CLI only if all gates pass; otherwise keep In Progress and document the precise failing gate. Record relevant hard-won lessons with their incident. Commit qualification/docs as `test(db): qualify lock-safe SQLite helper integration`.
 - [x] Hand back to Task 8 of `Docs/superpowers/plans/2026-09-06-chatbook-canvas-v2-mermaid-implementation.md`. Its full required candidate/admitted qualification and independent reviews remain under that separate plan, not completed by this handoff. Do not enable V2 as part of this correction commit or claim the previously admitted 1,346-pass/4-fail run was green.
 
 **Task 7 partial checkpoint — 2026-09-08:** Test/documentation implementation
@@ -776,7 +776,7 @@ unqualified. The invalid first benchmark's pre-import isolation incident and
 bounded historical audit are preserved in the report and lessons. Local evidence
 is macOS arm64 / Python 3.12.11 / SQLite 3.49.1 only. Whole-correction review,
 remaining qualification, final ACs and Canvas V2 admission remain pending. Keep
-TASK-31942 In Progress; do not change budgets or treat dependency/host/unrelated
+TASK-32160 In Progress; do not change budgets or treat dependency/host/unrelated
 repairs as implicitly authorized. See `Docs/Canvas/V2_VERIFICATION.md` and the
 preserved Task 7 report/review/re-review for exact accounting.
 
@@ -884,7 +884,7 @@ migration, proof/helper modules, budget constants or snapshots.
 - [x] Independent task-scoped spec and quality review.
 - [x] Complete the existing whole-correction review against original `9bc73ffb3`.
   This local fix
-  does not waive remaining qualification gaps or mark TASK-31942 Done.
+  does not waive remaining qualification gaps or mark TASK-32160 Done.
 
 **Task7b checkpoint:** Implemented in `bd96a923c4` and `ae629ed080`, with independent
 spec compliance and quality approval and no Critical/Important findings. Scoped
@@ -1006,7 +1006,7 @@ Binding constraints for this wave:
 - [x] One fix-only re-review against this wave's immutable diff, with a verdict on
   I1/M1/M2 and new breakage in the fix only. Root adjudicates residuals per the
   final-review workflow; no second automatic fix wave. Remaining qualification
-  gaps still block TASK-31942 completion and Canvas V2 admission.
+  gaps still block TASK-32160 completion and Canvas V2 admission.
 
 **Task8 checkpoint:** Commit `3b5031012c` addresses I1/M1/M2 in six scoped files.
 The independent fix-only re-review confirms all three addressed and no new
@@ -1032,7 +1032,7 @@ existing producer could associate the wrong retained owner with its repository.
 This closes the concrete review wave, not the full correction. Q1 remains:
 three unrelated strict-inventory failures, eleven pre-body SemLock ENOSPC cases,
 platform/optional qualification and final affected-selection/benchmark evidence.
-TASK-31942 stays In Progress with all seven final ACs unchecked, and Canvas V2
+TASK-32160 stays In Progress with all seven final ACs unchecked, and Canvas V2
 remains disabled. No host cleanup, unrelated repair, dependency change, full
 suite or external PR action was authorized or performed by this wave.
 
@@ -1170,7 +1170,7 @@ Reason: Restore tests to the approved helper boundary and reuse the existing
 pure Canvas integrity function during existing same-file maintenance. No new
 storage, runtime, authentication or mutation-authority contract is introduced.
 
-**Read first:** TASK-31942 and the preserved `task-10-owner-diagnosis.md` and
+**Read first:** TASK-32160 and the preserved `task-10-owner-diagnosis.md` and
 `task-10-compaction-diagnosis.md` in this plan's SDD directory. The retained
 `task-10-compaction-probe.py` is diagnostic evidence, not a production test.
 Relevant lessons cover collected pre-import isolation, selective path guards,
@@ -1241,7 +1241,7 @@ same-file/cursor quiescence. Read applicable repository/skill instructions.
 - [x] Independent task-scoped spec and quality review of immutable BASE-to-HEAD
   package, bounded fixes if needed, then root committed smoke of the diagnosed
   groups and fresh unchanged startup/import/UI-ready/preload guards. Tests remain
-  serialized. Record evidence and AC10/11 only if met; TASK-31942 stays In Progress
+  serialized. Record evidence and AC10/11 only if met; TASK-32160 stays In Progress
   while host/platform/final qualification remains open. No PR/push/rebase/merge,
   user resource cleanup/restart, or Canvas V2 enablement.
 
@@ -1280,7 +1280,7 @@ Reason: No product code, storage, API, dependency or authority change.
 
 **Only tracked edit/commit allowed:**
 `Tests/Chat/test_console_trace_compaction.py::test_maintenance_setup_failure_closes_handle_and_releases_exclusion`.
-Read TASK-31942 and `task-10-review.md` in this plan's preserved SDD workspace.
+Read TASK-32160 and `task-10-review.md` in this plan's preserved SDD workspace.
 Root owns plan/Backlog/evidence docs; leave them unstaged. No subagents.
 
 - [x] Before the edit, run the existing case with `../../.venv/bin/python -m pytest
@@ -1336,7 +1336,7 @@ new architectural plan. BASE: `a5b3159b89`.
 
 ADR required: no
 ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md (unchanged)
-Reason: Test-only readiness correction under TASK-31942; no runtime, authority,
+Reason: Test-only readiness correction under TASK-32160; no runtime, authority,
 storage or application interface changes.
 
 **Files:**
@@ -1387,7 +1387,7 @@ storage or application interface changes.
   do not raise deadlines, blindly retry or change product behavior.
 - [x] Independently review this task's spec compliance and quality only. The
   whole-correction review already completed and is not reopened here. Record
-  exact result and limits, commit only named files, leave TASK-31942 In Progress
+  exact result and limits, commit only named files, leave TASK-32160 In Progress
   and V2 disabled while the other qualification gates remain open.
 
 Task12 completed in `72af5b63bd` with independent spec/quality approval and no
@@ -1461,7 +1461,7 @@ runtime, security, storage or application-interface change.
 - [x] Root commits only the two test files, obtains independent task-scoped
   spec/quality review, and verifies the committed focused tests. Record the
   owner-approved budget change and results without claiming the old runtime
-  latency cause explained. Keep TASK-31942 In Progress and V2 disabled while
+  latency cause explained. Keep TASK-32160 In Progress and V2 disabled while
   host/platform/optional/static gates remain open. Do not reopen the completed
   whole-correction review or clean its evidence workspace.
 
@@ -1550,7 +1550,7 @@ no new runtime, permission, dependency or release-policy boundary.
 - [x] Root waits for the exact run, records run/job/commit identity and inspects
   log + downloaded JUnit. A failure is diagnosed, not blindly rerun or waived.
   CI execution failures requiring product changes need a separately scoped fix.
-- [x] Record exact evidence and limitations in TASK-31942/docs. Keep other
+- [x] Record exact evidence and limitations in TASK-32160/docs. Keep other
   platform/optional/static gates, original final ACs and V2-disabled status.
   The unchanged local Mac is not qualified by a remote pass. Preserve all
   historical evidence and the SDD workspace.
@@ -1747,7 +1747,7 @@ cost, not pure SQL time, first-paint latency or an invented performance ceiling.
   broad suites or whole-correction reviews.
 - [x] Obtain a fix-only evidence review from the closeout reviewer. Correct the
   Task7/closeout/Backlog status only when this specific gap is resolved. Keep
-  V2 disabled, TASK-31942 In Progress on failure, and all historical evidence.
+  V2 disabled, TASK-32160 In Progress on failure, and all historical evidence.
   No CI/push/PR/rebase/merge, dependency or host mutation is part of this task.
 
 Task16 execution status: stopped on the first current-arm invocation, exit1
@@ -1758,7 +1758,7 @@ No valid sample, baseline run, retry or aggregate exists. Preserve current-1
 output/JUnit/state and request approval for a fresh series with the explicit
 existing binary path in both arms. No source/assertion/timeout or dependency
 change is proposed. Full preparation/execution record: task-16-report.md in
-this plan's retained SDD evidence directory. TASK-31942 remains In Progress.
+this plan's retained SDD evidence directory. TASK-32160 remains In Progress.
 
 Owner approved restarting Task16 with the existing explicit Chromium executable
 path in both arms. Use a fresh series-2 evidence namespace and preserve the
@@ -1775,7 +1775,7 @@ Docs/superpowers/reviews/2026-09-08-sqlite-canvas-workflow-benchmark.md.
 The closeout finding's fix-only review approved the evidence: ADDRESSED, spec
 compliance PASS, task quality PASS, closeout READY, no new findings. The original
 AC mapping and all historical/static/platform limits are preserved in
-Docs/superpowers/reviews/2026-09-08-sqlite-acceptance-closeout.md. TASK-31942
+Docs/superpowers/reviews/2026-09-08-sqlite-acceptance-closeout.md. TASK-32160
 closes here; Task8/TASK-31941 qualification remains separate and V2 disabled.
 
 ## Spec coverage and handoff
@@ -1807,7 +1807,7 @@ the exact eleven macOS concurrency cases; Task15 completes the owner-approved
 no-new-static-debt gate and unchanged budget checks. The final acceptance review
 supports all original ACs and declared platform limits. Task16 resolves its sole
 missing actual-child measurement and passes fix-only review, with exact ten-case
-evidence and the higher measured workflow cost preserved. TASK-31942 is Done.
+evidence and the higher measured workflow cost preserved. TASK-32160 is Done.
 Consolidated record: Docs/superpowers/reviews/2026-09-08-sqlite-acceptance-closeout.md.
 All earlier evidence and SDD artifacts remain retained. Handback is to the
 separate Mermaid Task8/TASK-31941 qualification; V2 remains disabled.

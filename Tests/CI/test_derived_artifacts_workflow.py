@@ -23,6 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "derived-artifacts.yml"
 CHECKERS = (
     "tldw_chatbook/css/check_bundle_sync.py",
+    "scripts/check_canvas_mermaid_assets.py",
     "scripts/check_profile_owned_path_inventory.py",
     "scripts/check_persistent_diagnostic_inventory.py",
     "scripts/check_backlog_task_ids.py",
@@ -74,6 +75,15 @@ def test_every_checker_runs():
         assert checker in script, f"{checker} is not run by the required job"
 
 
+def test_local_preflight_runs_the_same_checker_inventory_in_order():
+    """Local authoring checks must not silently omit a required CI checker."""
+    preflight = (PROJECT_ROOT / "scripts" / "preflight.sh").read_text(encoding="utf-8")
+
+    positions = [preflight.index(checker) for checker in CHECKERS]
+
+    assert positions == sorted(positions)
+
+
 def test_checker_steps_survive_an_earlier_failure():
     """One red checker must not hide the others.
 
@@ -101,12 +111,12 @@ def test_job_installs_nothing():
         ), "no pip cache is needed when nothing is installed"
 
 
-def test_derived_artifact_ast_checkers_use_declared_python_floor():
+def test_derived_artifact_checkers_use_mermaid_builder_python_pin():
     setup = next(
         step for step in _steps() if step.get("uses") == "actions/setup-python@v5"
     )
 
-    assert setup["with"] == {"python-version": "3.12"}
+    assert setup["with"] == {"python-version": "3.12.11"}
 
 
 def test_required_check_name_is_stable():

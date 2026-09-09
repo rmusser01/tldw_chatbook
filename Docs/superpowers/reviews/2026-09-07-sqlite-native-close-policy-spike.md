@@ -31,7 +31,7 @@ requests dependency warning, 53.09 seconds. The eight failures are real preserva
 assertions in default-policy arms, not xfails or assertions requiring the bug.
 
 This supports retaining live SQLite in Chatbook rather than introducing a database
-service. It does not finish TASK-31942, Task5 integration, or Canvas qualification.
+service. It does not finish TASK-32160, Task5 integration, or Canvas qualification.
 
 ## Coverage
 

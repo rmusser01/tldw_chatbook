@@ -125,6 +125,14 @@ profile-owned conservative logical cell rule (16 CSS px per cell), not a platfor
 Original label code points are retained; Unicode normalization and `Intl` are not
 used. Escaped Mermaid entity spellings in plain labels remain literal text.
 
+The required derived-artifacts job runs `scripts/check_canvas_mermaid_assets.py`
+under the manifest-pinned Python 3.12.11, obtains only those declared inputs in
+temporary space, runs the same offline build, and compares all six generated
+outputs byte-for-byte with the packaged closure. Local preflight downloads the
+pinned inputs by default; set `TLDW_CANVAS_MERMAID_INPUT_DIR` to reuse an existing
+offline cache. Missing or mismatched cached inputs fail the check rather than
+skipping reproduction.
+
 The manifest's Mermaid provenance records source/input hashes, not qualification
 status. Catalog execution/default/refusal policy is separate from immutable
 manifest identity. Regeneration preserves an existing admitted or revoked policy

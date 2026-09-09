@@ -1,4 +1,4 @@
-# TASK-31942: fresh macOS concurrency evidence
+# TASK-32160: fresh macOS concurrency evidence
 
 ## Scope and authority
 
@@ -191,7 +191,7 @@ run was triggered after collecting this successful attempt.
 
 No result from this job qualifies the unchanged local Mac, historical skipped
 platform/optional cases, or the nonzero aggregate static gate. Earlier failures,
-skips, deselections, and diagnostic evidence remain preserved. TASK-31942 remains
+skips, deselections, and diagnostic evidence remain preserved. TASK-32160 remains
 In Progress and Canvas V2 remains disabled until its remaining required gates
 are resolved. This report does not authorize another suite, benchmark, host
 cleanup, dependency repair, main/dev change, PR, or merge.

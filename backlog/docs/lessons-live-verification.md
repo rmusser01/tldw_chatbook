@@ -2,7 +2,7 @@
 
 ## Check the target platform's exact interpreter build before pinning CI
 
-**TASK-31942 Task14, 2026-09-08.** A fresh macOS ARM64 evidence job pinned the
+**TASK-32160 Task14, 2026-09-08.** A fresh macOS ARM64 evidence job pinned the
 local Python3.12.11 version to keep qualification comparable. The job passed
 checkout, then setup-python failed before any lock control or product test:
 GitHub's manifest contained 3.12.11 only for Linux, not Darwin. The same manifest
@@ -1269,7 +1269,7 @@ provenance probe was not in the run as unproven. The same shape applies
 to any machine with several checkouts sharing one venv — which, on this
 repo, is every machine.
 
-**Recurrence — TASK-31942, 2026-09-08.** The shared environment's
+**Recurrence — TASK-32160, 2026-09-08.** The shared environment's
 `tldw_profile_core` editable `.pth` and `direct_url.json` still pointed at the
 removed `task-26042-workspace-files-read-only` checkout. The main Canvas
 qualification selection and five actual-child nodes failed collection; a
@@ -2337,7 +2337,7 @@ the assertion while the app is effectively dead to the keyboard.
 
 **Rule.** Never redirect stderr when driving the TUI; read loguru's file sink (or `[logging]` in the scratch config) for tracebacks instead. A fresh scratch profile's first-run wizard also does not reliably take Escape (PR O, same day) — set `[first_run] setup_completed = true` in the scratch config before the first launch.
 
-## Pass the existing browser path explicitly in private archives (TASK-31942, 2026-09-08)
+## Pass the existing browser path explicitly in private archives (TASK-32160, 2026-09-08)
 
 **Incident.** SQLite closeout Task16 verified an installed Chromium binary but
 the first Canvas benchmark sample in /private/tmp still failed before browser

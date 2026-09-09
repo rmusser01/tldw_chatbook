@@ -1,4 +1,7 @@
-name: TASK-31942 macOS SQLite concurrency evidence
+name: TASK-32160 macOS SQLite concurrency evidence
+
+# TASK-32160 was TASK-31942 before the PR #2537 collision correction. Keep this
+# workflow filename, evidence-branch selector and artifact names for provenance.
 
 on:
   push:
@@ -127,7 +130,7 @@ jobs:
           )
 
           def reject(reason: str) -> None:
-              print(f"invalid TASK-31942 JUnit: {reason}", file=sys.stderr)
+              print(f"invalid TASK-32160 JUnit: {reason}", file=sys.stderr)
               raise SystemExit(1)
 
           junit_path = Path(sys.argv[1])

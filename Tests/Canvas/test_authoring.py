@@ -1,5 +1,6 @@
 """Selected-profile authoring and executable guide examples."""
 
+import json
 from dataclasses import replace
 
 from markdown_it import MarkdownIt
@@ -7,6 +8,8 @@ from markdown_it import MarkdownIt
 from Tests.Canvas.mermaid_probe import run_mermaid_case
 from tldw_chatbook.Canvas.authoring import canvas_authoring_guide
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
+from tldw_chatbook.Canvas.models import CanvasScope
+from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
 
 
 def test_guide_uses_exact_profile_and_refuses_revoked(candidate_snapshot):
@@ -48,8 +51,6 @@ def test_guide_complete_examples_compile_and_execute(candidate_snapshot):
 
 
 def test_provider_context_deduplicates_exact_historical_guides(candidate_snapshot):
-    import json
-
     from Tests.Agents.test_canvas_tool_provider import _provider
     from tldw_chatbook.Agents.canvas_tool_provider import build_canvas_runtime_guidance
 
@@ -119,3 +120,88 @@ def test_provider_context_deduplicates_exact_historical_guides(candidate_snapsho
         "required": ["title", "html"],
         "additionalProperties": False,
     }
+
+
+def test_real_run_coordinator_retains_exact_profile_guidance_without_reload(
+    candidate_snapshot, monkeypatch
+):
+    """Removing the owner seam would hide creation and historical guidance."""
+    from tldw_chatbook.Agents.canvas_tool_provider import (
+        CanvasToolProvider,
+        build_canvas_runtime_guidance,
+    )
+
+    revoked_snapshot = replace(
+        candidate_snapshot,
+        profiles=tuple(
+            replace(row, executable=False, reason="revoked")
+            if row.profile_id == "canvas-v2-mermaid-1"
+            else row
+            for row in candidate_snapshot.profiles
+        ),
+    )
+    scope = CanvasScope(
+        session_id="profile-session",
+        conversation_id="profile-conversation",
+        active_message_ids=("assistant-profile",),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="profile-run",
+    )
+    admitted_controller = ConsoleCanvasController(profile_snapshot=candidate_snapshot)
+    admitted_coordinator = admitted_controller.register_run(
+        scope, assistant_message_id="assistant-profile", temporary=False
+    )
+    revoked_controller = ConsoleCanvasController(profile_snapshot=revoked_snapshot)
+    revoked_coordinator = revoked_controller.register_run(
+        scope, assistant_message_id="assistant-profile", temporary=False
+    )
+
+    def reject_reload():
+        raise AssertionError("profile snapshot was reloaded")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Canvas.profiles.load_profile_snapshot", reject_reload
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_canvas_controller.load_profile_snapshot",
+        reject_reload,
+    )
+    admitted_provider = CanvasToolProvider(
+        admitted_coordinator, scope=scope, enabled_reader=lambda: True
+    )
+    admitted_schema = admitted_provider.load_schema("canvas:canvas_create")
+    admitted_guidance = build_canvas_runtime_guidance([admitted_schema])
+    assert admitted_coordinator.profile_snapshot is candidate_snapshot
+    assert "Canvas profile canvas-v2-mermaid-1:" in admitted_guidance
+    assert "sequenceDiagram" in admitted_guidance
+
+    revoked_provider = CanvasToolProvider(
+        revoked_coordinator, scope=scope, enabled_reader=lambda: True
+    )
+    schema = revoked_provider.load_schema("canvas:canvas_create")
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "read-historical",
+                    "type": "function",
+                    "function": {"name": "canvas_read", "arguments": "{}"},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "read-historical",
+            "content": json.dumps(
+                {"status": "ok", "canvas": {"runtime_profile": "future-profile"}}
+            ),
+        },
+    ]
+    guidance = build_canvas_runtime_guidance([schema], messages=messages)
+
+    assert revoked_coordinator.profile_snapshot is revoked_snapshot
+    assert "Canvas profile canvas-v2-mermaid-1: source-only" in guidance
+    assert "Canvas profile future-profile: source-only" in guidance
+    assert "do not substitute another profile" in guidance

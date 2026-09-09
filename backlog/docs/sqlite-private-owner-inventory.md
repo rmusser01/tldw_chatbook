@@ -76,7 +76,7 @@ Classifications have these meanings:
 
 ## SQLite backup and restore inventory
 
-### TASK-31942 exclusive descriptor disposition (ADR-125)
+### TASK-32160 exclusive descriptor disposition (ADR-125)
 
 C48 is retired permanently; its ID is not reused. The former
 `tts.profile_store_descriptor` parent SHARED-startup registration is removed.

@@ -1,6 +1,6 @@
 # Read-only semaphore allocation diagnosis — 2026-09-08
 
-TASK-31942 continuation, authorized by the user after the SQLite review-fix
+TASK-32160 continuation, authorized by the user after the SQLite review-fix
 checkpoint `50a57004220645665f528edad31f7a31f9a608f2`.
 
 ## Result

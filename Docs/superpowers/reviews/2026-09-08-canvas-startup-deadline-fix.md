@@ -1,7 +1,7 @@
 # Canvas shared startup deadline — 2026-09-08
 
 Status: complete and independently reviewed in `235641b38026f747112f55899f6dd07994e7e6fd`.
-This is Task13 under TASK-31942, not Canvas V2 admission.
+This is Task13 under TASK-32160, not Canvas V2 admission.
 
 ## Approved correction
 
@@ -90,5 +90,5 @@ failure is addressed by an explicitly revised test contract, not a demonstrated
 runtime speedup. Eleven host-blocked cases, platform/optional coverage and
 nonzero aggregate static gates remain as recorded in
 [final local qualification](2026-09-08-sqlite-final-local-qualification.md).
-TASK-31942 stays In Progress, original final ACs remain unchecked, and V2 stays
+TASK-32160 stays In Progress, original final ACs remain unchecked, and V2 stays
 disabled. No PR, push, rebase, merge or evidence cleanup occurred.

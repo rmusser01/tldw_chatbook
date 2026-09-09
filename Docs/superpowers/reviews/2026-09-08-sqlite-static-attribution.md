@@ -1,7 +1,7 @@
 # SQLite correction static attribution — 2026-09-08
 
 Status: diagnostic comparison complete; static gates remain nonzero.
-TASK-31942 stays In Progress and Canvas V2 stays disabled.
+TASK-32160 stays In Progress and Canvas V2 stays disabled.
 
 Baseline: `9bc73ffb35ccd6eb24629bfa8021b28063dc9112`.
 Compared head: `d599fa037b0c5c7be6c53e8a316add84fd86cf4c`.

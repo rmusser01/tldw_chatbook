@@ -8,7 +8,20 @@ from .profiles import ProfileSnapshot, resolve_profile
 
 
 def canvas_authoring_guide(snapshot: ProfileSnapshot, profile_id: str) -> str:
-    """Return bounded guidance for the exact admitted historical profile."""
+    """Return bounded guidance for the exact historical runtime profile.
+
+    Args:
+        snapshot: Immutable process-lifetime catalog and execution-policy view.
+        profile_id: Exact runtime profile retained by the Canvas revision.
+
+    Returns:
+        Profile-specific authoring guidance when execution is admitted, or
+        source-only preservation guidance when the profile is unavailable.
+
+    Raises:
+        ValueError: If ``profile_id`` is not a valid Canvas profile identifier.
+        CanvasLimitError: If the packaged guide exceeds its fixed UTF-8 limit.
+    """
     selected = resolve_profile(
         snapshot, operation="load", parent_profile=profile_id, has_diagrams=False
     )
