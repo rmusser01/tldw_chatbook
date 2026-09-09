@@ -116,7 +116,7 @@ async def test_loading_surfaces_keep_unicode_copy_and_notes_sync_hook() -> None:
 
 @pytest.mark.asyncio
 async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None:
-    """Notes toggle/select/sort interactions never remount the Library shell."""
+    """Notes toggle/select/open interactions never remount the Library shell."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -139,18 +139,20 @@ async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None
             )
             assert screen._notes_state.row_selection.count == 2
             screen.query_one("#library-notes-select-toggle").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-sort")
-            screen.query_one("#library-notes-sort").press()
-            await _wait_for_selector(screen, pilot, "#library-notes-sort-oldest")
-            screen.query_one("#library-notes-sort-oldest").press()
-            await _wait_for_widget_text(
-                screen, pilot, "#library-notes-sort", "Oldest"
-            )
+            # task-32128: this app seeds the folder tree, where Sort is not
+            # composed; "New" is the browse toolbar's stable marker there. The
+            # Sort press -> apply round-trip is pinned on the flat list by
+            # Tests/UI/test_library_notes_wave_list.py.
+            await _wait_for_selector(screen, pilot, "#library-notes-new")
             screen.query_one("#library-notes-add-from-files").press()
             await _wait_for_selector(screen, pilot, "#notes-add-import-once")
             screen.query_one("#notes-sync-back").press()
             await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
-            screen.query_one("#library-notes-row-0").press()
+            # Same reason: the seeded app renders the folder tree, whose note
+            # rows are indexed across folder rows too, so the first note is
+            # not "#library-notes-row-0" (that line was already red at the
+            # wave base f054f35ae1, which never got this far).
+            screen.query(".library-notes-tree-note-row").first(Button).press()
             await _wait_for_selector(screen, pilot, "#library-note-title")
 
         assert calls == []
@@ -159,7 +161,6 @@ async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None
             screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
             is canvas_before
         )
-        assert screen._notes_state.sort == "oldest"
 
 
 @pytest.mark.asyncio
@@ -473,7 +474,9 @@ async def test_notes_select_toggle_latency_probe() -> None:
             expected = (
                 "#library-notes-select-all"
                 if index % 2 == 0
-                else "#library-notes-sort"
+                # task-32128: "New" is the browse toolbar's stable marker now
+                # that Sort is composed only for the flat list.
+                else "#library-notes-new"
             )
             await _wait_for_selector(screen, pilot, expected)
             samples.append((perf_counter() - started) * 1000.0)

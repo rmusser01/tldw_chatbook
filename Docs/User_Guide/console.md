@@ -240,6 +240,11 @@ provider**, then **Choose model**) and opens the Console Settings modal.
 The composer stays locked until a provider and model are configured; once
 they are, the empty transcript reads "Ready — type a message to begin."
 
+A second action, **Write a note in Library**, stays available beside it for
+as long as the card is showing — it needs no provider, and opens Library's
+New note view directly. A local-first user who came for notes is not stuck
+behind a provider-only card.
+
 If you land here with a handoff already staged — e.g. from Library's
 **Use in Console** on a Search/RAG result while a provider isn't set up
 yet — the card shows an extra line under "Get started" naming what's
@@ -665,3 +670,9 @@ width; the footer token counter is retired in favor of the status row's
 cost chip; the Status ▾ collapse choice and the status-row placement
 setting persist; compact mode (under 35 rows) drops the breathing-room
 rows. This page's layout tour re-verified against that build.*
+
+*Verified against fix/library-notes-onboarding — 2026-09-09 (task-32140:
+added the "Write a note in Library" action beside the Get started card's
+provider steps — needs no provider, opens Library's New note view, and
+stays available for the whole time the card is blocking. Widget-level
+check in `Tests/UI/test_library_notes_wave_onboarding.py`.)*

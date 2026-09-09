@@ -2421,12 +2421,22 @@ async def test_exact_draft_model_controls_remain_keyboard_visible_in_compact_vie
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
-async def test_summary_three_actions_visible_and_focused_on_full_track(
+async def test_summary_five_actions_visible_and_focused_on_full_track(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     size: tuple[int, int],
 ) -> None:
-    """Summary keeps exactly three actions visible, unique, and focused."""
+    """Summary keeps all five actions visible, unique, and focused.
+
+    Qodo review on PR #2538 (task-32140): the Summary actions row is a
+    single non-wrapping Horizontal, so once task-32072 (4 buttons) and
+    task-32140 (5 buttons) both landed, "Explore Home" and "Review
+    settings" were pushed entirely off the 80-column viewport -- the
+    original 3-button version of this test never caught it because it
+    only asserted an exact 3-id list. This version checks every current
+    action is on-screen and unclipped at the wizard's two supported
+    sizes.
+    """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
@@ -2473,12 +2483,20 @@ async def test_summary_three_actions_visible_and_focused_on_full_track(
             await pilot.pause(0.2)
 
             exit_chat = app.screen.query_one("#setup-exit-chat", Button)
+            exit_library = app.screen.query_one("#setup-exit-library", Button)
+            exit_notes = app.screen.query_one("#setup-exit-library-notes", Button)
             exit_home = app.screen.query_one("#setup-exit-home", Button)
             exit_settings = app.screen.query_one("#setup-exit-settings", Button)
             assert [
                 button.id
                 for button in app.screen.query(".setup-summary-actions Button")
-            ] == ["setup-exit-chat", "setup-exit-home", "setup-exit-settings"]
+            ] == [
+                "setup-exit-chat",
+                "setup-exit-library",
+                "setup-exit-library-notes",
+                "setup-exit-home",
+                "setup-exit-settings",
+            ]
             assert app.focused is exit_chat
             assert container.query_one("#wizard-next", Button).display is False
             assert container.query_one("#wizard-cancel", Button).display is False
@@ -2488,6 +2506,8 @@ async def test_summary_three_actions_visible_and_focused_on_full_track(
             )
             for button, label in (
                 (exit_chat, "Review provider setup"),
+                (exit_library, "Add your first document"),
+                (exit_notes, "Write your first note"),
                 (exit_home, "Explore Home"),
                 (exit_settings, "Review settings"),
             ):
@@ -2507,6 +2527,8 @@ async def test_summary_three_actions_visible_and_focused_on_full_track(
                     "compositor never painted it"
                 )
             assert "Review provider setup" in rendered_text
+            assert "Add your first document" in rendered_text
+            assert "Write your first note" in rendered_text
             assert "Explore Home" in rendered_text
             assert "Review settings" in rendered_text
 

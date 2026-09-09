@@ -1025,6 +1025,46 @@ $ds-library-source-browser-width: 31;
     max-width: 100%;
 }
 
+/* task-32127/32128: Button's own 16-cell minimum made "New / Sort: Newest /
+   Select" 48 cells wide -- wider than the list pane itself, so Select, the
+   Title sort option and the delete receipt's Undo were painted past the
+   pane edge. The compact stage already sized these to their content; the
+   ordinary stage does the same now, since the pane is never wide enough to
+   justify a 16-cell "New". */
+#library-notes-canvas .library-canvas-action {
+    width: auto;
+    min-width: 0;
+}
+
+/* ...except the branch pagers, which are full-width rows carrying wrapped
+   range/status copy, not toolbar buttons. The rule above outranks
+   `.library-notes-tree-pager` on specificity, so it has to say so here
+   (review round 1). */
+#library-notes-canvas .library-notes-tree-pager {
+    width: 100%;
+    max-width: 100%;
+}
+
+/* task-32123: the receipt's copy owns its own row above the two recovery
+   actions, so a title too long for the pane ends in an ellipsis instead of
+   pushing Undo off the edge. */
+#library-notes-delete-receipt-copy {
+    width: 1fr;
+    min-width: 0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* task-32127: the browse and transfer toolbars share one row. Each keeps
+   its own id (and its compact-stage rules); the trailing group takes the
+   leftover width so the raised toolbar background spans the row. */
+#library-notes-action-rows {
+    layout: horizontal;
+    height: auto;
+    width: 1fr;
+    min-width: 0;
+}
+
 .library-notes-folder-row {
     width: 100%;
     min-width: 0;
