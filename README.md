@@ -225,7 +225,7 @@ require native libraries. Add only the groups you plan to use.
 | `frontmatter` | YAML front matter support in Markdown notes and previews |
 | `speech_recording` | Microphone recording support |
 | `realtime` | Realtime audio/model dependencies |
-| `local_tts` | Local TTS engines such as Kokoro ONNX |
+| `local_tts` | Kokoro ONNX and official Kokoro PyTorch (Python 3.11–3.12) |
 | `chatterbox` | Chatterbox TTS support |
 | `higgs_tts` | Supporting packages for Higgs Audio; manual Higgs installation is also required |
 | `transcription_faster_whisper` | CPU/CUDA-optimized Whisper |
