@@ -852,3 +852,45 @@ def test_a_source_you_skipped_is_not_listed_with_its_planner_reason() -> None:
         ("record-1.md", "Skipped by you."),
         ("vault/.obsidian/app.json", "Not a note file (app configuration)."),
     )
+
+
+def test_an_unchanged_repeat_is_not_blamed_on_the_user() -> None:
+    """A repeat skips itself by default; 'Skipped by you.' would be a lie."""
+    unchanged = replace(
+        _item(3, classification=ImportClassification.UNCHANGED_REPEAT),
+        reason="This source matches an unchanged existing note.",
+    )
+    plan = _plan(unchanged)
+    state = _file_review(plan)
+    approved = approve_note_import_plan(plan)
+    state = begin_importing(set_approved_plan(state, approved))
+    receipt = ImportExecutionReceipt(
+        approval_id=approved.approval_id,
+        state=ImportSessionState.COMPLETED,
+        total=1,
+        completed=1,
+        imported=0,
+        updated=0,
+        skipped=1,
+        failed=0,
+        retryable=0,
+    )
+
+    projection = project_library_note_import_snapshot(settle_import(state, receipt))
+
+    assert projection.skipped_items == (
+        ("record-3.md", "This source matches an unchanged existing note."),
+    )
+
+
+def test_a_revisited_receipt_keeps_its_skipped_paths_after_a_new_selection() -> None:
+    """Starting another selection must not empty the retained receipt's rows."""
+    settled = _settled_state(imported=1, updated=0, skipped=1, failed=0)
+    expected = project_library_note_import_snapshot(settled).skipped_items
+    assert expected  # guard: the fixture really does skip one source
+
+    revisited = revisit_latest_receipt(clear_selection(settled))
+    projection = project_library_note_import_snapshot(revisited)
+
+    assert projection.skipped_count == 1
+    assert projection.skipped_items == expected

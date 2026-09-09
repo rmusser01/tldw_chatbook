@@ -41,6 +41,7 @@ from tldw_chatbook.Notes.note_folder_models import (
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportBounds,
+    ImportClassification,
     RootCollisionChoice,
 )
 
@@ -135,12 +136,7 @@ class LibraryNoteImportController:
 
     def begin_selection(self) -> None:
         """Start a new selection while retaining the latest session receipt."""
-        self._state = initial_note_import_snapshot(
-            latest_receipt=self._state.latest_receipt
-        )
-        self._existing_top_level_names = ()
-        self._error_message = ""
-        self.publish()
+        self.clear_selection()
 
     def accept_selected_path(
         self,
@@ -151,9 +147,19 @@ class LibraryNoteImportController:
     ) -> None:
         """Admit one picker result as a file or the exclusive folder source.
 
-        ``replace`` drops the previous selection first, and only once a path
-        has actually arrived -- cancelling the picker leaves the selection the
-        user already had (task-32134).
+        Args:
+            path: The path the picker returned.
+            is_folder: Whether ``path`` is a folder. ``None`` asks the
+                filesystem, which is what a real picker result needs.
+            replace: Drop the previous selection first, and only once a path
+                has actually arrived -- cancelling the picker leaves the
+                selection the user already had (task-32134).
+
+        Raises:
+            TypeError: If ``path`` is not a :class:`~pathlib.Path` or
+                ``is_folder`` is not a boolean.
+            ValueError: If the selection rules reject the path, such as adding
+                a file to an exclusive folder import.
         """
         if not isinstance(path, Path):
             raise TypeError("path must be a Path.")
@@ -194,12 +200,25 @@ class LibraryNoteImportController:
 
         Only the items on the page whose group header was pressed change, so
         the header's count is exactly what the bulk action settles.
+
+        Args:
+            classification: The :class:`ImportClassification` value naming the
+                group whose header was pressed.
+            action: The :class:`ImportAction` value to apply to that group.
+
+        Raises:
+            ValueError: If either value is not a member of its enum, or the
+                workflow is not in review. Both reach the user as one failure
+                notice rather than a silent no-op.
         """
         plan = self._require_review_plan()
+        # Validate at the boundary: an unknown classification used to compare
+        # unequal to every group and change nothing at all.
+        group = ImportClassification(classification)
         selected = ImportAction(action)
         for rendered in self._state.page.items:
             if (
-                rendered.classification.value != classification
+                rendered.classification is not group
                 or rendered.selected_action is selected
                 or selected not in rendered.allowed_actions
             ):
