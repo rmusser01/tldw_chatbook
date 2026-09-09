@@ -827,9 +827,14 @@ async def test_keep_waiting_grants_exactly_one_more_deadline(
 
 @pytest.mark.asyncio
 async def test_choose_another_abandons_the_change_and_reopens_the_picker(
-    blocked_root_change,
+    blocked_root_change, monkeypatch
 ) -> None:
-    """task-32121 AC4: the second choice is a real way to a different folder."""
+    """task-32121 AC4: the second choice is a real way to a different folder.
+
+    The pushed screen is recorded rather than mounted: rendering the
+    third-party picker pulls in a widget this task does not own, and doing
+    so mid-file has produced a component-class KeyError under load.
+    """
     from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 
     old_root, new_root, blocked = blocked_root_change
@@ -837,6 +842,12 @@ async def test_choose_another_abandons_the_change_and_reopens_the_picker(
     workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
     async with _production_workspace_context(workspace, size=(235, 52)) as pilot:
         wait = await _start_blocked_root_change(pilot, workspace, blocked, new_root)
+        pushed: list[object] = []
+
+        async def _record_push(screen, *args, **kwargs):
+            pushed.append(screen)
+
+        monkeypatch.setattr(pilot.app, "push_screen", _record_push)
         wait.started_at -= 5.0
         workspace._update_root_surface()
         await pilot.pause()
@@ -844,13 +855,12 @@ async def test_choose_another_abandons_the_change_and_reopens_the_picker(
 
         await _wait_until(
             pilot,
-            lambda: isinstance(pilot.app.screen, SelectDirectory),
+            lambda: bool(pushed),
             "Choose another did not reopen the folder picker",
         )
+        assert isinstance(pushed[0], SelectDirectory)
         assert workspace._structural_wait is None
         assert workspace.root == old_root.resolve()
-        pilot.app.pop_screen()
-        await pilot.pause()
     await workspace.shutdown()
     replica.close()
 
