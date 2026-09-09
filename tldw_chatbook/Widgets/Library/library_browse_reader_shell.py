@@ -55,6 +55,19 @@ LIBRARY_NOTES_ROUTE_SELECTOR = f".{LIBRARY_NOTES_ROUTE_CLASS}"
 #: construction. Toggled per route now (the grips are shared).
 LIBRARY_MEDIA_PANE_GRIP_CLASS = "library-media-pane-grip"
 
+#: Every class ``apply_route`` flips. They are QUERY markers, not style hooks:
+#: no rule in the app's stylesheet references any of them, which is what lets
+#: ``apply_route`` flip them without a restyle (see its body). Pinned by
+#: ``Tests/UI/test_library_phase_c_switch_storm.py::
+#: test_route_marker_classes_have_no_stylesheet_rules``, which reads the
+#: PARSED stylesheet -- widget ``DEFAULT_CSS`` counts, so grepping ``css/``
+#: would not be enough.
+LIBRARY_ROUTE_MARKER_CLASSES = (
+    LIBRARY_MEDIA_ROUTE_CLASS,
+    LIBRARY_NOTES_ROUTE_CLASS,
+    LIBRARY_MEDIA_PANE_GRIP_CLASS,
+)
+
 #: The two routes this shell hosts.
 LIBRARY_BROWSE_ROUTE_MEDIA = "media"
 LIBRARY_BROWSE_ROUTE_NOTES = "notes"
@@ -122,6 +135,23 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
         at construction (whole-screen recompose) and on the resident switch
         path.
 
+        **``update=False`` is load-bearing, not a micro-optimisation.** A
+        class flip with Textual's default ``update=True`` calls
+        ``DOMNode.update_node_styles`` -> ``App.update_styles(self)`` ->
+        ``stylesheet.update_nodes(self.walk_children(with_self=True))``: one
+        ``Stylesheet.apply`` for EVERY node in this shell's subtree, which is
+        the whole Library. Phase-C task 2.5 measured the two flips below at
+        **238 of the 423 apply calls on a media switch-back (43 ms of its 86 ms
+        of restyle)** and 192-206 on the notes arms -- the single largest
+        restyle originator on all three, larger than every mount on the switch
+        put together. The work is entirely wasted because these classes are
+        QUERY markers: no rule in the app's stylesheet references any of them,
+        so no node's computed styles can change when they flip. That premise is
+        not assumed, it is pinned -- ``Tests/UI/test_library_phase_c_switch_
+        storm.py::test_route_marker_classes_have_no_stylesheet_rules`` reads
+        the parsed stylesheet and fails the moment a rule starts depending on
+        one, which is the signal to restore a (single, coalesced) restyle here.
+
         Args:
             route: ``"media"`` or ``"notes"``.
 
@@ -129,12 +159,21 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
             None.
         """
         self.route = route
-        self.set_class(route == LIBRARY_BROWSE_ROUTE_MEDIA, LIBRARY_MEDIA_ROUTE_CLASS)
-        self.set_class(route == LIBRARY_BROWSE_ROUTE_NOTES, LIBRARY_NOTES_ROUTE_CLASS)
+        self.set_class(
+            route == LIBRARY_BROWSE_ROUTE_MEDIA,
+            LIBRARY_MEDIA_ROUTE_CLASS,
+            update=False,
+        )
+        self.set_class(
+            route == LIBRARY_BROWSE_ROUTE_NOTES,
+            LIBRARY_NOTES_ROUTE_CLASS,
+            update=False,
+        )
         for grip in (self.library_grip, self.items_grip):
             grip.set_class(
                 route == LIBRARY_BROWSE_ROUTE_MEDIA,
                 LIBRARY_MEDIA_PANE_GRIP_CLASS,
+                update=False,
             )
         # The items pane is called "Notes" on one route and "Items" on the
         # other, and that label is the grip's tooltip AND accessible name --
