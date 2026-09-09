@@ -157,9 +157,11 @@ _INGEST_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: against the same range, comparing a census-eligible denominator with
 #: total-mover ones. Source: task-3 report §4 ("Delegator census -- 50
 #: KEEP, 6 PRUNED"). TASK-31932 step 76 retargeted four concrete Screen
-#: callers to their existing controller owners: current 46 KEEP, 10 PRUNED.
+#: callers to their existing controller owners; step 137 adds the pause wrapper:
+#: current 45 KEEP, 11 PRUNED.
 _INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        "_pause_library_ingest_transient_ui",
         "_sync_library_ingest_rail_from_shell",
         "_update_library_ingest_fold_hint",
         "_scroll_library_ingest_queue_into_view",
@@ -218,7 +220,7 @@ def test_screen_delegates_ingest_handlers() -> None:
     Mirrors `test_screen_delegates_skills_handlers`: a same-name forwarding
     check, not a loose "the controller is referenced somewhere" substring
     check. Skips `_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 3 deleted
-    six unused delegates; TASK-31932 step 76 retargeted four sole callers)
+    six unused delegates; TASK-31932 steps 76/137 retargeted five sole callers)
     and instead asserts each such name is genuinely ABSENT from
     `LibraryScreen`, so a future accidental re-add would fail loudly here
     rather than silently reintroducing dead code.

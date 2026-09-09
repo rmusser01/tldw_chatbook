@@ -17445,12 +17445,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_folder_target_options(self, *, exclude_folder_id: str | None=None) -> tuple[tuple[str, str], ...]:
         return self._notes_controller._library_notes_folder_target_options(exclude_folder_id=exclude_folder_id)
 
-    def _remove_library_note_source_record(self, note_id: str) -> None:
-        return self._notes_controller._remove_library_note_source_record(note_id)
-
-    def _append_library_note_source_record(self, record: Mapping[str, Any]) -> bool:
-        return self._notes_controller._append_library_note_source_record(record)
-
     def _library_notes_canvas_kwargs(self) -> dict[str, Any]:
         return self._notes_controller._library_notes_canvas_kwargs()
 
@@ -18103,9 +18097,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _reset_library_ingest_transient_state(self) -> None:
         return self._ingest_controller._reset_library_ingest_transient_state()
-
-    def _pause_library_ingest_transient_ui(self) -> None:
-        return self._ingest_controller._pause_library_ingest_transient_ui()
 
     # ----- Export canvas -------------------------------------------------
 
@@ -19277,12 +19268,6 @@ class LibraryScreen(BaseAppScreen):
                 return str(record.get("title", "") or "")
         return None
 
-    def _focus_library_note_validation_field(self, field: str) -> None:
-        return self._notes_controller._focus_library_note_validation_field(field)
-
-    def _route_library_note_validation_field(self, field: str) -> None:
-        return self._notes_controller._route_library_note_validation_field(field)
-
     def _focus_library_note_conflict_callout(self) -> None:
         return self._notes_controller._focus_library_note_conflict_callout()
 
@@ -19413,10 +19398,10 @@ class LibraryScreen(BaseAppScreen):
         if outcome.save_outcome is not None and outcome.save_outcome.veto is not None:
             validation_field = outcome.save_outcome.veto.field
         if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO:
-            self._route_library_note_validation_field(validation_field)
+            self._notes_controller._route_library_note_validation_field(validation_field)
         self._update_library_note_meta_static(content=snapshot.body)
         if validation_field:
-            self._focus_library_note_validation_field(validation_field)
+            self._notes_controller._focus_library_note_validation_field(validation_field)
         return outcome
 
     async def _gc_pending_blank_note(self) -> bool:
@@ -20747,7 +20732,7 @@ class LibraryScreen(BaseAppScreen):
         # switch, destructive for multi-batch workflows (round-2 critique).
         # Only switch-hygiene runs here; the deep-link entry keeps its
         # documented full reset.
-        self._pause_library_ingest_transient_ui()
+        self._ingest_controller._pause_library_ingest_transient_ui()
         # Always resets to the Everything scope (a plain rail-row press,
         # unlike a browse-canvas "Export…" action, never carries a
         # section-specific filter) -- see
@@ -23426,9 +23411,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _apply_library_skill_save_success(self, result: Any, *, is_create: bool) -> None:
         return self._skills_controller._apply_library_skill_save_success(result, is_create=is_create)
-
-    def _enter_library_skill_conflict(self) -> None:
-        return self._skills_controller._enter_library_skill_conflict()
 
     @on(Button.Pressed, "#library-skill-conflict-reload")
     def handle_library_skill_conflict_reload(self, event: Button.Pressed) -> None:
@@ -28333,7 +28315,7 @@ class LibraryScreen(BaseAppScreen):
                 failure_message = "Could not delete this note."
 
         if deleted:
-            self._remove_library_note_source_record(admission.note_id)
+            self._notes_controller._remove_library_note_source_record(admission.note_id)
             self._notes_state.delete_receipt = LibraryNoteDeleteReceipt(
                 note_id=admission.note_id,
                 title=deleted_title or "Untitled",
@@ -28645,7 +28627,7 @@ class LibraryScreen(BaseAppScreen):
         created_version = (
             int(result.get("version") or 1) if isinstance(result, Mapping) else 1
         )
-        self._append_library_note_source_record(
+        self._notes_controller._append_library_note_source_record(
             {
                 "id": created_id,
                 "title": payload.title,

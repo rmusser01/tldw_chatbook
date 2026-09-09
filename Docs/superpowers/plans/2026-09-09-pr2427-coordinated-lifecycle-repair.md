@@ -52,9 +52,9 @@ Frozen evidence on runtime d034c2d9c9: 1581 passed, one existing skip across the
 16 affected native-observed files; zero final SQLite/instance-lock retention.
 The shell's exact-owner retirement needed no additional registry or scheduler.
 
-- [ ] Save evidence and rebase onto dev e574c81d22 or newer after inspecting churn.
-- [ ] Preserve upstream Library column defaults, boot sentinel contract and Watchlists width behavior while retaining the reviewed PR lifecycle/resource repairs.
-- [ ] Verify changed width/boot/Watchlists owners and affected Library geometry/focus integration, preflight and unchanged caps; independently review conflict resolution.
+- [x] Save evidence and rebase onto dev e574c81d22 or newer after inspecting churn.
+- [x] Preserve upstream Library column defaults, boot sentinel contract and Watchlists width behavior while retaining the reviewed PR lifecycle/resource repairs.
+- [x] Verify changed width/boot/Watchlists owners and affected Library geometry/focus integration, preflight and unchanged caps; independently review conflict resolution.
 - [ ] Publish, address final-head reviews/checks and merge normally.
 
 ADR required: no new ADR
