@@ -72,6 +72,10 @@ collection, and sort apply to the complete source before its page is chosen and
 successful changes return to page 1. The header and page line use the matching
 total, including results beyond the first page. While an adjacent page loads,
 the last applied rows remain visible and the pager explains why it is disabled.
+A list that fits one page shows only its item range: the "Page 1 of 1" counter,
+the "Already on the first page."/"No more results." reasons and the Previous and
+Next controls all appear the moment a second page exists, the same way the Media
+list handles it.
 If a request fails, those rows remain read-only and **Retry** repeats the failed
 request; the filter still shows the text you tried while the rows and range
 continue to describe the last applied scope. Empty outcomes remain distinct:
@@ -199,6 +203,14 @@ archive aborts instead of claiming a partial success.
 - **Advanced: System and User blocks** — exposes the complete structured
   block editor plus compiled previews, keywords, author, Collections, and
   retained history.
+- **Info: provenance and lifecycle** — the third mode button beside Basic
+  and Advanced. It does not edit anything: it states where the saved Prompt
+  came from and what state it is in ("Persisted source: Local · Prompt ·
+  \<definition state\>"), reminds you that "History and collection
+  memberships describe the saved Prompt; unsaved Basic or Advanced edits
+  remain draft-only until Save.", and shows the **Collections** membership
+  block that Advanced also carries. Your draft is untouched by switching
+  into and out of it. Disabled while a save is in flight.
 - **Remembered view** — choosing Basic or Advanced is saved for this profile.
   A Recipe, multi-block Prompt, compatibility/conversion state, version
   conflict, or record that cannot be safely updated opens in Advanced with a
@@ -292,10 +304,16 @@ The fixed action area shows only actions valid for the current lifecycle:
 | State | Visible actions |
 |---|---|
 | New | **Save prompt**, **Cancel** |
-| Saved and clean | **Use in Console**, **More actions** |
+| Saved and clean | **Use in Console** (in the header, see below), **More actions** |
 | Saved and changed | **Save changes**, **Discard changes** |
 | Version conflict | **Save as new**, **Reload** |
 | Mutation in progress | The relevant actions remain in place but are disabled with a readable reason |
+
+**Use in Console** sits in the editor **header**, on its own row directly
+under **Basic | Advanced | Info** — the same shape the Media Reader uses for
+its own Use in Console, and not at the bottom of the editor below every
+field. Its own row so the label paints in full even in the narrowest editor
+pane.
 
 **More actions** expands inline for a saved, clean item. It contains Export…,
 Copy Markdown, Duplicate, Collections, History, and Delete. Press **Escape** to
@@ -340,8 +358,10 @@ message `A Prompt variable name exceeds 64 characters.` or
 enabled.
 
 A System lane is always a separate choice. The checkbox reads
-`Replace the current session System prompt with this System lane` and starts
-**Off**. Turning it on may add System-only fields without discarding values you
+`Replace the current session System prompt with this System lane`, paints
+**☐** while off and **☑** while on (`[ ]` / `[x]` with ASCII glyphs), and
+starts **Off** — the word beside it says so too, so the state never depends on
+colour. Turning it on may add System-only fields without discarding values you
 already entered. **Apply** fills all active lanes; **Use original placeholders**
 applies the selected lanes unchanged; **Cancel** applies nothing. A System-only
 Prompt, including one whose User lane is blank, has no active lane until you
@@ -457,3 +477,20 @@ pattern — press opens Newest / Name with ✓ on the active one, a pick
 requests that exact scope at page 1, Escape cancels; the collection
 control's label dropped the cycle glyph — it opens the collection
 manager, a direct-pick surface, and never cycled.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): the editor's **Info** mode — a third
+button beside Basic and Advanced, carrying the persisted-source/
+definition-state line, the draft-vs-saved reminder, and the Collections
+membership block — shipped undocumented and is now described. Basic and
+Advanced are unchanged.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32074: the
+Prompt-variables checkbox paints ☐/☑ instead of an empty frame whose state was
+carried by colour alone, and **Use in Console** moved from the bottom of the
+editor into the header, on its own row directly under Basic/Advanced/Info.
+task-32067: a one-page prompt list drops its "Page 1 of 1" counter, boundary
+reasons and Previous/Next. Fix round 2: that header row now hides itself along
+with the button, instead of leaving an empty raised strip; and re-entering
+Media at an ordinary width no longer drops a pane priority the user just set
+with a grip.)*

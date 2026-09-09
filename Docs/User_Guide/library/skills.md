@@ -96,6 +96,14 @@ the accepted import's current state or actual result. A forced repeat submit
 is refused with `An import is already in progress.` The result stays available
 until you choose **Cancel**, open **Review…**, or begin a new import draft.
 
+If the import is still running after about three seconds, the line becomes
+`Inspecting/importing… · still working · Cancel` and a **Cancel** button
+appears under it. Pressing it stops the wait and leaves
+"Import cancelled · check the skills list before retrying." — the import
+itself runs on a worker thread that cannot be interrupted, so it may still
+have landed, which is why the receipt says to check rather than promising
+nothing happened.
+
 Chatbook inspects a folder or archive before importing it:
 
 - A package with one installable skill proceeds to import and trust review.
@@ -362,6 +370,12 @@ through (Esc also cancels the passphrase dialogs).
 
 ## Quirks & troubleshooting
 
+- **The "Chunking Lab | Try selected text" strip is not part of this
+  canvas.** It paints under the header on every Library canvas and opens a
+  full-screen developer tool for comparing chunking strategies; Escape does
+  not leave it. See [Library overview](../library.md); demoting it is
+  tracked as task-32064.
+
 - **Renaming isn't supported.** The Name field is locked on existing
   skills — create a new skill and delete the old one instead.
 - **Every import needs review**, even one you wrote yourself on another
@@ -416,3 +430,13 @@ five-column `<---`/`--->` run; opened live at 235x52.)*
 accepted skill import now updates the rail count **and** the mounted list in
 place — the list previously kept its old rows until you left the Skills row and
 came back.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073: the
+Library-wide "Chunking Lab | Try selected text" header strip, which paints
+on this canvas too, was undocumented everywhere; it is described once on
+the [Library overview](../library.md) and cross-referenced here. No other
+claim on this page changed.)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a skill
+import that outlives the patience window offers Cancel and never blocks
+leaving the screen).*

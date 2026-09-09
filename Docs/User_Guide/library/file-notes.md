@@ -76,6 +76,16 @@ Using compact **Back to navigator** does not reset it.
 |---|---|
 | **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
+| **Cancel** (folder change) | Appears beside **Change…** only while a folder change is running. Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
+
+While a folder change runs, the folder line reads `Changing folder…`. If it
+is still going after about three seconds it becomes `Changing folder… ·
+still working · Cancel`, and after 30 seconds it gives up on its own with
+"Folder change timed out · previous folder kept. Try again or choose a
+different folder." Either way the previously linked folder is untouched —
+unless the change had already finished saving when you cancelled, in which
+case the status says "Folder change finished before it could be stopped ·
+now linked to the new folder." and the new folder is the one in use.
 
 ### Edit and Manage
 
@@ -333,6 +343,7 @@ not available.
 | Esc (reload confirmation) | Cancel reload, preserve the draft and conflict, and return focus to the action that opened the confirmation |
 | Esc (Session Git panel) | Step back safely: row list → Files; commit form → cancel; commit review → edit message; candidate/remote check → cancel; push review → Back; active push/uncertain recovery check → Files while it continues; push result → session |
 | Esc (dialogs) | Close "File Notes folder details" or **Endpoint Details**; cancel the repository-trust or destination-authorization dialog |
+| Esc (folder change running) | Leaves Folder files for Database notes, exactly as it does when nothing is running — the folder change is abandoned and the previously linked folder is kept. The same applies to the "‹ Library / Notes" cue, the **Database** button, switching rail rows, the command palette and Ctrl+Q: a running folder change never blocks the way out |
 
 Folder Files does not register **Ctrl+S** and does not replace it with another
 save shortcut. File edits save automatically.
@@ -350,6 +361,12 @@ save shortcut. File edits save automatically.
   this page is the reference.
 
 ## Quirks & troubleshooting
+
+- **The "Chunking Lab | Try selected text" strip is not part of this
+  canvas.** It paints under the header on every Library canvas and opens a
+  full-screen developer tool for comparing chunking strategies; Escape does
+  not leave it. See [Library overview](../library.md); demoting it is
+  tracked as task-32064.
 
 - **Per-file caps: 8 MB and 2,000,000 characters.** Edits that would push a
   file past either limit are refused at save time. A body above 200,000
@@ -403,3 +420,13 @@ shell; Escape returns to Library notes)*
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
 Folder files mode's canvas states in-app that it edits the folder directly,
 unlike a managed Library relationship).*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073: the
+Library-wide "Chunking Lab | Try selected text" header strip, which paints
+on this canvas too, was undocumented everywhere; it is described once on
+the [Library overview](../library.md) and cross-referenced here. No other
+claim on this page changed.)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a folder
+change shows "still working · Cancel" after three seconds, times out after
+30, and never blocks Escape, the back cue or Quit).*

@@ -825,6 +825,15 @@ clears the query cache. Pinned by
 `Tests/UI/test_library_rag_rechunk_action.py`, and
 `Tests/RuntimePolicy/test_rechunk_policy_pin.py`.)*
 
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): `enter`, `o` and `u` are bound and
+advertised in the footer, and each one gates on a focused
+`.library-rag-result-card` — but nothing gives an evidence card focus by
+keyboard, so the advertised flow is unreachable without a mouse (14
+consecutive Tabs never landed on a card and eventually left Library for
+the nav bar). The keys themselves are unchanged; the table now says which
+half works today. The fix is task-32053.)*
+
 *Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32053: the
 focused evidence card now paints a left-edge block instead of only swapping
 its border colour — the generic focus outline had been painting over the

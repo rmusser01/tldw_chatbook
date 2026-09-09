@@ -92,7 +92,10 @@ from ...Library.export_progress import (
     ExportProgressThrottle,
     format_export_progress_line,
 )
-from ...Library.collections_capture_models import CaptureIdentity
+from ...Library.collections_capture_models import (
+    CaptureIdentity,
+    CapturePageRequest,
+)
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
@@ -124,6 +127,12 @@ from ...Library.library_export_state import (
     LibraryExportFormState,
     build_library_export_form_state,
     format_last_export_line,
+)
+from ...Library.library_structural_wait import (
+    STRUCTURAL_WAIT_PATIENCE_SECONDS,
+    WAIT_OWNER_EXPORT,
+    WAIT_OWNER_SKILL_IMPORT,
+    StructuralWait,
 )
 from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
@@ -453,6 +462,7 @@ from ...Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderTargetDialog,
 )
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
+from ...Widgets.glyph_fallback import ascii_glyph_mode
 from ...Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
 )
@@ -2577,7 +2587,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda: self._library_skills_import_path
             ),
             library_skills_import_status_accessor=(
-                lambda: self._library_skills_import_status
+                # task-32055: the RENDER path -- a live structural wait owns
+                # this line while the import runs, the receipt owns it after.
+                lambda: self._library_skills_import_status_line()
             ),
             library_skills_import_review_name_accessor=(
                 lambda: self._library_skills_import_review_name
@@ -3416,6 +3428,10 @@ class LibraryScreen(BaseAppScreen):
             if collections_capture_scope is not None
             else None
         )
+        # task-32057 AC#2: the rail's Collections count before the canvas
+        # has ever been opened. ``None`` until the first prefetch lands, so
+        # the row's ``count_pending`` placeholder rule still applies.
+        self._library_collections_prefetched_total: int | None = None
         self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
             self._collections_state.reader_preferences,
@@ -3747,6 +3763,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_consent: _LibraryIngestStartConsent | None = None
         self._library_external_submit_busy: bool = False
         self._library_external_submit_status: str = ""
+        #: task-32055: the screen-owned structural waits (skill import,
+        #: export write), one slot per owner -- a background export and a
+        #: skill import can be in flight at once, and neither may render or
+        #: cancel the other's. The File Notes folder change keeps its own
+        #: wait on the workspace, which also owns every way out of it.
+        self._library_structural_waits: dict[str, StructuralWait] = {}
         self._library_model_install_progress_label: str = ""
         self._library_model_install_progress_owner: str | None = None
         #: The 5s first-load failsafe armed in ``on_mount``; retained so
@@ -4794,6 +4816,13 @@ class LibraryScreen(BaseAppScreen):
                 force=True,
                 immediate=True,
             )
+        # task-32055: repeat the restore once layout has settled -- the
+        # caller used to queue this itself with a ``receipt.focus`` that
+        # does not exist (it raised instead, taking the whole Escape/back
+        # handler with it). The identity is the one built above, so the
+        # settled pass restores the same row AND its scroll offset, which
+        # the first pass loses to the post-switch layout.
+        self._queue_library_notes_settled_focus_restore(focus, guard)
 
     async def _reload_library_notes_browse_return_receipt(
         self,
@@ -6533,6 +6562,93 @@ class LibraryScreen(BaseAppScreen):
             return
         shell.sync_layout(layout)
         self._media_state.reader_layout = layout
+        self._sync_library_media_rail_return(layout, shell.region.width)
+
+    def _library_media_rail_return_visible(
+        self, layout: MediaReaderEffectiveLayout, width: int
+    ) -> bool:
+        """Whether the Media stage needs its own named way back to the rail.
+
+        task-32065: below the ordinary single-stage floor the Library pane
+        cannot be co-present, so the rail is otherwise reachable only through
+        a one-cell grip that says nothing about where it leads. Above the
+        floor the rail is one pane away and the control would be noise.
+
+        Args:
+            layout: The layout the shell is showing.
+            width: The shell's width in cells; a not-yet-measured 0 is not an
+                emergency (``ordinary_emergency_required`` rejects it).
+
+        Returns:
+            Whether the "‹ Library" control belongs on screen.
+        """
+        return (
+            width > 0
+            and not layout.library_open
+            and layout.items_open
+            and ordinary_emergency_required(width)
+        )
+
+    def _build_library_media_rail_return(self) -> Button:
+        """Build the Media stage's named way back to the rail (task-32065).
+
+        One builder for both the compose and the remount below, so the label
+        (and its ASCII fallback), the id and the initial visibility cannot
+        drift apart.
+
+        Returns:
+            The "‹ Library" control, already showing or hidden.
+        """
+        control = Button(
+            "< Library" if ascii_glyph_mode() else "‹ Library",
+            id="library-media-rail-return",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        control.display = self._library_media_rail_return_visible(
+            self._media_state.reader_layout, self.size.width
+        )
+        return control
+
+    def _sync_library_media_rail_return(
+        self, layout: MediaReaderEffectiveLayout, width: int
+    ) -> None:
+        """Patch the "‹ Library" control's visibility in place (task-32065).
+
+        Args:
+            layout: The layout just applied to the shell.
+            width: The shell's settled width in cells.
+        """
+        visible = self._library_media_rail_return_visible(layout, width)
+        controls = self.query("#library-media-rail-return")
+        if controls:
+            controls.first(Button).display = visible
+            return
+        if not visible:
+            return
+        # Fix round 1: every route swap replaces the WHOLE child list of
+        # ``#library-canvas`` (four sites do ``remove_children(host.children)``
+        # then mount the new route), so this control is detached with the
+        # outgoing canvas -- live at 60x24 the second visit to Media had the
+        # list but no way back. The ordinary shell escapes that by nesting its
+        # route in ``#library-canvas-route-content``; the Media items host has
+        # no such wrapper, so the control puts itself back instead.
+        try:
+            host = self.query_one("#library-canvas", Vertical)
+        except (NoMatches, QueryError):
+            return
+        host.mount(self._build_library_media_rail_return(), before=0)
+
+    @on(Button.Pressed, "#library-media-rail-return")
+    def handle_library_media_rail_return(self, event: Button.Pressed) -> None:
+        """Reopen the Library pane through the grip's own seam (task-32065).
+
+        Args:
+            event: The ``Button.Pressed`` from the "‹ Library" control; stopped
+                here so the canvas-action handlers do not also see it.
+        """
+        event.stop()
+        self.post_message(PaneToggleRequested("library"))
 
     def _sync_library_media_reader_layout_from_shell(
         self,
@@ -6626,6 +6742,7 @@ class LibraryScreen(BaseAppScreen):
             )
         shell.sync_layout(layout)
         self._media_state.reader_layout = layout
+        self._sync_library_media_rail_return(layout, width)
         if layout_changed:
             receipt = self._library_pending_list_entry_media_return
             if self._library_media_return_candidate(receipt):
@@ -9648,11 +9765,76 @@ class LibraryScreen(BaseAppScreen):
                     immediate=True,
                 )
 
+    def _begin_library_structural_wait(
+        self,
+        label: str,
+        owner: str,
+        *,
+        cancel: Callable[[], None] | None = None,
+        repaint: Callable[[], None] | None = None,
+    ) -> StructuralWait:
+        """Start the screen's one structural wait and arm its patience repaint.
+
+        Args:
+            label: What is happening, without a trailing ellipsis.
+            owner: Which surface started it (only that surface renders it).
+            cancel: How to abandon the operation, when it can be abandoned.
+            repaint: Called once the patience window closes, so the surface
+                can re-render the now-longer status line.
+
+        Returns:
+            The started wait.
+        """
+        wait = StructuralWait(
+            label=label,
+            started_at=time.monotonic(),
+            cancel=cancel,
+            owner=owner,
+        )
+        self._library_structural_waits[owner] = wait
+        if repaint is not None:
+            # One shot: the line only changes once, when patience runs out.
+            self.set_timer(STRUCTURAL_WAIT_PATIENCE_SECONDS, repaint)
+        return wait
+
+    def _library_structural_wait_for(self, owner: str) -> StructuralWait | None:
+        """Return ``owner``'s in-flight wait, if it has one."""
+        return self._library_structural_waits.get(owner)
+
+    def _end_library_structural_wait(self, owner: str) -> None:
+        """Clear the wait once ``owner``'s operation has settled."""
+        self._library_structural_waits.pop(owner, None)
+
+    @on(Button.Pressed, "#library-structural-wait-cancel")
+    def _library_structural_wait_cancel_pressed(self, event: Button.Pressed) -> None:
+        """Abandon the skill import behind the Import row's Cancel.
+
+        The File Notes workspace mounts a button with this id too, but
+        handles and stops it itself (it owns that wait), so the only press
+        that reaches the screen is the Skills Import row's; the export ships
+        its own ``#library-export-cancel``.
+        """
+        event.stop()
+        wait = self._library_structural_wait_for(WAIT_OWNER_SKILL_IMPORT)
+        if wait is not None:
+            wait.request_cancel()
+
     async def _flush_active_file_notes(self) -> bool:
-        """Delegate the common leave guard only while Files owns Notes."""
+        """Delegate the common leave guard only while Files owns Notes.
+
+        task-32055: this is the one seam Escape, the "‹ Library / Notes"
+        cue, the Database strip button and the app's own navigation flush
+        all reach, so it is where a structural wait is abandoned. Before
+        this, a folder change held ``_root_transitioning`` for as long as
+        its scan took and ``flush_pending_work`` refused for exactly that
+        long -- which is how a wedged folder change swallowed every exit.
+        The wait still gates the WRITE (``set_root`` refuses to start a
+        second change), never the way out.
+        """
         if not self._file_notes_active():
             return True
         assert self._notes_state.file_notes_workspace is not None
+        self._notes_state.file_notes_workspace.cancel_structural_wait()
         return await self._notes_state.file_notes_workspace.flush_pending_work()
 
     def _acquire_file_notes_transition(
@@ -10032,6 +10214,78 @@ class LibraryScreen(BaseAppScreen):
             # pay for an off-thread keyring read it has no use for).
             self._refresh_library_skills_trust_posture()
 
+    async def _read_library_collections_count(self) -> None:
+        """Read the Collections capture total for the rail row.
+
+        task-32057 AC#2: the capture count rides
+        ``LibraryCollectionsCaptureController.state.exact_total``, which
+        only exists once the canvas has loaded a page -- so the rail
+        painted a bare "Collections" beside "Media (11)"/"Notes (7)",
+        indistinguishable from Search / RAG, whose count is absent by
+        design.
+
+        Three deliberate constraints:
+
+        * It reads page 1 through the SAME scope-service enumerator the
+          canvas lists from, but NOT through the reader controller -- a
+          count read must not pre-select a capture or arm an applied scope
+          for the Continue receipt, i.e. decide any part of a visit the
+          user has not made yet. This is the UNFILTERED page-1 total, so it
+          answers only "how much is in Collections"; once the canvas owns a
+          scope, its own total is the authority and this value is not
+          consulted (see ``_build_library_shell_input``).
+        * It runs INSIDE the local-source snapshot pass rather than as its
+          own worker, so the count arrives with every other count and the
+          screen still reconciles exactly once per snapshot
+          (``Tests/UI/test_library_entry_compose_once.py``) -- started
+          alongside that pass's gather, not ahead of it, so its deadline
+          overlaps the gather's instead of stacking on top (fix round 2,
+          finding 3).
+        * Every path that does not produce a fresh total CLEARS the stored
+          one. ``CollectionsCaptureScopeService.deactivate()`` nulls the
+          active authority on an authority switch or teardown, and a
+          retained number would go on painting the previous authority's
+          count under the new one's name (fix round 1, finding 2).
+
+        The read carries its OWN deadline. It sits outside the shared
+        gather below (whose all-or-nothing failure branches would drop this
+        count whenever an unrelated source seam failed), so it would
+        otherwise be the one unbounded await in the snapshot pass -- and in
+        server mode ``list_page`` is an HTTP round trip with no timeout of
+        its own, which would hang every rail count in "Checking existing
+        Library content…" with no deadline sentence and no Retry (fix round
+        1, finding 3). A timeout is treated exactly like a failed read.
+        """
+        collections = self._collections_controller
+        controller = collections._ensure_library_collections_capture_controller()
+        scope_service = (
+            controller.scope_service if controller is not None else None
+        )
+        authority = getattr(scope_service, "active_authority", None)
+        if authority is None:
+            self._library_collections_prefetched_total = None
+            return
+        try:
+            page = await asyncio.wait_for(
+                scope_service.list_page(CapturePageRequest(authority.key)),
+                timeout=LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            # Reason, not raw text: in server mode this seam is an HTTP
+            # round trip, and an httpx exception's own message carries the
+            # server URL. ``_retry_failure_reason`` is the shared leak rule
+            # already applied to the Media callout -- it keeps an OS/SQLite
+            # message (paths redacted, 80 chars) and reduces anything else
+            # to its KIND, so the log gains context without a URL or a
+            # private path reaching a persistent sink.
+            logger.debug(
+                "Library Collections count read failed: {}",
+                _retry_failure_reason(exc),
+            )
+            self._library_collections_prefetched_total = None
+            return
+        self._library_collections_prefetched_total = page.total
+
     def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
         return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
 
@@ -10130,11 +10384,27 @@ class LibraryScreen(BaseAppScreen):
             return None
 
     def _library_entry_canvas_owner(self) -> Widget | None:
-        """Return the active route child without treating recovery chrome as one."""
+        """Return the active route child without treating recovery chrome as one.
+
+        task-32065: "without treating recovery chrome as one" used to rest on
+        that chrome being hidden. The Media items host has no
+        ``#library-canvas-route-content`` wrapper to keep chrome out of the
+        route's own container, so its VISIBLE "‹ Library" became the route
+        owner -- neither a route nor a focus-restore target. (The ordinary
+        ``LibraryEmergencyReturn`` needs no such clause: it is a sibling of
+        that wrapper, so it is never among this host's children.)
+        """
         host = self._library_entry_canvas_host()
         if host is None:
             return None
-        return next((child for child in host.children if child.display), None)
+        return next(
+            (
+                child
+                for child in host.children
+                if child.display and child.id != "library-media-rail-return"
+            ),
+            None,
+        )
 
     def _capture_library_entry_focus(self) -> LibraryEntryFocusIdentity | None:
         """Capture a focused canvas descendant by stable control or row identity."""
@@ -11660,6 +11930,24 @@ class LibraryScreen(BaseAppScreen):
         DestinationRecoveryState | None,
         dict[str, int | None],
     ]:
+        # task-32057 AC#2: the Collections capture total is one more local
+        # source count, read here so it lands with the rest of the snapshot
+        # and the screen still reconciles exactly ONCE per snapshot pass
+        # (``Tests/UI/test_library_entry_compose_once.py``). It is kept out
+        # of the shared gather below on purpose: that gather's deadline and
+        # its all-or-nothing failure branches would drop the count whenever
+        # an UNRELATED source seam fails, which is precisely the "counts
+        # disagree" complaint this fixes. It carries its own
+        # ``asyncio.wait_for`` on the same constant so being outside that
+        # gather does not mean being unbounded.
+        #
+        # Fix round 2, finding 3: it runs CONCURRENTLY with that gather
+        # rather than ahead of it. Awaited serially, the two equal deadlines
+        # stacked -- a stalled Collections read plus a stalled source seam
+        # took ~10 s while the resulting message says the pass waited 5 s.
+        # Started here and awaited below, the two deadlines overlap and the
+        # count keeps its independent degradation.
+        count_task = asyncio.ensure_future(self._read_library_collections_count())
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
         conversation_service = getattr(
@@ -11705,6 +11993,7 @@ class LibraryScreen(BaseAppScreen):
         if not all(
             callable(call) for call in (list_notes, list_media, list_conversations)
         ):
+            await count_task
             return (
                 empty_records,
                 empty_counts,
@@ -11861,6 +12150,11 @@ class LibraryScreen(BaseAppScreen):
                 failure_state,
                 empty_study_counts,
             )
+        finally:
+            # The count read is bounded by its own deadline, started with
+            # the gather above, so this settles it without extending the
+            # pass -- on every branch, including the returns above.
+            await count_task
 
         notes_result, media_result, conversation_result, *optional_results = (
             gathered_results
@@ -13496,7 +13790,16 @@ class LibraryScreen(BaseAppScreen):
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
+            # task-32065: the named way back to the rail for the widths where
+            # the Library pane cannot be co-present. Mounted always, shown by
+            # ``_sync_library_media_rail_return`` -- the layout it reads is
+            # only settled after this compose. A plain Button, NOT
+            # ``LibraryEmergencyReturn``: that widget's visibility belongs to
+            # the ordinary-route emergency stage, which force-hides every one
+            # of them whenever an adaptive reader shell is mounted.
+            media_rail_return = self._build_library_media_rail_return()
             items_host = Vertical(
+                media_rail_return,
                 self._build_library_media_active_child(),
                 id="library-canvas",
                 classes="destination-workbench-pane",
@@ -13764,7 +14067,7 @@ class LibraryScreen(BaseAppScreen):
                             filter_value=self._skills_state.filter,
                             import_open=self._library_skills_import_open,
                             import_path=self._library_skills_import_path,
-                            import_status=self._library_skills_import_status,
+                            import_status=self._library_skills_import_status_line(),
                             import_review_name=self._library_skills_import_review_name,
                             import_in_flight=self._library_skills_import_in_flight,
                             import_package_kind=(
@@ -13862,11 +14165,22 @@ class LibraryScreen(BaseAppScreen):
         collections_state = (
             collections_controller.state if collections_controller is not None else None
         )
-        collections_count = (
-            collections_state.exact_total
-            if collections_state is not None
-            else None
-        )
+        if collections_state is None or collections_state.page is None:
+            # task-32057 AC#2: until the canvas has loaded a page at least
+            # once, the rail reads the unfiltered prefetched total so the
+            # row never paints a countless "Collections" beside its counted
+            # siblings.
+            #
+            # Fix round 1, finding 1: the gate is "has NEVER loaded a page",
+            # not "has no total right now". ``exact_total`` is also None
+            # while a page is loading or stale, so gating on it substituted
+            # the UNFILTERED total on every page turn and scope switch --
+            # "Favorites (2)" flashed the whole-library count mid-load --
+            # and gave a stale page a number the canvas deliberately
+            # withholds.
+            collections_count = self._library_collections_prefetched_total
+        else:
+            collections_count = collections_state.exact_total
         counts = self._local_source_counts
         known = self._local_source_total_known
         counts_loading = not self._library_loaded and not self._library_lookup_error
@@ -17571,7 +17885,7 @@ class LibraryScreen(BaseAppScreen):
             destination=str(form.get("destination", "")),
             destination_exists=bool(form.get("destination_exists", False)),
             running=self._export_state.running,
-            status_line=self._export_state.status,
+            status_line=self._library_export_status_line(),
             error_line=self._export_state.error,
             last_export_line=last_export_line,
             quality_choices_visible=self._export_state.quality_choices_visible,
@@ -17599,6 +17913,9 @@ class LibraryScreen(BaseAppScreen):
         event_obj = self._export_state.cancel_event
         if event_obj is not None:
             event_obj.set()
+        # task-32055: the wait is over the moment the user cuts it short --
+        # the line below is now the truthful one.
+        self._end_library_structural_wait(WAIT_OWNER_EXPORT)
         self._export_state.status = "Cancelling…"
         self._refresh_library_export_status_line()
 
@@ -17876,6 +18193,20 @@ class LibraryScreen(BaseAppScreen):
     def _refresh_library_export_status_line(self) -> None:
         return self._export_controller._refresh_library_export_status_line()
 
+    def _library_export_status_line(self) -> str:
+        """Render the Export quiet line: the status, plus the wait's suffix.
+
+        task-32055: the run's own status -- the per-phase progress tick
+        (``Collecting notes…  3/12``) while it has one -- always owns this
+        line; a slow bundle write only appends "still working · Cancel" to
+        whatever it currently says.
+        """
+        status = self._export_state.status
+        wait = self._library_structural_wait_for(WAIT_OWNER_EXPORT)
+        if wait is None or not self._export_state.running:
+            return status
+        return wait.with_patience_suffix(status, time.monotonic())
+
     def _update_library_export_canvas_after_run(self) -> None:
         """Targeted DOM update once an export run finishes (success or failure).
 
@@ -17896,6 +18227,7 @@ class LibraryScreen(BaseAppScreen):
         update always finds them, mirroring the empty-scope helper's own
         always-mounted precedent from Task 2's fix.
         """
+        self._end_library_structural_wait(WAIT_OWNER_EXPORT)
         if (
             not self.is_mounted
             or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT
@@ -19659,13 +19991,17 @@ class LibraryScreen(BaseAppScreen):
                 # every other "enter/return to a list" seam does.
                 self._arm_library_list_entry_focus()
             elif retained_switch:
+                # task-32055: this used to queue a second, settled restore
+                # with ``receipt.focus`` -- an attribute
+                # ``LibraryNotesTreeReceipt`` has never had, so leaving
+                # Files with a captured browse receipt raised
+                # ``AttributeError`` and killed the Escape/back handler
+                # outright (found the moment Escape stopped being swallowed
+                # by a folder change). The restore below already rebuilds
+                # the focus identity from the receipt and queues it.
                 self.call_later(
                     self._restore_library_notes_browse_return_receipt,
                     receipt,
-                )
-                self.call_later(
-                    self._queue_library_notes_settled_focus_restore,
-                    receipt.focus,
                 )
             else:
                 self.call_after_refresh(
@@ -20152,6 +20488,33 @@ class LibraryScreen(BaseAppScreen):
                 self._present_library_skills_import_choice_if_needed
             )
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            # task-32065 (fix round 1): selecting a destination resolves THAT
+            # destination's stage. The resolved layout carries a
+            # ``priority_pane`` the resolver inherits on every later resolve,
+            # so one "‹ Library" (or Library grip) press below the
+            # single-stage floor pinned rail-plus-empty-Reader for the rest of
+            # the visit -- critique #8's finding again, with the return
+            # control hidden by its own rule. Pane PREFERENCES are untouched
+            # (a manual open/close still persists); only the transient
+            # starved-layout hint is cleared, and the resolver re-derives it.
+            #
+            # task-32065 (fix round 2): bounded to that same below-64
+            # emergency band. At an ordinary width (100 columns, say) Library
+            # and Items can each legitimately need the whole stage to
+            # themselves too -- opening Library there closes Items and sets
+            # this same ``priority_pane`` deliberately, not as a starved-width
+            # artifact. Clearing it unconditionally wiped that choice too: one
+            # "Browse Media" press closed the pane the user had just opened.
+            try:
+                media_shell_width = self.query_one(
+                    "#library-media-reader-shell"
+                ).region.width
+            except (NoMatches, QueryError):
+                media_shell_width = 0
+            if media_shell_width == 0 or media_shell_width < LIBRARY_EMERGENCY_WIDTH:
+                self._media_state.reader_layout = dataclasses.replace(
+                    self._media_state.reader_layout, priority_pane=None
+                )
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self._request_library_media_browse(
                 self._library_media_browse_controller.mutation_refresh_scope,
@@ -22433,30 +22796,87 @@ class LibraryScreen(BaseAppScreen):
                 "An import is already in progress."
             )
             return
+        # task-32055: an import that outlives the patience window says so
+        # and offers a way to stop waiting on it.
+        self._begin_library_structural_wait(
+            "Inspecting/importing",
+            WAIT_OWNER_SKILL_IMPORT,
+            cancel=coordinator.cancel_running_import,
+            repaint=self._repaint_library_skills_import_status,
+        )
         _sync_library_canvas(self, "skills")
         self.app.run_worker(
             coordinator.run(raw_path, runtime_app=self.app),
             group=LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
         )
 
-    def _apply_library_skills_import_status(self, text: str) -> None:
-        """Set and patch the Import row's one-line outcome in place."""
-        self._library_skills_import_status = text
+    def _library_skills_import_status_line(self) -> str:
+        """Render the Import row's line: the receipt, plus the wait's suffix.
+
+        task-32055: the row's own status owns this line -- including an
+        in-flight refusal ("An import is already in progress.") -- and a
+        slow import only appends "still working · Cancel" to it.
+        """
+        status = self._library_skills_import_status
+        wait = self._library_structural_wait_for(WAIT_OWNER_SKILL_IMPORT)
+        if wait is None or not self._library_skills_import_in_flight:
+            return status
+        return wait.with_patience_suffix(status, time.monotonic())
+
+    def _repaint_library_skills_import_status(self) -> None:
+        """Re-render the Import row once the wait stops being quiet.
+
+        Runs off a timer, so the row it was armed on may be long gone:
+        leaving Skills mid-import is supported. Without the same guard the
+        patch below uses, this would reach whatever canvas is on screen --
+        the File Notes workspace mounts a button with the very same id.
+        """
         if (
-            not self.is_mounted
-            or self.app.screen is not self
-            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
+            not self._library_skills_import_in_flight
+            or not self._library_skills_import_row_visible()
         ):
+            return
+        self._patch_library_skills_import_status_line(
+            self._library_skills_import_status_line()
+        )
+        try:
+            self.query_one("#library-structural-wait-cancel", Button).display = True
+        except (NoMatches, QueryError):
+            # No button to reveal on this row: nothing to repaint, and a
+            # whole-canvas recompose would only destroy live state.
+            pass
+
+    def _library_skills_import_row_visible(self) -> bool:
+        """Whether this screen's Skills Import row is the one on screen."""
+        return (
+            self.is_mounted
+            and self.app.screen is self
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+        )
+
+    def _patch_library_skills_import_status_line(self, text: str) -> None:
+        """Patch only the mounted Import row status widget."""
+        if not self._library_skills_import_row_visible():
             return
         try:
             self.query_one("#library-skills-import-status", Static).update(text)
         except (NoMatches, QueryError):
             _sync_library_canvas(self, "skills")
 
+    def _apply_library_skills_import_status(self, text: str) -> None:
+        """Set and patch the Import row's one-line outcome in place."""
+        self._library_skills_import_status = text
+        self._patch_library_skills_import_status_line(
+            self._library_skills_import_status_line()
+        )
+
     def _present_library_skills_import_snapshot(self, *, refresh_sources: bool) -> None:
         """Project the app-owned receipt onto only the current Library row."""
         if refresh_sources:
             self._refresh_local_source_snapshot()
+        if not self._library_skills_import_in_flight:
+            # The receipt below is terminal: the wait is over either way.
+            self._end_library_structural_wait(WAIT_OWNER_SKILL_IMPORT)
         if (
             self.is_mounted
             and self.app.screen is self
@@ -31917,6 +32337,15 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.editing_analysis = False
             self._close_library_media_find()
             self._media_state.content_mode = "raw"
+            # task-32065: the row path reclaims the Reader's width the moment
+            # the view flips (see ``_restore_library_media_reader_width_on_open``
+            # in the selection seam), and this branch claims to mirror that
+            # state-set exactly -- it did not. With task-31979 the gap cost a
+            # few columns; below the single-stage floor it costs the whole
+            # stage, leaving a deep-linked item in an 18-cell Reader beside the
+            # list it was opened from. After the refresh, because the surface
+            # this width belongs to is composed by the callers below.
+            self.call_after_refresh(self._restore_library_media_reader_width_on_open)
             self.run_worker(
                 self._refresh_library_media_detail(
                     record_id,

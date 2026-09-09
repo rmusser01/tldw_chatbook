@@ -247,7 +247,7 @@ destination, or leaving the Import canvas cancels pending consent.
 | "quality: thumbnail" | Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, hovering the button always shows a tooltip naming the same reason it's disabled (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
-| "Cancel" | Visible only while an export is running; stops it. |
+| "Cancel" | Visible only while an export is running; stops it. The quiet line above keeps reporting progress throughout ("Exporting (N items)…" at first, then the phase it's on — "Collecting notes…  3/12", "Packaging archive…  5/9 files"), and once the write has run for about three seconds that same line gains " · still working · Cancel" pointing at this button. Pressing it leaves "Cancelling…" until the run reports back. |
 | "Last export: …" | Appears after the first successful export this session; names the exact path written and how long ago, and stays until the next successful export replaces it. |
 
 ## Common tasks
@@ -288,7 +288,9 @@ destination, or leaving the Import canvas cancels pending consent.
    collection. Choose the rail's **Export** row for `Everything` when the bundle
    should also include media, conversations, and notes.
 7. **Retry a failed job** — Find the "✗ failed" row in the Queue and press
-   "Retry"; the new attempt shows a " · retry 1" suffix. No Retry button
+   "Retry"; the new attempt shows a **" · attempt 2"** suffix (then
+   " · attempt 3", and so on — the label counts attempts, not retries, so
+   the first retry reads 2). No Retry button
    means the failure is permanent (unsupported type or missing file) — fix
    the source and start a fresh import, and use "Dismiss" to drop the row.
    A URL your web-security settings refuse fails with a plain receipt:
@@ -429,8 +431,16 @@ imported items afterwards.
   timestamps, deleted rows, retained history, collections, and usage state;
   import assigns ordinary destination-owned identity and lifecycle state. Legacy
   single-`content` Prompt records remain accepted.
-- **"Show details" is your first stop on a confusing failure** — it opens
-  the full error behind the shortened reason on the row.
+- **"Show details" is your first stop on a confusing failure** — when it is
+  there. The row action appears **only when the failure carried a detail to
+  show**; a failure whose reason arrived with nothing behind it offers no
+  "Show details" at all. Infrastructure failures that stop the import
+  worker before it reads a single file are the case you are most likely to
+  meet: they surface as a raw system message on the row ("Parse pool could
+  not start: [Errno 28] No space left on device", which on macOS usually
+  means exhausted POSIX semaphores rather than a full disk) with no details
+  row and no plain-language remedy. Mapping those to a readable reason with
+  a next step is tracked as task-32054.
 
 —
 *Verified against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: the rail
@@ -863,6 +873,18 @@ enumerator kept a `client_id` filter the Library's own browse query had
 dropped, so a library seeded or synced by another client reported "0
 conversations" against a rail showing six.)*
 
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): the Library import queue's retry
+suffix is **" · attempt N"** (`library_ingest_state.py`), not the
+" · retry 1" this page claimed — the " · retry N" form belongs to Home's
+Active work card, a different surface. And **"Show details"** ships but is
+conditional on the failed job carrying an error detail, so the pool-start
+failures critique #8 hit showed a raw errno with no details row; the copy
+fix for those is task-32054. Import could not be exercised end to end on
+the review host (every local import failed at process-pool start there),
+so both were verified against the shipping code paths rather than a live
+run; every other claim on this page is unchanged.)*
+
 *Verified against fix/library-crit8-recovery-copy — 2026-09-08 (task-32054:
 failed rows now state a plain-language reason with its next step instead of
 a raw errno; "Show details" is offered on every failed row and reveals the
@@ -870,3 +892,7 @@ underlying text; an unsupported file stays "○ skipped" with its own reason
 and no Retry even when the parse worker never started; a batch reports ONE
 "Import finished — …" toast instead of one per file; the retry suffix reads
 " · retry 1", matching this page and Home.)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: the export
+bundle write reports "still working · Cancel" past three seconds, beside the
+Cancel button it already shipped).*
