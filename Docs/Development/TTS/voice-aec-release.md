@@ -15,9 +15,17 @@ its existing corpus gate. Software ABI checks do not qualify a device or release
 the packaged qualification manifest remains unqualified.
 
 The governing architecture is [ADR-098](../../../backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md).
-The reviewed WebRTC revision, closure, Abseil pin, license inventory, and empty patch
-series are recorded under `native/voice_aec/vendor/webrtc/`. A vendor update is a new
-security and legal review, not a routine dependency bump.
+The reviewed WebRTC revision, closure, Abseil pin, license inventory, and declared
+hash-pinned patch series are recorded under `native/voice_aec/vendor/webrtc/`.
+A vendor update is a new security and legal review, not a routine dependency bump.
+
+Windows Release wheels statically link the MSVC runtime in both the WebRTC and
+binding targets, preserving the single-extension archive policy. Do not bundle
+or silently exclude repair-discovered runtime DLLs. Keep native allocation
+ownership inside the extension; debug CRT builds are not redistributable.
+Static runtime security updates require rebuilding and requalifying the wheels
+with an appropriately licensed, supported toolchain; they do not arrive through
+an independently updated private DLL. See ADR-098 for the boundary rationale.
 
 The pybind11 3.1.0 binding headers are independently pinned with
 `pybind11==3.1.0`. The checked-in

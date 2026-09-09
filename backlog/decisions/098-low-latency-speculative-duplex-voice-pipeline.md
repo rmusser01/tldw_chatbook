@@ -133,6 +133,23 @@ file-descriptor protection with a small session-owned spawn worker.
    transitive `winmm` linkage, matching the pinned upstream timeutils target.
    Winmm remains an operating-system library, not a bundled wheel payload or a
    new third-party dependency; no DLL/archive validation rule is relaxed.
+   To preserve the single-static-extension wheel contract, both the WebRTC and
+   binding targets explicitly select the static MSVC runtime (/MT for Release,
+   /MTd for Debug) through CMake's target-level
+   [runtime property](https://cmake.org/cmake/help/v3.20/prop_tgt/MSVC_RUNTIME_LIBRARY.html).
+   A static WebRTC
+   archive alone does not prevent a dynamically linked C++ runtime DLL. Do not
+   admit a repair-discovered redistributable or exclude a required DLL merely
+   to pass archive validation. Native allocations stay owned and destroyed in
+   the extension; bytes/dicts and borrowed-buffer C callbacks do not transfer
+   [CRT-owned resources](https://learn.microsoft.com/en-us/cpp/c-runtime-library/potential-errors-passing-crt-objects-across-dll-boundaries?view=msvc-170).
+   Future cross-module allocation or STL ownership changes
+   require a new compatibility review. Pinned pybind11 distinguishes static and
+   dynamic runtime ABI keys, but that is not universal cross-CRT safety proof.
+   Static runtime servicing requires rebuilt and requalified wheels with an
+   appropriately licensed, supported toolchain. Debug CRTs are not redistributed.
+   These rules make the existing static packaging policy explicit; source pins,
+   exception behavior, notices, qualification gates and archive checks stay intact.
    No synthetic probabilistic confidence is
    treated as native evidence.
 

@@ -146,6 +146,26 @@ The constructor audit also required lazy creation behind the existing gateway re
     boundary; this restores the upstream system link, not a new runtime choice.
     Obtain a focused review, then use only normal automatic PR CI for native
     link/import proof. No local build/load, manual workflow or merge.
+13. Run `34303873079` at `f063035853` passes all three Windows wheel builds,
+    bindings and installed corpus tests, then correctly rejects a private
+    `msvcp140` DLL bundled by repair. CMake's default dynamic CRT choice did not
+    implement the existing single-static-extension packaging policy. After the
+    read-only runtime and allocation-boundary audits, set MSVC_RUNTIME_LIBRARY
+    consistently on both `webrtc_aec3` and `_native`, inside an MSVC-only block
+    after both targets exist: `MultiThreaded$<$<CONFIG:Debug>:Debug>` (Release
+    /MT, Debug /MTd). Use the existing CMake property, not global flags, a DLL
+    allowlist/exclusion or a redistributable prerequisite. Keep all source,
+    patch, definition, ownership, exception, SIMD and archive-policy bytes.
+    ADR required: no new ADR; amend existing ADR-098 to make its static packaging
+    policy's runtime and servicing consequences explicit. Separate CRT instances
+    must not exchange allocation ownership; the current bytes/dict/C callback
+    boundary preserves that rule. Debug CRT builds are not release payloads;
+    statically linked runtime security updates require rebuilding/requalification.
+    Add one file-only RED/GREEN guard for MSVC scope, both target names, property
+    value and placement, with only adjacent linkage/platform controls. Root also
+    corrects the release guide's stale empty-patch wording. Focused independent
+    review and normal automatic CI must prove native imports and unchanged
+    archive validation. No local native/CMake/full-suite or manual CI/merge.
 
 ## Final root-owned handoff
 
@@ -292,3 +312,23 @@ qualification or archive-policy bytes changed. These are file-level proofs;
 normal automatic Windows CI must establish native link/import success. The
 focused review and next automatic run remain required before final handoff.
 No local native execution, full suite, live audio, manual workflow or merge ran.
+
+## Fourth automatic CI follow-up — 2026-09-08
+
+Published `f063035853` passes all four non-Windows native jobs and every
+non-native check. Windows builds, repairs and tests all three Python wheels,
+including binding and installed corpus checks, then correctly fails the final
+archive check for a private MSVCP runtime DLL. The Winmm repair is proven.
+The read-only runtime diagnosis confirms CMake's default dynamic runtime and
+the exact two-target static property; a separate source audit checks allocation
+ownership. These justify step 13 without relaxing the archive policy.
+
+Commit `d3966073ae` implements only the property and its regression. One expected
+RED precedes four GREEN file guards; scoped lint/format and diff checks pass.
+The existing source/patch/definition/qualification bytes remain untouched.
+Static checks are not native evidence; the next automatic run must pass real
+Windows build/import and the unchanged archive checker. A focused review is
+required before push. New dev `8aa2211f2b` adds Library wait cancellation/timeout
+handling; inspect its incoming delta, retain a backup, cleanly rebase and verify
+the narrow software interaction before publishing. No local native execution,
+full sweep, live audio, manual CI or merge is authorized.
