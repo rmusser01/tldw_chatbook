@@ -105,6 +105,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-122](122-bundled-pixel-migu-character-and-buddy.md) | Accepted | Include pixel-migu as optional fresh-profile character and Buddy content using existing ownership and runtime boundaries. |
 | [ADR-127](127-fresh-install-private-data-root-recovery.md) | Accepted | Select durable home-level private storage for fresh installs blocked by shared default ancestors. |
 | [ADR-139](139-independent-buddy-conversation-and-workspace-bindings.md) | Accepted | Give one Buddy independent artwork ownership, explicit conversation/workspace binding, and directed interaction while retaining Console execution authority. |
+| [ADR-140](140-official-kokoro-pytorch-runtime.md) | Accepted | Use the official optional Kokoro PyTorch runtime with scoped MPS Fourier fallback and preserve existing TTS settings and lifecycle owners. |
 
 ## Historical Decision Material
 

@@ -251,6 +251,7 @@ chatterbox = [
 ]
 local_tts = [
     "kokoro-onnx",
+    "kokoro>=0.9.4,<0.10; python_version < '3.13'",  # Official PyTorch runtime
     "scipy",
     "numpy",
     "nltk",
@@ -422,6 +423,7 @@ all-tools = [
     "setuptools<82",  # Perth runtime compatibility; see the chatterbox extra above
     "torchaudio",
     "kokoro-onnx",
+    "kokoro>=0.9.4,<0.10; python_version < '3.13'",
     "onnxruntime",
     "av",
     # Note: higgs_tts requires manual installation of boson-multimodal from GitHub

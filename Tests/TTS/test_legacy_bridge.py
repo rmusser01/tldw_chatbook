@@ -1097,6 +1097,44 @@ async def test_provider_hosts_copy_config_and_close_materialized_managers_once()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "saved,explicit,route,expected",
+    [
+        (False, None, "onnx", "pytorch"),
+        (True, None, "onnx", "onnx"),
+        (False, True, "onnx", "onnx"),
+        (True, False, "onnx", "pytorch"),
+        (True, None, "pytorch", "pytorch"),
+        (False, True, "pytorch", "onnx"),
+    ],
+)
+async def test_kokoro_inherits_applied_engine_unless_request_selects_one(
+    saved,
+    explicit,
+    route,
+    expected,
+) -> None:
+    manager = FakeLegacyManager(FakeLegacyBackend())
+    config = {"app_tts": {"KOKORO_USE_ONNX": saved}}
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config=config,
+        manager_factory=lambda _: manager,
+    )
+    # The host must use the applied immutable snapshot, not later caller edits.
+    config["app_tts"]["KOKORO_USE_ONNX"] = not saved
+    request = speech_request()
+    if explicit is not None:
+        request.extra_params = {"use_onnx": explicit}
+    assert (
+        await collect(host.generate(f"local_kokoro_default_{route}", request, None))
+        == b"audio"
+    )
+    assert manager.backend_ids == [f"local_kokoro_default_{expected}"]
+    await host.close()
+
+
+@pytest.mark.asyncio
 async def test_same_backend_serializes_progress_through_stream_consumption() -> None:
     backend = BlockingLegacyBackend()
     manager = FakeLegacyManager(backend)
