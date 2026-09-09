@@ -924,8 +924,9 @@ discovery adapter never reports a vault (task-32178).)*
 *Verified against fix/library-notes-r-pickers — 2026-09-09 (task-32174:
 **Import once**'s and **Keep a folder synced**'s folder pickers each now
 reopen at the directory they were last successfully browsed in, falling
-back to home when nothing is recorded yet — independently of each other and
-of the Library ingest browser's own last-used directory. Stored in
+back to home when nothing is recorded yet, or when the recorded value no
+longer names a real folder — independently of each other and of the Library
+ingest browser's own last-used directory. Stored in
 `config.toml` as `[library.notes_import] last_directory` and
 `[library.notes_sync] last_directory`; Folder files' own picker does the
 same for its `[file_notes] browse` setting, see

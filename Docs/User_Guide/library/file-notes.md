@@ -495,7 +495,8 @@ is painted on the folder line rather than only in the editor's status line.
 *Verified against fix/library-notes-r-pickers — 2026-09-09 (task-32174: the
 "Choose File Notes Folder" picker opens on the current folder when one is
 linked; otherwise it now opens on the folder last picked through it,
-falling back to home when none has been picked yet, stored as
-`[file_notes] browse` in `config.toml`. Independent of Import once's and
+falling back to home when none has been picked yet — or when the stored
+value no longer names a real folder. Stored as `[file_notes] browse` in
+`config.toml`. Independent of Import once's and
 Keep a folder synced's own last-used directories, see
 [Database notes](notes.md).)*

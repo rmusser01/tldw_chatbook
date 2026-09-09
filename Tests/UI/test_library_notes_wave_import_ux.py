@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from textual.app import ComposeResult
@@ -23,6 +23,8 @@ from tldw_chatbook.Library.library_note_import_state import (
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     initial_lasting_sync_snapshot,
 )
+from tldw_chatbook.Library import library_browse_location as browse_location_module
+from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
     LibraryNoteImportCanvas,
@@ -472,6 +474,7 @@ async def test_a_wide_row_does_not_repeat_its_destination() -> None:
         assert not app.query(".note-import-row-destination")
 
 
+
 # --- task-32174 (last-used picker start directory) -------------------------
 #
 # Import once and Keep a folder synced both open a vendored, plain
@@ -480,71 +483,119 @@ async def test_a_wide_row_does_not_repeat_its_destination() -> None:
 # (``Widgets/enhanced_file_picker.py``), which already remembers a start
 # directory per ``context=``. These pickers get the same behaviour
 # caller-side instead, mirroring ``LibraryScreen._library_ingest_browse_
-# location``/``_remember_library_ingest_location`` (see
-# ``Tests/UI/test_library_screen.py::test_ingest_browse_location_prefers_
-# last_used_then_home``). ``LibraryScreen.__init__`` is pure attribute
-# setup -- no I/O, no compose(), no worker starts -- so constructing one
-# with a throwaway app stand-in is enough to reach these helpers directly,
-# with no mount required.
+# location`` (see ``Tests/UI/test_library_screen.py::test_ingest_browse_
+# location_prefers_last_used_then_home``). ``LibraryScreen.__init__`` is
+# pure attribute setup -- no I/O, no compose(), no worker starts -- so
+# constructing one with a throwaway app stand-in is enough to reach these
+# flows, with no mount required.
+#
+# PR #2554 review: these go through the production picker-opening methods
+# and their registered callbacks, not the private resolver/persist helpers
+# -- dropping ``location=`` from the ``FileOpen`` call, or the persistence
+# call from the callback, has to fail something here. The shared
+# validation/ordering contract lives in
+# ``Tests/Library/test_library_browse_location.py``.
 
 
 def _minimal_notes_screen() -> LibraryScreen:
     return LibraryScreen(MagicMock())
 
 
-def test_import_once_browse_location_prefers_last_used_then_home(
+class _PickerHost:
+    """App stand-in that captures the picker a flow pushes, and its callback."""
+
+    def __init__(self) -> None:
+        self.pushed = None
+        self.callback = None
+
+    def push_screen(self, screen, callback=None):
+        self.pushed = screen
+        self.callback = callback
+        return None
+
+
+def _as_host(screen: LibraryScreen, host: _PickerHost):
+    return patch.object(
+        LibraryScreen, "app", new_callable=lambda: property(lambda self: host)
+    )
+
+
+def _capture_saved_directories(monkeypatch) -> list[tuple]:
+    saved: list[tuple] = []
+    monkeypatch.setattr(
+        browse_location_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    return saved
+
+
+async def test_import_once_picker_opens_at_the_remembered_directory(
     tmp_path, monkeypatch
 ) -> None:
-    """task-32174 AC#1: Import once remembers its own last-used directory."""
+    """task-32174 AC#1: the real picker instance gets the remembered start."""
     screen = _minimal_notes_screen()
-
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
-        lambda *args, **kwargs: str(tmp_path),
+        lambda section, key=None, default=None: (
+            str(tmp_path)
+            if (section, key) == ("library.notes_import", "last_directory")
+            else default
+        ),
     )
-    assert screen._library_note_import_browse_location() == str(tmp_path)
+    host = _PickerHost()
+    with _as_host(screen, host):
+        screen._push_library_note_import_picker()
 
+    assert isinstance(host.pushed, FileOpen)
+    assert Path(host.pushed._location) == tmp_path.resolve()
+
+
+async def test_import_once_picker_opens_at_home_without_a_usable_memory(
+    tmp_path, monkeypatch
+) -> None:
+    """A remembered value that is relative, traversing or gone is refused --
+    it used to be handed to the picker after a bare ``is_dir()`` probe."""
+    screen = _minimal_notes_screen()
+    (tmp_path / "relative-dir").mkdir()
+    monkeypatch.chdir(tmp_path)
+    for remembered in ("relative-dir", "../..", str(tmp_path / "deleted"), None):
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+            lambda *args, _value=remembered, **kwargs: _value,
+        )
+        host = _PickerHost()
+        with _as_host(screen, host):
+            screen._push_library_note_import_picker()
+        assert Path(host.pushed._location) == Path.home(), remembered
+
+
+async def test_import_once_remembers_the_directory_it_selected(
+    tmp_path, monkeypatch
+) -> None:
+    """AC#1: completing a selection through the picker's own callback is
+    what persists the directory -- a picked file contributes its parent."""
+    screen = _minimal_notes_screen()
+    picked = tmp_path / "note.md"
+    picked.write_text("# hi", encoding="utf-8")
+    screen._library_note_import_controller = MagicMock()
+    monkeypatch.setattr(screen, "run_worker", lambda work, **kwargs: work())
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
         lambda *args, **kwargs: None,
     )
-    assert screen._library_note_import_browse_location() == str(Path.home())
+    saved = _capture_saved_directories(monkeypatch)
 
-    # A remembered directory that no longer exists must not be handed back.
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
-        lambda *args, **kwargs: str(tmp_path / "deleted"),
-    )
-    assert screen._library_note_import_browse_location() == str(Path.home())
+    host = _PickerHost()
+    with _as_host(screen, host):
+        screen._push_library_note_import_picker()
+        await host.callback(picked)
 
-
-def test_import_once_remembers_the_directory_of_the_picked_path(
-    tmp_path, monkeypatch
-) -> None:
-    """AC#1: a picked file's parent, or a picked folder itself, is kept."""
-    screen = _minimal_notes_screen()
-    picked_file = tmp_path / "note.md"
-    picked_file.write_text("# hi", encoding="utf-8")
-    picked_folder = tmp_path / "folder"
-    picked_folder.mkdir()
-
-    saved: list[tuple] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
-
-    screen._remember_library_note_import_location(picked_file)
     assert saved == [("library.notes_import", "last_directory", str(tmp_path))]
-
-    saved.clear()
-    screen._remember_library_note_import_location(picked_folder)
-    assert saved == [
-        ("library.notes_import", "last_directory", str(picked_folder))
-    ]
+    screen._library_note_import_controller.accept_selected_path.assert_called_once()
 
 
-def test_import_once_and_ingest_keep_independent_last_directories(
+async def test_import_once_and_ingest_keep_independent_last_directories(
     tmp_path, monkeypatch
 ) -> None:
     """Each picker context is keyed independently -- one cannot leak into
@@ -567,14 +618,23 @@ def test_import_once_and_ingest_keep_independent_last_directories(
         "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
         fake_save,
     )
+    monkeypatch.setattr(
+        browse_location_module, "save_setting_to_cli_config", fake_save
+    )
+    monkeypatch.setattr(screen, "run_worker", lambda work, **kwargs: work())
+    screen._library_note_import_controller = MagicMock()
 
     ingest_dir = tmp_path / "ingest-dir"
     notes_dir = tmp_path / "notes-import-dir"
     ingest_dir.mkdir()
     notes_dir.mkdir()
+    (notes_dir / "picked.md").write_text("# hi", encoding="utf-8")
 
     screen._remember_library_ingest_location(ingest_dir / "picked.txt")
-    screen._remember_library_note_import_location(notes_dir / "picked.md")
+    host = _PickerHost()
+    with _as_host(screen, host):
+        screen._push_library_note_import_picker()
+        await host.callback(notes_dir / "picked.md")
 
     assert store[("library.ingest", "last_directory")] == str(ingest_dir)
     assert store[("library.notes_import", "last_directory")] == str(notes_dir)
@@ -582,46 +642,80 @@ def test_import_once_and_ingest_keep_independent_last_directories(
     assert screen._library_note_import_browse_location() == str(notes_dir)
 
 
-def test_notes_sync_browse_location_prefers_last_used_then_home(
+def _folder_requested_event() -> MagicMock:
+    event = MagicMock()
+    event.stop = MagicMock()
+    return event
+
+
+async def test_notes_sync_picker_opens_at_the_remembered_directory(
     tmp_path, monkeypatch
 ) -> None:
     """task-32174 AC#2: Keep a folder synced remembers its own directory."""
     controller = _minimal_notes_screen()._notes_controller
-
     monkeypatch.setattr(
         "tldw_chatbook.UI.Library_Modules.library_notes_controller.get_cli_setting",
-        lambda *args, **kwargs: str(tmp_path),
+        lambda section, key=None, default=None: (
+            str(tmp_path)
+            if (section, key) == ("library.notes_sync", "last_directory")
+            else default
+        ),
     )
-    assert controller._library_notes_sync_browse_location() == str(tmp_path)
+    host = _PickerHost()
+    with _as_host(controller._screen, host):
+        controller.handle_library_notes_lasting_folder_requested(
+            _folder_requested_event()
+        )
 
+    assert isinstance(host.pushed, FileOpen)
+    assert Path(host.pushed._location) == tmp_path.resolve()
+
+
+async def test_notes_sync_picker_opens_at_home_without_a_usable_memory(
+    tmp_path, monkeypatch
+) -> None:
+    controller = _minimal_notes_screen()._notes_controller
+    (tmp_path / "relative-dir").mkdir()
+    monkeypatch.chdir(tmp_path)
+    for remembered in ("relative-dir", str(tmp_path / "deleted"), None):
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Library_Modules.library_notes_controller."
+            "get_cli_setting",
+            lambda *args, _value=remembered, **kwargs: _value,
+        )
+        host = _PickerHost()
+        with _as_host(controller._screen, host):
+            controller.handle_library_notes_lasting_folder_requested(
+                _folder_requested_event()
+            )
+        assert Path(host.pushed._location) == Path.home(), remembered
+
+
+async def test_notes_sync_remembers_the_folder_it_selected(tmp_path, monkeypatch) -> None:
+    """AC#2: the folder just picked becomes the next open's start directory,
+    persisted from the picker's own callback."""
+    screen = _minimal_notes_screen()
+    controller = screen._notes_controller
+    picked_folder = tmp_path / "sync-folder"
+    picked_folder.mkdir()
     monkeypatch.setattr(
         "tldw_chatbook.UI.Library_Modules.library_notes_controller.get_cli_setting",
         lambda *args, **kwargs: None,
     )
-    assert controller._library_notes_sync_browse_location() == str(Path.home())
+    monkeypatch.setattr(screen, "run_worker", lambda work, **kwargs: work())
+    saved = _capture_saved_directories(monkeypatch)
 
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Library_Modules.library_notes_controller.get_cli_setting",
-        lambda *args, **kwargs: str(tmp_path / "deleted"),
-    )
-    assert controller._library_notes_sync_browse_location() == str(Path.home())
-
-
-def test_notes_sync_remembers_the_picked_folder(tmp_path, monkeypatch) -> None:
-    """AC#2: the folder just picked becomes the next open's start directory."""
-    controller = _minimal_notes_screen()._notes_controller
-    picked_folder = tmp_path / "sync-folder"
-    picked_folder.mkdir()
-
-    saved: list[tuple] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Library_Modules.library_notes_controller."
-        "save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
-
-    controller._remember_library_notes_sync_location(picked_folder)
+    host = _PickerHost()
+    with _as_host(screen, host):
+        controller.handle_library_notes_lasting_folder_requested(
+            _folder_requested_event()
+        )
+        await host.callback(picked_folder)
 
     assert saved == [
         ("library.notes_sync", "last_directory", str(picked_folder))
     ]
+    assert (
+        controller._library_notes_sync_controller.snapshot.setup.folder
+        == str(picked_folder)
+    )

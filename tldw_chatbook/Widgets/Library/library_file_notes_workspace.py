@@ -30,7 +30,11 @@ from tldw_chatbook.config import (
     apply_settings_mutation_to_cli_config,
     get_cli_setting,
     get_user_data_dir,
-    save_setting_to_cli_config,
+)
+from tldw_chatbook.Library.library_browse_location import (
+    claim_browse_directory,
+    remember_browse_directory,
+    validated_browse_directory,
 )
 from tldw_chatbook.Library.library_structural_wait import (
     STRUCTURAL_WAIT_PATIENCE_SECONDS,
@@ -6203,17 +6207,13 @@ class LibraryFileNotesWorkspace(Vertical):
 
         Keyed independently (``file_notes.browse``) from Import once and
         "Keep a folder synced" -- each picker context remembers its own
-        last-used directory.
+        last-used directory. The stored value is persisted user state, so it
+        is validated in ``library_browse_location`` before it is used.
         """
-        remembered = get_cli_setting("file_notes", "browse", None)
-        if remembered:
-            try:
-                candidate = Path(str(remembered)).expanduser()
-                if candidate.is_dir():
-                    return candidate
-            except OSError:
-                pass
-        return Path.home()
+        remembered = validated_browse_directory(
+            get_cli_setting("file_notes", "browse", None)
+        )
+        return remembered if remembered is not None else Path.home()
 
     @on(Button.Pressed, "#file-notes-use-sync-folder")
     def _use_configured_sync_folder(self, event: Button.Pressed) -> None:
@@ -6268,14 +6268,13 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _persist_file_notes_browse_location(self, path: Path) -> None:
         """Off the event loop: remember the picked Folder files directory."""
-
-        def _persist() -> None:
-            try:
-                save_setting_to_cli_config("file_notes", "browse", str(path))
-            except Exception:
-                pass
-
-        self.run_worker(_persist, thread=True)
+        generation = claim_browse_directory("file_notes", "browse")
+        self.run_worker(
+            lambda: remember_browse_directory(
+                "file_notes", "browse", path, generation
+            ),
+            thread=True,
+        )
 
     async def _change_root_with_deadline(self, path: Path) -> None:
         """Run one folder change under a deadline the user can cut short.

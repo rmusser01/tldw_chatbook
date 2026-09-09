@@ -26,6 +26,7 @@ from Tests.UI.test_library_file_notes_workspace import (
 )
 from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     FOLDER_FILES_EMPTY_COPY,
     LibraryFileNotesWorkspace,
@@ -277,5 +278,65 @@ async def test_folder_files_remembers_the_picked_root(tmp_path) -> None:
             == str(picked),
             "the picked root was never remembered as the browse directory",
         )
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_picker_instance_opens_at_the_remembered_directory(
+    tmp_path, monkeypatch
+) -> None:
+    """PR #2554 review: the production ``_open_root_picker`` must hand the
+    remembered directory to the real ``SelectDirectory`` instance -- not
+    merely resolve it in a helper nothing consults."""
+    remembered = tmp_path / "remembered"
+    remembered.mkdir()
+    monkeypatch.setattr(
+        workspace_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            str(remembered) if (section, key) == ("file_notes", "browse") else default
+        ),
+    )
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    captured: dict = {}
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await pilot.pause()
+
+        async def _fake_push(screen, callback=None):
+            captured["screen"] = screen
+            captured["callback"] = callback
+
+        monkeypatch.setattr(workspace.app, "push_screen", _fake_push)
+        await workspace._open_root_picker()
+
+    assert isinstance(captured["screen"], SelectDirectory)
+    assert Path(captured["screen"]._location) == remembered.resolve()
+    assert captured["callback"] == workspace._root_selected
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_refuses_an_unusable_remembered_directory(
+    tmp_path, monkeypatch
+) -> None:
+    """A relative or traversing remembered value used to reach the picker
+    after a bare ``is_dir()`` probe; it now falls back to home."""
+    (tmp_path / "relative-dir").mkdir()
+    monkeypatch.chdir(tmp_path)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await pilot.pause()
+        for remembered in ("relative-dir", "../..", str(tmp_path / "deleted")):
+            monkeypatch.setattr(
+                workspace_module,
+                "get_cli_setting",
+                lambda *args, _value=remembered, **kwargs: _value,
+            )
+            assert workspace._file_notes_browse_location() == Path.home(), remembered
     await workspace.shutdown()
     replica.close()

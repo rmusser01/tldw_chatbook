@@ -96,6 +96,11 @@ from ...Library.collections_capture_models import (
     CaptureIdentity,
     CapturePageRequest,
 )
+from ...Library.library_browse_location import (
+    claim_browse_directory,
+    remember_browse_directory,
+    validated_browse_directory,
+)
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
@@ -25473,36 +25478,22 @@ class LibraryScreen(BaseAppScreen):
         prior Import once selection came from, else home. Keyed
         independently (``library.notes_import``) from the ingest browser and
         from the other two Notes pickers -- each context remembers its own
-        last-used directory.
+        last-used directory. The stored value is persisted user state, so it
+        is validated in ``library_browse_location`` before it is used.
         """
-        remembered = get_cli_setting("library.notes_import", "last_directory", None)
-        if remembered:
-            try:
-                candidate = Path(str(remembered)).expanduser()
-                if candidate.is_dir():
-                    return str(candidate)
-            except OSError:
-                pass
-        return str(Path.home())
+        remembered = validated_browse_directory(
+            get_cli_setting("library.notes_import", "last_directory", None)
+        )
+        return str(remembered) if remembered is not None else str(Path.home())
 
-    @work(thread=True)
     def _persist_library_note_import_location(self, selected_path: Path) -> None:
-        """Dispatch ``_remember_library_note_import_location`` off the loop."""
-        try:
-            self._remember_library_note_import_location(selected_path)
-        except Exception:
-            logger.error("Failed to persist Library note import browse location")
-
-    def _remember_library_note_import_location(self, selected_path: Path) -> None:
-        """Persist the directory an Import once selection came from."""
-        try:
-            directory = (
-                selected_path if selected_path.is_dir() else selected_path.parent
-            )
-        except OSError:
-            return
-        save_setting_to_cli_config(
-            "library.notes_import", "last_directory", str(directory)
+        """Off the event loop: remember the picked Import once directory."""
+        generation = claim_browse_directory("library.notes_import", "last_directory")
+        self.run_worker(
+            lambda: remember_browse_directory(
+                "library.notes_import", "last_directory", selected_path, generation
+            ),
+            thread=True,
         )
 
     @on(Button.Pressed, '#library-notes-add-from-files')
