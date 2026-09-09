@@ -3,7 +3,8 @@
 from dataclasses import FrozenInstanceError
 
 import pytest
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
+from textual.css.parse import parse, tokenize_values
 from textual.widgets import Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -50,6 +51,40 @@ def test_projection_is_frozen_and_repr_hides_provisional_content() -> None:
     representation = repr(projection)
     assert "rolling user text" not in representation
     assert "provisional response" not in representation
+
+
+def test_compact_preview_css_preserves_selectors_specificity_and_declarations() -> None:
+    original_css = """
+    ConsoleVoicePreview {height:auto;margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;background:$surface-lighten-1 55%;color:$text-muted;}
+    ConsoleVoicePreview .console-voice-preview-status {color:$accent-lighten-1;text-style:italic;}
+    ConsoleVoicePreview .console-voice-preview-user,
+    ConsoleVoicePreview .console-voice-preview-assistant {height:auto;}
+    """
+    variables = tokenize_values(App().get_css_variables())
+
+    def declarations_by_selector(css: str) -> dict:
+        declarations = {}
+        for rule in parse(
+            "", css, ("preview", ""), variable_tokens=variables, is_default_rules=True
+        ):
+            assert not rule.errors
+            for selector_set in rule.selector_set:
+                chain = tuple(
+                    (
+                        selector.name,
+                        selector.type.name,
+                        selector.combinator.name,
+                        tuple(sorted(selector.pseudo_classes)),
+                    )
+                    for selector in selector_set.selectors
+                )
+                key = (chain, selector_set.specificity, rule.tie_breaker)
+                declarations.setdefault(key, {}).update(rule.styles.get_rules())
+        return declarations
+
+    original = declarations_by_selector(original_css)
+    assert len(original) == 4
+    assert declarations_by_selector(ConsoleVoicePreview.BUNDLED_CSS) == original
 
 
 @pytest.mark.asyncio

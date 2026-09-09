@@ -99,12 +99,12 @@ class ConsoleVoicePreview(Vertical):
     """Two visually provisional rows kept outside durable transcript grouping."""
 
     can_focus = False
-    BUNDLED_CSS = """
-    ConsoleVoicePreview {height:auto;margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;background:$surface-lighten-1 55%;color:$text-muted;}
-    ConsoleVoicePreview .console-voice-preview-status {color:$accent-lighten-1;text-style:italic;}
-    ConsoleVoicePreview .console-voice-preview-user,
-    ConsoleVoicePreview .console-voice-preview-assistant {height:auto;}
-    """
+    BUNDLED_CSS = (
+        "ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;"
+        "background:$surface-lighten-1 55%;color:$text-muted;"
+        "&,.console-voice-preview-user,.console-voice-preview-assistant{height:auto;}"
+        ".console-voice-preview-status{color:$accent-lighten-1;text-style:italic;}}"
+    )
 
     def __init__(
         self,

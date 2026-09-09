@@ -67,6 +67,48 @@ full-suite, local native/model/playback or hardware qualification claim. The
 incoming Torch/MPS test module was not collected. Final source identity, focused
 quality re-review, exact-lease push and automatic CI remain the publication gates.
 
+## Automatic CI CSS budget follow-up
+
+At published `e7c98188`, automatic Perf Guard run 34314637566 passed the startup
+module and worker guards but measured 804,080 boot CSS bytes against the unchanged
+804,000-byte ceiling. Address only repeated syntax in the feature-owned voice
+preview CSS; do not change its selectors, specificity, computed declarations,
+load timing, source registrations, budget or snapshot.
+
+ADR required: no new ADR
+ADR path: `backlog/decisions/097-boot-budget-ratchets.md` and existing ADR-098
+Reason: behavior-preserving stylesheet compression within established budgets.
+
+1. Reproduce the exact byte-budget failure locally with its single software test.
+2. Add a parser-level equivalence test for selector chains, specificity and
+   declarations against the existing preview CSS. Group repeated parent syntax
+   with supported Textual nesting while retaining the original spacing values.
+3. Regenerate CSS through the official builder. Verify the exact budget, generated
+   sheet parse/scope/reproducibility and existing fake-only preview lifecycle tests.
+4. Review the frozen diff independently, record actual byte counts, commit only
+   the voice source/test, generated outputs and this plan, then push the same PR.
+   Observe automatic CI and comments; leave the PR open and unmerged.
+
+The exact local budget test reproduced CI's 804,080-byte failure. Nested grouping
+and whitespace removal reduce the same registered boot sources by 94 bytes to
+803,986/804,000 (14 bytes of headroom); only the voice segment in the generated
+widget-default sheet changes, from 464 to 370 bytes. Textual rejects browser CSS's
+three-value margin shorthand, so the original four-value margin is retained.
+The new parser regression verifies all four selector chains, specificity, tie
+breakers and merged declarations against the prior CSS. Fourteen selected parser,
+preview lifecycle, budget, generated parse/scope and reproduction cases pass with
+zero skips in 5.39 seconds. Three warnings comprise two inherited dependency
+warnings and the expected low-headroom budget warning. Ruff passes; existing
+unrelated formatting in the preview test file is preserved. No budget or snapshot,
+source registration, load timing, behavioral code or native artifact was changed.
+Root independently reran the same 14 selected cases in the main virtual
+environment: 14 passed, zero skips, the same three warnings, 4.63 seconds. Scoped
+Ruff and diff checks pass; qualification, build identity and schema 69/70 hashes
+still match their protected checkpoints. Independent CSS spec/quality review
+approved the exact three-file patch `2ad9d8ba4806825425fe612609d4002b7d2167c967287fba02005bb0f20aaa89`
+with no actionable findings. Automatic CI on the publication commit remains the
+final gate; the PR must remain open and unmerged.
+
 ## Global Constraints
 
 - Work only in `.worktrees/speculative-duplex-voice-dev`, branch `codex/speculative-duplex-voice-dev`. Preserve main and the original feature worktree, including all unrelated edits.

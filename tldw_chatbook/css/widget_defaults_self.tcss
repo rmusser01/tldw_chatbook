@@ -2470,12 +2470,7 @@
 
 
 /* ===== WIDGET: ConsoleVoicePreview (Widgets/Console/console_voice_preview.py) ===== */
-
-    ConsoleVoicePreview {height:auto;margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;background:$surface-lighten-1 55%;color:$text-muted;}
-    ConsoleVoicePreview .console-voice-preview-status {color:$accent-lighten-1;text-style:italic;}
-    ConsoleVoicePreview .console-voice-preview-user,
-    ConsoleVoicePreview .console-voice-preview-assistant {height:auto;}
-
+ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;background:$surface-lighten-1 55%;color:$text-muted;&,.console-voice-preview-user,.console-voice-preview-assistant{height:auto;}.console-voice-preview-status{color:$accent-lighten-1;text-style:italic;}}
 
 /* ===== WIDGET: ConsoleWorkspaceActionMenu (Widgets/Console/console_workspace_action_menu.py) ===== */
 
