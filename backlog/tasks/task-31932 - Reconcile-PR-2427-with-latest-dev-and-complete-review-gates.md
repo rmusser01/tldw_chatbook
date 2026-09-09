@@ -221,4 +221,26 @@ The isolated recovery worktree is `.worktrees/pr2427-review-recovery`. Rebase on
 Step 88 diagnostic refinement: ordinary `sys.stdout` redirection alone still produces all 14 failures because installed Textual captures `sys.__stdout__` as `app._original_stdout` and forwards headless print events there. Point that fixture-owned app output stream to stderr as well, before mounting; keep the original phase pipe and strict parser unchanged. This is the same diagnostic-channel separation, not a production logging change.
 89. Address six Qodo test-contract findings on published 69108f4d1d: complete the persona activation fixture annotation and Google-style docstrings in actor-pack activation/contracts, and add the missing documentation/annotations in the Console delegate, Library assembly/private-owner, and exclusive-worker inventory tests. Preserve all test bodies, assertions and production behavior. Verify the six complete affected files, scoped Ruff and whitespace checks, then publish before replying/resolving comments 3966299125/3966299137/3966299147/3966299157/3966299166/3966299174. These nonbehavioral test files are outside the active Library shell run; its runtime/shared fixtures and test bytes remain frozen. ADR required: no. ADR path: N/A. Reason: documentation and type annotations only.
 90. Investigate the complete native Library result (855 passed, one autosaved-then-emptied blank-note GC failure, final SQLite descriptors empty). First reproduce the save/GC ordering deterministically with real SQLite and controlled service-reply boundaries; preserve the original failing test and its row-deletion assertion. Separate transient failure-traceback retention from actual terminal cleanup. If confirmed, use the existing note-session pending-work/admission mechanisms to serialize the affected operation, preserving session-created/finally-empty/title-provenance checks, version-checked external-conflict protection, explicit Save exemptions and best-effort exit behavior. Add controls for intervening authored edits and unrelated notes before any runtime fix. Keep the correction within existing owner/screen limits, then run complete affected Notes/Library files, independent review, derived gates and a fresh complete native Library qualification before publication/merge. ADR required: no new ADR for a routine ordering correction implementing accepted contracts. ADR paths: backlog/decisions/055-library-destructive-action-reversibility-rule.md and existing task-2858 AC5. Reason: preserve the established silent-GC exception and concurrency protections, not expand deletion authority or change persistence policy. Any necessary policy change requires separate approval.
+91. The original autosaved-then-empty fixture still fails after the causal save/GC fix. Exact load_text/Changed/save-outcome tracing shows its unfocused body assignment is overwritten by accepted TASK-32062 snapshot projection before Changed consumes it; Back receives the old nonempty canonical draft and never enters GC. Focus the real body before editing and await the canonical empty-draft receipt before Back, retaining the original row-deletion assertion. Add an external-write-at-admitted-delete control and assert zero delete calls for intervening authored content/earlier save conflicts. Run complete affected files and native cleanup on stable source. ADR required: no. ADR path: existing ADR-027/055 and TASK-32062. Reason: fixture alignment with accepted focused-field authority and stronger concurrency evidence; no new UI policy.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+Steps 90/91 repair the proven committed-save/blank-GC ordering through existing
+coordinator destructive admission, then revalidate the exact session and blank
+provenance before a version-checked delete. Intervening authored drafts follow
+normal saving; external changes and unrelated rows remain protected. A separate
+original-fixture focus/Changed race is corrected without weakening its deletion
+assertion. Four controlled real-SQLite cases pin actual destructive calls and
+row/version preservation. ADR-027/055 apply; no new boundary, policy or cap.
+
+Complete native verification: 902 passed, 10 warnings in 1662.29s, exit 0, final
+SQLite descriptor inventory empty. Five complete architecture files pass 79
+tests; derived preflight passes; changed controller/test lint is clean and
+Screen lint matches the pre-existing baseline. Independent review cleared the
+repair and strengthened tests. Exact evidence, frozen hashes and earlier
+cohorts are in `backlog/docs/pr-2427-rebase-reconciliation.md`; the commit-vs-reply
+and focused-draft lesson is recorded in `lessons-testing-evidence.md`.
+
+Task remains In Progress until the published final revision's review/checks and
+normal protected merge complete. No repository-wide sweep is claimed.

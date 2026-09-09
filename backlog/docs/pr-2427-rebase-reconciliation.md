@@ -2388,4 +2388,72 @@ bodies. The six complete files pass **185 tests, 5 warnings in 20.63s**
 pass. AST comparison after stripping annotations/docstrings confirms executable
 behavior is unchanged. The worker-matrix docstring additionally explains callback
 forms, literal exclusivity/group requirements and nested direct-await rejection.
-Publication/replies remain pending this next checkpoint.
+Published as `538c36b9927fa1e24b494af891379d8d6a14ef96`. All six threads are
+replied to and resolved (replies 3966470050, 3966480304, 3966480459,
+3966480643, 3966480796, 3966480976). Final worker-docstring verification is
+22 passed, 5 warnings in 7.39s. This closes these documentation findings,
+not the remaining runtime qualification or final-head merge gates.
+
+### Step 90/91: save-reply ordering and original-fixture reconciliation
+
+Controlled real-SQLite RED held a successful save reply after its commit:
+the database was version 2 while the coordinator still held version 1 and
+`saving=True`. Back attempted version-1 deletion and received `ConflictError`.
+Another observed interleaving lost a newly authored draft when Back closed
+the session before the save chain settled. Latest main RED: **1 failed,
+2 passed in 9.73s** (`/private/tmp/pr2427-gc-before.log`); the earlier authored
+loss is recorded in `pr2427-blank-gc-red.Qpl1fE/pytest4.log` under the per-user
+temporary directory. These are separate observations, not universal timings.
+
+The existing Notes controller now obtains destructive admission, waits for
+coalesced saves, then rechecks exact session/note identity, canonical blank
+fields, title provenance and explicit-Save exemption before deleting at the
+admitted version. An intervening authored draft falls through normal flushing;
+failed cleanup remains best-effort. Every admission is cancelled or finished.
+ADR-027/055 ownership and silent-GC limits are preserved; no new ADR or caps.
+
+The original shell test still failed after this repair. A separate trace proved
+its unfocused programmatic body clear was overwritten by TASK-32062's accepted
+snapshot projection before its queued Changed event was consumed. Back therefore
+correctly saw nonempty content and never entered GC. The fixture now focuses the
+body and awaits the canonical empty receipt, retaining its strict deletion
+assertion. Paired diagnostic evidence is in
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-blank-gc-trace.FZxJi8`.
+
+The strengthened regression file covers successful cleanup, authored/early
+external changes with **no delete call**, and an external write at the admitted
+delete boundary causing a real version conflict. Every case retains an unrelated
+note's exact content/version. Targeted combined GREEN: **57 passed, 845
+deselected, 3 warnings in 49.76s**
+(`/private/tmp/pr2427-gc-final-targeted.log`). Five complete architecture files:
+**79 passed, 2 warnings in 1.63s**. Derived preflight passes. Controller/new-test
+Ruff passes; Screen's 47 pre-existing findings are byte-identical to the HEAD
+baseline, not newly introduced or declared clean. New-test formatting and
+whitespace checks pass. Independent rereview found no blockers after strengthening
+the destructive-call assertions. An earlier three-case native probe had no
+retained SQLite descriptors; this is not complete-file qualification.
+
+**Wave sixteen complete native verification is active**, session 39893, covering
+the entire Library shell, new race file and note-session coordinator file, with
+source frozen. Evidence:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave16-native.0PgC1F`
+(`pytest.log`, `native.jsonl`). Runtime repairs remain uncommitted until this
+qualification finishes. Latest live dev remains `a36fc6133c`; final publication,
+exact-head review/checks and normal protected merge are still pending.
+
+Wave-sixteen frozen source SHA-256 (including the still-untracked regression,
+which is not included in `git diff`'s hash):
+
+- Notes controller: `89ef975bc14ebb6c4a4462442b6d75ea3e138718e591986c5e53de647fbf0a4c`
+- Library screen: `dd5ed00e2644a7803c38f414827ea17ba1f417c0d657b645d0b1682e1c5accd3`
+- Library shell tests: `5bd626ada8be4ae292314a4ee8d5e0f894bcd5a4174dc83cf43ef49dab865d85`
+- New GC race tests: `62657a8cd488fb939c73678885f6ffc7bab03e5cb1e90452556f3ed20350b18c`
+- Note session tests: `6999f1ce0955e7991fa59f0dac2187c02f6cb35523dcb2f304fc659c98ab3d83`
+
+Wave-sixteen terminal verification: **902 passed, 10 warnings in 1662.29s
+(27:42)**, exit 0, final **`sqlite_paths: []`**. All five frozen source hashes
+match after completion. Session 39893 is closed and the source freeze is lifted.
+This qualifies the entire Library shell, all four race controls and the complete
+note-session coordinator file. Fresh live dev still equals `a36fc6133c`;
+published `538c36b992` has green required checks and CLEAN merge state, but the
+new runtime repair still requires publication and exact-head review/checks.
