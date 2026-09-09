@@ -271,9 +271,27 @@ dev-side reds, not this task's:
 Working tree, all 19 `test_library_media_*.py` files plus
 `test_library_multiselect_media.py`: **24 failed, 686 passed**.
 
-Control, scratch worktree at the untouched HEAD, on the four files carrying
+Control, scratch worktree at the untouched HEAD, on four of the files carrying
 those failures: **19 failed, 236 passed** (`_reader_no_change_sync_t22208.py`,
 `_render_fixes.py`, `_side_by_side.py`, `_trash.py`).
+
+**Erratum (review finding 4): the failures span SEVEN files, not four.** The
+four above were the ones my truncated capture happened to show. Re-derived by
+running the other fifteen media files in the working tree: **7 failed, 448
+passed**, in three more files —
+
+| file | failures |
+|---|---|
+| `test_library_media_reader_flow.py` | 4 (row-focus survival x2 sizes, background-recompose focus x2 sizes) |
+| `test_library_media_reader_traversal_t22207.py` | 2 (zero-body traversal, per-keystroke reparse) |
+| `test_library_media_reader_match_nav_t22209.py` | 1 (rescan for the same query) |
+
+**The per-run TOTAL drifts and should not be quoted as a fixed number.** The
+first working run reported 24; my two partial working runs sum to 26. The
+drifting rows are precisely the focus-survival and wall-time/reparse probes,
+which is what one expects with other sessions' pytest processes competing.
+**The stable fact is the file span and the fact that both trees fail the same
+tests** — which is why the claim below rests on the diff, not on a count.
 
 **The two failure sets are identical**, with one exception in one direction:
 
