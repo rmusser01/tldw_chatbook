@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import ClassVar
 
 import pytest
 from textual.app import ComposeResult
@@ -10,7 +11,11 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from Tests.textual_test_utils import widget_pilot  # noqa: F401
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    BUNDLED_STYLESHEET,
+    ConsolidatedCSSApp,
+)
 from tldw_chatbook.Library.library_notes_state import (
     DatabaseNoteDraft,
     LibraryNoteSessionSnapshot,
@@ -169,6 +174,10 @@ def _sync_tree_projection(
         tree_deleted_folder_available=False,
         title_placeholder_only=False,
         compact=False,
+        # task-32127 made `pane_width` required. Re-syncing at the width the
+        # canvas already resolved keeps this a same-width state sync, so the
+        # toolbar shape cannot change under the pager assertions below.
+        pane_width=canvas.pane_width,
         create_running=False,
         create_status="",
         load_state="loading",
@@ -318,6 +327,9 @@ async def test_lasting_setup_retained_wrapper_preserves_input_and_pins_action_at
             tree_deleted_folder_available=False,
             title_placeholder_only=False,
             compact=True,
+            # task-32127 made `pane_width` required; re-sync at the width the
+            # canvas already has so this stays a same-width state sync.
+            pane_width=canvas.pane_width,
             create_running=False,
             create_status="",
             load_state="loading",
@@ -370,6 +382,14 @@ async def test_import_selection_summary_bounds_many_long_names(widget_pilot):  #
 async def test_list_authority_running_without_status_uses_updating_fallback(
     widget_pilot,  # noqa: F811
 ):
+    """task-32063: a running list ends at its status, with no "Next:" clause.
+
+    The line used to close with "Next: Wait for the running notes operation
+    to finish." A "Next:" clause names a control the reader can press, and
+    waiting names none, so the whole clause is gone -- asserted here as the
+    exact line plus the absence of ANY "Next:", which is stricter than
+    pinning the one sentence that used to follow it.
+    """
     running = replace(
         _list_state(),
         operation_running=True,
@@ -385,10 +405,17 @@ async def test_list_authority_running_without_status_uses_updating_fallback(
 
         assert "Updating notes…" in text
         assert "Ready" not in text
-        assert "Next: Wait for the running notes operation to finish." in text
+        assert text == "Library notes · Library database · Updating notes…"
+        assert "Next:" not in text
 
 
 async def test_editor_authority_tracks_post_mount_save_state(widget_pilot):  # noqa: F811
+    """A save in flight ends at its status; a failed one still names a next step.
+
+    task-32063 dropped "Next: Wait for saving to finish." -- it named no
+    control. The failure branch below keeps its "Next:", so this test pins
+    both halves of that rule rather than only the removal.
+    """
     initial = _editor_state()
     async with await widget_pilot(
         LibraryNotesCanvas,
@@ -403,7 +430,8 @@ async def test_editor_authority_tracks_post_mount_save_state(widget_pilot):  # n
         assert canvas.query_one("#library-notes-authority", Static) is authority
         text = getattr(authority.renderable, "plain", str(authority.renderable))
         assert "Saving note…" in text
-        assert "Next: Wait for saving to finish." in text
+        assert text == "Library notes · Library database · Saving note…"
+        assert "Next:" not in text
 
         canvas.apply_session_state(_editor_state(status="Save failed: database busy"))
         text = getattr(authority.renderable, "plain", str(authority.renderable))
@@ -414,6 +442,11 @@ async def test_editor_authority_tracks_post_mount_save_state(widget_pilot):  # n
 async def test_editor_authority_tracks_transfer_through_context_navigation(
     widget_pilot,  # noqa: F811
 ):
+    """A running export ends at its status; a failed one still names a next step.
+
+    task-32063 dropped "Next: Wait for export to finish." for the same
+    reason it dropped the save one -- it named no control.
+    """
     initial = _editor_state()
     async with await widget_pilot(
         LibraryNotesCanvas,
@@ -434,7 +467,10 @@ async def test_editor_authority_tracks_transfer_through_context_navigation(
         text = getattr(authority.renderable, "plain", str(authority.renderable))
         assert "Saved" in text
         assert "Exporting Markdown…" in text
-        assert "Next: Wait for export to finish." in text
+        assert (
+            text == "Library notes · Library database · Saved · Exporting Markdown…"
+        )
+        assert "Next:" not in text
 
         canvas.apply_session_state(
             _editor_state(
@@ -928,7 +964,13 @@ def _compact_pager_projection() -> LibraryNotesTreeProjection:
 
 
 class _CompactPagerApp(ConsolidatedCSSApp):
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    #: Every app-tier sheet, not the boot bundle alone. TASK-25812 moved the
+    #: Library rules -- including `.library-notes-tree-pager`'s `width: 100%`
+    #: -- out of the bundle and into `screen_agentic_library.tcss`, which the
+    #: real app parses on first visit to LibraryScreen. Pinning CSS_PATH to
+    #: the bundle silently dropped those rules, so the pagers fell back to
+    #: Button's own `width: auto` and the geometry below measured nothing.
+    CSS_PATH: ClassVar[list[str]] = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         shell = Vertical(id="library-shell-grid", classes="library-notes-compact")

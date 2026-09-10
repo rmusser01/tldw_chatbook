@@ -148,7 +148,7 @@ full stored keyword but drops a dangling half-flag so that surface's frame
 does not drift either (the edit form still prefills the stored keyword
 verbatim).
 
-*Historical verification (grip sizes and thresholds superseded by the five-column restoration, TASK-32184). Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
+*Historical verification (grip sizes and thresholds superseded by the five-column restoration, TASK-32200). Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
 Skills and Collections opened live at 235x52. Each painted one-cell `‹` grips
 — the Library grip at columns 37 on two rows, the Items grip at column 78 on
 one — and no `<---`/`--->` run appeared anywhere on the three surfaces.
@@ -555,7 +555,7 @@ on it across both toggles. AC#1/AC#2 layout numbers -- the 56-cell Items
 ceiling and its 46 painted title characters at 235x52, 15 items in a
 52-row terminal, the then-one-cell grips, and the then-112- and 88-column
 thresholds were cross-checked against that revision. Grip sizes and collapse
-thresholds are superseded by the five-column restoration (TASK-32184).)*
+thresholds are superseded by the five-column restoration (TASK-32200).)*
 
 ### Review sets
 
