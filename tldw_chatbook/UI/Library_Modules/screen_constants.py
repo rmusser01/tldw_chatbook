@@ -408,6 +408,16 @@ _LIBRARY_LIST_ROW_CLASSES = (
     "library-conversation-row",
 )
 
+#: task-32225 (re-review N4): the canvas filters "/" prefers over the rail's
+#: global search, keyed by rail-row id. Named once so the ``on_key`` handler
+#: that FOCUSES one and the footer predicate that decides whether to advertise
+#: the key read the same two selectors. The handler stays the authority on
+#: order; this is only its lookup table.
+_LIBRARY_SLASH_CANVAS_FILTERS = {
+    LIBRARY_ROW_BROWSE_MEDIA: "#library-media-filter",
+    LIBRARY_ROW_BROWSE_PROMPTS: "#library-prompts-filter",
+}
+
 _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID = {
     LIBRARY_ROW_BROWSE_MEDIA: "library-media-row",
     LIBRARY_ROW_BROWSE_NOTES: "library-notes-row",

@@ -4,7 +4,7 @@ title: Library Conversations footer offers neither 'esc focus rail' nor a '/' hi
 status: Done
 assignee: []
 created_date: '2026-09-10 14:56'
-updated_date: '2026-09-10 20:19'
+updated_date: '2026-09-10 21:31'
 labels:
   - library
   - conversations
@@ -38,7 +38,7 @@ The Conversations canvas footer is nearly empty while every sibling list adverti
 <!-- SECTION:NOTES:BEGIN -->
 Fix round 1: AC#1 delivered per ruling R1.
 
-Two halves. The first was live at 100x30 before this round: the canvas showed
+Two halves. The first was live at 100x30 before that round: the canvas showed
 its Filter box, "/" focused it, and the footer said only "F6 next pane",
 because the "/" chip reads `reader_layout.items_open` and the footer is
 registered from `compose_content`, before the shell resolves its panes. A
@@ -58,7 +58,8 @@ Two seams had to be honest before that worked, both measured:
 * the arm schedules ONE attempt and relies on `compose_content` re-requesting
   while armed -- which covers rows arriving on a SCREEN recompose but not on a
   canvas-level one. It now retries on a coarse poll, bounded on both axes by
-  the arm's own settle window.
+  the arm's own settle window. Fix round 2 gave that poll a stored handle, so
+  one chain runs per arm and a disarm stops it early (re-review N5).
 * the empty-list fallback treated `set_focus` as success. A control that is
   mounted but not yet focusable leaves focus on None, which is exactly the
   state Conversations arrives in, so only a landing counts now.
@@ -76,10 +77,13 @@ pins (re-run green). Parity is on the KEYS, which is what AC#1 asks for; the
 alternative -- an unconditional "esc focus rail" -- would restore the dead-key
 lie task-31272 removed.
 
-Known ceiling, recorded in code: the entry-focus arm is a 2-second window, so
-the FIRST visit of a session to Conversations (cold DB) can still miss it and
-land nowhere. The other list canvases share that ceiling (a cold Prompts visit
-lands in its filter rather than row 0). A warm re-entry lands every time.
+Known ceiling, now a filed rider rather than only a comment: the entry-focus
+arm is a fixed 2-second window, so a session's FIRST visit to Conversations
+(cold DB) can still miss it and land nowhere. task-32260 measured Library at
+12.6s to open, which makes the miss routine rather than rare; the other list
+canvases share the ceiling (a cold Prompts visit lands in its filter rather
+than row 0). Upgrade path: **task-32301**, re-arm from each destination's own
+list-arrived seam instead of a fixed window.
 
 Files: UI/Library_Modules/screen_constants.py, UI/Screens/library_screen.py,
 Tests/UI/test_library_crit9_shell.py,

@@ -187,10 +187,13 @@ Prompts, Skills, Collections) close their Library pane at that width too, and
 Escape there does the same thing — **unless the canvas you are on already owns
 Escape**. A surface with its own exit keeps it: a reader with an item open goes
 back to its list, an editor back to its list, an armed delete confirmation
-cancels, and Notes keeps its own Escape throughout. The footer always names
-whichever one is live, so the chip and the key cannot disagree. Above 64
-columns a closed Library pane is an ordinary collapsed pane one grip away, and
-Escape keeps its usual step-back through the visible panes.
+cancels, and Notes keeps its own Escape throughout (Notes still returns to the
+rail — through its own key, not this one). The footer never names a return the
+key would not perform; at 60 columns it may not have room to name the surface's
+own exit either, so treat Escape as "back one step" and read the chip when
+there is one. Above 64 columns a closed Library pane is an ordinary collapsed
+pane one grip away, and Escape keeps its usual step-back through the visible
+panes.
 
 At this width the footer has room for one canvas key, and the way back wins it:
 `esc back to Library` replaces the `/` and `F6` hints rather than being dropped

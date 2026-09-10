@@ -6,9 +6,8 @@ critique-9 fix wave.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
+from textual._context import NoActiveAppError
 from textual.widget import Widget
 
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
@@ -312,7 +311,7 @@ async def test_the_conversations_footer_advertises_the_filter_key_it_honours() -
 async def test_the_return_chip_stands_down_where_escape_belongs_to_the_surface() -> None:
     """task-32225 fix round 1: the chip may not override an earlier Escape.
 
-    Eleven Escape bindings are declared ABOVE ``library_narrow_stage_return``
+    Every Escape binding declared ABOVE ``library_narrow_stage_return``
     (viewer back, editor back, trash back, an armed delete confirm, ...), and
     Textual gives the key to the first gate that passes. Below 64 columns the
     Media viewer therefore painted "esc back to Library" while Escape went to
@@ -351,21 +350,30 @@ async def test_the_return_chip_stands_down_where_escape_belongs_to_the_surface()
         )
 
 
-def test_the_narrow_stage_gate_survives_an_unmeasured_screen() -> None:
-    """task-32225 fix round 1: a not-yet-measured width is not an emergency.
+def test_the_narrow_stage_gate_survives_a_screen_with_no_active_app() -> None:
+    """task-32225 fix round 2: the gate must not read ``Screen.size`` too early.
 
-    ``Widget.size`` is ``Size(0, 0)`` until the screen is in the layout map --
-    the first ``compose_content`` (which registers the footer, which reads this
-    gate) and any frame where Library is not the active screen. The width
-    contract REFUSES a non-positive width with ``ValueError``, so the gate
-    needs the same ``width > 0`` guard its five older siblings carry.
+    Re-review N1: ``Screen.size`` is ``self.app.size - gutter``, NOT
+    ``Widget.size``. Read with no active app it RAISES ``NoActiveAppError`` --
+    it never returns ``Size(0, 0)``, which is what round 1's guard and its
+    ``SimpleNamespace(size=Size(0, 0))`` fake pinned. The real state is an
+    unmounted screen driven directly, which is how
+    ``Tests/UI/test_library_entry_compose_once.py`` exercises
+    ``apply_navigation_context`` -> ``_register_footer_shortcuts`` -> this gate,
+    and where eight of its cases went red.
+
+    Pinned against a REAL ``LibraryScreen`` outside any app context, so the
+    fake can no longer disagree with the class it stands for.
     """
-    from textual.geometry import Size
-
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-    fake = SimpleNamespace(size=Size(0, 0))
-    assert LibraryScreen._library_narrow_stage_return_active(fake) is False
+    screen = LibraryScreen(_build_test_app())
+    assert screen.is_mounted is False
+    with pytest.raises(NoActiveAppError):
+        _ = screen.size  # the read the gate must not reach unguarded
+    assert screen._library_narrow_stage_return_active() is False
+    # ...and the footer that reads it survives the same context.
+    assert isinstance(screen._library_footer_shortcuts_for_current_state(), tuple)
 
 
 async def test_the_conversations_footer_advertises_escape_on_arrival() -> None:
@@ -426,3 +434,73 @@ def test_an_unrecognised_trust_status_never_claims_trust() -> None:
     assert _trust_row_label("some_future_status", blocked=True) == "needs review"
     assert _trust_row_label("some_future_status", blocked=False) == ""
     assert _trust_row_label("", blocked=False) == ""
+
+
+async def test_the_slash_chip_stands_down_when_its_box_is_in_a_closed_pane() -> None:
+    """task-32225 re-review N4: the same dead-chip test, one key over.
+
+    Below 64 columns the box "/" jumps to can be inside a CLOSED pane --
+    mounted, so the handler's query finds it, but out of the focus chain, so
+    ``focus()`` is a no-op. Measured in the Media Reader at 60x24:
+    "/ focus search" was the FIRST painted chip (the P1 stand-down promoted it
+    there), ``#library-media-filter`` was mounted inside the collapsed Items
+    pane, and the key moved nothing.
+    """
+    from Tests.UI.test_library_media_reader_flow import _flow_app, _load_row_0
+    from Tests.UI.test_library_media_side_by_side import _open_media_list
+    from Tests.UI.test_library_shell import LibraryProductionCSSHarness
+
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=NARROW_TEST_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.view == "viewer",
+            message="The Media viewer never opened at 60 columns.",
+        )
+        assert screen.query_one("#library-rail").display is False
+        # The filter IS mounted -- being findable is not being focusable.
+        assert screen.query("#library-media-filter")
+
+        chips = screen._library_footer_shortcuts_for_current_state()
+        assert not any(pair[0] == "/" for pair in chips), chips
+
+        before = screen.focused
+        await pilot.press("slash")
+        await pilot.pause()
+        assert screen.focused is before, screen.focused
+
+
+async def test_the_slash_chip_survives_where_the_key_still_works() -> None:
+    """Negative control for the chip above: a reachable box keeps its chip.
+
+    Same canvas, same harness, one width apart -- so the difference under test
+    is the closed pane and nothing else.
+    """
+    from Tests.UI.test_library_media_reader_flow import _flow_app
+    from Tests.UI.test_library_media_side_by_side import _open_media_list
+    from Tests.UI.test_library_shell import LibraryProductionCSSHarness
+
+    app, _service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-rail").display
+            and any(
+                pair[0] == "/"
+                for pair in screen._library_footer_shortcuts_for_current_state()
+            ),
+            message=lambda: (
+                "The Media footer dropped a working / key: "
+                f"{screen._library_footer_shortcuts_for_current_state()}"
+            ),
+        )
+        await pilot.press("slash")
+        await pilot.pause()
+        assert getattr(screen.focused, "id", "") == "library-media-filter"
