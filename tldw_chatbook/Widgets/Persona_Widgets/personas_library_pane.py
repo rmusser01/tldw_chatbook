@@ -282,7 +282,7 @@ class PersonasLibraryPane(Vertical):
             yield Button(
                 "Import",
                 id="personas-library-import",
-                tooltip="Import a character card (PNG or JSON).",
+                tooltip="Import a character card or create a character from a Buddy archive.",
                 classes="console-action-secondary",
             )
             yield Button(
@@ -347,7 +347,9 @@ class PersonasLibraryPane(Vertical):
         elif mode == "lore":
             import_button.tooltip = "Import a world book (JSON)."
         else:
-            import_button.tooltip = "Import a character card (PNG or JSON)."
+            import_button.tooltip = (
+                "Import a character card or create a character from a Buddy archive."
+            )
         self.query_one("#personas-library-duplicate", Button).display = mode in (
             "characters",
             "dictionaries",

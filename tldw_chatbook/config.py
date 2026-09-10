@@ -3644,6 +3644,7 @@ fps = 6  # 1-12
 # project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
 
 [appearance]
+character_expression_mode = "dynamic"  # Dynamic animates character expressions; Static changes poses without motion
 density = "normal"  # compact, normal, or comfortable default control density
 animations_enabled = true  # Enable optional UI animations where supported
 smooth_scrolling = true  # Enable smooth scrolling where supported

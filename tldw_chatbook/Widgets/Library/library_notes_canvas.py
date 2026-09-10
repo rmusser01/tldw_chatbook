@@ -17,6 +17,7 @@ from textual.widgets import Button, Input, Markdown, Static, TextArea
 from tldw_chatbook.Library.library_notes_state import (
     LibraryNoteSessionSnapshot,
     LibraryNotesListState,
+    LibraryNotesTrashState,
     build_library_note_template_rows,
     ellipsize_note_title_cells,
 )
@@ -352,6 +353,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         tree_projection: LibraryNotesTreeProjection | None = None,
         tree_selected_placement_id: str = "",
         tree_deleted_folder_available: bool = False,
+        trash: LibraryNotesTrashState | None = None,
         title_placeholder_only: bool = False,
         compact: bool = False,
         pane_width: int = 0,
@@ -400,6 +402,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.tree_projection = tree_projection
         self.tree_selected_placement_id = tree_selected_placement_id
         self.tree_deleted_folder_available = tree_deleted_folder_available
+        self.trash = trash
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
         self.pane_width = pane_width
@@ -529,6 +532,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         if self.mode == "create":
             yield from self._compose_create()
+            return
+        if self.mode == "trash":
+            yield from self._compose_trash()
             return
         if self.mode == "import":
             if self.import_snapshot is not None:
@@ -689,6 +695,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         tree_projection: LibraryNotesTreeProjection | None,
         tree_selected_placement_id: str,
         tree_deleted_folder_available: bool,
+        trash: LibraryNotesTrashState | None = None,
         title_placeholder_only: bool,
         compact: bool,
         pane_width: int = 0,
@@ -759,6 +766,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.tree_projection = tree_projection
         self.tree_selected_placement_id = tree_selected_placement_id
         self.tree_deleted_folder_available = tree_deleted_folder_available
+        self.trash = trash
         self.title_placeholder_only = title_placeholder_only
         self.compact = compact
         self.pane_width = pane_width
@@ -1200,10 +1208,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         disabled=list_state.operation_running,
                     )
         if self.tree_projection is not None:
+            # The opener is the row list's last row -- see
+            # ``_compose_trash_opener``.
             yield from self._compose_tree_rows(list_state)
             return
         if not list_state.rows:
             yield Static(list_state.empty_copy, id="library-notes-empty", markup=False)
+            yield from self._compose_trash_opener()
             return
         with Vertical(id="library-notes-list"):
             for index, row in enumerate(list_state.rows):
@@ -1237,6 +1248,98 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # user titles).
                 button._library_row_label_rest = label_rest
                 yield button
+            yield from self._compose_trash_opener()
+
+    def _compose_trash_opener(self) -> ComposeResult:
+        """Name the Trash under the tree, and only while it holds something.
+
+        task-32144: the delete receipt was the ONLY way back from a delete,
+        so dismissing it stranded the note. This row is the standing second
+        net; at zero it is absent rather than disabled -- an empty Trash has
+        nothing to say and a dead affordance is worse than none.
+
+        Composed as the row list's LAST ROW, not as a sibling after it: the
+        list is ``height: 1fr``, so a sibling docked to the foot of the pane
+        with a dozen blank rows between it and the tree (measured live at
+        235x52) -- the same detached-affordance shape task-28015 fixed in the
+        Media Trash. Every path that has no row list yields it directly.
+        """
+        trash = self.trash
+        if trash is None or trash.total <= 0:
+            return
+        yield Button(
+            f"Recently deleted ({trash.total})",
+            id="library-notes-trash-open",
+            classes="library-canvas-action",
+            compact=True,
+        )
+
+    def _compose_trash(self) -> ComposeResult:
+        """Render the soft-deleted notes with one Restore each, and no more.
+
+        Restore is the only mutation this view offers: it commits through
+        the same ``_undo_library_note_delete`` seam the receipt's Undo uses,
+        so the row returns to its folder (or Unfiled) and the rail count
+        moves exactly as an Undo would. There is deliberately no permanent
+        delete here -- ADR-055 keeps destruction behind its own receipt, and
+        this surface exists to recover.
+        """
+        trash = self.trash or LibraryNotesTrashState()
+        yield Static(
+            "Recently deleted",
+            id="library-notes-trash-header",
+            classes="destination-section",
+            markup=False,
+        )
+        yield Static(
+            "Deleted notes stay here until you restore them. Restore puts a "
+            "note back where it was; nothing is removed for good from here.",
+            id="library-notes-trash-purpose",
+            markup=False,
+        )
+        yield Button(
+            _library_note_back_label(self.compact),
+            id="library-notes-trash-back",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        if not trash.rows:
+            yield Static(
+                "Nothing deleted recently. Deleted notes appear here — press "
+                "Escape to go back to the list.",
+                id="library-notes-trash-empty",
+                markup=False,
+            )
+            return
+        with Vertical(id="library-notes-trash-list"):
+            for index, row in enumerate(trash.rows):
+                trash_row = Horizontal(classes="library-notes-trash-row")
+                trash_row.styles.height = "auto"
+                with trash_row:
+                    yield Static(
+                        compose_note_row_label(row.title, age_label=row.age_label),
+                        classes="library-notes-trash-row-copy",
+                        markup=False,
+                    )
+                    button = Button(
+                        "Restore",
+                        id=f"library-notes-trash-restore-{index}",
+                        classes=(
+                            "library-canvas-action library-notes-trash-restore"
+                        ),
+                        compact=True,
+                    )
+                    button.note_id = row.note_id
+                    button.note_title = row.title
+                    button.note_version = row.version
+                    yield button
+        if trash.total > len(trash.rows):
+            yield Static(
+                f"Showing the {len(trash.rows)} most recently deleted of "
+                f"{trash.total}. Restore one to see the rest.",
+                id="library-notes-trash-more",
+                markup=False,
+            )
 
     def _compose_tree_rows(self, list_state: LibraryNotesListState) -> ComposeResult:
         """Render placement-aware rows while retaining legacy note handlers."""
@@ -1249,6 +1352,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-notes-empty",
                 markup=False,
             )
+            yield from self._compose_trash_opener()
             return
         # task-32126: a seeded folder (Agent_Lessons) gives the tree
         # projection rows even when the library holds zero notes, so the
@@ -1387,6 +1491,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 self._set_tree_row_metadata(button, row)
                 button._library_row_label_rest = label_rest
                 yield button
+            yield from self._compose_trash_opener()
 
     def _compose_tree_actions(self, *, operation_running: bool) -> ComposeResult:
         """Render actions appropriate to the selected folder-tree placement."""
