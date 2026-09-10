@@ -1956,3 +1956,36 @@ def test_environment_poll_tick_is_a_no_op_once_the_screen_stack_is_empty():
 
     assert ticks == []
     assert ChatScreen._is_active_console_screen(fake) is False
+
+
+@pytest.mark.asyncio
+async def test_environment_poll_tick_survives_app_teardown_through_the_real_screen():
+    """task-32297, at the application boundary (Qodo asked for it).
+
+    The real Console screen inside the real app: empty the live screen stack
+    the way teardown does (the harness keeps the stack until its context
+    ends, so ``App.exit()`` alone never reaches that window here), confirm
+    ``App.screen`` now raises ``ScreenStackError``, and fire the poll tick
+    the way a late timer would. Before the guard the tick raised.
+    """
+    from textual.app import ScreenStackError
+
+    ticks: list[str] = []
+    async with _console_screen() as (pilot, screen):
+        owner = screen._console_environment
+        owner.poll_tick = lambda: ticks.append("tick")
+        assert screen._is_active_console_screen() is True
+
+        stack = pilot.app._screen_stack  # the live list (screen_stack returns a copy)
+        saved = list(stack)
+        stack.clear()
+        try:
+            with pytest.raises(ScreenStackError):
+                pilot.app.screen
+            before = len(ticks)
+            screen._poll_console_environment()  # a late timer tick: must not raise
+            assert len(ticks) == before
+            assert screen._is_active_console_screen() is False
+            assert owner._rail_open_accessor() is False
+        finally:
+            stack.extend(saved)  # let the harness tear down normally
