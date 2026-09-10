@@ -1,7 +1,7 @@
 ---
 id: TASK-31999
 title: Write verify and publish recovery archives without overwrite
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-07 23:57
 labels:
@@ -11,7 +11,7 @@ dependencies:
 - task-31985
 - task-31995
 - task-31998
-updated_date: 2026-09-10 19:29
+updated_date: 2026-09-10 19:33
 ---
 
 ## Description
@@ -56,3 +56,9 @@ Original Task17 integration exposed missing manifest producer metadata: director
 Added original restore-input metadata: strict inert producer inventory for files/directories/exclusions, dependencies and sharing, plus file mode/mtime. Capture emits synthetic parent/material records explicitly and retains excluded-owner identity without claiming an observed schema. Reader rejects mismatched coverage/status/owner, unknown dependencies, duplicate records, conflicting shared file bytes and coherent archives containing unsupported/unavailable/missing-required producers. Legacy archives remain readable with metadata absent; no local authority inferred. Red metadata4 failed7 passed; integrated reader/writer/capture114 passed47s; final contradiction red then metadata12 passed1.03s. New/changed modules Ruff clean except unchanged reader2→2 baseline; Bandit0. Restore planner consumes producer graph transitively; source/target mappings remain local.
 Task17 retirement integration further distinguishes source directory trees from synthetic archive-only parent containers: Directory.synthetic defaults false, current capture explicitly marks only fabricated roots, and reader rejects synthetic nonroot records. This prevents standalone DB/config restore from treating unrelated target siblings as owned retirement scope. Original regression red then producer/capture39 passed3.57s; scoped Ruff no new findings and Bandit0.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Original archive-writer contract implemented: regular bounded ZIP64 and optional age encryption, exact shared reader verification before native no-overwrite publication, source/control alias refusal, truthful producer/directory/credential metadata and cancellation/failure cleanup. Focused actual plaintext/encrypted capture publication and archive tests pass; no new security findings. This completes Task16 only; whole backup runtime and restore work remain in their original tasks.
+<!-- SECTION:FINAL_SUMMARY:END -->
