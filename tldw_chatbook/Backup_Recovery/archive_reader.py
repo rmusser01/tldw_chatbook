@@ -165,7 +165,67 @@ def _manifest(data: bytes, limits: ArchiveLimits, encrypted: bool) -> ArchiveMan
         raise ValueError("invalid_relocation")
     if not encrypted and (doc.relocations or doc.credential_policy != "exclude"):
         raise ValueError("encryption_required")
+    _producer_inventory(doc, limits)
     return doc
+
+
+def _producer_inventory(doc: ArchiveManifest, limits: ArchiveLimits) -> None:
+    """Validate explicit coverage without treating imported ownership as proof."""
+    if not doc.producer_inventory:
+        return  # Legacy archives do not gain inferred producer metadata.
+    if len(doc.producer_inventory) > limits.members:
+        raise ValueError("member_limit")
+    _unique(item.logical_id for item in doc.producer_inventory)
+    items = {item.logical_id: item for item in doc.producer_inventory}
+    files = {item.logical_id: item for item in doc.files}
+    directories = {item.logical_id: item for item in doc.directories}
+    exclusions = {item.logical_id: item for item in doc.exclusions}
+    owners = {owner.owner_id for owner in doc.owners}
+    if set(items) != files.keys() | directories.keys() | exclusions.keys():
+        raise ValueError("producer_coverage_mismatch")
+    shared = {}
+    for item in items.values():
+        if doc.consistency == "coherent" and item.status in {
+            "unsupported",
+            "unavailable",
+            "missing_required",
+        }:
+            raise ValueError("producer_coverage_incomplete")
+        if item.owner_id not in owners:
+            raise ValueError("unknown_producer_owner")
+        _unique(item.dependencies)
+        if not set(item.dependencies) <= items.keys():
+            raise ValueError("unknown_producer_dependency")
+        if item.logical_id in files:
+            payload = files[item.logical_id]
+            if item.status != "included" or item.owner_id != payload.owner_id:
+                raise ValueError("producer_payload_mismatch")
+        elif item.logical_id in directories:
+            if item.status != "included_directory":
+                raise ValueError("producer_directory_mismatch")
+        elif (
+            item.status in {"included", "included_directory"}
+            or exclusions[item.logical_id].reason != item.status
+        ):
+            raise ValueError("producer_exclusion_mismatch")
+        if item.shared_group and item.logical_id in files.keys() | directories.keys():
+            shared.setdefault(item.shared_group, []).append(item)
+    if exclusions.keys() & (files.keys() | directories.keys()):
+        raise ValueError("producer_exclusion_mismatch")
+    for group in shared.values():
+        if len({item.status for item in group}) != 1:
+            raise ValueError("shared_kind_mismatch")
+        if (
+            group[0].status == "included"
+            and len(
+                {
+                    (files[item.logical_id].size, files[item.logical_id].sha256)
+                    for item in group
+                }
+            )
+            != 1
+        ):
+            raise ValueError("shared_payload_mismatch")
 
 
 def _central_preflight(stream, limits):

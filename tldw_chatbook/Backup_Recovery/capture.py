@@ -45,6 +45,24 @@ def _manifest_for(inventory, staged, aliases, options, issues):
     declarations = {adapter.owner_id: adapter for adapter in registered()}
     directories, files, owners = {}, [], {}
     selected = {item.logical_id: item for item in inventory.items}
+    producers = {
+        item.logical_id: {
+            "logical_id": item.logical_id,
+            "owner_id": item.owner,
+            "status": item.status,
+            "dependencies": list(item.dependencies),
+            "shared_group": item.shared_group,
+        }
+        for item in inventory.items
+    }
+    # An excluded owner has no observed payload schema. Its identity is still
+    # needed to distinguish intentional omissions from target-only live data.
+    for item in inventory.items:
+        owners[item.owner] = {
+            "owner_id": item.owner,
+            "schema_version": 0,
+            "capabilities": [],
+        }
     for item in inventory.items:
         if item.status == "included_directory" and item.metadata:
             meta = item.metadata
@@ -77,6 +95,21 @@ def _manifest_for(inventory, staged, aliases, options, issues):
                 "relative_path": "",
                 "metadata": {"version": 1, "mode": 0o700, "mtime_ns": 0},
             }
+            producers[root_id] = {
+                "logical_id": root_id,
+                "owner_id": item.owner,
+                "status": "included_directory",
+                "dependencies": [],
+                "shared_group": None,
+            }
+        producers[item.logical_id] = {
+            "logical_id": item.logical_id,
+            "owner_id": item.owner,
+            "status": "included",
+            "dependencies": list(item.dependencies),
+            "shared_group": item.shared_group,
+        }
+        source_info = item.path.stat()
         adapter = declarations.get(item.owner)
         policy = adapter.schema_policy() if adapter else None
         owners[item.owner] = {
@@ -96,6 +129,11 @@ def _manifest_for(inventory, staged, aliases, options, issues):
                 "payload": str(path.relative_to(options["root"])),
                 "size": path.stat().st_size,
                 "sha256": reader._hash(path, options["cancel"]),
+                "metadata": {
+                    "version": 1,
+                    "mode": meta.mode if meta else source_info.st_mode & 0o777,
+                    "mtime_ns": meta.mtime_ns if meta else source_info.st_mtime_ns,
+                },
             }
         )
     groups = []
@@ -157,6 +195,7 @@ def _manifest_for(inventory, staged, aliases, options, issues):
         "required_capabilities": [],
         "report": {"version": 1, "lines": lines},
         "relocations": [],
+        "producer_inventory": list(producers.values()),
     }
     encoded = json.dumps(
         doc, sort_keys=True, separators=(",", ":"), ensure_ascii=True

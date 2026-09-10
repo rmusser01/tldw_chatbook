@@ -38,6 +38,26 @@ class Payload(Record):
     payload: str
     size: int = Field(ge=0)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    metadata: Metadata | None = None
+
+
+class ProducerItem(Record):
+    """Archived ownership observations; never local destination authority."""
+
+    logical_id: Identifier
+    owner_id: Identifier
+    status: Literal[
+        "included",
+        "included_directory",
+        "intentionally_excluded",
+        "unused",
+        "intentionally_deleted",
+        "unavailable",
+        "unsupported",
+        "missing_required",
+    ]
+    dependencies: tuple[Identifier, ...]
+    shared_group: Identifier | None = None
 
 
 class Owner(Record):
@@ -93,6 +113,7 @@ class ArchiveManifest(Record):
     required_capabilities: tuple[Identifier, ...]
     report: RecoveryReport
     relocations: tuple[Relocation, ...]
+    producer_inventory: tuple[ProducerItem, ...] = ()
 
 
 @dataclass(frozen=True)

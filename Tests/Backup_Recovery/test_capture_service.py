@@ -162,6 +162,18 @@ def test_public_config_capture_and_publication_without_profile_rebinding(
     )
     assert bootstrap._records(root) == ([], [])
     manifest = json.loads(result.manifest_bytes)
+    producers = {item["logical_id"]: item for item in manifest["producer_inventory"]}
+    assert set(producers) == {
+        item["logical_id"]
+        for item in (
+            *manifest["files"],
+            *manifest["directories"],
+            *manifest["exclusions"],
+        )
+    }
+    for file in manifest["files"]:
+        assert producers[file["logical_id"]]["owner_id"] == file["owner_id"]
+        assert file["metadata"]["version"] == 1
     audio_payload = next(
         file for file in manifest["files"] if file["owner_id"] == "audio.history"
     )
