@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-10 15:35'
-updated_date: '2026-09-10 21:43'
+updated_date: '2026-09-10 22:20'
 labels: []
 dependencies: []
 priority: high
@@ -42,6 +42,7 @@ PR #2576 wave 2 backend: use shared Pydantic name validation matching the existi
 PR #2576 second review: reproduce registry-read error escapes and UI-thread storage in Console Restore/Settings Undo; dispatch recovery through asynchronous storage calls, fence delayed UI publication, retain failed receipts, and assert replacement rename-input identity before the next action. Verify blocking-storage responsiveness and targeted mounted lifecycle flows.
 PR #2576 third review: preserve deleted conversation discovery independently of archive scope; prevent failed new mutations from exposing prior Undo; recheck durable state before existing-session Resume; serialize Unicode name checks with restore writes; align workspace-archive action copy and navigation contracts. Add focused regressions and verify affected integrations. ADR required: no new ADR; implements existing ADR147 lifecycle/recovery boundaries.
 PR #2576 fourth review: centralize resume-ID validation; keep memory-backed registry enrichment on its owning thread; verify confirmed close retains real saved history; fence recovery publication by request/revision ownership; check durable state for both warm and cold resume paths; reuse async workspace restore for receipt Undo. Add targeted regressions. ADR required: no new ADR; implement ADR147 ownership and recovery rules.
+PR #2576 fifth review: verify all 17 findings; retain send drafts and completed archive receipts through cancellation; make remaining workspace lifecycle storage asynchronous; fence the late existing-session hydration branch; synchronize retained reader lifecycle metadata and honest Find navigation; repair behavioral test gaps/flaky waits, batching names, and docs. Use bounded independent domain agents plus local integration. ADR required: no new ADR; correct ADR147 close consent wording and implement existing lifecycle/ownership decisions. Targeted checks only.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -65,4 +66,6 @@ UI verification: 4 focused reproductions failed before implementation and then p
 Final integrated review verification and baseline limits are recorded in Docs/superpowers/qa/console/2026-09-10-archive-recovery.md. All modified archive flows pass their targeted tests; the unrelated compact Overview assertion reproduces with the prior Settings implementation. Started-write cancellation preserves storage completion publication. Existing ADR147 applies.
 PR #2576 third review: fixed Trash archive independence, failed-mutation Undo ownership, durable existing-tab Resume checks, serialized Unicode restore names, workspace recovery labels, and archive navigation contracts. Targeted real SQLite, recovery and mounted checks pass; third-review evidence and temporary host-disk interruption are recorded in the QA report. ADR147 applies and documents deletion-oriented scope. Self-review and scoped static checks complete.
 PR #2576 fourth review: centralized resume validation, preserved in-memory SQLite ownership, verified confirmed close retains stored history, fenced recovery against newer request revisions, checked both warm/cold lifecycle state, and routed Console receipt Undo through async restore with expected-record checks. Evidence: 99 focused tests, 2 supersession-boundary cases, confirmed-close SQLite test, and 14 mounted lifecycle cases pass; static and diagnostic checks pass. See fourth-review QA section; ADR147 applies.
+
+PR #2576 fifth review: retained committed archive/Undo completion through cancellation, preserved live owning keyboard drafts, made remaining workspace lifecycle storage asynchronous, fenced late Resume and retained reader generations, corrected Find feedback, and strengthened mounted source/import/wait assertions. ADR147 close-consent wording clarified; existing lifecycle design applies. Targeted results and baseline fixture limitations are recorded in Docs/superpowers/qa/console/2026-09-10-archive-recovery.md. New diagnostics were reviewed; scoped Ruff and artifact checks pass. Self-review caught and covered closed-owner cancellation and same-ID reader-generation races.
 <!-- SECTION:NOTES:END -->

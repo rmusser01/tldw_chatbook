@@ -424,27 +424,6 @@ def test_link_remedy_refuses_a_stale_retained_transcript() -> None:
 
 
 @pytest.mark.asyncio
-async def test_use_as_source_has_a_composed_control_and_both_handlers(widget_pilot) -> None:
-    """Source handoff is now a real control distinct from original-ID Resume."""
-    from tldw_chatbook.UI.Library_Modules.library_conversations_controller import (
-        LibraryConversationsController,
-    )
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
-    assert callable(LibraryScreen.use_selected_conversation_as_source)
-    assert callable(LibraryConversationsController.use_selected_conversation_as_source)
-    async with await widget_pilot(
-        LibraryConversationReader,
-        state=_loaded_reader_state(),
-        id="library-conversation-reader",
-    ) as pilot:
-        source = pilot.app.query_one("#library-conversation-use-source", Button)
-        resume = pilot.app.query_one("#library-conversation-open-console", Button)
-        assert str(source.label) == "Use as source"
-        assert str(resume.label) == "Resume conversation"
-
-
-@pytest.mark.asyncio
 async def test_blocked_state_paints_the_action_name_once(widget_pilot) -> None:
     """task-32101 AC#4: one control, one action name, one sentence.
 

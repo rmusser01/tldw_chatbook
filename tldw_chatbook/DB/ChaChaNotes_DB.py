@@ -114,6 +114,7 @@ from tldw_chatbook.Utils.fts5_match_forms import (
 DEFAULT_RUNTIME_BACKEND = "local"
 DEFAULT_DISCOVERY_OWNER = "general_chat"
 _CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
+_CONVERSATION_ARCHIVE_STATE_BATCH_SIZE = 500
 _SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
 _UNSET = object()
 _CANVAS_REVISION_DELETE_GUARD_FUNCTION = "canvas_revision_delete_authorized"
@@ -10840,8 +10841,8 @@ UPDATE db_schema_version
         ids = list(dict.fromkeys(conversation_ids))
         states: dict[str, bool] = {}
         with self.transaction() as conn:
-            for start in range(0, len(ids), 500):
-                batch = ids[start : start + 500]
+            for start in range(0, len(ids), _CONVERSATION_ARCHIVE_STATE_BATCH_SIZE):
+                batch = ids[start : start + _CONVERSATION_ARCHIVE_STATE_BATCH_SIZE]
                 placeholders = ",".join("?" for _ in batch)
                 rows = conn.execute(
                     f"SELECT id, archived FROM conversations WHERE deleted = 0 AND id IN ({placeholders})",

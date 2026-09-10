@@ -113,6 +113,7 @@ class LibraryConversationReader(Vertical):
         self._message_sync_generation = 0
         self._find_navigation_key = None
         self._find_navigation_index = -1
+        self._pending_find_navigation_index: int | None = None
 
     def _workspace_block(self) -> str:
         """Return the short workspace refusal reason, or empty when eligible.
@@ -537,6 +538,7 @@ class LibraryConversationReader(Vertical):
         if find_key != self._find_navigation_key:
             self._find_navigation_key = find_key
             self._find_navigation_index = -1
+            self._pending_find_navigation_index = None
             find_position.update("")
         find_navigation.display = state.mode == "read"
         for button in find_buttons:
@@ -592,15 +594,33 @@ class LibraryConversationReader(Vertical):
         ):
             return
         direction = -1 if (event.button.id or "").endswith("previous") else 1
-        self._find_navigation_index = (
-            (len(matches) - 1 if direction < 0 else 0)
-            if self._find_navigation_index < 0
-            else (self._find_navigation_index + direction) % len(matches)
+        previous = (
+            self._pending_find_navigation_index
+            if self._pending_find_navigation_index is not None
+            else self._find_navigation_index
         )
-        match = matches[self._find_navigation_index]
-        self.focus_find_match(match.message_id)
+        self._pending_find_navigation_index = (
+            (len(matches) - 1 if direction < 0 else 0)
+            if previous < 0
+            else (previous + direction) % len(matches)
+        )
+        self._finish_find_navigation()
+
+    def _finish_find_navigation(self) -> None:
+        """Publish a position only after its current transcript row is revealed."""
+        index = self._pending_find_navigation_index
+        if index is None or not self.state.loaded_actions_eligible:
+            return
+        matches = self.state.find_matches
+        if not self.state.find_complete or index >= len(matches):
+            return
+        match = matches[index]
+        if not self.focus_find_match(match.message_id):
+            return
+        self._pending_find_navigation_index = None
+        self._find_navigation_index = index
         self.query_one("#library-conversation-find-position", Static).update(
-            f"Match {self._find_navigation_index + 1} of {len(matches)} · message {match.message_index + 1}, character {match.message_offset + 1}"
+            f"Match {index + 1} of {len(matches)} · message {match.message_index + 1}"
         )
 
     async def _sync_messages(self, generation: int) -> None:
@@ -631,6 +651,7 @@ class LibraryConversationReader(Vertical):
             else:
                 row.update(self._message_copy(message))
         if generation == self._message_sync_generation and self.is_mounted:
+            self._finish_find_navigation()
             self.post_message(
                 self.MessagesSynced(self.state.generation, self.state.find_query)
             )

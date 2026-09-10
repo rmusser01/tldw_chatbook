@@ -9,22 +9,23 @@ from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceControlle
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("matching_receipt", [True, False])
-def test_settings_restore_clears_only_matching_archive_receipt(matching_receipt):
+async def test_settings_restore_clears_only_matching_archive_receipt(matching_receipt):
     receipt = SimpleNamespace(workspace_id="restored" if matching_receipt else "other")
     restored = SimpleNamespace(workspace_id="restored", name="Restored")
-    screen = SimpleNamespace(
-        _settings_selected_workspace_id="restored",
-        _settings_workspace_archive_receipt=receipt,
-        app_instance=SimpleNamespace(
-            workspace_registry_service=SimpleNamespace(
-                unarchive_workspace=Mock(return_value=restored)
-            )
-        ),
-        query_one=lambda *_: SimpleNamespace(value="Restored"),
-        _refresh_settings_workspaces_pane=Mock(),
+    controller, tasks = _recovery_host(
+        SimpleNamespace(unarchive_workspace=Mock(return_value=restored))
     )
+    screen = controller._screen
+    screen.app_instance = controller.app_instance
+    screen._settings_selected_workspace_id = "restored"
+    screen._settings_workspace_archive_receipt = receipt
+    screen.query_one = lambda *_: SimpleNamespace(value="Restored")
+    screen._refresh_settings_workspaces_pane = Mock()
     SettingsScreen.handle_workspace_unarchive(screen, SimpleNamespace(stop=Mock()))
+    for task in tasks:
+        await task
     assert screen._settings_workspace_archive_receipt is (
         None if matching_receipt else receipt
     )
@@ -60,18 +61,17 @@ async def test_console_archive_invalidates_cached_rows_before_sync():
     registry = SimpleNamespace(
         get_workspace=lambda _: record, archive_workspace=lambda _: record
     )
-    app = SimpleNamespace(workspace_registry_service=registry, notify=Mock())
-    screen = SimpleNamespace(
-        _console_composer_or_none=lambda: None, _console_visible_draft_session_id=None
+    controller, tasks = _recovery_host(registry)
+    controller._screen._console_composer_or_none = lambda: None
+    controller._screen._console_visible_draft_session_id = None
+    controller.push_screen = lambda modal, **kwargs: dialogs.append(modal)
+    controller._invalidate_console_persisted_rows_cache = lambda: events.append(
+        "invalidate"
     )
-    controller = SimpleNamespace(
-        app_instance=app,
-        _screen=screen,
-        push_screen=lambda modal, **kwargs: dialogs.append(modal),
-        _invalidate_console_persisted_rows_cache=lambda: events.append("invalidate"),
-        _sync_console_chat_core_state=lambda: events.append("sync"),
-    )
+    controller._sync_console_chat_core_state = lambda: events.append("sync")
     ConsoleWorkspaceController._confirm_console_workspace_archive(controller, "w")
+    for task in tasks:
+        await task
     await dialogs[0].confirm_callback()
     assert events == ["invalidate", "sync"]
 
@@ -106,14 +106,23 @@ async def test_settings_archive_checks_live_composer_before_and_after_confirmati
         _reusable_screen_instances={"chat": (object(), console)},
         push_screen=lambda modal: dialogs.append(modal),
     )
+    import asyncio
+
+    tasks = []
+    app.run_worker = lambda coroutine, **_: tasks.append(asyncio.create_task(coroutine))
     settings = SimpleNamespace(
         app_instance=app,
         app=app,
+        is_mounted=True,
         _settings_selected_workspace_id="w",
+        _settings_workspace_archive_receipt=None,
         _set_settings_workspaces_result=Mock(),
         _refresh_settings_workspaces_pane=Mock(),
     )
+    app.screen = settings
     SettingsScreen.handle_workspace_archive(settings, SimpleNamespace(stop=Mock()))
+    for task in tasks:
+        await task
     if draft_during_confirmation:
         assert len(dialogs) == 1
         text[0] = "Unsent text"
@@ -173,19 +182,25 @@ async def test_console_restore_reports_storage_failure(failure_stage):
 async def test_console_restore_storage_does_not_block_ui_loop():
     import asyncio
     import threading
-    import time
 
     ui_thread = threading.get_ident()
+    loop = asyncio.get_running_loop()
     threads = []
+    started = [asyncio.Event(), asyncio.Event()]
+    release = [threading.Event(), threading.Event()]
+
+    def block_storage(index):
+        threads.append(threading.get_ident())
+        assert threads[-1] != ui_thread
+        loop.call_soon_threadsafe(started[index].set)
+        assert release[index].wait(10), "UI did not release blocked storage"
 
     def read(_):
-        threads.append(threading.get_ident())
-        time.sleep(0.1)
+        block_storage(0)
         return SimpleNamespace(archived=True, name="Workspace")
 
     def restore(*_, **__):
-        threads.append(threading.get_ident())
-        time.sleep(0.1)
+        block_storage(1)
         return SimpleNamespace(name="Workspace")
 
     controller, tasks = _recovery_host(
@@ -196,12 +211,22 @@ async def test_console_restore_storage_does_not_block_ui_loop():
         pass
 
     controller._sync_native_console_chat_ui = sync
-    start = time.monotonic()
     ConsoleWorkspaceController._restore_console_workspace(controller, "w")
-    await asyncio.sleep(0)
-    assert time.monotonic() - start < 0.08
-    for task in tasks:
-        await task
+    try:
+        for index in range(2):
+            await asyncio.wait_for(started[index].wait(), timeout=10)
+            # This UI-loop callback must run while the storage call is blocked.
+            responsive = loop.create_future()
+            loop.call_soon(responsive.set_result, True)
+            assert await asyncio.wait_for(responsive, timeout=10)
+            assert not tasks[0].done()
+            assert not release[index].is_set()
+            release[index].set()
+    finally:
+        for gate in release:
+            gate.set()
+        for task in tasks:
+            await task
     assert len(threads) == 2 and all(thread != ui_thread for thread in threads)
 
 
@@ -434,6 +459,8 @@ async def test_console_receipt_undo_read_failure_has_async_recovery():
 
     controller.push_screen = push
     ConsoleWorkspaceController._confirm_console_workspace_archive(controller, "w")
+    for task in tasks:
+        await task
     await dialogs[0][0].confirm_callback()
     await dialogs[0][1]["callback"](True)
     registry.get_workspace.side_effect = WorkspaceRegistryServiceError(

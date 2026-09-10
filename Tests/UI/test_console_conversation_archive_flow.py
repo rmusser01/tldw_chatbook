@@ -1,6 +1,5 @@
 """Mounted Console recovery controls with isolated, real conversation storage."""
 
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -105,10 +104,8 @@ async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
             "#console-switcher-query", Input
         ).value = "retained phrase"
         await pilot.pause(0.3)
-        evidence = Path("output/archive-recovery-2026-09-10")
-        evidence.mkdir(parents=True, exist_ok=True)
         host.save_screenshot(
-            filename=f"console-search-{size[0]}x{size[1]}.svg", path=str(evidence)
+            filename=f"console-search-{size[0]}x{size[1]}.svg", path=str(tmp_path)
         )
         host.screen.query_one("#console-switcher-full-search", Button).press()
         for _ in range(100):

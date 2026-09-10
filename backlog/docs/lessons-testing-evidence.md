@@ -13189,3 +13189,19 @@ write continued, allowing a send before commit. The regression now controls the
 thread with events and verifies the archive reservation remains until commit and
 cache publication. Shield the operation that owns the reservation, rather than
 assuming coroutine cancellation stops a database thread.
+
+PR #2576's fifth review found that shielding storage alone still lost the UI
+receipt when the waiter was cancelled. Completion must also own receipt and
+cache publication. Block the write, cancel its caller, release it, and assert
+the durable outcome and recovery state; a successful database assertion alone
+does not prove the user can recover the completed operation.
+
+### Batch import success can hide the item under test (2026-09-10)
+
+During PR #2576 review, the Chatbook rename-conflict test passed even though its
+one-argument mock rejected the new `archive_scope` keyword. Other imported items
+made the aggregate success count positive while the conversation failed. An
+assertion on the actual renamed conversation creation exposed the TypeError;
+correcting the mock contract then made that assertion pass. Batch tests must
+assert the specific item's persisted outcome or write payload, not only an
+aggregate count that unrelated items can satisfy.

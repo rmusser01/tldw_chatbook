@@ -477,7 +477,8 @@ saved conversation away. Its messages, branches and workspace are preserved.
 The receipt offers **Undo**, **View archived** and **Done**. A chat with a draft,
 attachments, unsaved messages, or running/queued work must finish saving or have
 that work resolved before it can be archived. An archived open tab remains
-readable; restore it before sending again.
+readable; restore it before sending again. If you leave Console while the archive
+finishes, its completion notice points you to **Archived chats** for recovery.
 
 1. Choose **Archived chats** in Console context, or open the session switcher
    and choose **Archived chats**. Library opens in its **Archived** scope.

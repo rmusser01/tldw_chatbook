@@ -1072,6 +1072,7 @@ class LibraryConversationsController:
         """Finish list focus and align the permanent work selection."""
         self._finish_library_conversation_request_focus()
         self._ensure_library_conversation_reader_selection()
+        self._sync_library_conversation_reader()
 
     def _fail_library_conversation_request(
         self,

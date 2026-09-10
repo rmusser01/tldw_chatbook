@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from loguru import logger
@@ -348,6 +348,40 @@ async def archive_current_conversation(screen: Any) -> None:
         if not row:
             app.notify("This conversation is no longer available.", severity="warning")
             return
+        await _retain_archive_completion(
+            app, _complete_conversation_archive(screen, conversation_id, row)
+        )
+    except Exception as exc:  # noqa: BLE001 - notify and retain recovery state at the UI boundary
+        logger.bind(conversation_id=conversation_id).exception(
+            "Conversation archive failed"
+        )
+        app.notify(f"Could not archive conversation: {exc}", severity="error")
+
+
+async def _retain_archive_completion(
+    app: Any, operation: Coroutine[Any, Any, None]
+) -> None:
+    """Keep accepted storage and outcome publication alive after caller cancellation."""
+    tasks = getattr(app, "_console_archive_completion_tasks", None)
+    if tasks is None:
+        tasks = app._console_archive_completion_tasks = set()
+    task = asyncio.create_task(operation)
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    await asyncio.shield(task)
+
+
+def _archive_screen_current(screen: Any) -> bool:
+    return getattr(screen, "is_mounted", True) and (
+        getattr(screen.app, "screen", screen) is screen
+    )
+
+
+async def _complete_conversation_archive(
+    screen: Any, conversation_id: str, row: dict[str, Any]
+) -> None:
+    app = screen.app_instance
+    try:
         result = await change_conversation_archive(
             app,
             [conversation_id],
@@ -368,34 +402,47 @@ async def archive_current_conversation(screen: Any) -> None:
             WorkspaceArchiveReceiptModal,
         )
 
+        async def undo() -> None:
+            try:
+                restored = await change_conversation_archive(
+                    app,
+                    [conversation_id],
+                    archived=False,
+                    expected_versions=result["changed"],
+                )
+                app.notify(
+                    "Conversation restored."
+                    if restored["changed"]
+                    else "Conversation changed; refresh Archived chats to restore it."
+                )
+                screen._workspace._invalidate_console_persisted_rows_cache()
+                if _archive_screen_current(screen):
+                    await screen._sync_native_console_chat_ui()
+            except Exception:  # noqa: BLE001 - notify and retain recovery state at the UI boundary
+                logger.bind(
+                    conversation_id=conversation_id,
+                    workspace_id=row.get("workspace_id"),
+                ).exception("Conversation Undo failed")
+                app.notify(
+                    "Undo could not complete. Open Archived chats to retry restoration.",
+                    severity="error",
+                )
+
         async def recover(action: str | None) -> None:
             if action == "view":
                 app.open_conversation_archive()
             elif action == "undo":
-                try:
-                    restored = await change_conversation_archive(
-                        app,
-                        [conversation_id],
-                        archived=False,
-                        expected_versions=result["changed"],
-                    )
-                    app.notify(
-                        "Conversation restored."
-                        if restored["changed"]
-                        else "Conversation changed; refresh Archived chats to restore it."
-                    )
-                    screen._workspace._invalidate_console_persisted_rows_cache()
-                    await screen._sync_native_console_chat_ui()
-                except Exception:  # noqa: BLE001 - notify and retain recovery state at the UI boundary
-                    logger.bind(
-                        conversation_id=conversation_id,
-                        workspace_id=row.get("workspace_id"),
-                    ).exception("Conversation Undo failed")
-                    app.notify(
-                        "Undo could not complete. Open Archived chats to retry restoration.",
-                        severity="error",
-                    )
+                await _retain_archive_completion(app, undo())
 
+        # Cache publication belongs to the completed write, even when the
+        # initiating screen/worker has gone away. Do not cover a newer screen
+        # with this operation's receipt modal.
+        screen._workspace._invalidate_console_persisted_rows_cache()
+        if not _archive_screen_current(screen):
+            app.notify(
+                "Conversation archived. Open Archived chats to review or restore it."
+            )
+            return
         await screen.app.push_screen(
             WorkspaceArchiveReceiptModal(
                 name=str(row.get("title") or "Conversation"),
@@ -404,8 +451,8 @@ async def archive_current_conversation(screen: Any) -> None:
             ),
             callback=recover,
         )
-        screen._workspace._invalidate_console_persisted_rows_cache()
-        await screen._sync_native_console_chat_ui()
+        if getattr(screen, "is_mounted", True):
+            await screen._sync_native_console_chat_ui()
     except Exception as exc:  # noqa: BLE001 - notify and retain recovery state at the UI boundary
         logger.bind(conversation_id=conversation_id).exception(
             "Conversation archive failed"

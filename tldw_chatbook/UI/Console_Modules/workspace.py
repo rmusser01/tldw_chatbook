@@ -4094,6 +4094,9 @@ class ConsoleWorkspaceController:
             return
         from tldw_chatbook.Chat.conversation_archive_actions import storage_call
 
+        receipt = getattr(self, "_console_workspace_archive_receipt", None)
+        # A completion received while away remains reachable on the next visit.
+        show_archived = show_archived or receipt is not None
         request = object()
         self._console_workspace_switcher_request = request
 
@@ -4164,6 +4167,8 @@ class ConsoleWorkspaceController:
                 ),
                 callback=_apply_workspace_switch,
             )
+            if getattr(self, "_console_workspace_archive_receipt", None) is receipt:
+                self._console_workspace_archive_receipt = None
 
         self._screen.app.run_worker(
             _open(), group="console-workspace-switcher", exclusive=True
@@ -4231,6 +4236,13 @@ class ConsoleWorkspaceController:
             # Cancelling the exclusive worker cannot cancel a SQLite write
             # already executing in a thread or skip its cache publication.
             operation = asyncio.create_task(_complete_restore())
+            operations = getattr(
+                self.app_instance, "_workspace_lifecycle_operations", None
+            )
+            if operations is None:
+                operations = self.app_instance._workspace_lifecycle_operations = set()
+            operations.add(operation)
+            operation.add_done_callback(operations.discard)
             operation.add_done_callback(
                 lambda task: None if task.cancelled() else task.exception()
             )
@@ -4324,7 +4336,7 @@ class ConsoleWorkspaceController:
         )
 
     def _confirm_console_workspace_archive(self, workspace_id: str) -> None:
-        """Confirm and archive a workspace (TASK-714)."""
+        """Confirm and archive a workspace without blocking registry storage."""
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -4333,84 +4345,198 @@ class ConsoleWorkspaceController:
                 "Workspace service is not ready.", severity="warning"
             )
             return
-        record = registry_service.get_workspace(workspace_id)
-        if record is None:
-            self.app_instance.notify(
-                "Workspace is no longer available.", severity="warning"
-            )
-            return
         from tldw_chatbook.Chat.conversation_archive_actions import (
             capture_console_archive_draft,
+            storage_call,
             workspace_archive_refusal,
         )
         from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
             WorkspaceArchiveReceiptModal,
         )
 
+        request = object()
+        self._console_workspace_archive_request = request
+        dialog = None
+        archived_record = None
+
+        def _current() -> bool:
+            return (
+                self._console_workspace_archive_request is request
+                and self._screen.is_mounted
+                and self._screen.app.screen in (self._screen, dialog)
+            )
+
         def _refusal() -> str | None:
             capture_console_archive_draft(self.app_instance, screen=self._screen)
             return workspace_archive_refusal(self.app_instance, workspace_id)
 
-        refusal = _refusal()
-        if refusal:
-            self.app_instance.notify(refusal, severity="warning")
-            return
-        was_active = bool(record.active)
-        archived_record = None
+        def _failed(message: str) -> None:
+            if _current():
+                self.app_instance.notify(message, severity="warning")
 
-        # ConfirmationDialog awaits its confirm callback, so this must be a
-        # coroutine function.
-        async def _archive() -> None:
-            nonlocal archived_record
+        async def _prepare() -> None:
+            nonlocal dialog
             refusal = _refusal()
             if refusal:
-                self.app_instance.notify(refusal, severity="warning")
+                _failed(refusal)
                 return
             try:
-                archived_record = registry_service.archive_workspace(workspace_id)
+                record = await storage_call(
+                    registry_service, "get_workspace", workspace_id
+                )
             except WorkspaceRegistryServiceError as exc:
-                self.app_instance.notify(str(exc), severity="warning")
+                _failed(str(exc))
                 return
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Unable to archive Console workspace"
+            except Exception:  # noqa: BLE001 - UI storage boundary offers retry
+                logger.opt(exception=True).warning("Unable to read Console workspace")
+                _failed(
+                    "Workspace could not be read. Retry from the workspace switcher."
+                )
+                return
+            if not _current():
+                return
+            if record is None:
+                self.app_instance.notify(
+                    "Workspace is no longer available.", severity="warning"
+                )
+                return
+            was_active = bool(record.active)
+            confirmation_cancelled = False
+            receipt_shown = False
+
+            async def _complete_archive() -> None:
+                nonlocal archived_record
+                try:
+                    archived_record = await storage_call(
+                        registry_service, "archive_workspace", workspace_id
+                    )
+                except WorkspaceRegistryServiceError as exc:
+                    _failed(str(exc))
+                    return
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Unable to archive Console workspace"
+                    )
+                    if _current():
+                        self.app_instance.notify(
+                            "Workspace could not be archived.", severity="error"
+                        )
+                    return
+                # Commit completion survives cancellation of the confirming UI.
+                self._invalidate_console_persisted_rows_cache()
+                if self._console_workspace_archive_request is request:
+                    self._console_workspace_archive_receipt = archived_record
+                if not _current():
+                    return
+                self._sync_console_chat_core_state()
+                if was_active:
+                    self._activate_console_session_for_workspace(DEFAULT_WORKSPACE_ID)
+                suffix = (
+                    " Console switched to the Default workspace." if was_active else ""
                 )
                 self.app_instance.notify(
-                    "Workspace could not be archived.", severity="error"
+                    f"Archived {record.name}. Its conversations stay saved in "
+                    f"Library.{suffix}",
+                    severity="information",
                 )
-                return
-            self._invalidate_console_persisted_rows_cache()
-            self._sync_console_chat_core_state()
-            if was_active:
-                self._activate_console_session_for_workspace(DEFAULT_WORKSPACE_ID)
-            suffix = " Console switched to the Default workspace." if was_active else ""
-            self.app_instance.notify(
-                f"Archived {record.name}. Its conversations stay saved in "
-                f"Library.{suffix}",
-                severity="information",
-            )
+                if confirmation_cancelled:
+                    await _show_receipt()
 
-        def _recovery(action: str | None) -> None:
-            if action == "view":
-                self._open_console_workspace_switcher(show_archived=True)
-            elif action == "undo":
-                self._restore_console_workspace(
-                    workspace_id, expected_record=archived_record
+            async def _archive() -> None:
+                nonlocal confirmation_cancelled
+                if not _current():
+                    return
+                refusal = _refusal()
+                if refusal:
+                    _failed(refusal)
+                    return
+                store = getattr(
+                    getattr(self.app_instance, "console_runtime", None),
+                    "chat_store",
+                    None,
                 )
+                reserved = (
+                    {
+                        session.persisted_conversation_id
+                        for session in store.sessions()
+                        if session.workspace_id == workspace_id
+                        and session.persisted_conversation_id
+                    }
+                    if store is not None
+                    else set()
+                )
+                inflight = getattr(
+                    self.app_instance, "_conversation_archive_inflight", None
+                )
+                if inflight is None:
+                    inflight = self.app_instance._conversation_archive_inflight = set()
+                if reserved & inflight:
+                    _failed("An archive change is already in progress.")
+                    return
+                inflight.update(reserved)
 
-        async def _after_archive(confirmed: bool | None) -> None:
-            if confirmed and archived_record is not None:
-                await self.push_screen(
-                    WorkspaceArchiveReceiptModal(name=record.name), callback=_recovery
-                )
-                self.run_worker(
-                    self._sync_native_console_chat_ui(),
-                    exclusive=True,
-                    group="console-sync",
-                )
+                async def _complete_reserved_archive() -> None:
+                    try:
+                        await _complete_archive()
+                    finally:
+                        inflight.difference_update(reserved)
 
-        self.push_screen(
-            ConfirmationDialog(
+                operation = asyncio.create_task(_complete_reserved_archive())
+                operations = getattr(
+                    self.app_instance, "_workspace_lifecycle_operations", None
+                )
+                if operations is None:
+                    operations = self.app_instance._workspace_lifecycle_operations = (
+                        set()
+                    )
+                operations.add(operation)
+                operation.add_done_callback(operations.discard)
+                operation.add_done_callback(
+                    lambda task: None if task.cancelled() else task.exception()
+                )
+                try:
+                    await asyncio.shield(operation)
+                except asyncio.CancelledError:
+                    confirmation_cancelled = True
+                    raise
+
+            def _recovery(action: str | None) -> None:
+                if action == "view":
+                    self._open_console_workspace_switcher(show_archived=True)
+                elif action == "undo":
+                    self._restore_console_workspace(
+                        workspace_id, expected_record=archived_record
+                    )
+
+            async def _show_receipt() -> None:
+                nonlocal receipt_shown
+                if (
+                    not receipt_shown
+                    and archived_record is not None
+                    and _current()
+                    and self._screen.app.screen is self._screen
+                ):
+                    receipt_shown = True
+                    if (
+                        getattr(self, "_console_workspace_archive_receipt", None)
+                        is archived_record
+                    ):
+                        self._console_workspace_archive_receipt = None
+                    await self.push_screen(
+                        WorkspaceArchiveReceiptModal(name=record.name),
+                        callback=_recovery,
+                    )
+                    self.run_worker(
+                        self._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
+
+            async def _after_archive(confirmed: bool | None) -> None:
+                if confirmed or confirmation_cancelled:
+                    await _show_receipt()
+
+            dialog = ConfirmationDialog(
                 title="Archive workspace?",
                 message=(
                     f"Archive {record.name}? Its conversations stay saved and "
@@ -4419,8 +4545,11 @@ class ConsoleWorkspaceController:
                 ),
                 confirm_label="Archive",
                 confirm_callback=_archive,
-            ),
-            callback=_after_archive,
+            )
+            self.push_screen(dialog, callback=_after_archive)
+
+        self._screen.app.run_worker(
+            _prepare(), group="console-workspace-archive", exclusive=True
         )
 
     def _create_console_workspace(self) -> None:
@@ -4537,8 +4666,21 @@ class ConsoleWorkspaceController:
         *,
         row_key: str = "",
         target_workspace_id: str | None = None,
+        resume_if: Callable[[], bool] | None = None,
     ) -> bool | None:
-        """Open one saved conversation for both the flat browser and Tree."""
+        """Open a saved conversation while its optional resume claim is current.
+
+        Args:
+            conversation_id: Saved conversation identity or native session key.
+            row_key: Optional browser row that owns the selected scope.
+            target_workspace_id: Fallback workspace for a cold load.
+            resume_if: Optional predicate rechecked after token preparation and
+                before changing the active session.
+
+        Returns:
+            True after activation, False for a missing row, or None when the
+            request is superseded or presentation fails.
+        """
 
         conversation_id = str(conversation_id or "").strip()
         explicit_row_key = str(row_key or "").strip()
@@ -4553,8 +4695,7 @@ class ConsoleWorkspaceController:
         prior_browser_workspace_id: str | None = None
         if browser_row is not None:
             prior_browser_workspace_id = (
-                self._active_console_workspace_id_for_conversation_search()
-                or None
+                self._active_console_workspace_id_for_conversation_search() or None
             )
             row_conversation_id = str(browser_row.conversation_id or "").strip()
             session_id = self._session_id_for_browser_row_fn(browser_row)
@@ -4584,12 +4725,11 @@ class ConsoleWorkspaceController:
                         if browser_row is not None
                         else target_workspace_id
                     ),
+                    resume_if=resume_if,
                 )
             finally:
                 try:
-                    self._set_conversation_row_loading_fn(
-                        row_conversation_id, False
-                    )
+                    self._set_conversation_row_loading_fn(row_conversation_id, False)
                 except BaseException:
                     logger.opt(exception=True).warning(
                         "Unable to clear Console conversation-row loading state"
@@ -4617,6 +4757,8 @@ class ConsoleWorkspaceController:
             from .conversation_token_preparation import prepare_conversation_tokens
 
             await prepare_conversation_tokens(self._screen, store, session_id)
+            if resume_if is not None and not resume_if():
+                return None
             if prior_active_session_id != session_id:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
@@ -5584,6 +5726,8 @@ class ConsoleWorkspaceController:
             target_workspace_id: Optional fallback workspace for cold hydration.
             reuse_existing: Prefer an open runtime after validating the saved
                 record. History opts in; explicit fresh-session callers do not.
+            preserve_persisted_scope: Restore the saved workspace or global scope.
+            resume_if: Optional ownership predicate carried through activation.
 
         Returns:
             True on success; None on a transient failure this method already
@@ -5655,7 +5799,7 @@ class ConsoleWorkspaceController:
                     matches[0],
                 )
                 return await self.open_console_workspace_conversation(
-                    f"native:{session.id}"
+                    f"native:{session.id}", resume_if=resume_if
                 )
 
         conversation = tree.get("conversation")

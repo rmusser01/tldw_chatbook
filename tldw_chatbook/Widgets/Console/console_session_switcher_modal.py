@@ -424,6 +424,11 @@ class ConsoleSessionSwitcherModal(
 
     @on(Button.Pressed, "#console-switcher-full-search, #console-switcher-archive")
     def open_full_search(self, event: Button.Pressed) -> None:
+        """Dismiss the switcher and open Library search with its query and scope.
+
+        Args:
+            event: Search or Archived chats button press to consume.
+        """
         event.stop()
         if self._activation_phase in {
             ConsoleActivationPhase.OPENING_CANCELLABLE,

@@ -18141,6 +18141,42 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance.notify(reason, severity="warning")
                 return
             result = await controller.run_prompt_chain(draft, session_id=session_id)
+        except asyncio.CancelledError:
+            # Archive admission adds an awaited read before submission can
+            # consume the keyboard stash. Return only this attempt's still
+            # unaccepted stash to its owner, preserving newer edits/tabs.
+            if (
+                inflight_stash is not None
+                and self._console_inflight_send_stashes.get(session_id)
+                is inflight_stash
+            ):
+                self._console_inflight_send_stashes.pop(session_id)
+                live_owner = next(
+                    (
+                        item
+                        for item in controller.store.sessions()
+                        if item.id == session_id
+                    ),
+                    None,
+                )
+                owner_composer = self._console_composer_or_none()
+                if (
+                    live_owner is not None
+                    and self.is_mounted
+                    and self._console_visible_draft_session_id == session_id
+                    and owner_composer is not None
+                ):
+                    owner_composer.restore_stashed_draft(inflight_stash)
+                    controller.store.set_session_draft(
+                        session_id, owner_composer.draft_text()
+                    )
+                elif live_owner is not None:
+                    controller.store.set_session_draft(
+                        session_id,
+                        inflight_stash.text
+                        + controller.store.session_draft(session_id),
+                    )
+            raise
         except Exception:
             # An unexpected submit crash must not eat the keypress-cleared
             # draft — and must not escape the worker (exit_on_error would

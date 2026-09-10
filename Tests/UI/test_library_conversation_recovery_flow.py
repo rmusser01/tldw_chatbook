@@ -28,6 +28,11 @@ async def wait_for_button(pilot, screen, selector):
             bool(screen.query(selector))
             and not screen.query_one(selector, Button).disabled
         ),
+        lambda: (
+            str(screen.query_one(selector, Button).tooltip)
+            if screen.query(selector)
+            else "control absent"
+        ),
     )
     return screen.query_one(selector, Button)
 
@@ -68,9 +73,13 @@ async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_
     app.resume_console_conversation = lambda identity: calls.append(
         ("resume", identity)
     )
-    app.open_chat_with_handoff = lambda payload, **kw: calls.append(
-        ("source", payload.source_id)
-    )
+    source_handoffs = []
+
+    def receive_source(payload, **kwargs):
+        source_handoffs.append((payload, kwargs))
+        calls.append(("source", payload.source_id))
+
+    app.open_chat_with_handoff = receive_source
     host = LibraryHarness(app)
     try:
         async with host.run_test(size=size) as pilot:
@@ -136,6 +145,15 @@ async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_
             )
             assert local.get_conversation_archive_states([cid]) == {cid: True}
             assert screen._conversations_state.total == 0
+            reader = screen.query_one("#library-conversation-reader")
+            assert reader.loaded_metadata["archived"] is True
+            assert reader.loaded_metadata["version"] == recovery.receipt_versions[cid]
+            assert (
+                str(screen.query_one("#library-conversation-open-console", Button).label)
+                == "Restore and resume"
+            )
+            assert screen.query_one("#library-conversation-restore", Button).display
+            assert not screen.query_one("#library-conversation-archive", Button).display
             view_archive = await wait_for_button(
                 pilot, screen, "#library-conversations-view-archived"
             )
@@ -167,9 +185,19 @@ async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_
             await pilot.press("enter")
             await wait_until(pilot, lambda: bool(calls))
             assert calls == [("resume", cid)]
+            assert not source_handoffs
             source.press()
             await wait_until(pilot, lambda: len(calls) == 2)
-            assert calls[-1] == ("source", cid)
+            assert calls == [("resume", cid), ("source", cid)]
+            payload, kwargs = source_handoffs[0]
+            assert payload.source == "library"
+            assert payload.item_type == "conversation"
+            assert payload.source_id == cid
+            assert payload.title == "Research notes"
+            assert f"Conversation ID: {cid}" in payload.body
+            assert payload.metadata["conversation_id"] == cid
+            assert payload.runtime_backend == "local"
+            assert kwargs == {"action_label": "Use in Console"}
             (tmp_path / f"library-archive-port-{size[0]}.svg").write_text(
                 host.export_screenshot()
             )
@@ -178,6 +206,14 @@ async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_
             assert local.get_conversation_archive_states([cid]) == {cid: False}
             assert screen._conversations_state.total == 0
             assert not recovery.receipt_versions
+            reader = screen.query_one("#library-conversation-reader")
+            assert reader.loaded_metadata["archived"] is False
+            assert (
+                str(screen.query_one("#library-conversation-open-console", Button).label)
+                == "Resume conversation"
+            )
+            assert screen.query_one("#library-conversation-archive", Button).display
+            assert not screen.query_one("#library-conversation-restore", Button).display
             all_scope = await wait_for_button(
                 pilot, screen, "#library-conversations-scope-all"
             )

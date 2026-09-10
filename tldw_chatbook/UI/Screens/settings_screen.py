@@ -23272,56 +23272,139 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-workspace-archive")
     def handle_workspace_archive(self, event: Button.Pressed) -> None:
-        """Confirm, then archive (task 9).
+        """Confirm workspace archive and retain recovery after storage completes.
 
-        Mirrors `ChatScreen._confirm_console_workspace_archive` (Console's
-        own archive flow): the SAME verbatim copy, and the SAME shape --
-        an async closure passed as `confirm_callback`, since
-        `ConfirmationDialog.on_button_pressed` `await`s that callback and a
-        plain sync function would raise there instead of archiving.
+        Args:
+            event: The workspace Archive button event.
         """
-        event.stop()
-        workspace_id = self._settings_selected_workspace_id
-        if not workspace_id:
-            return
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
-        if registry is None:
-            return
-        record = registry.get_workspace(workspace_id)
-        if record is None:
-            return
-
         from tldw_chatbook.Chat.conversation_archive_actions import (
+            storage_call,
             workspace_archive_refusal,
         )
 
-        refusal = workspace_archive_refusal(self.app_instance, workspace_id)
-        if refusal:
-            self._set_settings_workspaces_result(refusal)
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if not workspace_id or registry is None:
             return
+        request = object()
+        self._settings_workspace_archive_request = request
+        prior_receipt = getattr(self, "_settings_workspace_archive_receipt", None)
+        dialog = None
 
-        async def _archive() -> None:
+        def _current() -> bool:
+            return (
+                self._settings_workspace_archive_request is request
+                and self._settings_selected_workspace_id == workspace_id
+                and self.is_mounted
+                and self.app.screen in (self, dialog)
+            )
+
+        def _failed(message: str) -> None:
+            if _current():
+                self._set_settings_workspaces_result(message)
+
+        async def _prepare() -> None:
+            nonlocal dialog
             refusal = workspace_archive_refusal(self.app_instance, workspace_id)
             if refusal:
-                self._set_settings_workspaces_result(refusal)
+                _failed(refusal)
                 return
             try:
-                archived = registry.archive_workspace(workspace_id)
+                record = await storage_call(registry, "get_workspace", workspace_id)
             except WorkspaceRegistryServiceError as exc:
-                self._set_settings_workspaces_result(str(exc))
+                _failed(str(exc))
                 return
-            # The row disappears from the default (not-showing-archived)
-            # list -- a selection surviving would point the card at a
-            # workspace no longer in view.
-            self._settings_selected_workspace_id = None
-            self._settings_workspace_archive_receipt = archived
-            self._settings_workspaces_result = (
-                f"Archived {record.name}. Saved conversations stay in Library."
-            )
-            self._refresh_settings_workspaces_pane()
+            except Exception:
+                logger.exception("Unable to read Settings workspace")
+                _failed("Workspace could not be read. Retry Archive.")
+                return
+            if record is None or not _current():
+                return
 
-        self.app.push_screen(
-            ConfirmationDialog(
+            async def _complete_archive() -> None:
+                try:
+                    archived = await storage_call(
+                        registry, "archive_workspace", workspace_id
+                    )
+                except WorkspaceRegistryServiceError as exc:
+                    _failed(str(exc))
+                    return
+                except Exception:
+                    logger.exception("Unable to archive Settings workspace")
+                    _failed("Workspace could not be archived. Retry Archive.")
+                    return
+                # Keep the receipt for a committed write even after navigation or
+                # cancellation, but never replace a newer operation's receipt.
+                if (
+                    self._settings_workspace_archive_request is not request
+                    or getattr(self, "_settings_workspace_archive_receipt", None)
+                    is not prior_receipt
+                ):
+                    return
+                self._settings_workspace_archive_receipt = archived
+                if not _current():
+                    return
+                self._settings_selected_workspace_id = None
+                self._settings_workspaces_result = (
+                    f"Archived {record.name}. Saved conversations stay in Library."
+                )
+                self._refresh_settings_workspaces_pane()
+
+            async def _archive() -> None:
+                if not _current():
+                    return
+                refusal = workspace_archive_refusal(self.app_instance, workspace_id)
+                if refusal:
+                    _failed(refusal)
+                    return
+                store = getattr(
+                    getattr(self.app_instance, "console_runtime", None),
+                    "chat_store",
+                    None,
+                )
+                reserved = (
+                    {
+                        session.persisted_conversation_id
+                        for session in store.sessions()
+                        if session.workspace_id == workspace_id
+                        and session.persisted_conversation_id
+                    }
+                    if store is not None
+                    else set()
+                )
+                inflight = getattr(
+                    self.app_instance, "_conversation_archive_inflight", None
+                )
+                if inflight is None:
+                    inflight = self.app_instance._conversation_archive_inflight = set()
+                if reserved & inflight:
+                    _failed("An archive change is already in progress.")
+                    return
+                inflight.update(reserved)
+
+                async def _complete_reserved_archive() -> None:
+                    try:
+                        await _complete_archive()
+                    finally:
+                        inflight.difference_update(reserved)
+
+                operation = asyncio.create_task(_complete_reserved_archive())
+                operations = getattr(
+                    self.app_instance, "_workspace_lifecycle_operations", None
+                )
+                if operations is None:
+                    operations = self.app_instance._workspace_lifecycle_operations = (
+                        set()
+                    )
+                operations.add(operation)
+                operation.add_done_callback(operations.discard)
+                operation.add_done_callback(
+                    lambda task: None if task.cancelled() else task.exception()
+                )
+                await asyncio.shield(operation)
+
+            dialog = ConfirmationDialog(
                 title="Archive workspace?",
                 message=(
                     f"Archive {record.name}? Its conversations stay saved and "
@@ -23331,10 +23414,19 @@ class SettingsScreen(BaseAppScreen):
                 confirm_label="Archive",
                 confirm_callback=_archive,
             )
+            self.app.push_screen(dialog)
+
+        self.app.run_worker(
+            _prepare(), group="settings-workspace-archive", exclusive=True
         )
 
     @on(Button.Pressed, "#settings-workspace-archive-view")
     def handle_workspace_archive_view(self, event: Button.Pressed) -> None:
+        """Show archived workspaces and select the retained recovery receipt.
+
+        Args:
+            event: The View archived button event.
+        """
         event.stop()
         self._settings_show_archived_workspaces = True
         receipt = getattr(self, "_settings_workspace_archive_receipt", None)
@@ -23389,6 +23481,13 @@ class SettingsScreen(BaseAppScreen):
                     )
                 return
             operation = asyncio.create_task(_complete_undo())
+            operations = getattr(
+                self.app_instance, "_workspace_lifecycle_operations", None
+            )
+            if operations is None:
+                operations = self.app_instance._workspace_lifecycle_operations = set()
+            operations.add(operation)
+            operation.add_done_callback(operations.discard)
             operation.add_done_callback(
                 lambda task: None if task.cancelled() else task.exception()
             )
@@ -23423,26 +23522,80 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-workspace-unarchive")
     def handle_workspace_unarchive(self, event: Button.Pressed) -> None:
-        """Restore a workspace to the default listing without activating it
-        (spec: never auto-activate on unarchive, task 9)."""
+        """Restore the selected workspace asynchronously without activating it.
+
+        Args:
+            event: The workspace Restore button event.
+        """
+        from tldw_chatbook.Chat.conversation_archive_actions import storage_call
+
         event.stop()
         workspace_id = self._settings_selected_workspace_id
-        if not workspace_id:
-            return
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        if registry is None:
+        if not workspace_id or registry is None:
             return
-        try:
-            name = self.query_one("#settings-workspace-restore-name", Input).value
-            restored = registry.unarchive_workspace(workspace_id, name=name)
-        except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
-            return
+        name = self.query_one("#settings-workspace-restore-name", Input).value
         receipt = getattr(self, "_settings_workspace_archive_receipt", None)
-        if receipt is not None and receipt.workspace_id == workspace_id:
-            self._settings_workspace_archive_receipt = None
-        self._settings_workspaces_result = f"Restored {restored.name}. Active workspace unchanged; choose Set active to switch."
-        self._refresh_settings_workspaces_pane()
+        request = object()
+        self._settings_workspace_restore_request = request
+
+        def _current() -> bool:
+            return (
+                self._settings_workspace_restore_request is request
+                and self._settings_selected_workspace_id == workspace_id
+                and self.is_mounted
+                and self.app.screen is self
+            )
+
+        async def _complete_restore() -> None:
+            try:
+                restored = await storage_call(
+                    registry, "unarchive_workspace", workspace_id, name=name
+                )
+            except WorkspaceRegistryServiceError as exc:
+                if _current():
+                    self._set_settings_workspaces_result(str(exc))
+                return
+            except Exception:
+                logger.exception("Unable to restore Settings workspace")
+                if _current():
+                    self._set_settings_workspaces_result(
+                        "Workspace could not be restored. Retry Restore."
+                    )
+                return
+            if (
+                receipt is not None
+                and receipt.workspace_id == workspace_id
+                and self._settings_workspace_archive_receipt is receipt
+            ):
+                self._settings_workspace_archive_receipt = None
+            if not _current():
+                return
+            self._settings_workspaces_result = (
+                f"Restored {restored.name}. Active workspace unchanged; "
+                "choose Set active to switch."
+            )
+            self._refresh_settings_workspaces_pane()
+
+        async def _restore() -> None:
+            if not _current():
+                return
+            operation = asyncio.create_task(_complete_restore())
+            operations = getattr(
+                self.app_instance, "_workspace_lifecycle_operations", None
+            )
+            if operations is None:
+                operations = self.app_instance._workspace_lifecycle_operations = set()
+            operations.add(operation)
+            operation.add_done_callback(operations.discard)
+            operation.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
+            await asyncio.shield(operation)
+
+        self.app.run_worker(
+            _restore(), group="settings-workspace-restore", exclusive=True
+        )
 
     @on(Button.Pressed, "#settings-workspace-change-review-toggle")
     def _settings_workspace_toggle_change_review(self, event: Button.Pressed) -> None:

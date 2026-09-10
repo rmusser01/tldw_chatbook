@@ -26,14 +26,18 @@ class LibraryConversationRecovery:
 
     def __init__(self, screen: Any) -> None:
         self.screen = screen
+        self._owner = getattr(screen, "_screen", screen)
         self.scope = "active"
         self.receipt_copy = ""
         self.receipt_versions: dict[str, int] = {}
         self.receipt_archived = True
         self.busy = False
+        self._change_task: asyncio.Task[None] | None = None
 
     def sync(self) -> None:
         """Paint only the mounted conversation canvas; navigation owns remounts."""
+        if not getattr(self._owner, "is_current", True):
+            return
         query = getattr(self.screen, "query", None)
         if callable(query) and not query("#library-conversations-canvas"):
             return
@@ -81,6 +85,39 @@ class LibraryConversationRecovery:
             return
         self.busy = True
         self.sync()
+        state = getattr(self._owner, "_conversations_state", None)
+        generation = getattr(state, "request_generation", None)
+        self._change_task = asyncio.create_task(
+            self._complete_change(
+                ids,
+                archived=archived,
+                expected_versions=expected_versions,
+                undo=undo,
+                state=state,
+                request_generation=generation,
+                reader_generation=(
+                    state.reader_state.generation,
+                    state.reader_state.loaded_generation,
+                )
+                if state is not None
+                else None,
+            )
+        )
+        # The controller owns completion even if the confirmation worker leaves.
+        # Keep its strong reference and busy gate until storage and receipt settle.
+        await asyncio.shield(self._change_task)
+
+    async def _complete_change(
+        self,
+        ids: tuple[str, ...],
+        *,
+        archived: bool,
+        expected_versions: dict[str, int],
+        undo: bool,
+        state: Any,
+        request_generation: int | None,
+        reader_generation: tuple[int, int | None] | None,
+    ) -> None:
         try:
             result = await change_conversation_archive(
                 self.screen.app_instance,
@@ -90,6 +127,42 @@ class LibraryConversationRecovery:
             )
             changed = dict(result.get("changed", {}))
             failures = dict(result.get("failures", {}))
+            if state is not None and state is self._owner._conversations_state:
+                reader = state.reader_state
+                updates = {}
+                for kind in ("loaded", "selected"):
+                    identity = getattr(reader, f"{kind}_id")
+                    if (
+                        (reader.generation, reader.loaded_generation)
+                        == reader_generation
+                        and identity in changed
+                        and getattr(reader, f"{kind}_version")
+                        == expected_versions.get(identity)
+                    ):
+                        metadata_name = f"reader_{kind}_metadata"
+                        setattr(
+                            state,
+                            metadata_name,
+                            {
+                                **getattr(state, metadata_name),
+                                "archived": archived,
+                                "version": changed[identity],
+                            },
+                        )
+                        updates[f"{kind}_version"] = changed[identity]
+                if updates:
+                    state.reader_state = replace(reader, **updates)
+                # Canvas sync reconciles selection against retained page rows.
+                # Advance those same versions before it can restart a reader
+                # load from the pre-commit lifecycle metadata.
+                state.page_records = tuple(
+                    {**row, "archived": archived, "version": changed[identity]}
+                    if (identity := str(row.get("id") or row.get("conversation_id")))
+                    in changed
+                    and row.get("version") == expected_versions.get(identity)
+                    else row
+                    for row in state.page_records
+                )
             if undo:
                 self.receipt_versions = {
                     key: value
@@ -129,10 +202,17 @@ class LibraryConversationRecovery:
         finally:
             self.busy = False
             self.sync()
-        self.screen._start_library_conversation_page_request(
-            self.screen._library_conversation_requested_page,
-            self.screen._library_conversation_requested_query,
-        )
+        query = getattr(self.screen, "query", None)
+        if (
+            getattr(self._owner, "is_current", True)
+            and (not callable(query) or query("#library-conversations-canvas"))
+            and state is getattr(self._owner, "_conversations_state", None)
+            and request_generation == getattr(state, "request_generation", None)
+        ):
+            self.screen._start_library_conversation_page_request(
+                self.screen._library_conversation_requested_page,
+                self.screen._library_conversation_requested_query,
+            )
 
     async def undo(self) -> None:
         await self.change(

@@ -98,3 +98,52 @@ Six further findings are addressed: resume intent IDs use the shared Pydantic bo
 Evidence: three focused regressions failed before fixes and then passed. The final focused suite passed 99 tests; both confirmation-time and write-completion supersession cases pass (2-case run, including one added case). Confirmed close with real SQLite passed, and 14 mounted Console archive/workspace lifecycle tests passed. Read-error receipt recovery is covered through the actual receipt callback; memory-backed enrichment is tested using WorkspaceDB(":memory:"). Scoped lint/format/whitespace checks pass; persistent diagnostic inventory verifies without regeneration. Existing ADR147 remains the governing design.
 
 Fourth-review integration rebased onto dev `0292293d25373669ac53a00b3d5a321f59253aaa`; all code applied unchanged and both appended testing lessons were preserved. 25 post-rebase Library recovery/import tests passed; Backlog ID and CSS reproduction checks pass. Corrected the remaining archive testing-lesson reference to TASK-32300.
+
+### Fifth Qodo review
+
+Cancellation during Console send admission returns only that attempt's unaccepted keyboard stash to its owning session, retaining later edits and other tabs. Console conversation archive and Undo retain completion tasks so a committed write still invalidates caches and offers recovery; navigation suppresses stale modal publication and reports the completed archive with the Archived chats recovery route.
+
+The import conflict test now checks that the renamed conversation was actually created. Its prior broad success assertion hid an unexpected-keyword failure; the strengthened assertion failed before correcting the mock contract. Settings recovery tests wait for durable state and mounted controls, and off-loop storage tests use blocked storage/event-loop signals rather than a scheduling-speed threshold. Console screenshots use per-test temporary directories. Archive-state batching has one named bound, public archive controls document their arguments, and ADR147 distinguishes archive guards from explicitly confirmed session close.
+
+The claimed failure in `test_existing_resume_releases_claim_after_navigation` does not reproduce: releasing a current claim clears its in-flight marker and requeues the same revision. The unchanged test passes; changing it to expect a missing retry would violate the intended recovery contract.
+
+Verification: the four new parent cancellation regressions failed before fixes; 49 send-snapshot/cancellation/recovery boundary tests passed afterward, followed by four passing final cancellation cases after persisting restored visible drafts. The consolidated import, workspace, Settings, switcher and test-reliability run passed 52 cases. These targeted runs do not supersede the baseline limits documented above.
+
+Library verification passed 134 reader/recovery/handoff/controller cases and 20
+archive-review cases. Additional same-ID/new-generation ownership coverage failed
+before its guard, then all 33 affected reader/recovery cases passed. Lifecycle
+completion updates the retained metadata, versions and page rows without
+invalidating a newer reader request. Find waits for the target row before
+reporting a match and reports a message number rather than a misleading
+normalized-character offset. Mounted source-action verification asserts the
+actual payload and distinguishes it from Resume.
+
+Integration review added a closed-owner send-cancellation regression: removing
+the session during preflight raised KeyError instead of propagating cancellation.
+The handler now re-resolves the live owner before any restoration; all six final
+cancellation tests pass, including closed-background and closed-still-visible
+cases. The original accepted/consumed stash remains untouched.
+
+Final workspace verification passed 47 cases (24 new cancellation, storage,
+receipt and request-ownership regressions; 18 existing review cases; five mounted
+lifecycle cases). Strong application-owned references retain started completion
+through cancellation. Owned conversation reservations last until workspace
+archive settles, and generic storage failures have recovery feedback. Console
+receipts remain accessible after a late dialog dismissal or the next workspace
+switcher visit. The late existing-session Resume branch carries its predicate
+through token preparation, with positive and superseded controls.
+
+Two additional pre-existing resume fixture failures were checked using the exact
+HEAD opener/resume methods in the same harness: `_NoMountScreen` lacks
+`_build_console_provider_selection` before the feature's ownership check runs.
+Both failures reproduce unchanged; they are not included among passing cases.
+The baseline substitution script and log are retained as
+`/private/tmp/archive-v5-workspace-resume-head-baseline.{py,log}`.
+
+Final scoped Ruff comparison adds no diagnostics. CSS reproduction, the 283-index
+census, Backlog ID uniqueness, whitespace, and the diagnostic inventory pass.
+The inventory now verifies 596 owners and 7672 TASK-494 calls; newly added logs
+contain fixed operation descriptions without user content interpolation.
+
+Final combined Console cancellation, workspace completion and mounted original-ID
+archive/Undo/resume/send run: 34 passed.

@@ -178,7 +178,12 @@ async def test_create_rename_archive_unarchive_flow() -> None:
                 pilot,
                 "#settings-workspaces-show-archived",
             )
-            assert not screen.query(f"#settings-workspace-row-{workspace_id}")
+            for _ in range(200):
+                if not screen.query(f"#settings-workspace-row-{workspace_id}"):
+                    break
+                await pilot.pause(0.01)
+            else:
+                pytest.fail("Archived workspace remained in the active workspace list")
             screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
             await _wait_for_selector(
                 screen,
@@ -774,11 +779,21 @@ async def test_settings_archive_receipt_undo_without_switching() -> None:
         screen.query_one("#settings-workspace-row-receipt", Button).press()
         await pilot.pause(0.2)
         screen.query_one("#settings-workspace-archive", Button).press()
-        await pilot.pause(0.2)
+        for _ in range(200):
+            if host.screen is not screen and host.screen.query("#confirm-button"):
+                break
+            await pilot.pause(0.01)
+        else:
+            pytest.fail("Workspace archive confirmation did not mount")
         host.screen.query_one("#confirm-button", Button).press()
-        await pilot.pause(0.3)
+        await _wait_for_selector(screen, pilot, "#settings-workspace-archive-undo")
         assert registry.get_workspace("receipt").archived
         screen.query_one("#settings-workspace-archive-undo", Button).press()
-        await pilot.pause(0.3)
+        for _ in range(200):
+            if not registry.get_workspace("receipt").archived:
+                break
+            await pilot.pause(0.01)
+        else:
+            pytest.fail("Workspace Undo did not restore the archived workspace")
         assert not registry.get_workspace("receipt").archived
         assert registry.get_active_workspace().workspace_id == "workspace-default"
