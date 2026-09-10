@@ -14,6 +14,7 @@ from .admission import Admission, fcntl
 from .bootstrap import _key, _overlap, _read, _records, _registry
 from .journal import (
     _CandidateReceipt,
+    _DirectoryState,
     _matches,
     _Prepared,
     _PublicationContext,
@@ -255,6 +256,99 @@ def _check_parents(item):
         raise ValueError("publication_parent_changed") from None
 
 
+def _directory_state(path):
+    with pinned_directory(Path(path)) as fd:
+        info = os.fstat(fd)
+        if info.st_uid != os.geteuid():
+            raise ValueError("directory_metadata_changed")
+        return _DirectoryState(
+            path=str(path),
+            device=info.st_dev,
+            inode=info.st_ino,
+            mode=stat.S_IMODE(info.st_mode),
+            mtime_ns=info.st_mtime_ns,
+            ctime_ns=info.st_ctime_ns,
+        )
+
+
+def _directory_expected(prepared, records):
+    expected = {
+        item.previous.path: item.previous for item in prepared.directory_metadata
+    }
+    for record in records:
+        if record.event in {"artifact_retired", "artifact_published"}:
+            for value in record.evidence.get("directories", []):
+                state = _DirectoryState.model_validate(value)
+                expected[state.path] = state
+        elif record.event == "directory_metadata_applied":
+            state = _DirectoryState.model_validate(record.evidence["observed"])
+            expected[state.path] = state
+    return expected
+
+
+def _directory_transition_states(before, mode, mtime_ns):
+    # The native sequence is fchmod, then utime; the fourth Cartesian pair
+    # (old mode, new time) is not an interrupted operation when both differ.
+    return {(before.mode, before.mtime_ns), (mode, before.mtime_ns), (mode, mtime_ns)}
+
+
+def _check_directory_states(prepared, records):
+    expected = _directory_expected(prepared, records)
+    for item in prepared.directory_metadata:
+        with pinned_directory(Path(item.parent.path)) as fd:
+            info = os.fstat(fd)
+            if (info.st_dev, info.st_ino) != (item.parent.device, item.parent.inode):
+                raise ValueError("publication_parent_changed")
+        state = _directory_state(item.previous.path)
+        intent = next(
+            (
+                row
+                for row in records
+                if row.event == "directory_metadata_started"
+                and row.evidence["logical_id"] == item.logical_id
+            ),
+            None,
+        )
+        applied = any(
+            row.event == "directory_metadata_applied"
+            and row.evidence["logical_id"] == item.logical_id
+            for row in records
+        )
+        if intent is not None and not applied:
+            before = _DirectoryState.model_validate(intent.evidence["before"])
+            if (state.device, state.inode) != (before.device, before.inode) or (
+                state.mode,
+                state.mtime_ns,
+            ) not in _directory_transition_states(
+                before, item.applied.mode, item.applied.mtime_ns
+            ):
+                raise ValueError("directory_metadata_changed")
+        elif state != expected[item.previous.path]:
+            raise ValueError("directory_metadata_unproven")
+
+
+def _directory_observations(prepared, item):
+    observations = []
+    for row in prepared.directory_metadata:
+        if row.previous.path != str(Path(item.target).parent):
+            continue
+        state = _directory_state(row.previous.path)
+        if (state.device, state.inode, state.mode) != (
+            row.previous.device,
+            row.previous.inode,
+            row.previous.mode,
+        ):
+            raise ValueError("directory_metadata_changed")
+        observations.append(state.model_dump())
+    return observations
+
+
+def _publication_targets(prepared):
+    return [Path(item.target) for item in prepared.artifacts] + [
+        Path(item.previous.path) for item in prepared.directory_metadata
+    ]
+
+
 def _prepare(
     journal, candidate, plan, bootstrap_root, namespaces, selectors, generation
 ):
@@ -399,6 +493,7 @@ def _prepare(
                 }
             )
         installed_paths = []
+        directory_metadata = []
         for row in [*document["artifacts"], *document.get("containers", [])]:
             target = Path(row["destination"])
             moved = any(
@@ -411,6 +506,19 @@ def _prepare(
                 for item in artifacts
             ) or row in document.get("containers", [])
             source = Path(row["candidate"]) if moved else target
+            if row["kind"] == "directory" and not moved:
+                local = target_items.get(target)
+                if local is None or local.owner not in owners:
+                    raise ValueError("directory_metadata_owner_required")
+                directory_metadata.append(
+                    {
+                        "logical_id": row["logical_id"],
+                        "owner_id": local.owner,
+                        "previous": _directory_state(target).model_dump(),
+                        "parent": _parent_evidence(target.parent, {}),
+                        "applied": row["applied_metadata"],
+                    }
+                )
             info = source.lstat()
             installed_paths.append(
                 {"path": str(target), "device": info.st_dev, "inode": info.st_ino}
@@ -424,6 +532,7 @@ def _prepare(
                 "artifacts": artifacts,
                 "publication": context.model_dump(),
                 "installed_paths": installed_paths,
+                "directory_metadata": directory_metadata,
             },
         )
 
@@ -478,14 +587,17 @@ def _verify_rollback(journal, path, password, work_root, cancel, coverage):
         _pending(
             journal,
             prepared.publication,
-            targets=[Path(item.target) for item in prepared.artifacts],
+            targets=_publication_targets(prepared),
         )
         previous = {
             item.logical_id: item
             for item in prepared.artifacts
             if item.previous is not None
         }
-        if set(coverage) != set(previous):
+        directory_metadata = {
+            item.logical_id: item for item in prepared.directory_metadata
+        }
+        if set(coverage) != set(previous) | set(directory_metadata):
             raise ValueError("rollback_coverage_mismatch")
         if any(item.rollback_requires_owner for item in previous.values()):
             raise ValueError("rollback_sqlite_owner_receipt_required")
@@ -509,6 +621,24 @@ def _verify_rollback(journal, path, password, work_root, cancel, coverage):
             if (size, digest) != (
                 item.previous_metadata.size,
                 item.previous_metadata.sha256,
+            ):
+                raise ValueError("rollback_coverage_mismatch")
+        producers = {item.logical_id: item for item in document.producer_inventory}
+        directories = {item.logical_id: item for item in document.directories}
+        for key, item in directory_metadata.items():
+            original = item.previous
+            if _directory_state(original.path) != original:
+                raise ValueError("rollback_source_changed")
+            archived = directories.get(coverage[key])
+            producer = producers.get(coverage[key])
+            if (
+                archived is None
+                or archived.synthetic
+                or producer is None
+                or producer.owner_id != item.owner_id
+                or producer.status != "included_directory"
+                or (archived.metadata.mode, archived.metadata.mtime_ns)
+                != (original.mode, original.mtime_ns)
             ):
                 raise ValueError("rollback_coverage_mismatch")
         journal._append(
@@ -566,6 +696,7 @@ def publish_candidate(
             raise ValueError("unexpected_rollback_archive")
         started = any(row.event == "publication_started" for row in records)
         if not started:
+            _check_directory_states(prepared, records)
             recheck_targets(plan)
             _descriptor(candidate, plan)
             for item in prepared.artifacts:
@@ -579,7 +710,7 @@ def publish_candidate(
         _pending(
             journal,
             context,
-            targets=[Path(item.target) for item in prepared.artifacts],
+            targets=_publication_targets(prepared),
             durable=True,
         )
         journal._flush_records(parent)
@@ -589,6 +720,7 @@ def publish_candidate(
             if state == "uncertain":
                 raise ValueError("publication_objects_changed")
             if state == "staged" and item.previous is not None:
+                _check_directory_states(prepared, journal._records(parent))
                 _retire(item)
                 journal._append(
                     parent,
@@ -598,10 +730,12 @@ def publish_candidate(
                         "observed": observe_artifact(
                             Path(item.retained), metadata=True
                         ),
+                        "directories": _directory_observations(prepared, item),
                     },
                 )
                 state = "retired"
             if item.candidate is not None and state in {"staged", "retired"}:
+                _check_directory_states(prepared, journal._records(parent))
                 if not _matches(item.candidate, item.candidate.path):
                     raise ValueError("candidate_content_changed")
                 parents = {row.path: (row.device, row.inode) for row in item.parents}
@@ -621,6 +755,7 @@ def publish_candidate(
                     {
                         "logical_id": item.logical_id,
                         "observed": observe_artifact(Path(item.target)),
+                        "directories": _directory_observations(prepared, item),
                     },
                 )
 
@@ -649,14 +784,29 @@ def _installed_file_digest(path, size):
         return digest.hexdigest()
 
 
-def _installed_metadata(path, expected, metadata):
+def _installed_metadata(
+    path, expected, metadata, *, previous=None, parent_identity=None
+):
     """Apply supported metadata only through the checked object's native handle."""
     with pinned_directory(path.parent) as parent:
+        parent_info = os.fstat(parent)
+        if (
+            parent_identity is not None
+            and (parent_info.st_dev, parent_info.st_ino) != parent_identity
+        ):
+            raise ValueError("publication_parent_changed")
         fd = os.open(
             path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
         )
         try:
             before = os.fstat(fd)
+            if previous is not None and (
+                (stat.S_IMODE(before.st_mode), before.st_mtime_ns)
+                not in _directory_transition_states(
+                    previous, metadata["mode"], metadata["mtime_ns"]
+                )
+            ):
+                raise ValueError("directory_metadata_changed")
             if (
                 before.st_dev,
                 before.st_ino,
@@ -756,6 +906,7 @@ def _validate_installed(journal, candidate, plan):
                 sqlite_paths.append(dict(plan.restore)[key])
 
         def verify():
+            _check_directory_states(prepared, journal._records(parent))
             for path in sqlite_paths:
                 if any(
                     os.path.lexists(str(path) + suffix)
@@ -765,7 +916,7 @@ def _validate_installed(journal, candidate, plan):
             _pending(
                 journal,
                 context,
-                targets=[Path(item.target) for item in prepared.artifacts],
+                targets=_publication_targets(prepared),
             )
             states = _states(prepared)
             for item in prepared.artifacts:
@@ -785,14 +936,23 @@ def _validate_installed(journal, candidate, plan):
                     raise ValueError("installed_content_changed")
 
         verify()
+        metadata_paths = {item.previous.path for item in prepared.directory_metadata}
         if any(
             row["kind"] == "directory"
             and expected[row["destination"]] != tuple(row["identity"][:2])
+            and row["destination"] not in metadata_paths
             for row in rows
         ):
-            # Existing owned directories can preserve unrelated children. Their
-            # metadata needs its own rollback coverage, not tree retirement.
             raise ValueError("installed_directory_rollback_required")
+        if metadata_paths:
+            rollback = next(
+                (row for row in records if row.event == "rollback_verified"), None
+            )
+            if rollback is None or not {
+                item.logical_id for item in prepared.directory_metadata
+            } <= set(rollback.evidence["coverage"]):
+                raise ValueError("installed_directory_rollback_required")
+            _check_directory_states(prepared, records)
         prior_validation = next(
             (row for row in reversed(records) if row.event == "installed_validated"),
             None,
@@ -808,7 +968,7 @@ def _validate_installed(journal, candidate, plan):
         _pending(
             journal,
             context,
-            targets=[Path(item.target) for item in prepared.artifacts],
+            targets=_publication_targets(prepared),
             durable=True,
         )
         journal._flush_records(parent)
@@ -916,11 +1076,22 @@ def _validate_installed(journal, candidate, plan):
                     -len(Path(row["destination"]).parts),
                 ),
             ):
-                _installed_metadata(
-                    Path(row["destination"]),
-                    expected[row["destination"]],
-                    row["applied_metadata"],
+                directory = next(
+                    (
+                        item
+                        for item in prepared.directory_metadata
+                        if item.previous.path == row["destination"]
+                    ),
+                    None,
                 )
+                if directory is not None:
+                    _apply_directory_metadata(journal, parent, prepared, directory)
+                else:
+                    _installed_metadata(
+                        Path(row["destination"]),
+                        expected[row["destination"]],
+                        row["applied_metadata"],
+                    )
             verify()
             for row in rows:
                 info = Path(row["destination"]).lstat()
@@ -945,3 +1116,50 @@ def _validate_installed(journal, candidate, plan):
             )
         finally:
             shutil.rmtree(work)
+
+
+def _apply_directory_metadata(journal, parent, prepared, item):
+    records = journal._records(parent)
+    _check_directory_states(prepared, records)
+    if any(
+        row.event == "directory_metadata_applied"
+        and row.evidence["logical_id"] == item.logical_id
+        for row in records
+    ):
+        return
+    if not any(
+        row.event == "directory_metadata_started"
+        and row.evidence["logical_id"] == item.logical_id
+        for row in records
+    ):
+        journal._append(
+            parent,
+            "directory_metadata_started",
+            {
+                "logical_id": item.logical_id,
+                "before": _directory_state(item.previous.path).model_dump(),
+                "applied": item.applied.model_dump(),
+            },
+        )
+    journal._flush_records(parent)
+    intent = next(
+        row
+        for row in journal._records(parent)
+        if row.event == "directory_metadata_started"
+        and row.evidence["logical_id"] == item.logical_id
+    )
+    _installed_metadata(
+        Path(item.previous.path),
+        (item.previous.device, item.previous.inode),
+        item.applied.model_dump(),
+        previous=_DirectoryState.model_validate(intent.evidence["before"]),
+        parent_identity=(item.parent.device, item.parent.inode),
+    )
+    state = _directory_state(item.previous.path)
+    if (state.mode, state.mtime_ns) != (item.applied.mode, item.applied.mtime_ns):
+        raise ValueError("directory_metadata_changed")
+    journal._append(
+        parent,
+        "directory_metadata_applied",
+        {"logical_id": item.logical_id, "observed": state.model_dump()},
+    )

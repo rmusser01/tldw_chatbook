@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .admission import Admission, fcntl
+from .archive_models import Metadata
 from .bootstrap import _read
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .qualification import qualified_for
@@ -50,6 +51,31 @@ class _Directory(_Evidence):
     @classmethod
     def absolute_path(cls, value):
         return _Object.absolute_path(value)
+
+
+class _DirectoryState(_Directory):
+    mode: int = Field(ge=0, le=0o777)
+    mtime_ns: int = Field(ge=0)
+    ctime_ns: int = Field(ge=0)
+
+
+class _DirectoryRestore(_Evidence):
+    logical_id: str
+    owner_id: str
+    previous: _DirectoryState
+    parent: _Directory
+    applied: Metadata
+
+
+class _DirectoryIntent(_Evidence):
+    logical_id: str
+    before: _DirectoryState
+    applied: Metadata
+
+
+class _DirectoryProgress(_Evidence):
+    logical_id: str
+    observed: _DirectoryState
 
 
 class _Artifact(_Evidence):
@@ -96,6 +122,9 @@ class _Rollback(_Evidence):
 class _Progress(_Evidence):
     logical_id: str
     observed: _Object
+    directories: list[_DirectoryState] = Field(
+        default_factory=list, max_length=MAX_EVENTS
+    )
 
 
 class _Prepared(_Evidence):
@@ -103,6 +132,9 @@ class _Prepared(_Evidence):
     mode: Literal["isolated", "replace"]
     artifacts: list[_Artifact] = Field(default_factory=list, max_length=MAX_EVENTS)
     publication: _PublicationContext | None = None
+    directory_metadata: list[_DirectoryRestore] = Field(
+        default_factory=list, max_length=MAX_EVENTS
+    )
     installed_paths: list[_Directory] = Field(
         default_factory=list, max_length=MAX_EVENTS
     )
@@ -334,6 +366,8 @@ class _Event(_Evidence):
         "artifact_retired",
         "artifact_published",
         "installed_validated",
+        "directory_metadata_started",
+        "directory_metadata_applied",
     ]
     evidence: dict
 
@@ -358,7 +392,13 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             if lifecycle == ["prepared"]
             else {"publication_started"}
             if lifecycle == ["prepared", "rollback_verified"]
-            else {"artifact_retired", "artifact_published", "installed_validated"}
+            else {
+                "artifact_retired",
+                "artifact_published",
+                "installed_validated",
+                "directory_metadata_started",
+                "directory_metadata_applied",
+            }
             if "publication_started" in events
             else set()
         )
@@ -378,10 +418,60 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         "artifact_retired": _Progress,
         "artifact_published": _Progress,
         "installed_validated": _Installed,
+        "directory_metadata_started": _DirectoryIntent,
+        "directory_metadata_applied": _DirectoryProgress,
     }.get(event, _Evidence)
     try:
         validated = model.model_validate(dict(evidence))
-        if isinstance(validated, _Installed):
+        if isinstance(validated, (_DirectoryIntent, _DirectoryProgress)):
+            prepared = _Prepared.model_validate(prepared_record.evidence)
+            item = next(
+                (
+                    item
+                    for item in prepared.directory_metadata
+                    if item.logical_id == validated.logical_id
+                ),
+                None,
+            )
+            if item is None or any(
+                row.event == event
+                and row.evidence["logical_id"] == validated.logical_id
+                for row in prior
+            ):
+                raise ValueError("directory_metadata_progress_invalid")
+            observed = (
+                validated.before
+                if isinstance(validated, _DirectoryIntent)
+                else validated.observed
+            )
+            if (observed.path, observed.device, observed.inode) != (
+                item.previous.path,
+                item.previous.device,
+                item.previous.inode,
+            ):
+                raise ValueError("directory_metadata_progress_invalid")
+            if isinstance(validated, _DirectoryIntent):
+                expected_before = item.previous
+                for record in prior:
+                    if record.event in {"artifact_retired", "artifact_published"}:
+                        for value in record.evidence.get("directories", []):
+                            if value["path"] == item.previous.path:
+                                expected_before = _DirectoryState.model_validate(value)
+                if (
+                    validated.applied != item.applied
+                    or validated.before != expected_before
+                ):
+                    raise ValueError("directory_metadata_progress_invalid")
+            elif not any(
+                row.event == "directory_metadata_started"
+                and row.evidence["logical_id"] == validated.logical_id
+                for row in prior
+            ) or (observed.mode, observed.mtime_ns) != (
+                item.applied.mode,
+                item.applied.mtime_ns,
+            ):
+                raise ValueError("directory_metadata_progress_invalid")
+        elif isinstance(validated, _Installed):
             receipt = next(
                 (row for row in prior if row.event == "candidate_staged"), None
             )
@@ -397,6 +487,16 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             ):
                 raise ValueError("installed_context_invalid")
             prepared = _Prepared.model_validate(prepared_record.evidence)
+            completed = {
+                row.evidence["logical_id"]
+                for row in prior
+                if row.event == "directory_metadata_applied"
+            }
+            if (
+                not {item.logical_id for item in prepared.directory_metadata}
+                <= completed
+            ):
+                raise ValueError("directory_metadata_progress_invalid")
             expected = {
                 item.path: (item.device, item.inode)
                 for item in prepared.installed_paths
@@ -412,6 +512,16 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
                 raise ValueError("installed_objects_invalid")
         elif isinstance(validated, _Prepared):
             artifacts = validated.artifacts
+            metadata = validated.directory_metadata
+            if (
+                len({item.logical_id for item in metadata}) != len(metadata)
+                or len({item.previous.path for item in metadata}) != len(metadata)
+                or any(
+                    item.parent.path != str(Path(item.previous.path).parent)
+                    for item in metadata
+                )
+            ):
+                raise ValueError("directory_metadata_mapping_invalid")
             if len({item.logical_id for item in artifacts}) != len(artifacts) or len(
                 {item.target for item in artifacts}
             ) != len(artifacts):
@@ -446,6 +556,24 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
                 and item.candidate is None
             ):
                 raise ValueError("artifact_progress_invalid")
+            expected_directories = {
+                directory.previous.path: (
+                    directory.previous.device,
+                    directory.previous.inode,
+                )
+                for directory in _Prepared.model_validate(
+                    prepared_record.evidence
+                ).directory_metadata
+                if directory.previous.path == str(Path(item.target).parent)
+            }
+            observed_directories = {
+                directory.path: (directory.device, directory.inode)
+                for directory in validated.directories
+            }
+            if expected_directories != observed_directories or len(
+                validated.directories
+            ) != len(observed_directories):
+                raise ValueError("directory_metadata_progress_invalid")
             expected = (
                 item.previous_metadata
                 if event == "artifact_retired"

@@ -687,6 +687,34 @@ def _encrypted_rollback(
             }
         )
         document["dependency_groups"][0]["members"].append("old-data")
+    root_info = previous.parent.stat()
+    document["directories"][0]["metadata"] = {
+        "version": 1,
+        "mode": root_info.st_mode & 0o777,
+        "mtime_ns": root_info.st_mtime_ns,
+    }
+    document["owners"].append(
+        {"owner_id": "ui.state", "schema_version": 0, "capabilities": []}
+    )
+    document["producer_inventory"] = [
+        {
+            "logical_id": row["logical_id"],
+            "owner_id": "ui.state" if row["logical_id"] == "root" else "notes",
+            "status": "included_directory",
+            "dependencies": [row["parent_id"]] if row["parent_id"] else [],
+            "shared_group": None,
+        }
+        for row in document["directories"]
+    ] + [
+        {
+            "logical_id": row["logical_id"],
+            "owner_id": row["owner_id"],
+            "status": "included",
+            "dependencies": [row["parent_id"]],
+            "shared_group": None,
+        }
+        for row in document["files"]
+    ]
     capture = CaptureResult(
         capture.root, capture.inventory, json.dumps(document).encode()
     )
@@ -721,7 +749,7 @@ def test_authenticated_raw_rollback_binds_actual_coverage(
                 else b"test-only-password",
                 work_root=tmp_path / "verify",
                 cancel=Event(),
-                coverage={"file": "file"},
+                coverage={"file": "file", "root": "root"},
             )
         assert previous.read_bytes() == b"original bytes"
         with pytest.raises(ValueError, match="rollback_required"):
@@ -732,7 +760,7 @@ def test_authenticated_raw_rollback_binds_actual_coverage(
         password=b"test-only-password",
         work_root=tmp_path / "verify",
         cancel=Event(),
-        coverage={"file": "file"},
+        coverage={"file": "file", "root": "root"},
     )
     if case == "changed":
         raw = archive.read_bytes()
@@ -773,7 +801,7 @@ def test_authenticated_tree_retirement_keeps_original_metadata(
         password=b"test-only-password",
         work_root=tmp_path / "verify",
         cancel=Event(),
-        coverage={"file": "file", "old": "old"},
+        coverage={"file": "file", "old": "old", "root": "root"},
     )
     publish_candidate(candidate, plan, journal, archive)
     with journal._locked(exclusive=False) as fd:
@@ -813,7 +841,7 @@ root = Path(sys.argv[1])
 candidate, plan, journal, previous = _replacement(root)
 archive = _encrypted_rollback(root, previous, Path(sys.argv[2]), pytest.MonkeyPatch())
 journal.verify_rollback(archive, password=b"test-only-password", work_root=root/"verify",
-    cancel=Event(), coverage={"file":"file"})
+    cancel=Event(), coverage={"file":"file", "root":"root"})
 retire = publication._retire
 def crash(item):
     retire(item)

@@ -281,7 +281,7 @@ def test_validation_checks_retained_original_evidence(
         password=b"test-only-password",
         work_root=tmp_path / "verify",
         cancel=Event(),
-        coverage={"file": "file"},
+        coverage={"file": "file", "root": "root"},
     )
     publish_candidate(candidate, plan, journal, archive)
     with journal._locked(exclusive=False) as fd:
@@ -299,8 +299,7 @@ def test_validation_checks_retained_original_evidence(
         with pytest.raises(ValueError, match="installed_objects_changed"):
             journal.validate_installed(candidate, plan)
     else:
-        with pytest.raises(ValueError, match="installed_directory_rollback_required"):
-            journal.validate_installed(candidate, plan)
+        journal.validate_installed(candidate, plan)
         assert retained.read_bytes() == b"original bytes"
     assert journal.recover() == "recovery_required"
 
@@ -321,7 +320,7 @@ def test_installed_validation_does_not_accept_empty_success_evidence(tmp_path):
         )
 
 
-def test_existing_owned_directory_metadata_requires_rollback_before_mutation(
+def test_existing_owned_directory_metadata_uses_verified_node_rollback(
     tmp_path, helper_resource_root, monkeypatch
 ):
     from threading import Event
@@ -392,13 +391,12 @@ def test_existing_owned_directory_metadata_requires_rollback_before_mutation(
         password=b"test-only-password",
         work_root=tmp_path / "verify",
         cancel=Event(),
-        coverage={},
+        coverage={"root": "root"},
     )
     publish_candidate(candidate, plan, journal, rollback)
-    before = target.stat()
-    with pytest.raises(ValueError, match="installed_directory_rollback_required"):
-        journal.validate_installed(candidate, plan)
-    assert (target.stat().st_mode, target.stat().st_mtime_ns) == (
+    before = optional.stat()
+    journal.validate_installed(candidate, plan)
+    assert (optional.stat().st_mode, optional.stat().st_mtime_ns) == (
         before.st_mode,
         before.st_mtime_ns,
     )
