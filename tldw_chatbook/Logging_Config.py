@@ -203,6 +203,7 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
         errors: str | None = None,
     ) -> None:
         selected = lexical_path(filename)
+        self._maintenance_closed = False
         self._private_parent = selected.parent
         self._configured_backup_count = backupCount
         secure_private_directory(
@@ -253,6 +254,38 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
             encoding=self.encoding or "utf-8",
             errors=self.errors,
         )
+
+    def _maintenance_close_admission(self) -> None:
+        """Flush and retire this file sink while other logger handlers stay live."""
+        self.acquire()
+        try:
+            self._maintenance_closed = True
+            if self.stream is not None:
+                self.flush()
+                self.stream.close()
+                self.stream = None
+        finally:
+            self.release()
+
+    def _maintenance_resume(self) -> None:
+        """Reopen through private storage admission after capture releases it."""
+        self.acquire()
+        try:
+            if self._closed:
+                raise RuntimeError("logging_handler_closed")
+            if not self._maintenance_closed:
+                return
+            if self.stream is not None:
+                raise RuntimeError("logging_pause_incomplete")
+            self.stream = self._open()
+            self._maintenance_closed = False
+        finally:
+            self.release()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Keep paused diagnostic output on the logger's other installed sinks."""
+        if not self._maintenance_closed:
+            super().emit(record)
 
     def doRollover(self) -> None:
         """Rotate only after every existing generation passes private checks."""
