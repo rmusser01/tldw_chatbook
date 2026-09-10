@@ -594,9 +594,15 @@ class TestChatbookCreator:
             output_path=output_path,
         )
 
-        # Should still succeed but with no conversations
-        assert success is True
-        assert output_path.exists()
+        # task-32232: a selection that collects NOTHING must fail. This
+        # used to assert "still succeeds but with no conversations" -- that
+        # is the data-loss shape (a README-only bundle reported as a
+        # success), so the archive is now refused outright and the caller
+        # is told how many items it had selected.
+        assert success is False
+        assert "none of the 1 selected items" in message
+        assert dependency_info["empty_export_requested"] == 1
+        assert not output_path.exists()
         assert dependency_info["missing_dependencies"] == []
 
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
