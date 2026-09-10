@@ -279,6 +279,19 @@ def _section_label(kind: str) -> str:
 def _metadata_copy(review: ActorPackImportReview) -> str:
     lines = [f"License {key}: {value}" for key, value in review.license]
     lines.extend(f"Provenance {key}: {value}" for key, value in review.provenance)
+    if review.artwork_attribution is not None:
+        import json
+
+        carrier = json.loads(review.artwork_attribution)
+        records = {"Source artwork": carrier["pack"], **carrier["assets"]}
+        for label, record in records.items():
+            if record is None:
+                continue
+            lines.append(f"\nArtwork credits — {label}")
+            for key in ("creator", "license", "source_url", "notices"):
+                value = record[key]
+                if value is not None:
+                    lines.append(f"{key.replace('_', ' ').title()}: {value}")
     return "\n".join(lines) if lines else "Not provided."
 
 

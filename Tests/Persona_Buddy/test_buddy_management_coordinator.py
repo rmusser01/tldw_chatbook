@@ -266,15 +266,26 @@ async def test_import_retry_after_save_failure_reuses_publication_and_keeps_revi
     from tldw_chatbook import config
     from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
     from tldw_chatbook.Persona_Buddy.preferences import BuddySelection
+    from tldw_chatbook.Persona_Visual.snapshot import BuddySnapshot
     from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
         BuddyManagementChoice,
     )
 
     published = []
     record = SimpleNamespace(id="imported")
+    path = tmp_path / "pack.zip"
+    path.write_bytes(b"reviewed by test library")
+    review = BuddySnapshot(
+        title="Reviewed Buddy",
+        manifest_json="{}",
+        assets=(),
+        artwork={},
+        source_sha256="0" * 64,
+        _guard=lambda: True,
+    )
     library = SimpleNamespace(
-        review_archive=lambda p: p,
-        publish_review=lambda review: published.append(review) or record,
+        review_archive=lambda _: review,
+        publish_review=lambda _: published.append(path) or record,
         get_buddy=lambda _: record,
     )
     controller = PersonaBuddyController()
@@ -283,8 +294,6 @@ async def test_import_retry_after_save_failure_reuses_publication_and_keeps_revi
         controller=controller,
         library=library,
     )
-    path = tmp_path / "pack.zip"
-    path.write_bytes(b"reviewed by test library")
     choice = BuddyManagementChoice(enabled=True, import_path=str(path))
     imports = {}
     monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: False)

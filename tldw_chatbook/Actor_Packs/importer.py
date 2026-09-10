@@ -17,6 +17,11 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
 
+from tldw_chatbook.Character_Chat.artwork_attribution import (
+    ARTWORK_MEMBER,
+    decode_artwork_attribution,
+)
+
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -155,6 +160,7 @@ class _ActorPackSectionMaterial:
     kind: str
     manifest: Mapping[str, Any]
     assets: tuple[tuple[_ActorPackSectionAsset, bytes], ...] = field(repr=False)
+    artwork_attribution: bytes | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +201,7 @@ class ActorPackImportReview:
     _source_path: Path = field(repr=False)
     _source_identity: tuple[int, ...] = field(repr=False)
     _source_sha256: str = field(repr=False)
+    artwork_attribution: bytes | None = field(default=None, repr=False)
 
 
 class ActorPackImportService:
@@ -379,6 +386,7 @@ class ActorPackImportService:
                         document.sections,
                         frozenset(staged_records),
                         lambda member: _read_staged(candidate, staged_records[member]),
+                        required_features=manifest["required_features"],
                     )
                     matched = self.repository.get_identity_by_portable_uuid(
                         document.portable_uuid
@@ -428,6 +436,11 @@ class ActorPackImportService:
                 section_effects=section_effects,
                 license=_display_metadata(manifest.get("license")),
                 provenance=_display_metadata(manifest.get("provenance")),
+                artwork_attribution=(
+                    _read_staged(candidate, staged_records[ARTWORK_MEMBER])
+                    if ARTWORK_MEMBER in staged_records
+                    else None
+                ),
                 warnings=(),
                 differences=differences,
                 uuid_match=uuid_match,
@@ -600,7 +613,12 @@ class ActorPackImportService:
                     (asset, _read_staged(candidate, records[asset.member]))
                     for asset in section_records[kind]
                 )
-                sections.append(_ActorPackSectionMaterial(kind, manifest, assets))
+                artwork = (
+                    _read_staged(candidate, records[ARTWORK_MEMBER])
+                    if kind == "shared-visual-identity" and ARTWORK_MEMBER in records
+                    else None
+                )
+                sections.append(_ActorPackSectionMaterial(kind, manifest, assets, artwork))
         except Exception:
             raise ActorPackImportError("actor_pack_import_review_stale") from None
         return _ActorPackImportMaterial(dict(fields), portrait, tuple(sections))
@@ -715,7 +733,7 @@ class ActorPackImportService:
                 int(shared_graph["pack"]["id"]),
                 int(shared_graph["pack"]["version"]),
                 int(shared_graph["version"]["id"]),
-                hashlib.sha256(canonical_json_bytes(shared_graph)).hexdigest(),
+                _shared_graph_digest(shared_graph),
             )
         )
         if identity.actor_kind != "persona":
@@ -976,6 +994,27 @@ def _read_member(
     return b"".join(chunks)
 
 
+def _shared_graph_digest(graph: Mapping[str, Any]) -> str:
+    """Hash exact private JSON fields without applying portable display limits.
+
+    Notices and native manifests legitimately exceed the actor payload's 4096
+    character string limit. Hashing their bytes retains stale-review detection
+    while the ordinary canonical validator still checks the graph's other fields.
+    """
+    projected = dict(graph)
+    projected["pack"] = dict(graph["pack"])
+    projected["version"] = dict(graph["version"])
+    projected["assets"] = [dict(asset) for asset in graph["assets"]]
+    for row in (projected["pack"], projected["version"], *projected["assets"]):
+        for key in ("source_context_json", "manifest_json"):
+            if key in row:
+                value = row[key]
+                if type(value) is not str:
+                    raise ValueError
+                row[key] = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json_bytes(projected)).hexdigest()
+
+
 def _canonical_object(data: bytes) -> dict[str, Any]:
     try:
         value = json.loads(data)
@@ -1135,6 +1174,8 @@ def _validate_sections(
     sections: tuple[Any, ...],
     archive_members: frozenset[str],
     read_member: Callable[[str], bytes],
+    *,
+    required_features: list[str],
 ) -> tuple[tuple[str, tuple[_ActorPackSectionAsset, ...]], ...]:
     # Deferred: see the TASK-21200 note at the top of this module.
     from tldw_chatbook.Character_Chat.visual_identity import (
@@ -1219,7 +1260,18 @@ def _validate_sections(
         section_members = {
             path for path in archive_members if path.startswith(f"{section.kind}/")
         }
-        if section_members != {section.manifest_path, *asset_members}:
+        expected_members = {section.manifest_path, *asset_members}
+        if (
+            section.kind == "shared-visual-identity"
+            and ARTWORK_MEMBER in archive_members
+        ):
+            decode_artwork_attribution(
+                read_member(ARTWORK_MEMBER),
+                {asset.expression_key: asset.sha256 for asset in visual.assets},
+                required_features=required_features,
+            )
+            expected_members.add(ARTWORK_MEMBER)
+        if section_members != expected_members:
             raise ValueError
         validated.append((section.kind, tuple(records)))
     return tuple(validated)

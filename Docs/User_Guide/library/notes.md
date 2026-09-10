@@ -403,8 +403,10 @@ them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
 **Undo** restores that exact database note and immediately returns its row —
 in its folder, or under Unfiled — along with the Notes rail count, and moves
 the selection to the restored row. **Dismiss** removes only the receipt; the
-note remains deleted. Notes do not currently expose a separate Trash browser,
-so the receipt is the in-Library recovery action.
+note remains deleted. *(This page previously said Notes expose no separate
+Trash browser, so the receipt was the only in-Library recovery action —
+superseded by task-32144: see "Recently deleted" below, which recovers a note
+whose receipt was dismissed.)*
 
 *Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
 receipt's actions are no longer composed off the pane; task-32124: Undo
@@ -660,13 +662,31 @@ automatic-sync setting.
 2. In the Notes list, find the "✓ deleted · \<title\>" receipt.
 3. Click **Undo** to restore the note, or **Dismiss** to leave it deleted.
 
+### Recently deleted
+
+The receipt is the immediate way back, but it is not the only one. Under the
+folder tree, **Recently deleted (N)** counts the notes that have been deleted
+and not yet restored; it is absent while that count is zero.
+
+1. Click **Recently deleted (N)** to open the list, newest deletion first.
+   Each row shows the note's title and how long ago it went.
+2. Click that row's **Restore** — or press **r** on the focused row — to put
+   the note back in its folder (or Unfiled). The rail count and the tree row
+   return exactly as **Undo** returns them; it is the same restore.
+3. Press **Escape** (or **‹ Notes**) to go back to the list.
+
+The view holds the 20 most recent deletions and says so when there are more.
+Nothing here deletes anything for good: the Trash offers **Restore** and no
+permanent delete.
+
 ## Keyboard & commands
 
 | Key | Action |
 |---|---|
 | **Ctrl+N** | New note. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** still works too, but the footer advertises Ctrl+N in both places now. |
 | **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". |
-| **Escape** | Focus the rail |
+| **Escape** | Focus the rail (in **Recently deleted**, go back to the list) |
+| **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
 | ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
 | Enter (New note view) | Create from the focused row |
@@ -938,6 +958,13 @@ note as code, so a `[[link]]` after it is neither recorded nor rewritten;
 Obsidian vault detection was stated as POSIX-only, since the Windows
 discovery adapter never reported a vault — superseded by task-32178 below,
 which taught that adapter to detect one.)*
+
+*Verified against fix/library-notes-i-trash — 2026-09-09 (task-32144: a
+"Recently deleted (N)" row under the folder tree opens a Trash view of the
+soft-deleted notes, newest first, with a per-row Restore and `r` on the
+focused row. Restore commits through the same seam the delete receipt's Undo
+uses, so the row returns to its folder and the rail count moves identically.
+The view offers no permanent delete.)*
 
 *Verified against fix/library-notes-i-backlinks — 2026-09-09 (task-32145:
 Info → Properties now lists "Linked from (N)" — the notes whose bodies carry
