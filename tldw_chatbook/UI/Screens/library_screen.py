@@ -3472,13 +3472,14 @@ class LibraryScreen(BaseAppScreen):
         # has ever been opened. ``None`` until the first prefetch lands, so
         # the row's ``count_pending`` placeholder rule still applies.
         self._library_collections_prefetched_total: int | None = None
-        #: task-32103: which authority ``_library_collections_prefetched_total``
-        #: was read from. The prefetch outlives an authority switch
+        #: task-32103: which authority the last count OUTCOME below belongs
+        #: to -- the total on success, the failure kind on failure. Both
+        #: outlive an authority switch
         #: (``_activate_collections_capture_authority``), so without this the
-        #: rail painted the previous authority's total under the new one's
-        #: name -- the same defect the controller-state path is fenced
-        #: against (fix round 1).
-        self._library_collections_prefetched_authority: str | None = None
+        #: rail painted the previous authority's total, or its "(—)", under
+        #: the new one's name -- the same defect the controller-state path is
+        #: fenced against (fix round 1, and Qodo #2).
+        self._library_collections_count_authority: str | None = None
         #: task-32103: why the last count read produced no number --
         #: ``"timeout"``, ``"error"``, or ``""`` for success and for "no
         #: captures authority" (which is not a failure). The row says so
@@ -10386,7 +10387,7 @@ class LibraryScreen(BaseAppScreen):
         authority = getattr(scope_service, "active_authority", None)
         if authority is None:
             self._library_collections_prefetched_total = None
-            self._library_collections_prefetched_authority = None
+            self._library_collections_count_authority = None
             self._library_collections_count_failure = ""
             return
         try:
@@ -10410,7 +10411,7 @@ class LibraryScreen(BaseAppScreen):
                 _retry_failure_reason(exc),
             )
             self._library_collections_prefetched_total = None
-            self._library_collections_prefetched_authority = None
+            self._library_collections_count_authority = authority.key
             # (fix round 1) A read that failed in 20 ms must not tell the
             # user it waited five seconds, so the KIND is recorded, not just
             # the fact.
@@ -10419,7 +10420,7 @@ class LibraryScreen(BaseAppScreen):
             )
             return
         self._library_collections_prefetched_total = page.total
-        self._library_collections_prefetched_authority = authority.key
+        self._library_collections_count_authority = authority.key
         self._library_collections_count_failure = ""
 
     def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
@@ -14279,12 +14280,26 @@ class LibraryScreen(BaseAppScreen):
         # Collections row is deliberately excluded from ``counts_loading``,
         # so the gap between the switch and the next read painted the old
         # authority's total under the new one's name.
-        if (
-            authority is None
-            or self._library_collections_prefetched_authority != authority.key
-        ):
+        if not self._library_collections_count_is_current():
             return None
         return self._library_collections_prefetched_total
+
+    def _library_collections_count_is_current(self) -> bool:
+        """Whether the last count outcome belongs to the ACTIVE authority.
+
+        (fix round 1) Fences both halves of that outcome -- the prefetched
+        total and the failure kind behind the row's "(—)". A failure carried
+        over from the previous authority would otherwise mark the new one
+        unavailable until its own read landed (Qodo #2).
+        """
+        controller = self._library_collections_capture_controller
+        authority = getattr(
+            getattr(controller, "scope_service", None), "active_authority", None
+        )
+        return (
+            authority is not None
+            and self._library_collections_count_authority == authority.key
+        )
 
     def _build_library_shell_input(self) -> LibraryShellInput:
         """Build the pure shell input from live counts and runtime state.
@@ -14321,6 +14336,7 @@ class LibraryScreen(BaseAppScreen):
         collections_count_failure = (
             self._library_collections_count_failure
             if collections_count is None
+            and self._library_collections_count_is_current()
             else ""
         )
         counts = self._local_source_counts

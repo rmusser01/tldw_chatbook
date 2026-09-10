@@ -551,7 +551,7 @@ async def test_details_stops_saying_unavailable_once_the_canvas_supplies_a_count
 
         # A failed prefetch: the row says so, and so does Details.
         screen._library_collections_prefetched_total = None
-        screen._library_collections_prefetched_authority = None
+        screen._library_collections_count_authority = authority.key
         screen._library_collections_count_failure = "error"
         shell_input = screen._build_library_shell_input()
         assert shell_input.collections_count_unavailable is True
@@ -631,6 +631,16 @@ async def test_the_prefetched_total_is_fenced_to_the_authority_it_was_read_from(
 
         assert screen._library_collections_prefetched_total == 2
         assert screen._build_library_shell_input().collections_count is None
+
+        # The FAILURE half is fenced the same way (Qodo #2): a failure from
+        # the departed authority must not mark the new one unavailable.
+        screen._library_collections_count_failure = "timeout"
+        shell_input = screen._build_library_shell_input()
+        assert shell_input.collections_count_unavailable is False
+        assert not any(
+            "Collections count unavailable" in line
+            for line in shell_input.details_lines
+        ), shell_input.details_lines
 
 
 async def test_a_count_deadline_never_cancels_the_evidence_read() -> None:
