@@ -23,6 +23,13 @@ from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 
 APPROVED_SESSION_DECISION = "approved-session"
 
+#: task-32280: a refusal the PERMISSIONS produced -- the tool is set to Off
+#: (or there was no approval surface to ask on), so nobody was shown a card
+#: and nobody said no. Distinct from the bare ``"denied"`` a user's own card
+#: Deny writes, which Audit labels "Denied by you": collapsing the two left
+#: "what did I refuse?" unanswerable.
+POLICY_DENIED_DECISION = "denied-policy"
+
 
 @dataclass(frozen=True)
 class ExecutionRecord:

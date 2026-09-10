@@ -56,7 +56,10 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
 from tldw_chatbook.Agents.builtin_tool_gate import DENIAL_POLICY
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
-from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
+from tldw_chatbook.MCP.execution_log import (
+    APPROVED_SESSION_DECISION,
+    POLICY_DENIED_DECISION,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -531,6 +534,35 @@ class MCPToolProvider:
         with self._decisions_lock:
             return self._stamped_decisions.get((run_id, llm_name))
 
+    def record_user_denial(self, llm_name: str) -> None:
+        """Audit a card "Deny" the review hook resolved BEFORE dispatch.
+
+        `invoke()` records every refusal it reaches, but a hook-level deny
+        never reaches it: `run_agent_loop` turns any non-"proceed" verdict
+        straight into the call's result and skips the dispatch chain
+        entirely (`agent_runtime.py`, "a non-'proceed' verdict ... skips
+        dispatch entirely"). Live on dev 3315241674 that left three
+        approvals of one tool in `mcp_execution_log.jsonl` and no row at
+        all for the Deny pressed on the same tool (task-32280). So the
+        denial is recorded here, where it becomes final, through the same
+        `record_tool_decision` seam and the same `"denied"` decision
+        `_apply_verdict`'s own deny branch writes.
+
+        No double-recording: the runtime never dispatches the call this
+        denial belongs to, so `invoke()` never runs for it. A same-name
+        SIBLING call the user approved is dispatched and recorded on its
+        own, once, by `_execute`.
+
+        Args:
+            llm_name: The LLM-facing tool id the card refused. A name this
+                provider does not own (a built-in or skill tool -- the
+                review hook reviews those too) is silently ignored.
+        """
+        entry = self._entry_by_llm_name.get(llm_name)
+        if entry is None:
+            return
+        self._record_decision_safe(entry[0], decision="denied")
+
     @contextlib.contextmanager
     def stamp_scope(self, run_id: str):
         """Snapshot `run_id`'s stamps on enter; RESTORE (not merge) on exit.
@@ -790,7 +822,12 @@ class MCPToolProvider:
             return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
 
         if state.state == "deny":
-            self._record_decision_safe(tool, decision="denied")
+            # task-32280: `DENY_REFUSAL` tells the model this was the
+            # permissions being Off, so the audit row says the same. Plain
+            # "denied" is now reserved for a person's card Deny ("Denied by
+            # you" in Audit) -- one bucket for both made "what did I
+            # refuse?" unanswerable.
+            self._record_decision_safe(tool, decision=POLICY_DENIED_DECISION)
             return ToolResult.blocked(DENY_REFUSAL)
 
         if state.state == "allow":
@@ -808,7 +845,10 @@ class MCPToolProvider:
         if self._arg_rule_allows_safe(tool, call_args):
             return self._execute(tool, call_args, decision="allowed")
         if self._approval_callback is None:
-            self._record_decision_safe(tool, decision="denied")
+            # Same `DENY_REFUSAL` copy, same audit token (task-32280): there
+            # was no surface to ask on, so nobody was shown a card and
+            # nobody said no.
+            self._record_decision_safe(tool, decision=POLICY_DENIED_DECISION)
             return ToolResult.blocked(DENY_REFUSAL)
 
         pending = MCPPendingCall(

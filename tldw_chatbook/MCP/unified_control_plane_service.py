@@ -18,7 +18,7 @@ from loguru import logger
 from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
-from .execution_log import MCPExecutionLog, build_record
+from .execution_log import MCPExecutionLog, POLICY_DENIED_DECISION, build_record
 from .hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -4937,7 +4937,12 @@ class UnifiedMCPControlPlaneService:
                         else "approval_cancelled"
                         if decision == "denied" and error
                         else "denied"
-                        if decision == "denied"
+                        # task-32280 split the permissions-Off refusal out of
+                        # plain "denied" into its own decision token; it is
+                        # still the same CATEGORY of row, so keep deriving
+                        # the same category rather than silently demoting
+                        # those rows to the generic "blocked".
+                        if decision in ("denied", POLICY_DENIED_DECISION)
                         else "execution_bridge_failed"
                         if error
                         else "blocked"

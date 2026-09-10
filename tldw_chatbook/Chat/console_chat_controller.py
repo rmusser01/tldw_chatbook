@@ -2047,6 +2047,19 @@ def build_tool_review_hook(
         for name, decision in _stamps_for(builtin_pending).items():
             builtin_gate.stamp(run_id, name, decision)
 
+        # task-32280: because the runtime turns the refusal below into the
+        # call's result and never dispatches it, `MCPToolProvider.invoke` --
+        # which records every refusal IT reaches -- never runs for a denied
+        # call. Live on dev 3315241674 that left three approvals of one tool
+        # in the execution log and no row at all for the Deny. Record at the
+        # point the denial becomes final, through the provider's own audit
+        # seam. Built-in rows are left alone: nothing records their
+        # approvals either, so a denial-only trail would be worse than none.
+        if mcp_provider is not None:
+            for row in mcp_pending:
+                if _decision_for(row) == "deny":
+                    mcp_provider.record_user_denial(row.llm_name)
+
         # The refusal half, enforced HERE rather than through the stamps.
         # The runtime resolves `call_id` before name and turns any
         # non-"proceed" verdict string into that call's result without

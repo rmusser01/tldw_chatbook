@@ -432,6 +432,17 @@ as a run finishes — no need to press **r** — and each row records the
 argument *names* the run supplied (e.g. `query`, `limit`, `use_semantic`),
 never the values.
 
+Refusals are recorded with the same precision, so the Decision column and
+its filter can answer "what did I refuse?":
+
+- **Denied by you** — you pressed **Deny** on the approval card.
+- **Blocked (Off)** — the permissions refused the call; no card was shown.
+- **Denied (timeout)** — the card expired before you answered.
+- **Denied (no decision)** — the approval round ended with no verdict.
+
+A Deny you press in Console lands here as its own row, exactly as each
+approval does.
+
 ## Advanced (legacy control plane)
 
 Opt in from the inspector's **Advanced…** toggle (it persists across
@@ -496,4 +507,9 @@ not a live screen): added "`expand_document` and the Library consent
 boundary" — expansion does not defer to `[console] direct_library_tools`
 (default on) but to its own `[tools] expand_document_enabled` gate
 (default off) plus the risk-tag Ask floor, and the raw-id read that
-implies is recorded with its mitigations.*
+implies is recorded with its mitigations. Docs pass 2026-09-10
+(task-32280, against code and tests, not a live screen): a card **Deny** now leaves an execution-log row
+of its own (it previously left none — the review hook refuses the call
+before the provider that was doing the recording ever runs), and the
+permissions-Off refusal moved to its own **Blocked (Off)** decision so it
+no longer shares the user's "Denied by you" bucket.*
