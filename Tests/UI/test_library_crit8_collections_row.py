@@ -511,14 +511,19 @@ async def test_a_count_that_times_out_says_so_on_the_row() -> None:
         # The Details sentence comes from the SAME gated value as the row's
         # "(—)" -- ``_build_library_shell_input`` computes it once -- so the
         # rail's two lines cannot contradict each other (fix round 1).
+        # (fix round 2) The sentence joins the counts VALUE rather than
+        # becoming a fourth details line, which would land in the rail's
+        # DB-sizes slot -- see
+        # ``test_a_collections_count_failure_never_evicts_the_db_sizes_row``.
         deadline_line = next(
             line for line in shell_input.details_lines if "Collections count" in line
         )
-        assert deadline_line == (
+        assert deadline_line.endswith(
             "Collections count unavailable (waited "
             f"{library_screen.LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s) — "
             "open Collections to load it."
-        )
+        ), deadline_line
+        assert len(shell_input.details_lines) <= 3, shell_input.details_lines
 
 
 async def test_details_stops_saying_unavailable_once_the_canvas_supplies_a_count() -> None:
