@@ -830,12 +830,11 @@ def _validate_installed(journal, candidate, plan):
     """Recheck published objects, validate disposable copies, then persist proof."""
     import shutil
     import tempfile
-    from types import MappingProxyType
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
 
     from .owner_registry import install_adapters
-    from .sqlite_validation import validate_candidate
     from .staging import _items
-    from .storage_admission import _preview_reads
 
     with journal._locked(exclusive=True) as parent:
         records = journal._records(parent)
@@ -977,6 +976,8 @@ def _validate_installed(journal, candidate, plan):
         work = Path(tempfile.mkdtemp(prefix="installed-check-", dir=candidate))
         try:
             candidates = {}
+            physical_candidates = {}
+            restored = dict(plan.restore)
             topology = {}
             directories = {row.logical_id for row in doc.directories}
             for record in (*doc.directories, *doc.files):
@@ -987,14 +988,18 @@ def _validate_installed(journal, candidate, plan):
                     record.relative_path,
                     kind,
                 )
-                if record.logical_id not in dict(plan.restore):
+                if record.logical_id not in restored:
+                    continue
+                source = restored[record.logical_id]
+                physical_key = (str(source), expected[str(source)])
+                if physical_key in physical_candidates:
+                    candidates[record.logical_id] = physical_candidates[physical_key]
                     continue
                 destination = work / record.root_id / record.relative_path
                 destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 if kind == "directory":
                     destination.mkdir(mode=0o700, exist_ok=True)
                 else:
-                    source = dict(plan.restore)[record.logical_id]
                     row = next(
                         row for row in rows if row["logical_id"] == record.logical_id
                     )
@@ -1015,59 +1020,24 @@ def _validate_installed(journal, candidate, plan):
                             raise ValueError("installed_content_changed")
                     destination.chmod(0o600)
                 candidates[record.logical_id] = destination
+                physical_candidates[physical_key] = destination
             verify()
             synthetic = {row.logical_id for row in doc.directories if row.synthetic}
-            with _preview_reads():
-                for key, item in items.items():
-                    owner = owners[item.owner]
-                    if item.metadata.kind == "file":
-                        role_check = getattr(owner, "restore_role", None)
-                        policy = owner.schema_policy()
-                        role = (
-                            role_check(item)
-                            if callable(role_check)
-                            else "sqlite"
-                            if policy is not None and policy.schema_sql
-                            else "file"
-                        )
-                        if role == "sqlite":
-                            source = dict(plan.restore)[key]
-                            if any(
-                                Path(str(source) + suffix).exists()
-                                for suffix in ("-wal", "-shm", "-journal")
-                            ):
-                                raise ValueError("installed_sqlite_sidecar_present")
-                            issues = validate_candidate(
-                                owner, candidates[key], Event(), migrate=False
-                            )
-                        else:
-                            validator = getattr(owner, "validate_restore", None)
-                            issues = (
-                                validator(item, candidates[key])
-                                if callable(validator)
-                                else owner.validate(candidates[key])
-                            )
-                        if issues:
-                            raise ValueError(issues[0])
-                    if key in synthetic:
-                        continue
-                    validator = getattr(owner, "validate_restore_dependencies", None)
-                    legacy = getattr(owner, "validate_dependencies", None)
-                    if callable(validator):
-                        issues = validator(
-                            item,
-                            candidates[key],
-                            MappingProxyType(candidates),
-                            topology=MappingProxyType(topology),
-                        )
-                    elif callable(legacy):
-                        issues = legacy(
-                            item, candidates[key], MappingProxyType(candidates)
-                        )
-                    else:
-                        issues = ()
-                    if issues:
-                        raise ValueError(issues[0])
+            # A fresh worker owns only private read probes. Executor shutdown
+            # waits even if result() is interrupted, keeping native maintenance
+            # and these private files alive until every callback has retired.
+            private_items = {
+                key: replace(item, path=candidates[key]) for key, item in items.items()
+            }
+            with ThreadPoolExecutor(max_workers=1) as worker:
+                worker.submit(
+                    _validate_installed_copies,
+                    private_items,
+                    candidates,
+                    topology,
+                    synthetic,
+                    owners,
+                ).result()
             verify()
             for row in sorted(
                 rows,
@@ -1163,3 +1133,55 @@ def _apply_directory_metadata(journal, parent, prepared, item):
         "directory_metadata_applied",
         {"logical_id": item.logical_id, "observed": state.model_dump()},
     )
+
+
+def _validate_installed_copies(items, candidates, topology, synthetic, owners):
+    """Validate operation-private copies without receiving live native authority."""
+    from types import MappingProxyType
+
+    from .sqlite_validation import validate_candidate
+    from .storage_admission import _preview_reads
+
+    with _preview_reads():
+        for key, item in items.items():
+            owner = owners[item.owner]
+            if item.metadata.kind == "file":
+                role_check = getattr(owner, "restore_role", None)
+                policy = owner.schema_policy()
+                role = (
+                    role_check(item)
+                    if callable(role_check)
+                    else "sqlite"
+                    if policy is not None and policy.schema_sql
+                    else "file"
+                )
+                if role == "sqlite":
+                    issues = validate_candidate(
+                        owner, candidates[key], Event(), migrate=False
+                    )
+                else:
+                    validator = getattr(owner, "validate_restore", None)
+                    issues = (
+                        validator(item, candidates[key])
+                        if callable(validator)
+                        else owner.validate(candidates[key])
+                    )
+                if issues:
+                    raise ValueError(issues[0])
+            if key in synthetic:
+                continue
+            validator = getattr(owner, "validate_restore_dependencies", None)
+            legacy = getattr(owner, "validate_dependencies", None)
+            if callable(validator):
+                issues = validator(
+                    item,
+                    candidates[key],
+                    MappingProxyType(candidates),
+                    topology=MappingProxyType(topology),
+                )
+            elif callable(legacy):
+                issues = legacy(item, candidates[key], MappingProxyType(candidates))
+            else:
+                issues = ()
+            if issues:
+                raise ValueError(issues[0])

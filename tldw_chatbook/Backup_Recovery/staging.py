@@ -461,6 +461,16 @@ def stage_restore(
         candidate_paths = {
             key: path for key, path in extracted.items() if key in selected
         }
+        # Whole-file aliases have already passed exact post-relocation digest
+        # equality. Their semantic validators must see the same private file
+        # when the locally reviewed plan installs them at one destination.
+        shared_candidates = {}
+        for item in doc.producer_inventory:
+            if item.shared_group and item.logical_id in candidate_paths:
+                key = (item.shared_group, selected[item.logical_id])
+                candidate_paths[item.logical_id] = shared_candidates.setdefault(
+                    key, candidate_paths[item.logical_id]
+                )
         candidate_paths.update(
             {row["logical_id"]: Path(row["candidate"]) for row in artifacts}
         )
