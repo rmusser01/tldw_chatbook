@@ -263,6 +263,10 @@ def _branch_screen_fake(service: _BranchService):
         _focus_calls=[],
         _capture_library_notes_focus_identity=lambda: SimpleNamespace(),
         is_mounted=True,
+        # i-trash (#2553): a fresh tree visit also refreshes the trash
+        # count; a no-op keeps every caller of this shared fake off that
+        # AttributeError regardless of which wave lands first.
+        _refresh_library_notes_trash=lambda: None,
     )
 
     def _sync(*_args, **kwargs):

@@ -876,9 +876,9 @@ no longer sits at 38 columns beside an empty work area, and its action
 groups stack rather than clip in a narrow pane; task-32137: rows
 carry an age, and same-folder duplicate titles name their folder;
 task-32128: the tree's title order is the database's, so Sort is not
-offered there; task-32123: the delete receipt's Undo/Dismiss actions are no
-longer composed off the pane; task-32124: Undo returns the row to the
-folder tree, not only the count.)*
+offered there — superseded by task-32172 below; task-32123: the delete
+receipt's Undo/Dismiss actions are no longer composed off the pane;
+task-32124: Undo returns the row to the folder tree, not only the count.)*
 
 *Verified against fix/library-notes-editor-keys — 2026-09-09 (task-32131: `/`
 no longer types itself into the filter it focuses; a same-round controller
