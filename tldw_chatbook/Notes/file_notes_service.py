@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import wraps
 from pathlib import Path
-from threading import RLock
+from threading import RLock, current_thread
 from typing import Literal, TypeVar, cast
 
 from loguru import logger
@@ -54,6 +54,12 @@ def _serialized(method: _ServiceMethod) -> _ServiceMethod:
         *args: object,
         **kwargs: object,
     ) -> object:
+        if method.__name__ not in {"session_changes", "close"}:
+            with (
+                service._session_owner._maintenance_operation(current_thread()),
+                service._operation_lock,
+            ):
+                return method(service, *args, **kwargs)
         with service._operation_lock:
             return method(service, *args, **kwargs)
 
@@ -184,6 +190,8 @@ class FileNotesService:
         self._session_binding = session_binding
         self._entry_cache: dict[str, FileNoteEntry] = {}
         self._pending_replica_moves: dict[str, str] = {}
+        with session_owner._lock:
+            session_owner._maintenance_file_sources.add(self)
 
     @property
     @_serialized
@@ -1348,6 +1356,8 @@ class FileNotesService:
             raise ValueError("session binding belongs to another File Notes root")
         self._session_owner = owner
         self._session_binding = binding
+        with owner._lock:
+            owner._maintenance_file_sources.add(self)
 
     def _upsert_opened(self, opened: OpenedFileNote) -> str | None:
         return self._upsert_bytes(

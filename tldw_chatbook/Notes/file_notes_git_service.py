@@ -20,6 +20,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass, field, replace
+from functools import wraps
 from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
@@ -1043,6 +1044,7 @@ class _PrivatePushProofDirectory:
 
 
 GitStatusAdmissionReason = Literal[
+    "maintenance_paused",
     "untrusted",
     "mutation_active",
     "stale_binding",
@@ -1050,6 +1052,7 @@ GitStatusAdmissionReason = Literal[
     "status_active",
 ]
 GitMutationAdmissionReason = Literal[
+    "maintenance_paused",
     "authorization_required",
     "invalid_capability",
     "untrusted",
@@ -2869,6 +2872,20 @@ class AsyncGitProcessRunner:
         ).encode("utf-8", "surrogateescape")
 
 
+def _maintenance_query(method):
+    """Keep direct async queries admitted across their successive Git children."""
+
+    @wraps(method)
+    async def query(self, *args, **kwargs):
+        task = asyncio.current_task()
+        with self._owner._maintenance_operation(
+            task, admitted=task in self._maintenance_cycles()
+        ):
+            return await method(self, *args, **kwargs)
+
+    return query
+
+
 class FileNotesGitService:
     """Trusted, process-owned Git projection for one File Notes owner."""
 
@@ -2994,6 +3011,54 @@ class FileNotesGitService:
         self._shutdown_runner_confirmed: bool | None = None
         self._shutdown_settlement: Awaitable[None] | None = None
 
+    def _maintenance_cycles(self) -> tuple[asyncio.Task, ...]:
+        """Return actual retained operations, never their cancellable waiters."""
+        return tuple(
+            task
+            for task in (
+                self._status_cycle,
+                self._action_cycle,
+                self._commit_review_cycle,
+                self._commit_cycle,
+                self._commit_recovery_cycle,
+                self._push_local_proof_cycle,
+                self._push_preflight_cycle,
+                self._push_cycle,
+                self._push_recovery_cycle,
+                self._push_recovery_settlement_cycle,
+            )
+            if task is not None and not task.done()
+        )
+
+    def _maintenance_check_admission(self, *, status: bool = False) -> None:
+        """Refuse new operations without sealing existing publication paths."""
+        with self._owner._lock:
+            if self._owner._maintenance_closed:
+                error = (
+                    GitStatusAdmissionError if status else GitMutationAdmissionError
+                )
+                raise error(
+                    "maintenance_paused", "File Notes maintenance is paused"
+                )
+
+    def _maintenance_ready(self) -> bool:
+        """Uncertain children or private recovery bytes keep capture blocked."""
+        runner = self._runner
+        return not (
+            self._sealed
+            or self._maintenance_cycles()
+            or self._uncertain_commit is not None
+            or self._orphaned_commit is not None
+            or self._uncertain_push is not None
+            or self._unsettled_push_preflight is not None
+            or self._pending_push_contexts
+            or self._pending_hooks_cleanup
+            or type(runner) is not AsyncGitProcessRunner
+            or runner._run_tasks
+            or runner._processes
+            or runner._retained_children
+        )
+
     @staticmethod
     def _validate_positive_timeout(name: str, value: object) -> None:
         """Reject nonnumeric, nonfinite, and nonpositive network bounds."""
@@ -3005,6 +3070,7 @@ class FileNotesGitService:
         ):
             raise ValueError(f"{name} must be a finite positive number")
 
+    @_maintenance_query
     async def discover(
         self,
         binding: SessionBinding,
@@ -3117,6 +3183,7 @@ class FileNotesGitService:
             head=head_result,
         )
 
+    @_maintenance_query
     async def revalidate_repository(
         self,
         binding: SessionBinding,
@@ -3149,6 +3216,7 @@ class FileNotesGitService:
             self._owner.clear_trust_if_matches(binding, repository)
         return valid
 
+    @_maintenance_query
     async def review_push_destination(
         self,
         binding: SessionBinding,
@@ -3174,6 +3242,7 @@ class FileNotesGitService:
         binding: SessionBinding,
     ) -> asyncio.Task[PushDestinationPolicyResult]:
         """Admit and retain the local-only guarded-push proof phase."""
+        self._maintenance_check_admission()
         if self._sealed:
             raise GitMutationAdmissionError(
                 "shutdown",
@@ -3270,6 +3339,7 @@ class FileNotesGitService:
         binding: SessionBinding,
     ) -> PushAuthorizationHandle | None:
         """Authorize later contact with the exact locally proved destination."""
+        self._maintenance_check_admission()
         policy = self._push_destination_policy
         if (
             self._sealed
@@ -3287,6 +3357,7 @@ class FileNotesGitService:
         self._push_authorization = authorization
         return authorization
 
+    @_maintenance_query
     async def revalidate_push_destination(
         self,
         binding: SessionBinding,
@@ -3324,6 +3395,7 @@ class FileNotesGitService:
         operation: RetainedPushOperation,
     ) -> asyncio.Task[PushPreflightResult]:
         """Authorize one frozen destination and retain its exact-ref query."""
+        self._maintenance_check_admission()
         if self._sealed:
             raise GitMutationAdmissionError(
                 "shutdown",
@@ -3727,6 +3799,7 @@ class FileNotesGitService:
         handle: PushReviewHandle,
     ) -> asyncio.Task[PushExecutionResult]:
         """Consume one immutable review and retain its exact push attempt."""
+        self._maintenance_check_admission()
         if self._sealed:
             raise GitMutationAdmissionError(
                 "shutdown",
@@ -4310,6 +4383,7 @@ class FileNotesGitService:
         operation: RetainedPushOperation,
     ) -> bool:
         """Freshly authorize one query of the retained frozen destination."""
+        self._maintenance_check_admission()
         if self._sealed:
             return False
         evidence = self._uncertain_push
@@ -4341,6 +4415,7 @@ class FileNotesGitService:
         operation: RetainedPushOperation,
     ) -> asyncio.Task[PushRecoveryProjection]:
         """Start exactly one query-only check of an uncertain destination."""
+        self._maintenance_check_admission()
         if self._sealed:
             raise GitMutationAdmissionError(
                 "shutdown",
@@ -5258,6 +5333,7 @@ class FileNotesGitService:
         changes: tuple[SequencedSessionChange, ...],
     ) -> asyncio.Task[SessionGitStatus]:
         """Synchronously admit one retained trusted status query."""
+        self._maintenance_check_admission(status=True)
         if self._sealed:
             raise GitStatusAdmissionError(
                 "shutdown",
@@ -5363,6 +5439,7 @@ class FileNotesGitService:
         group_ids: Collection[int],
     ) -> asyncio.Task[GitActionResult]:
         """Synchronously admit and retain one exact Stage operation."""
+        self._maintenance_check_admission()
         requested = tuple(dict.fromkeys(group_ids))
         if self._sealed:
             raise GitMutationAdmissionError(
@@ -5426,6 +5503,7 @@ class FileNotesGitService:
         group_ids: Collection[int],
     ) -> asyncio.Task[GitActionResult]:
         """Synchronously admit and retain one exact Unstage operation."""
+        self._maintenance_check_admission()
         requested = tuple(dict.fromkeys(group_ids))
         if self._sealed:
             raise GitMutationAdmissionError(
@@ -5490,6 +5568,7 @@ class FileNotesGitService:
         body: str = "",
     ) -> asyncio.Task[CommitReviewResult]:
         """Admit and retain one read-only guarded commit review preflight."""
+        self._maintenance_check_admission()
         if self._sealed:
             raise GitMutationAdmissionError(
                 "shutdown",
@@ -5574,6 +5653,7 @@ class FileNotesGitService:
         body: str = "",
     ) -> asyncio.Task[CommitOutcome]:
         """Consume one review capability and retain one guarded commit cycle."""
+        self._maintenance_check_admission()
         if self._sealed:
             raise GitMutationAdmissionError(
                 "shutdown",
@@ -5744,6 +5824,7 @@ class FileNotesGitService:
         binding: SessionBinding,
     ) -> asyncio.Task[CommitOutcome]:
         """Re-observe one exact attempt, proving it only when lifecycle-safe."""
+        self._maintenance_check_admission()
         if self._sealed:
             raise GitMutationAdmissionError(
                 "shutdown",
