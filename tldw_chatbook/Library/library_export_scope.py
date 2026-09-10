@@ -11,8 +11,9 @@ page size. This module -- and the ``get_all_*`` DB methods it calls
 -- deliberately never reads a rendered snapshot: every count/resolve call
 issues a fresh, uncapped id query against the database.
 
-Pure module: stdlib + ``Chatbooks.chatbook_models.ContentType`` + type hints
-only. DB handles are passed in by the caller and never constructed here.
+Pure module: stdlib + ``Chatbooks.chatbook_models.ContentType`` +
+``Library.library_media_state``'s backing-id coercion + type hints only. DB
+handles are passed in by the caller and never constructed here.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 from typing import Mapping, Protocol
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
+from tldw_chatbook.Library.library_media_state import library_media_int_backing_id
 
 _VALID_KINDS = ("everything", "media", "conversations", "notes", "prompts")
 
@@ -50,7 +52,10 @@ class ExportScope:
             query. Only meaningful for a single-source ``kind`` ("media",
             "conversations", "notes", "prompts") -- raises if set with
             ``kind="everything"``. When non-empty, every resolver returns
-            these ids directly without querying the database.
+            these ids directly without querying the database -- media ids
+            first normalized to their bare backing id (task-32232, see
+            ``_media_selection_id``), since select mode carries canonical
+            ``local:media:<n>`` display ids.
     """
 
     kind: str
@@ -102,6 +107,29 @@ def _effective_media_type(scope: ExportScope) -> str | None:
     if scope.media_type in (None, _UNFILTERED_MEDIA_TYPE_SENTINEL):
         return None
     return scope.media_type
+
+
+def _media_selection_id(media_id: str) -> str:
+    """Normalize one selected media id to the bare backing id the collector parses.
+
+    task-32232: Media select mode carries CANONICAL display ids
+    (``local:media:<n>``), while ``ChatbookCreator._collect_media`` parses
+    its selection with ``int(media_id)`` inside a broad ``except`` -- so an
+    uncoerced selection logged ``invalid literal for int()`` per item and
+    wrote a bundle containing README + ``content_items: []`` while the run
+    reported success. The whole-source branch below already normalized with
+    ``str(int(...))``; this is the same normalization for the explicit-ids
+    branch, done through the single backing-id owner
+    (``library_media_int_backing_id``) rather than a second parser.
+
+    An id carrying no backing id is deliberately passed through UNCHANGED
+    rather than dropped: dropping it would shrink the selection silently
+    (the exact failure mode this fixes), while keeping it lets the
+    creator's "a non-empty selection collected nothing" guard report an
+    honest failure.
+    """
+    backing_id = library_media_int_backing_id(media_id)
+    return str(backing_id) if backing_id is not None else str(media_id)
 
 
 def count_export_scope(
@@ -161,6 +189,8 @@ def resolve_export_selections(
     optional Prompt source is likewise omitted while other sources resolve.
     """
     if scope.ids:
+        if scope.kind == "media":
+            return {ContentType.MEDIA: [_media_selection_id(i) for i in scope.ids]}
         return {_KIND_TO_CONTENT_TYPE[scope.kind]: list(scope.ids)}
     selections: dict[ContentType, list[str]] = {}
     if scope.kind in ("everything", "media"):
