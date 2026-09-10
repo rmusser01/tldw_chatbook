@@ -512,10 +512,10 @@ class ConsoleFleetWakeCoordinator:
         allowed before (no ``_shutdown_requested``) and is allowed now
         (``_disposed`` defaults False).
         """
-        if not autowake_enabled():
-            return
         controller = self._controller
-        if controller is None:
+        if controller is None or getattr(controller, "_maintenance_paused", False):
+            return
+        if not autowake_enabled():
             return
         if getattr(controller, "_disposed", False):
             return

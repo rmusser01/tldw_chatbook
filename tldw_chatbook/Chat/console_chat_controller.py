@@ -1647,6 +1647,47 @@ class ImpersonateResult:
     detail: str = ""
 
 
+_MAINTENANCE_REFUSAL = "Console generation is paused for backup maintenance."
+
+
+def _maintenance_boundary(kind="turn"):
+    """Retain one controller call through nested preflight/publication awaits."""
+    def decorate(function):
+        @functools.wraps(function)
+        async def admitted(self, *args, **kwargs):
+            task = asyncio.current_task()
+            depth = self._maintenance_calls.get(task, 0)
+            if self._maintenance_paused and not depth:
+                if kind == "bool":
+                    return False
+                if kind == "compact":
+                    return False, _MAINTENANCE_REFUSAL
+                if kind == "impersonate":
+                    return ImpersonateResult("", "maintenance", _MAINTENANCE_REFUSAL)
+                if kind in ("queue", "queue_message"):
+                    if kind == "queue_message":
+                        message_id = args[0] if args else kwargs["message_id"]
+                        session_id = self.store.session_id_for_message(message_id)
+                    else:
+                        session_id = args[0] if args else kwargs["session_id"]
+                    return PromptQueueMutationResult(
+                        QueueMutationStatus.INVALID,
+                        self.prompt_queue_registry.snapshot(session_id),
+                        detail=_MAINTENANCE_REFUSAL,
+                    )
+                return ConsoleSubmitResult(False, False, _MAINTENANCE_REFUSAL)
+            self._maintenance_calls[task] = depth + 1
+            try:
+                return await function(self, *args, **kwargs)
+            finally:
+                if depth:
+                    self._maintenance_calls[task] = depth
+                else:
+                    self._maintenance_calls.pop(task, None)
+        return admitted
+    return decorate
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -1899,6 +1940,9 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        self._maintenance_paused = False
+        self._maintenance_calls: dict[asyncio.Task, int] = {}
+        self._maintenance_background: set[asyncio.Task] = set()
         self._provider_continuation_recovery_sessions: set[str] = set()
         self._stop_requested = False
         #: F5 fix (Qodo wave): set ONLY by ``shutdown()`` and NEVER reset
@@ -2301,6 +2345,62 @@ class ConsoleChatController:
                 return self._lifecycle_revision
             return self._session_lifecycle_revisions.get(session_id, 0)
 
+    def maintenance_close_admission(self) -> None:
+        """Fence new turns without cancelling admitted work or changing drafts."""
+        self._maintenance_paused = True
+        self.prompt_queue_coordinator.maintenance_close_admission()
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait for preflight, publication and retained native agent calls."""
+        if not self._maintenance_paused:
+            raise RuntimeError("console_maintenance_not_paused")
+        while (
+            self._maintenance_calls
+            or self._maintenance_background
+            or self._fleet_wake._delivery_tasks
+        ):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def _retain_maintenance_task(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._maintenance_background.add(task)
+        task.add_done_callback(self._maintenance_task_finished)
+        return task
+
+    def _maintenance_task_finished(self, task):
+        self._maintenance_background.discard(task)
+        if not task.cancelled():
+            # A cancelled caller may no longer await the shielded native call.
+            # Retrieve failures without changing normal await propagation.
+            task.exception()
+
+    def maintenance_resume(self) -> None:
+        """Reopen intake and only restart queues suspended by maintenance."""
+        if not self._maintenance_paused:
+            return
+        self._maintenance_paused = False
+        for session_id, revision in self.prompt_queue_coordinator.maintenance_resume():
+            self._retain_maintenance_task(
+                self._resume_maintenance_queue(session_id, revision)
+            )
+        self._fleet_wake.retry_soon()
+
+    @_maintenance_boundary("queue")
+    async def _resume_maintenance_queue(self, session_id, revision):
+        return await self.prompt_queue_coordinator.resume_after_maintenance(
+            session_id, revision
+        )
+
+    async def _run_maintenance_agent_call(self, function, **kwargs):
+        # The native bridge call survives caller cancellation. Keep its task
+        # until it really returns, while the existing caller handles Stop.
+        task = self._retain_maintenance_task(asyncio.to_thread(function, **kwargs))
+        return await asyncio.shield(task)
+
     def lifecycle_impact(
         self, *, session_id: str | None = None
     ) -> ConsoleLifecycleImpact:
@@ -2429,6 +2529,7 @@ class ConsoleChatController:
             self.prompt_queue_coordinator.publish_registry_change(session_id)
         return result
 
+    @_maintenance_boundary("turn")
     async def run_prompt_chain(
         self,
         draft: str,
@@ -3063,6 +3164,7 @@ class ConsoleChatController:
             "Wait for one to finish or interrupt it."
         )
 
+    @_maintenance_boundary("bool")
     async def recover_provider_continuation(
         self,
         action: str,
@@ -3314,6 +3416,7 @@ class ConsoleChatController:
         """
         return self._run_state_histories.setdefault(session_id, [ConsoleRunStatus.IDLE])
 
+    @_maintenance_boundary("turn")
     async def submit_draft(
         self,
         draft: str,
@@ -6774,6 +6877,7 @@ class ConsoleChatController:
                 return message.id
         return None
 
+    @_maintenance_boundary("turn")
     async def retry_message(
         self,
         message_id: str,
@@ -6860,6 +6964,7 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
 
+    @_maintenance_boundary("queue")
     async def resume_prompt_queue(self, session_id: str) -> PromptQueueMutationResult:
         """Resume next queued prompt after visibly reacquiring one agent slot."""
 
@@ -6883,6 +6988,7 @@ class ConsoleChatController:
             session_id, expected_revision=expected_revision
         )
 
+    @_maintenance_boundary("queue")
     async def skip_and_resume_prompt_queue(
         self, session_id: str
     ) -> PromptQueueMutationResult:
@@ -6890,6 +6996,7 @@ class ConsoleChatController:
 
         return await self.prompt_queue_coordinator.resume_and_drain(session_id)
 
+    @_maintenance_boundary("queue_message")
     async def retry_failed_queue_turn(
         self, message_id: str
     ) -> PromptQueueMutationResult:
@@ -6903,6 +7010,7 @@ class ConsoleChatController:
             ),
         )
 
+    @_maintenance_boundary("queue_message")
     async def retry_stopped_queue_turn(
         self, message_id: str
     ) -> PromptQueueMutationResult:
@@ -6916,6 +7024,7 @@ class ConsoleChatController:
             ),
         )
 
+    @_maintenance_boundary("queue")
     async def use_current_context_and_resume_prompt_queue(
         self,
         session_id: str,
@@ -6931,6 +7040,7 @@ class ConsoleChatController:
             reviewed_context_epoch=reviewed_context_epoch,
         )
 
+    @_maintenance_boundary("turn")
     async def continue_from_message(self, message_id: str) -> ConsoleSubmitResult:
         """Continue from a selected message by streaming a new assistant turn."""
         active_rejection = self._active_run_rejection()
@@ -7010,6 +7120,7 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
 
+    @_maintenance_boundary("turn")
     async def regenerate_message(
         self,
         message_id: str,
@@ -7143,6 +7254,7 @@ class ConsoleChatController:
     #: or normal use; a runaway history drops its OLDEST turns before the call.
     _SUMMARY_SPAN_TOKEN_BUDGET = 12000
 
+    @_maintenance_boundary("turn")
     async def summarize_up_to(self, message_id: str) -> ConsoleSubmitResult:
         """Summarize the active path up to (excluding) a USER message.
 
@@ -7344,6 +7456,7 @@ class ConsoleChatController:
             body = assemble(rows)
         return body
 
+    @_maintenance_boundary("impersonate")
     async def impersonate_user_reply(
         self, session_id: str
     ) -> "ImpersonateResult":
@@ -7505,6 +7618,7 @@ class ConsoleChatController:
                 chunks.append(chunk)
         return "".join(chunks)
 
+    @_maintenance_boundary("turn")
     async def edit_and_resend_message(
         self, message_id: str, new_content: str
     ) -> ConsoleSubmitResult:
@@ -9717,6 +9831,7 @@ class ConsoleChatController:
             reset_at=datetime.now(UTC).isoformat(),
         )
 
+    @_maintenance_boundary("compact")
     async def compact_context_now(self, session_id: str) -> tuple[bool, str]:
         """Run one user-initiated bounded compaction without sending a turn."""
         if not self.run_state_for(session_id).is_send_allowed:
@@ -11837,7 +11952,7 @@ class ConsoleChatController:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
-            run_id, outcome = await asyncio.to_thread(
+            run_id, outcome = await self._run_maintenance_agent_call(
                 self._agent_bridge.run_reply,
                 conversation_id=conversation_id,
                 session_id=session_id,
