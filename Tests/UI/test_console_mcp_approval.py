@@ -347,11 +347,13 @@ def test_raw_shell_command_view_has_bounded_scrollable_geometry():
 
 
 @pytest.mark.asyncio
-async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
+async def test_reason_badges_carry_a_visible_why_line_not_a_tooltip():
     """Fleet-UX expert review F5/F7 (task-1234, item g): "(high risk)" on a
-    plain read reads as alarmist with no explanation -- the row header
-    Static now carries a tooltip naming why. `config_changed` rows (no
-    risk badge) get no tooltip at all; this is scoped to `risk_floored`."""
+    plain read reads as alarmist with no explanation. That explanation was a
+    header TOOLTIP, which on a terminal nobody sees; task-32278 made it a
+    visible `.approval-row-reason` line and gave `config_changed` one too.
+    The header must carry no tooltip at all now -- a hover-only duplicate of
+    a line already on the card is how the unreadable version came back."""
     app = _CardHarnessApp()
     calls = [
         {
@@ -381,12 +383,15 @@ async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
         changed_header = rows[1].query_one(".approval-row-header", Static)
 
         assert "(high risk)" in _text(risk_header)
-        assert risk_header.tooltip == (
-            "Reads can exfiltrate file contents; built-in file tools "
-            "always ask before running."
+        assert not risk_header.tooltip
+        assert _text(rows[0].query_one(".approval-row-reason", Static)) == (
+            "High risk: this tool reads local data and always asks first."
         )
         assert "(definition changed)" in _text(changed_header)
         assert not changed_header.tooltip
+        assert _text(rows[1].query_one(".approval-row-reason", Static)) == (
+            "Definition changed since you last allowed it; review the arguments."
+        )
 
 
 @pytest.mark.asyncio
@@ -1723,8 +1728,12 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
                     f"decision Select width {select.size.width} claimed the "
                     f"entire row width {row.size.width} under bundled CSS"
                 )
-                assert select.size.width == 26, (
-                    f"decision Select width {select.size.width} != pinned 26"
+                # task-32278: 27 = the 19-cell longest label ("Always · these
+                # args") + 8 cells of Textual Select chrome. The closed Select
+                # does not ellipsize -- it WRAPS and grows -- so this number
+                # and `_DECISION_OPTIONS` move together.
+                assert select.size.width == 27, (
+                    f"decision Select width {select.size.width} != pinned 27"
                 )
                 # TASK-1846: the row is three stacked lines now -- header,
                 # arguments, then `.approval-row-controls` -- so neither text
@@ -1762,7 +1771,11 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
                 # arguments moved to their own, and a collapsed `xN` row may
                 # legitimately render several argument sets. A row that has
                 # lost `height: auto` balloons to 15, so this still catches it.
-                assert row.size.height <= 6, (
+                # task-32278: 6 -> 8. Every row gained the scope line under
+                # its controls, and the `config_changed` row in
+                # `_sample_calls` gained the reason line that used to be a
+                # header tooltip.
+                assert row.size.height <= 8, (
                     f"approval row ballooned to height {row.size.height} under "
                     "bundled CSS -- height: auto; min-height: 1; is not winning"
                 )
@@ -1773,13 +1786,15 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
             # #approval-batch-actions bar far down. Empirically measured before
             # this fix: container ballooning to height 19, actions pushed to y=20.
             batch_rows = card.query_one("#approval-batch-rows")
-            # TASK-1846: per-row budget 3 -> 6 (a row is two lines now and a
-            # collapsed row may carry several argument sets). Still catches a
-            # balloon: the container is capped at 15, so two ballooned rows
-            # clamp to 15 and blow this bound.
-            assert batch_rows.size.height <= len(rows) * 6 + 2, (
+            # task-32278: this was a per-row CONSTANT (3, then 6), which had
+            # to be re-bumped every time a row gained a line -- and each bump
+            # loosened it. Bounded by the rows' ACTUAL heights instead: the
+            # bug it guards is the container claiming space its rows do not
+            # need, which this states directly and needs no future bumping.
+            assert batch_rows.size.height <= sum(r.size.height for r in rows) + 2, (
                 f"approval-batch-rows container ballooned to height "
-                f"{batch_rows.size.height} (with {len(rows)} rows) under bundled CSS "
+                f"{batch_rows.size.height} over {len(rows)} rows totalling "
+                f"{sum(r.size.height for r in rows)} under bundled CSS "
                 "-- height: auto; min-height: 0; is not winning"
             )
 
@@ -1846,8 +1861,9 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
 
             # Compact row (same discipline as the sibling test). TASK-1846
             # made it two lines -- headline + full-width arguments -- so the
-            # bound moves 4 -> 6; a row that lost `height: auto` is 15.
-            assert row.size.height <= 6, (
+            # bound moves 4 -> 6; task-32278's scope line makes it 7. A row
+            # that lost `height: auto` is 15.
+            assert row.size.height <= 7, (
                 f"single-row approval row ballooned to height {row.size.height} "
                 "under bundled CSS"
             )
@@ -1863,7 +1879,7 @@ def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bun
     Defect-1 Select-width lesson as `#mcp-tools-filter-server-slot Select`
     / `#mcp-audit-filter-decision` above, applied to the approval card."""
     _assert_rule_pinned_in_bundle_source_and_bundle(
-        ".approval-row-decision {", ("width: 26;",)
+        ".approval-row-decision {", ("width: 27;",)
     )
 
 

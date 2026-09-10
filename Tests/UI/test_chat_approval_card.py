@@ -415,3 +415,121 @@ def test_format_approval_deadline_hides_copy_when_no_deadline_armed():
 
     assert format_approval_deadline(0) == ""
     assert format_approval_deadline(None) == ""
+
+
+# ---------------------------------------------------------------------------
+# task-32278: decision labels fit the closed Select and state their scope
+# ---------------------------------------------------------------------------
+
+#: What Textual's closed `Select` spends on chrome, leaving the rest for the
+#: label: `SelectCurrent` is `border: tall` (1 cell each side) + `padding: 0 2`
+#: (2 each side) and its `.arrow` is `width: 1` with `padding: 0 0 0 1`.
+_SELECT_CHROME_CELLS = 8
+
+
+def _decision_select_width() -> int:
+    """Return the shipped `.approval-row-decision` width, from the stylesheet.
+
+    Read from the source component rather than hard-coded: the label budget
+    and the rule that sets it must not be able to drift apart, which is
+    exactly how "Approve for session" came to render as "Approve for".
+    """
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "components"
+        / "_agentic_terminal.tcss"
+    ).read_text()
+    # `;`-anchored so the `width: 1fr` in the BuddyConversationModal
+    # override further down the file cannot match as "1".
+    match = re.search(
+        r"(?<![-\w ])\.approval-row-decision\s*\{[^}]*?width:\s*(\d+);",
+        source,
+        re.S,
+    )
+    assert match, "`.approval-row-decision` no longer sets an explicit width"
+    return int(match.group(1))
+
+
+@pytest.mark.unit
+def test_every_decision_label_fits_the_closed_select():
+    """AC#1: no decision label may be wider than the Select can paint.
+
+    A label one cell too long does not ellipsize -- `SelectCurrent` is
+    `height: auto` and its `Static#label` wraps, so the row's Select grows a
+    line and the choice reads as two half-sentences.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        _RAW_SHELL_DECISION_OPTIONS,
+    )
+
+    budget = _decision_select_width() - _SELECT_CHROME_CELLS
+    too_long = {
+        label: len(label)
+        for label, _value in [*_DECISION_OPTIONS, *_RAW_SHELL_DECISION_OPTIONS]
+        if len(label) > budget
+    }
+    assert not too_long, (
+        f"these labels exceed the {budget}-cell label area of a "
+        f"{_decision_select_width()}-cell Select: {too_long}"
+    )
+
+
+@pytest.mark.unit
+def test_every_offered_decision_states_its_scope():
+    """AC#2: a decision the card offers must say how long it lasts."""
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        DECISION_SCOPE_COPY,
+        _RAW_SHELL_DECISION_OPTIONS,
+    )
+
+    offered = {
+        value for _label, value in [*_DECISION_OPTIONS, *_RAW_SHELL_DECISION_OPTIONS]
+    }
+    assert offered <= set(DECISION_SCOPE_COPY), (
+        "no scope copy for: " f"{sorted(offered - set(DECISION_SCOPE_COPY))}"
+    )
+    assert DECISION_SCOPE_COPY["approve_once"] == "This call only."
+
+
+@pytest.mark.unit
+def test_persistent_decisions_name_where_to_undo_them():
+    """AC#2: "remembered" is only honest if the card says where to remove it."""
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        DECISION_SCOPE_COPY,
+    )
+
+    assert "MCP ▸ Tools" in DECISION_SCOPE_COPY["allow_matching"]
+    assert "MCP ▸ Permissions" in DECISION_SCOPE_COPY["always_allow"]
+
+
+@pytest.mark.unit
+def test_the_high_risk_explanation_differs_for_reads_and_mutations():
+    """AC#3: the reads-only sentence was also shown for `write_file`."""
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_reason,
+    )
+
+    read = format_approval_reason({"reason": "risk_floored"})
+    mutate = format_approval_reason(
+        {"reason": "risk_floored", "effects": ["mutates_local"]}
+    )
+    assert read == "High risk: this tool reads local data and always asks first."
+    assert mutate == "High risk: this tool changes local data and always asks first."
+
+
+@pytest.mark.unit
+def test_a_changed_definition_explains_itself_too():
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_reason,
+    )
+
+    assert format_approval_reason({"reason": "config_changed"}) == (
+        "Definition changed since you last allowed it; review the arguments."
+    )
+    assert format_approval_reason({"reason": "ask"}) == ""
+    assert format_approval_reason({}) == ""

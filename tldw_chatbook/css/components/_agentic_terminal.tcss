@@ -10305,10 +10305,11 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     min-height: 1;
     width: 1fr;
 }
-/* TASK-1846 AC#2: `.approval-row` is now a Vertical of two lines --
-   header, arguments, and `.approval-row-controls` each on their own FULL
-   width line. Before the split all four shared one Horizontal, and the
-   controls' 26 + 14 + 14 = 54 fixed cells left the arguments 10 cells at 80
+/* TASK-1846 AC#2: `.approval-row` is now a Vertical -- header, arguments,
+   and `.approval-row-controls` each on their own FULL width line (plus, since
+   task-32278, the reason and scope lines below).
+   Before the split all four shared one Horizontal, and the
+   controls' 27 + 14 + 14 = 55 fixed cells left the arguments 10 cells at 80
    columns: `{"path":"~/` of `{"path":"~/notes/secrets.md"}`. Since
    TASK-1861 the card offers one decision per TARGET, so that clipped text
    was the decision.
@@ -10345,8 +10346,27 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     width: 1fr;
     height: auto;
 }
+/* task-32278: the label area is this width MINUS 8 cells of Textual chrome
+   (`SelectCurrent`: `border: tall` 1+1, `padding: 0 2` 2+2, `.arrow`
+   `width: 1` with `padding: 0 0 0 1`). The closed Select does not
+   ellipsize -- `SelectCurrent` is `height: auto` and its `Static#label`
+   wraps -- so a label one cell over grows the control instead of clipping:
+   "Always allow this exact input" measured FOUR lines tall at width 26.
+   The labels are short now (longest: "Always · these args", 19); 27 is
+   19 + 8, and `Tests/UI/test_chat_approval_card.py` reads this number back
+   out of this file so the two cannot drift apart again. */
 .approval-row-decision {
-    width: 26;
+    width: 27;
+}
+/* task-32278: the row's reason line (why this is asking -- the visible
+   replacement for the old header tooltip) and its scope line (what the
+   selected decision commits to, and where to undo it). Both carry full
+   sentences, so they get the same explicit `1fr` share as the header and
+   args lines above rather than a `width: auto` that overflows the row. */
+.approval-row-reason,
+.approval-row-scope {
+    width: 1fr;
+    height: auto;
 }
 /* Fleet-UX expert review F5 (task-1234): single-row cards additionally
    mount two compact fast-path buttons after the decision Select --
