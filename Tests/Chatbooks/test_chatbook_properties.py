@@ -222,6 +222,11 @@ class TestChatbookProperties:
             patch.object(creator, "_collect_characters", side_effect=_collect),
             patch.object(creator, "_collect_media", side_effect=_collect),
             patch.object(creator, "_collect_prompts", side_effect=_collect),
+            # The strategy can produce KEPT_BRIEFING selections too, and this
+            # collector was never patched -- it ran for real against
+            # ``:memory:`` and collected nothing, which the empty-export
+            # guard now refuses to package.
+            patch.object(creator, "_collect_kept_briefings", side_effect=_collect),
         ):
             output_path = tmp_path / f"test_{hash(name)}.zip"
 
