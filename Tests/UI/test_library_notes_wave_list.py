@@ -6,10 +6,12 @@ Group `list` of the critique-notes-2026-09 fix wave: tasks 32123, 32124,
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import MethodType, SimpleNamespace
 
 import pytest
+from textual import on
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
@@ -28,6 +30,8 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _two_conversations,
     _two_notes,
+    _task10_activate_with_keyboard,
+    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -623,6 +627,106 @@ async def test_pressing_a_sort_option_applies_that_sort(monkeypatch) -> None:
     assert fake._library_notes_select_mode is False
     assert cleared == [True]
     assert synced == ["notes"]
+
+
+class _SortKeyboardApp(_CanvasApp):
+    """`_CanvasApp` plus the two Sort routes ``LibraryScreen`` declares.
+
+    The canvas composes the real Sort Buttons but has no screen above it to
+    dispatch their presses, so the two ``@on`` selectors the screen binds
+    (``#library-notes-sort`` and ``.library-notes-sort-choice``, see
+    ``library_screen.py``) are re-declared here verbatim and handed the real
+    controller handlers. Everything between the key press and the handler --
+    focus traversal, ``Button.Pressed``, the selector match -- is Textual's
+    own, which is the half a direct handler call cannot reach.
+    """
+
+    def __init__(self, *, screen_state, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.screen_state = screen_state
+
+    @on(Button.Pressed, "#library-notes-sort")
+    def _open_sort_choices(self, event: Button.Pressed) -> None:
+        LibraryNotesController.handle_library_notes_sort(self.screen_state, event)
+
+    @on(Button.Pressed, ".library-notes-sort-choice")
+    def _apply_sort_choice(self, event: Button.Pressed) -> None:
+        LibraryNotesController.handle_library_notes_sort_choice(
+            self.screen_state, event
+        )
+
+
+@pytest.mark.asyncio
+async def test_sort_is_operable_by_keyboard_on_the_flat_list(monkeypatch) -> None:
+    """task-32175 review round 1: Sort's keyboard round trip, re-pinned here.
+
+    ``test_library_note_keyboard_capability_matrix[filter_sort]`` used to
+    drive ``#library-notes-sort`` -> ``#library-notes-sort-oldest`` with Tab
+    and Enter, but every seeded shell now composes the folder tree, where
+    Sort is not composed at all -- so that node was renamed to ``filter``
+    and the keyboard half was lost. The flat list is still a live production
+    path (``library_screen.py`` builds a tree projection only ``if branches``)
+    and keyboard completeness was a P1 of the Library critique, so the round
+    trip lives here now, on the one harness that still mounts a real Sort.
+    """
+    screen_state = SimpleNamespace(
+        _library_notes_mutation_fenced=lambda: False,
+        _library_notes_sort="newest",
+        _library_notes_sort_choices_visible=False,
+        _library_notes_select_mode=False,
+        _library_notes_row_selection=SimpleNamespace(clear=lambda: None),
+    )
+    app = _SortKeyboardApp(
+        pane_width=100,
+        list_state=_list_state(
+            rows=(LibraryNotesListRow("n1", "Alpha", "2h", False),)
+        ),
+        screen_state=screen_state,
+    )
+
+    def _resync(_screen, kind, **_kwargs) -> None:
+        # Stands in for `_sync_library_canvas`, which needs a whole screen.
+        # Both handlers under test only ask it to repaint the canvas from
+        # the state they just wrote, which is what this does -- attribute
+        # assignment then `refresh(recompose=True)`, exactly the tail of
+        # `LibraryNotesCanvas.sync_state`.
+        assert kind == "notes"
+        canvas = app.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        canvas.list_state = replace(
+            canvas.list_state,
+            sort_choices_visible=screen_state._library_notes_sort_choices_visible,
+        )
+        canvas.sort_mode = screen_state._library_notes_sort
+        canvas.refresh(recompose=True)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Library_Modules.library_notes_controller"
+        "._sync_library_canvas",
+        _resync,
+    )
+
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert not app.query("#library-notes-sort-choices")
+
+        await _task10_activate_with_keyboard(screen, pilot, "#library-notes-sort")
+        await _wait_for_selector(screen, pilot, "#library-notes-sort-oldest")
+        assert screen_state._library_notes_sort_choices_visible is True
+
+        await _task10_activate_with_keyboard(
+            screen, pilot, "#library-notes-sort-oldest"
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen_state._library_notes_sort == "oldest",
+            message="Keyboard Enter on the Oldest option never applied the sort.",
+        )
+
+    # The option's own side effects, so this pins the applied sort and not
+    # merely that some handler ran.
+    assert screen_state._library_notes_sort_choices_visible is False
+    assert screen_state._library_notes_select_mode is False
 
 
 # -- task-32137: rows carry an age and duplicates are distinguishable -----
