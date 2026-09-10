@@ -18,9 +18,12 @@ restatement of it.
 > subsystems landed across eight waves; `library_screen.py` carries no
 > generated flat-state shim block for any subsystem. **§25 is the program
 > close** — the eight-wave trajectory, the landed architecture, the three
-> reusable catalogues, and the phase-C handoff. If you are here to start
-> phase C, read §25's handoff first; if you are here to run a decomposition
-> on some other screen, read §3 (six census spellings, the bypass catalogue),
+> reusable catalogues, and the phase-C handoff. **§26 is the phase-C MEDIA
+> graduation close** (2026-09-09) — the founding click-freeze, before and
+> after, for the first subsystem to graduate; read it if you are here to
+> graduate the next subsystem. If you are here to start a phase-C graduation,
+> read §25's handoff and §26 first; if you are here to run a decomposition on
+> some other screen, read §3 (six census spellings, the bypass catalogue),
 > §7 (the four-rung disposition ladder) and §24 (evidence discipline), which
 > are the parts that generalise.
 
@@ -1891,31 +1894,21 @@ rediscover the same red from scratch.
   the isolated verdict governs because it is the one identical on both
   trees. A Home-origin navigation-leak test; this wave's diff touches
   neither.
-- **Wave-7 Task 4 (wave close) — `Tests/UI/test_library_honesty_
-  accessibility.py::test_row_toggle_patcher_rebuilds_marker_label_both_
-  directions` is a PRE-EXISTING RED that blocks real coverage, not just a
-  flake.** It fails `assert '○ Export' == '○ Export selected'` — a
-  label-truncation assertion that fires BEFORE the body under test matters
-  — **byte-identically on the branch and on an isolated baseline worktree**,
-  in isolation on both. It earns its own entry rather than a line in a
-  shared flake list because of what it BLOCKS: it is the only real-row
-  Pilot test that drives the MEDIA `_apply_library_row_toggle` path (it
-  toggles a real `#library-media-row-0` and reads the real bulk-action
-  labels), i.e. the natural end-to-end coverage for §3's fifth-spelling
-  (computed-name) fix, which consequently had to be guarded by a ~15-line
-  screen double instead. This is wave-6 lesson 4's shape one level milder —
-  not a discovery-time raise, but an early assertion that voids everything
-  after it, and the file's own section comment says these pins exist
-  precisely because "mutation C ... survived every existing suite" — and
-  the triage rule is the same: **ask what a pre-existing red is BLOCKING
-  before filing it as "pre-existing, not mine".** Filed as **TASK-31880**;
-  remove this entry when that lands. **Wave 8 is the second wave to pay
-  this bill**: the media receiver defect (§3, §23) had to be guarded by a
-  `[controller]` parametrization of the same ~15-line screen double, for the
-  identical reason — the one real-row test that would have caught it
-  end-to-end is this red. TASK-31880 is now the coverage gate for BOTH the
-  fifth spelling and its receiver dimension, and it is named in the phase-C
-  handoff (§25) for that reason.
+- ~~Wave-7 Task 4 (wave close) — `test_row_toggle_patcher_rebuilds_marker_
+  label_both_directions`~~ **CLOSED by TASK-31880 (2026-09-08, phase C's
+  opening move); entry removed per its AC#4.** Verdict: the ASSERTION was
+  stale, not the label — task-30043 (2026-09-03) deliberately renamed
+  media's select-mode bulk actions to the short words "Export"/"Delete" for
+  the ~40-col items pane and did not update this test. A second, quieter
+  staleness sat behind it: task-28007 (2026-09-04) added an in-place
+  "Analyze" flip that calls a SCREEN method the test's duck-typed app
+  stand-in never had, so the dispatcher's blanket `except` had silently
+  rerouted every toggle here onto the full-recompose fallback. Both fixed
+  test-side; the real-row media `_apply_library_row_toggle` coverage this
+  list said the red was blocking is live again, and the test now pins
+  widget IDENTITY across each toggle so a silent fallback fails loudly.
+  The lesson it produced — **ask what a pre-existing red is BLOCKING before
+  filing it as "pre-existing, not mine"** — is kept at §22 lesson 6.
 - **Wave-8 Task 1 (notes state PR) found 3 more:**
   - `Tests/UI/test_library_recompose_ratchet.py::test_library_screen_whole_
     screen_recompose_count_is_ratcheted` — *"statement-level whole-screen
@@ -1981,11 +1974,15 @@ series being fully landed including cleanup, dense mounted coverage, and a
 concrete motivating change. That gate is now open for every subsystem.
 **First motivated candidates: media and notes**, motivated by the measured
 139–380 ms rail-mode-switch main-thread freeze (§9's probe is that fix's
-before/after acceptance evidence). See the spec's "Phase C — region
-ownership" section and **§25's phase-C handoff** — which names the probe
-baseline, the mount-storm acceptance target, TASK-31880 as the coverage
-gate, and `canvas_sync.py` as the first surface — before starting; out of
-scope for this recipe's pure-move PRs.
+before/after acceptance evidence). **Media has since GRADUATED** (2026-09-09,
+four tasks on `feat/library-phase-c-resident-canvas`): the switch now blocks
+the main thread for 51–78 ms with the whole-screen recompose eliminated — the
+full close is **§26**. Notes is the next candidate (spec §"Notes-graduation
+readiness"). See the spec's "Phase C — region ownership" section and **§25's
+phase-C handoff** — which names the probe baseline, the mount-storm
+acceptance target, TASK-31880 as the coverage gate, and `canvas_sync.py` as
+the first surface — before starting; out of scope for this recipe's pure-move
+PRs.
 
 ## 9. Probe usage — before/after evidence
 
@@ -6522,7 +6519,10 @@ recorded; max gap 41–129 against 54–195, again faster at the low end).
    for the fifth-spelling fix, which consequently had to be guarded by a
    ~15-line screen double. Five waves had read that red as "pre-existing,
    not mine" and moved on, which is correct about ownership and useless
-   about consequence. Filed as TASK-31880.
+   about consequence. Filed as TASK-31880 — **closed 2026-09-08**: the
+   assertion was stale (task-30043 renamed the labels), and behind it the
+   test had been silently running on the recompose fallback since
+   task-28007 added an in-place Analyze flip the harness could not satisfy.
 7. **Two numbers can both be "36" and mean different things, and the
    program quoted them interchangeably for a whole series.** The media
    cleanup's CENSUS (files containing a moved field name at the wave-start
@@ -6681,8 +6681,9 @@ mutation-verified BOTH ways:
 `library_media_controller.py` re-pinned 4630 → 4669 in the same commit (§6),
 the +39 being one property and its docstring. **The natural end-to-end
 coverage for this — the one real-row Pilot test that drives
-`_apply_library_row_toggle` — is TASK-31880's standing red**, which is why
-this fix, like wave 7's before it, had to be guarded by a screen double.
+`_apply_library_row_toggle` — was TASK-31880's standing red** (closed
+2026-09-08), which is why this fix, like wave 7's before it, had to be
+guarded by a screen double.
 
 ### Delegator census — 159 KEEP, 26 PRUNED (14.05%)
 
@@ -7391,20 +7392,46 @@ for the click-freeze fix. The numbers phase C will be measured against, from
 §23's same-checkout-location n=10 interleaved pair on a quiet machine (load
 3.5–4.8), median settle / max gap in ms:
 
-| interaction | settle | max gap | recompose | full-update | mounts | nodes |
+| interaction | settle | max gap | recompose † | full-update | mounts | nodes |
 |---|---|---|---|---|---|---|
-| media (switch-in) | 470 | 134 | **0** | 2 | 177–179 | 119 |
+| media (switch-in) | 470 | 134 | **0 †** | 2 | 177–179 | 119 |
 | media (re-click same) | 303 | 46 | **0** | 2 | 85–89 | 119 |
 | media (re-click same, 2nd) | 302 | 46 | **0** | 2 | 85–89 | 119 |
-| notes (switch) | 350 | 128 | **0** | 2 | 114 | 114 |
+| notes (switch) | 350 | 128 | **0 †** | 2 | 114 | 114 |
 | notes (re-click same) | 258 | 42 | **0** | 1 | 38 | 114 |
-| media (switch-back) | 384 | 89 | **0** | 1 | 175–179 | 119 |
-| notes (switch, 2nd) | 368 | 157 | **0** | 2 | 114 | 114 |
-| media (switch-back, 2nd) | 384 | 84 | **0** | 1 | 175–179 | 119 |
+| media (switch-back) | 384 | 89 | **0 †** | 1 | 175–179 | 119 |
+| notes (switch, 2nd) | 368 | 157 | **0 †** | 2 | 114 | 114 |
+| media (switch-back, 2nd) | 384 | 84 | **0 †** | 1 | 175–179 | 119 |
+
+> **† Instrument correction — the `recompose` column is INSTRUMENT-BLIND on
+> the rail-switch rows, landed by phase-C task 1 (`library_click_probe.py`)
+> and confirmed three ways by that task's review; do NOT read `recompose 0`
+> as a verdict for the four switch rows daggered above.** The freeze rows
+> (media switch-in, notes switch, media switch-back, notes switch-2nd) each
+> run **exactly one whole-screen `Widget.recompose()`** — this table's `0`
+> was a blind spot, not a finding. The three confirmations: (1) the click
+> probe's recompose counter hooks `refresh(recompose=True)`, but
+> `LibraryScreen` awaits `Widget.recompose()` DIRECTLY on the rail-switch
+> path (`_select_library_rail_row_after_source_admission`, the `if not
+> replaced:` arm), which bypasses `refresh` entirely, so the hook cannot
+> fire there; (2) the sibling column the click probe also prints, `removes`,
+> hooks `App._unregister`, which has **zero callers anywhere in Textual
+> 8.2.8** (prune finalises in `Widget._message_loop_exit`), so it could
+> never fire on ANY path — a counter that has never been non-zero has never
+> been tested; (3) the truth-measuring instrument
+> (`Helper_Scripts/library_switch_teardown_probe.py`, which counts BOTH
+> `Widget.recompose()` and `refresh(recompose=True)` and hooks
+> `_message_loop_exit` for unmounts) reads **1 whole-screen recompose** on
+> exactly the four switch rows, reproduced base-vs-HEAD by phase-C task 4's
+> definitive probe (§26). The `full-update`, `nodes` and `mounts` columns
+> are sound; the annotation is scoped to `recompose` on the switch path.
+> Not rewritten in place — annotated — so this baseline stays comparable and
+> the blind spot stays visible.
 
 Overall band across both trees: **settle 243–494 ms, max gap 37–179 ms.**
-Read the load-INDEPENDENT columns as the verdict (`recompose`,
-`full-update`, `nodes`, `mounts`) and the wall-clock columns as context.
+Read the load-INDEPENDENT columns as the verdict (`full-update`,
+`nodes`, `mounts`; and `recompose` **only off the switch path** — see the
+`†` correction above) and the wall-clock columns as context.
 Run the pair TWICE with the tree order swapped — and **check out the branch
 into a scratch worktree so both sides sit at the same kind of location**, which
 §9 now requires and which this close had to discover the hard way: without
@@ -7422,7 +7449,21 @@ row-for-row between trees, which is what makes them a usable acceptance
 target rather than a timing anecdote: **phase C's success condition is that
 the re-click rows go to ~0 mounts with `recompose` still 0.**
 
+> **Correction (phase-C task 1, carried by task 4):** the mount half of that
+> success condition held and was the right target; the "`recompose` still 0"
+> half was written on the instrument-blind column corrected above (`†`). What
+> phase C actually had to eliminate was the **one whole-screen
+> `Widget.recompose()` per switch** that this baseline could not see — and it
+> did: §26's graduation record shows that recompose driven to a genuine,
+> instrument-verified **0** on both switch arms. State the condition as "0
+> whole-screen recomposes, measured by an instrument that hooks
+> `Widget.recompose()` directly", not "recompose column still 0".
+
 **3. The coverage gate is TASK-31880, and it must be closed FIRST.**
+*(Closed 2026-09-08 — phase C's opening move; the paragraph below is the
+handoff as written, kept for the reasoning. Verdict: stale assertion, plus a
+harness gap that had rerouted the test onto the recompose fallback since
+2026-09-04. §7's entry is retired.)*
 `Tests/UI/test_library_honesty_accessibility.py::test_row_toggle_patcher_
 rebuilds_marker_label_both_directions` is the only real-row Pilot test that
 drives the `_apply_library_row_toggle` path end to end, and it has been red
@@ -7447,3 +7488,109 @@ replace with widget-resident handlers. Whoever does that work should start
 by reading §3's fifth-and-sixth-spelling entries and this file's
 `test_library_selection_updates.py` guards, all three of which are now
 parametrized or mutation-verified for a reason.
+
+## 26. Phase C, media graduation — the founding freeze, closed
+
+§25 handed phase C its target: the click-freeze that motivated the whole
+decomposition program. **This section is that target's close for the first
+subsystem to graduate — media.** It is the payoff the eight-wave program was
+the precondition for, and it is stated the way §25 states the wave trajectory:
+one authoritative table, every number traceable to a task and a commit — the
+base and now rows re-measured at the close by task 4's definitive probe, the
+intermediate rows carried from each task's own §9 pair rather than re-run.
+
+Branch `feat/library-phase-c-resident-canvas` off `7e81ed55d` (the wave-8
+merge into `dev`). Phase C was FOUR tasks — a mechanism spike (task 1), the
+resident canvas (task 2), the sync storm (task 2.5, added by coordinator
+ruling after task 2's review), and region ownership (task 3) — plus this
+close (task 4). It is a **designed behaviour-change series**, explicitly
+outside the pure-move recipe of §1–§24.
+
+### The founding number, before and after
+
+The freeze metric is the teardown probe's `block` — the longest single
+main-thread stall on a rail-mode switch (`Helper_Scripts/
+library_switch_teardown_probe.py`, the phase-C instrument that hooks
+`Widget.recompose()` directly and `_message_loop_exit` for unmounts, i.e. the
+two things §25's click-probe baseline could not see). Measured by task 4's
+**definitive probe**: one scratch worktree at a fixed path, `tldw_chatbook/`
+reverted between `7e81ed55d` (base) and `b2ccbca09` (HEAD) so both arms sit at
+the same checkout location per §9, interleaved and order-swapped
+(`b m m b b m m b b m m b`), **n = 6 per arm**. Medians, with the full block
+range across the six runs:
+
+| rail-mode switch | block: base → now | cpu | mounts | unmounts | whole-screen recompose |
+|---|---|---|---|---|---|
+| **media (switch-back)** | **93 ms (86–95) → 51 ms (49–53)** | 382 → 140 ms | 179 → 58 | 176 → 63 | **1 → 0** |
+| **notes (switch)** | **140 ms (126–149) → 78 ms (66–79)** | 363 → 162 ms | 114 → 26 | 121 → 2 | **1 → 0** |
+
+**The block ranges do not overlap on either arm** (media gap 33 ms, notes gap
+47 ms), so this is a measured effect and not a load anecdote. The
+load-independent verdict columns are the durable claim: **the one whole-screen
+recompose per switch is gone (1 → 0), and the mount storm §25.2 named is cut
+7× on media (179 → 58) and 4× on notes (114 → 26).** Against the program's
+founding estimate — the design doc's 139–380 ms freeze — a Library rail-mode
+switch now stalls the main thread for **51–78 ms**.
+
+Not a resident-shell switch, and unchanged on purpose: `media (switch-in)` is
+the ordinary-route ENTRY into the Library, still 1 recompose / 177 mounts on
+both arms. Residency is a within-Library mode switch; the first entry is not.
+
+### The trajectory, task by task
+
+Every row re-measured at the close (block from task 4's definitive probe for
+the base and now rows; the intermediate rows from each task's own §9 pair,
+cited):
+
+| stage | commit(s) | what it changed | media / notes block | recompose | mounts (media / notes) |
+|---|---|---|---|---|---|
+| base (pre-phase-C) | `7e81ed55d` | — | 93 / 140 ms | 1 | 179 / 114 |
+| task 1 — mechanism | `b81cb98b0..db2b179f5` | decision (mechanism C) + FAILING acceptance test; **zero production** | 93 / 140 | 1 | 179 / 114 |
+| task 2 — resident canvas | `7b4a7e289..5fc35f1fa` | structural cause removed: 0 whole-screen recomposes; mounts more than halved | 98 / 147 (unchanged) | **0** | 81 / 26 |
+| task 2.5 — sync storm | `497bc5f8e..4645e4c8c` | felt freeze halved; non-overlapping ranges, reviewer-reproduced | **55 (51–65) / 73 (68–78)** | 0 | 60 / 26 |
+| task 3 — region ownership | `480eadbba`, `cad52260b` | 16 canvas-origin `@on` rows migrated onto the canvas; routing-only | 50–55 / 67–82 (in band) | 0 | 58 / 26 |
+| now | `b2ccbca09` | definitive base-vs-HEAD probe | **51 / 78** | 0 | 58 / 26 |
+
+The two lessons this table teaches. **First, the structural fix was not the
+felt fix.** Task 2 removed the whole-screen recompose and the block did not
+move (98 → 98 media, 142 → 147 notes) — the record predicted otherwise and was
+corrected. It took task 2.5's attribution measurement (`apply` calls by
+trigger, not by mounts) to find that the largest cost was task 2's own
+marker-class flips restyling the whole shell subtree for classes no stylesheet
+references, and to halve the block. **A structural pin going green is not
+evidence the user's freeze is gone; measure the block, and attribute before
+fixing.** Second, region ownership (task 3) rode AFTER the motivating change
+and only as far as residency forced it: of media's 79 `@on` rows, **16
+migrated, 20 deferred (blocked on a phase-A body extraction), 43 permanent** —
+a three-way census, not the two-way one the doctrine's wording implies. The
+screen shrank `32351 / 1259` → **`32178 / 1243`** across the phase. The −173
+lines land in three stages — task 2 −109 (32351 → 32242), task 2.5 −1
+(→ 32241), task 3 −63 (→ 32178); the −16 methods are all task 3 (the count
+held at 1259 through task 2.5, then 1259 → 1243).
+
+### The doctrine correction phase C carried back
+
+§25's phase-C handoff baseline promoted `recompose 0` to a load-independent
+verdict column and wrote "recompose still 0" into phase C's success condition
+— while every measured rail switch was doing exactly one whole-screen
+recompose the column could not see. That column is now annotated in place
+(the `†` correction in §25) rather than rewritten, with the three-way
+confirmation from task 1's review recorded there. The generalisable rule,
+earned here and now in `backlog/docs/lessons-testing-evidence.md`: **a probe
+column that reads zero is not evidence of zero — a counter that has never been
+non-zero has never been tested; before trusting one, provoke the event it
+claims to count and confirm it moves.** The `removes` column (hooked on
+`App._unregister`, which has zero callers in Textual 8.2.8) is the pure case:
+it could never have fired on any path.
+
+### What graduates to the next subsystem
+
+The full transfer analysis is in the spec's design record (§"Notes-graduation
+readiness"). In one line: the **mechanism** transfers (mount-once-then-toggle
+lazy residency; one route-neutral shell id plus per-route marker classes
+written by a single `apply_route` seam; the dual-receiver, route-ownership,
+hidden-canvas and same-node-dispatch guards), and the **evidence must be run
+fresh** (notes has no row-geometry message, its own canvas-origin/deferred
+census must be taken from source, and its sync-storm shape differed from
+media's — notes' storm was a first-entry placeholder-layout collapse, not
+media's outgoing-canvas rebuild).

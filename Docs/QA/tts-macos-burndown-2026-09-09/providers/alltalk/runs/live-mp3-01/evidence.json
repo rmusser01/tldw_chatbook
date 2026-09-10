@@ -1,0 +1,509 @@
+{
+  "schema_version": 1,
+  "upstream_runner": "scripts/validate_live_tts.py",
+  "derived_runner_note": "Task-local provider specialization; exact production mounted Lab and Console lifecycle, no synthesis/playback replacements.",
+  "status": "runtime_passed_content_pending",
+  "pid": 2563,
+  "started_utc": "2026-09-09T07:02:46.157688+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "language": "en",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2173480.66888775,
+      "native_calls": [
+        {
+          "server_call_id": "2585:1",
+          "enter_at": 2173481.873624666,
+          "pid": 2585,
+          "device": "cpu",
+          "dtype": "torch.float32",
+          "class": "TTS.utils.synthesizer.Synthesizer.tts",
+          "exit_at": 2173482.489143875,
+          "samples": 92688,
+          "failure_type": null
+        }
+      ],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "request": {
+        "model_id": "alltalk",
+        "voice_id": "alloy",
+        "speed": 1.0
+      },
+      "actual_format": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "mp3",
+            "sample_rate": "44100",
+            "channels": 2
+          }
+        ],
+        "format": {
+          "format_name": "mp3"
+        }
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/alltalk/live-mp3-01/audio/speech-lab.mp3",
+        "sha256": "1d3ac3bbbd4477161e35fa22d716330f2f5e901be833df6a659c2ed76e513fce",
+        "pcm_sha256": "59acb944c6abcca56dafa39ff22360617b3483241b501de495d290af9e51c45c",
+        "sample_rate": 44100,
+        "channels": 2,
+        "frames": 185376,
+        "seconds": 4.203537414965987,
+        "rms": 0.11185632839777898,
+        "peak": 0.68585205078125,
+        "decoded_path": "/private/tmp/tts-macos-burndown/alltalk/live-mp3-01/audio/speech-lab.decoded.wav",
+        "decoded_sha256": "60100f9575f45fd458d64f4e034c478ccb951b0ea61294ed7e121bc58fef92db"
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 2641,
+        "player": "afplay",
+        "started_at": 2173482.964375625,
+        "exit_code": 0,
+        "elapsed_seconds": 5.332895958330482
+      },
+      "settled_at": 2173488.297533666,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2173488.297536333,
+        "threads": 3,
+        "rss_bytes": 392478720,
+        "peak_rss_bytes": 392560640,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-warmup",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "language": "en",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2173488.329572291,
+      "native_calls": [
+        {
+          "server_call_id": "2585:2",
+          "enter_at": 2173488.356431,
+          "pid": 2585,
+          "device": "cpu",
+          "dtype": "torch.float32",
+          "class": "TTS.utils.synthesizer.Synthesizer.tts",
+          "exit_at": 2173489.07309075,
+          "samples": 97040,
+          "failure_type": null
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "message_id": "176398e3-9b31-4039-96fb-8f6e5db93ce0",
+      "destination_fingerprint": "sha256:988740a8f7bd9b5cdf98fd742833072c7146ed2c21ba03b4488403cbf81af10c",
+      "disposition": "speak",
+      "actual_format": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "mp3",
+            "sample_rate": "44100",
+            "channels": 2
+          }
+        ],
+        "format": {
+          "format_name": "mp3"
+        }
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/alltalk/live-mp3-01/audio/console-warmup.mp3",
+        "sha256": "abc88e033bb6d880b5f0bd273e37466a1d824b0e94b26942625eedf427bb825e",
+        "pcm_sha256": "1e1981f01213920ef9519a0d0a3da807bdac474171682dc2cc23956519f480ef",
+        "sample_rate": 44100,
+        "channels": 2,
+        "frames": 194080,
+        "seconds": 4.400907029478458,
+        "rms": 0.11426282665947797,
+        "peak": 0.68572998046875,
+        "decoded_path": "/private/tmp/tts-macos-burndown/alltalk/live-mp3-01/audio/console-warmup.decoded.wav",
+        "decoded_sha256": "f0d66666fd757de7a405e2489369d9850248f834d4a66f63a5c4f5e27c86d35e"
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 2688,
+        "player": "afplay",
+        "started_at": 2173489.286489416,
+        "exit_code": 0,
+        "elapsed_seconds": 5.343956042081118
+      },
+      "settled_at": 2173494.630664833,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2173494.630666708,
+        "threads": 3,
+        "rss_bytes": 397705216,
+        "peak_rss_bytes": 397754368,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-repeat-01",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "language": "en",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2173494.644697916,
+      "native_calls": [
+        {
+          "server_call_id": "2585:3",
+          "enter_at": 2173494.657867833,
+          "pid": 2585,
+          "device": "cpu",
+          "dtype": "torch.float32",
+          "class": "TTS.utils.synthesizer.Synthesizer.tts",
+          "exit_at": 2173495.337585916,
+          "samples": 99088,
+          "failure_type": null
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "message_id": "f3332262-e453-4108-889e-5b573adcf5a6",
+      "destination_fingerprint": "sha256:988740a8f7bd9b5cdf98fd742833072c7146ed2c21ba03b4488403cbf81af10c",
+      "disposition": "speak",
+      "actual_format": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "mp3",
+            "sample_rate": "44100",
+            "channels": 2
+          }
+        ],
+        "format": {
+          "format_name": "mp3"
+        }
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/alltalk/live-mp3-01/audio/console-repeat-01.mp3",
+        "sha256": "60e0f1cec119bb8738f948f9c63934349cbbbc5b25485fc568fd23bd9868d91e",
+        "pcm_sha256": "9d78f31d52426316e0bade30c0f999b0d977899e20d296d368cc82ffa3585eea",
+        "sample_rate": 44100,
+        "channels": 2,
+        "frames": 198191,
+        "seconds": 4.494126984126984,
+        "rms": 0.09052653534194459,
+        "peak": 0.686004638671875,
+        "decoded_path": "/private/tmp/tts-macos-burndown/alltalk/live-mp3-01/audio/console-repeat-01.decoded.wav",
+        "decoded_sha256": "bd39aed45e32e57c810f194667bc269931d359aec2853cb69e13eeefede9f8b4"
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 2728,
+        "player": "afplay",
+        "started_at": 2173495.534428458,
+        "exit_code": 0,
+        "elapsed_seconds": 5.614421082660556
+      },
+      "settled_at": 2173501.14900675,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2173501.149008791,
+        "threads": 3,
+        "rss_bytes": 398737408,
+        "peak_rss_bytes": 398786560,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    }
+  ],
+  "arguments": {
+    "provider": "alltalk",
+    "format": "mp3",
+    "port": 17851,
+    "phase_timeout": 180.0,
+    "cleanup_timeout": 120.0,
+    "run_timeout": 900.0,
+    "output": "/private/tmp/tts-macos-burndown/alltalk/live-mp3-01",
+    "expected_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+    "scenarios": [
+      "playback",
+      "repeat"
+    ],
+    "repeats": 1,
+    "play_audio": true,
+    "worker": true,
+    "voice": "alloy",
+    "model": "alltalk",
+    "language": "en",
+    "speed": 1.0,
+    "device": "cpu",
+    "text_file": null,
+    "cancel_text_file": null
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+  "runner_sha256": "c26972db2e3edee0834ed6d7e077aec8a2746bef968a6b6f0272eeacabfbf3e6",
+  "assets": {
+    "/private/tmp/tts-macos-burndown/alltalk/asset-manifest.json": "58947a0d576ab06d163d527b2ae5ab301f90a39b51c012e44a66cb2ed0b4e10f"
+  },
+  "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "versions": {
+    "tldw_chatbook": "0.2.0",
+    "textual": "8.2.8",
+    "numpy": "2.5.3",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": "0.9.4",
+    "kokoro-onnx": "0.6.1",
+    "torch": "2.14.0",
+    "onnxruntime": "1.29.0",
+    "misaki": "0.9.4",
+    "spacy": "3.8.16",
+    "en-core-web-sm": "3.8.0"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2173473.174103375,
+    "threads": 2,
+    "rss_bytes": 225132544,
+    "peak_rss_bytes": 225132544
+  },
+  "runtime_files": {},
+  "server_runs": [
+    {
+      "pid": 2585,
+      "command": [
+        "/private/tmp/tts-macos-burndown/alltalk/venv/bin/python",
+        "-B",
+        "/private/tmp/tts-macos-burndown/alltalk/observed_server.py",
+        "--port",
+        "17851",
+        "--events",
+        "/private/tmp/tts-macos-burndown/alltalk/live-mp3-01/server-events.jsonl"
+      ],
+      "start_at": 2173473.197170625,
+      "ready_at": 2173480.417236583,
+      "exit_code": -15,
+      "exit_at": 2173501.412154666
+    }
+  ],
+  "backend_assets": [
+    {
+      "provider": "alltalk",
+      "initialize_start": 2173481.683760458,
+      "initialize_exit": 2173481.688605166
+    }
+  ],
+  "server_generation_events": [
+    {
+      "event": "setup_enter",
+      "at": 2173480.122242375,
+      "pid": 2585,
+      "engine": "vits"
+    },
+    {
+      "event": "setup_exit",
+      "at": 2173480.351551333,
+      "pid": 2585,
+      "model": "vits - tts_models--en--vctk--vits",
+      "loaded": true,
+      "device": "cpu",
+      "dtype": "torch.float32"
+    },
+    {
+      "event": "generation_enter",
+      "at": 2173481.873624666,
+      "pid": 2585,
+      "id": "2585:1",
+      "device": "cpu",
+      "dtype": "torch.float32",
+      "generation_count": 1
+    },
+    {
+      "event": "generation_exit",
+      "at": 2173482.489143875,
+      "pid": 2585,
+      "id": "2585:1",
+      "samples": 92688
+    },
+    {
+      "event": "generation_enter",
+      "at": 2173488.356431,
+      "pid": 2585,
+      "id": "2585:2",
+      "device": "cpu",
+      "dtype": "torch.float32",
+      "generation_count": 2
+    },
+    {
+      "event": "generation_exit",
+      "at": 2173489.07309075,
+      "pid": 2585,
+      "id": "2585:2",
+      "samples": 97040
+    },
+    {
+      "event": "generation_enter",
+      "at": 2173494.657867833,
+      "pid": 2585,
+      "id": "2585:3",
+      "device": "cpu",
+      "dtype": "torch.float32",
+      "generation_count": 3
+    },
+    {
+      "event": "generation_exit",
+      "at": 2173495.337585916,
+      "pid": 2585,
+      "id": "2585:3",
+      "samples": 99088
+    }
+  ],
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation complete!",
+      "severity": "information"
+    },
+    {
+      "message": "Playback complete",
+      "severity": "information"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "176398e3-9b31-4039-96fb-8f6e5db93ce0",
+      "error": null
+    },
+    {
+      "message_id": "f3332262-e453-4108-889e-5b573adcf5a6",
+      "error": null
+    }
+  ],
+  "memory_after_cleanup": {
+    "at": 2173501.412489041,
+    "threads": 2,
+    "rss_bytes": 398770176,
+    "peak_rss_bytes": 398802944,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "ended_utc": "2026-09-09T07:03:17.382556+00:00",
+  "_packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/alltalk/live-mp3-01/evidence.json",
+    "original_sha256": "a21d0d8858e683fa2ccdfc29df26bf91af9702ffa9388bd5fec111f4757d7deb",
+    "source_maps": {
+      "source_hashes": {
+        "path": "../../../../kokoro-english/provenance/source-hashes.json",
+        "shared_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+        "overrides": {},
+        "removed": []
+      },
+      "source_hashes_after": {
+        "path": "../../../../kokoro-english/provenance/source-hashes.json",
+        "shared_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+        "overrides": {},
+        "removed": []
+      }
+    }
+  }
+}

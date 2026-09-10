@@ -130,11 +130,8 @@ def _painted_rows_containing(app: _ProbeApp, widget: Widget, token: str) -> list
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("grip_width", "arrow"),
-    # task-31633 AC#2: the grip width is the destination profile's, and the
-    # arrow is as wide as the grip. Five columns is the shared default Notes,
-    # File Notes and Prompts still use; one column is Media's, and since
-    # task-31951 also Conversations', Skills' and Collections'.
-    [(PANE_GRIP_WIDTH, "<---"), (MEDIA_READER_LAYOUT_PROFILE.grip_width, "‹")],
+    # Library destinations retain the full five-cell pointer target.
+    [(PANE_GRIP_WIDTH, "<---"), (MEDIA_READER_LAYOUT_PROFILE.grip_width, "<---")],
 )
 async def test_shell_mounts_three_concrete_widgets_and_two_profile_width_grips(
     grip_width: int,
@@ -625,7 +622,16 @@ def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
     # #4 P2), not as focus. Focus is the accent recolour on the arrow glyph.
     assert "outline-top: solid $ds-action-focus;" not in source
     assert "outline-bottom: solid $ds-action-focus;" not in source
-    assert "#library-media-reader-shell > .library-media-pane-grip" not in source
+    # Phase C: the per-route shell ids are gone, so asserting the ABSENCE of
+    # one is now vacuous (nothing anywhere can spell it). What the original
+    # assertion protected -- that grip styling is expressed on the SHARED
+    # classes and never keyed to one route's shell -- is re-pinned positively
+    # against the ids that exist today.
+    assert "library-media-reader-shell" not in source
+    assert "library-notes-reader-shell" not in source
+    assert "#library-browse-reader-shell >" not in source
+    assert ".library-media-route >" not in source
+    assert ".library-notes-route >" not in source
 
 
 # ---------------------------------------------------------------------------
@@ -739,12 +745,8 @@ def _painted_lines(host, region) -> list[str]:
         # 56 is the profile's list comfort ceiling, the same one the
         # library-closed branch of the resolver already uses.
         ((235, 52), 56, 46),
-        # 100x30 was 44 cells / 39 painted title characters while the two pane
-        # grips still cost five columns each (task-31633 AC#2). The Reader is
-        # on its 46-cell minimum here, so the eight cells the grips gave back
-        # went to the list -- and the same 98-character title now survives to
-        # the same 46 characters at BOTH sizes.
-        ((100, 30), 52, 46),
+        # Five-cell controls reserve ten columns while preserving the reader.
+        ((100, 30), 44, 39),
     ],
 )
 @pytest.mark.asyncio
@@ -762,11 +764,18 @@ async def test_media_items_pane_grows_with_the_terminal_once_reader_is_comfortab
 
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
+        # Measure a populated reader; the empty reader gives its space to Items.
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.reader_session.loaded_id is not None,
+            message="Media reader did not finish opening the selected item",
+        )
         for _ in range(4):
             await pilot.pause()
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryAdaptiveReaderShell
+            ".library-media-route", LibraryAdaptiveReaderShell
         )
         row = next(
             candidate
@@ -791,16 +800,11 @@ async def test_media_items_pane_grows_with_the_terminal_once_reader_is_comfortab
 
 
 # ---------------------------------------------------------------------------
-# task-31633 AC#2: no 5-cell dead gutter between rail, list and Reader.
-#
-# Painted, not region-only: the gutter is the pane grip's own columns, and a
-# region assertion is blind to what those columns actually carry. The slice
-# bounds come from the pane regions, but every assertion below reads glyphs --
-# the panes' own border glyphs anchor the slice, and the slice itself must be
-# dead (the grip's arrow paints on its own rows, not on a list row).
-# ---------------------------------------------------------------------------
+# Five intentionally wide controls separate the panes. Measure their full
+# painted span, including the columns around the arrows, to protect the
+# pointer target that was previously mistaken for wasted gutter space.
 
-MAX_PANE_GUTTER_CELLS = 2
+PANE_CONTROL_CELLS = 5
 
 
 def _dead_gutters(host, screen, shell) -> tuple[str, str]:
@@ -814,7 +818,7 @@ def _dead_gutters(host, screen, shell) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_no_dead_gutter_flanks_the_media_items_pane_at_235x52() -> None:
+async def test_full_width_collapse_controls_flank_the_media_items_pane_at_235x52() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -825,7 +829,7 @@ async def test_no_dead_gutter_flanks_the_media_items_pane_at_235x52() -> None:
             await pilot.pause()
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryAdaptiveReaderShell
+            ".library-media-route", LibraryAdaptiveReaderShell
         )
         assert shell.library.display, "the rail pane is closed at 235x52"
         left_gutter, right_gutter = _dead_gutters(host, screen, shell)
@@ -839,5 +843,5 @@ async def test_no_dead_gutter_flanks_the_media_items_pane_at_235x52() -> None:
 
         assert left_gutter.strip() == "", (left_gutter, painted)
         assert right_gutter.strip() == "", (right_gutter, painted)
-        assert len(left_gutter) <= MAX_PANE_GUTTER_CELLS, (left_gutter, painted)
-        assert len(right_gutter) <= MAX_PANE_GUTTER_CELLS, (right_gutter, painted)
+        assert len(left_gutter) == PANE_CONTROL_CELLS, (left_gutter, painted)
+        assert len(right_gutter) == PANE_CONTROL_CELLS, (right_gutter, painted)

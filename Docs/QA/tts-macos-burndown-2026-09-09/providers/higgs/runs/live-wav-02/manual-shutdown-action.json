@@ -1,0 +1,9 @@
+{
+  "action": "SIGINT to verified owned parent; parent performs bounded worker group cleanup",
+  "parent_pid": 8176,
+  "worker_pid": 8182,
+  "at": 2.399994875,
+  "reason": "Second sink terminal-event timeout and interpreter-exit hang persisted with sounddevice0.5.6; preserve complete generated audio separately from failed cleanup.",
+  "at_clock_domain": "System Python3.9 macOS process-relative monotonic value; do not compare to Python3.11/3.12 worker cross-process monotonic values.",
+  "recorded_utc": "2026-09-09T07:15:03.962759+00:00"
+}

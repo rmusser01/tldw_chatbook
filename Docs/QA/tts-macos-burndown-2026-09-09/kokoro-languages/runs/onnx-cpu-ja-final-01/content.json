@@ -1,0 +1,149 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-ja-final-01/evidence.json",
+  "evidence_sha256": "642986acc7c28ed218c98c75c97e5c214c0e2082152048d0f2f410369b802748",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 2,
+  "clips": [
+    {
+      "transcript": "AIN CHINEEZIAR LETロックのAIN CHINEEZIAR LET AIN CHINEEZIAR LETを月傷発揮 will be given by",
+      "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+      "anchors": [
+        "銀色のコンパス",
+        "静かな果樹園",
+        "朝焼け"
+      ],
+      "anchor_positions": [
+        -1,
+        -1,
+        -1
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "speech-lab",
+      "audio_sha256": "88b537c6312403a1faef596b1b8e74e0bb3a18b476b1d88d4fba289f152a9865",
+      "segments": [
+        {
+          "start": 30.0,
+          "end": 34.66,
+          "text": "AIN CHINEEZIAR LETロックのAIN CHINEEZIAR LET"
+        },
+        {
+          "start": 34.96,
+          "end": 41.2,
+          "text": "AIN CHINEEZIAR LETを月傷発揮 will be given by"
+        }
+      ],
+      "detected_language": "ja"
+    },
+    {
+      "transcript": "エンチャイニーズやレト エンチャイニーズやレトのコンフ エンチャープニーズやレトするく エンチャープニーズやレトこのエンチャイニーズ やレト エンチャイニーズ やレトをエンチャイニーズやレトメモス エンチャイニーズやレトン エンチャイニーズやレトニーフ エンチャイニーズやレトクの エンチャイニーズやレト エンチャイニーズやレト エンチャイニーズやレトク エンチャイニーズやレト今する エンチャイニーズやレト",
+      "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+      "anchors": [
+        "銀色のコンパス",
+        "静かな果樹園",
+        "朝焼け"
+      ],
+      "anchor_positions": [
+        -1,
+        -1,
+        -1
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "console-warmup",
+      "audio_sha256": "88b537c6312403a1faef596b1b8e74e0bb3a18b476b1d88d4fba289f152a9865",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.0,
+          "text": "エンチャイニーズやレト"
+        },
+        {
+          "start": 2.0,
+          "end": 4.0,
+          "text": "エンチャイニーズやレトのコンフ"
+        },
+        {
+          "start": 4.0,
+          "end": 6.0,
+          "text": "エンチャープニーズやレトするく"
+        },
+        {
+          "start": 6.0,
+          "end": 8.0,
+          "text": "エンチャープニーズやレトこのエンチャイニーズ"
+        },
+        {
+          "start": 8.0,
+          "end": 9.0,
+          "text": "やレト"
+        },
+        {
+          "start": 9.0,
+          "end": 10.0,
+          "text": "エンチャイニーズ"
+        },
+        {
+          "start": 10.0,
+          "end": 12.0,
+          "text": "やレトをエンチャイニーズやレトメモス"
+        },
+        {
+          "start": 12.0,
+          "end": 14.0,
+          "text": "エンチャイニーズやレトン"
+        },
+        {
+          "start": 14.0,
+          "end": 16.0,
+          "text": "エンチャイニーズやレトニーフ"
+        },
+        {
+          "start": 16.0,
+          "end": 18.0,
+          "text": "エンチャイニーズやレトクの"
+        },
+        {
+          "start": 18.0,
+          "end": 20.0,
+          "text": "エンチャイニーズやレト"
+        },
+        {
+          "start": 20.0,
+          "end": 22.0,
+          "text": "エンチャイニーズやレト"
+        },
+        {
+          "start": 22.0,
+          "end": 24.0,
+          "text": "エンチャイニーズやレトク"
+        },
+        {
+          "start": 24.0,
+          "end": 26.0,
+          "text": "エンチャイニーズやレト今する"
+        },
+        {
+          "start": 26.0,
+          "end": 28.0,
+          "text": "エンチャイニーズやレト"
+        }
+      ],
+      "detected_language": "ja"
+    }
+  ],
+  "status": "content_review_required"
+}

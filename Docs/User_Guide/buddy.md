@@ -139,6 +139,24 @@ When an approval appears, inspect the tool, inputs, target, and permission in
 indicator, not an approval control. See
 [Agent runs and tools](console/agent-runs-and-tools.md).
 
+## Import a Buddy without a Persona
+
+In Console, choose **Menu → Buddy** to open **Buddy & Persona Management**.
+Expand **Import pack & size**, enter the downloaded `.tldw-persona-vpack` file's
+path, and choose **Apply**. This installs an independent Buddy; it does not create
+a Persona. Enable the Buddy and choose a conversation or workspace to follow.
+
+Use a full local path or `~/Downloads/trenchcoat.tldw-persona-vpack`. Matching
+quotes around a pasted path are accepted. Download the actual archive using
+GitHub's **Download raw file** button; a GitHub page address or a saved HTML page
+is not an importable pack. Choose a regular local file, not a directory or link.
+
+If import fails, the dialog keeps your entered path and previous Buddy selection.
+A missing-file message means to check the download location. An invalid-pack
+message means to download the archive again. An installation error means the
+archive was read, but profile storage could not be updated; check its permissions
+and free space before retrying.
+
 ## Use your own Persona Visual pack
 
 Open a saved local Persona's editor and find **Persona Visual**. Select a state

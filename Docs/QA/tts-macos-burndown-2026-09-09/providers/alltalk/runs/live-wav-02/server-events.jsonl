@@ -1,0 +1,14 @@
+{"event": "setup_enter", "at": 2173363.956983625, "pid": 1257, "engine": "vits"}
+{"event": "setup_exit", "at": 2173364.463853625, "pid": 1257, "model": "vits - tts_models--en--vctk--vits", "loaded": true, "device": "cpu", "dtype": "torch.float32"}
+{"event": "generation_enter", "at": 2173366.514762541, "pid": 1257, "id": "1257:1", "device": "cpu", "dtype": "torch.float32", "generation_count": 1}
+{"event": "generation_exit", "at": 2173367.43761375, "pid": 1257, "id": "1257:1", "samples": 98064}
+{"event": "generation_enter", "at": 2173373.184876458, "pid": 1257, "id": "1257:2", "device": "cpu", "dtype": "torch.float32", "generation_count": 2}
+{"event": "generation_exit", "at": 2173374.095780416, "pid": 1257, "id": "1257:2", "samples": 99344}
+{"event": "generation_enter", "at": 2173378.802592083, "pid": 1257, "id": "1257:3", "device": "cpu", "dtype": "torch.float32", "generation_count": 3}
+{"event": "generation_exit", "at": 2173382.357402166, "pid": 1257, "id": "1257:3", "samples": 399680}
+{"event": "generation_enter", "at": 2173382.39715175, "pid": 1257, "id": "1257:4", "device": "cpu", "dtype": "torch.float32", "generation_count": 4}
+{"event": "generation_exit", "at": 2173383.3209395, "pid": 1257, "id": "1257:4", "samples": 100368}
+{"event": "setup_enter", "at": 2173396.478231208, "pid": 1594, "engine": "vits"}
+{"event": "setup_exit", "at": 2173396.774801208, "pid": 1594, "model": "vits - tts_models--en--vctk--vits", "loaded": true, "device": "cpu", "dtype": "torch.float32"}
+{"event": "generation_enter", "at": 2173397.019254416, "pid": 1594, "id": "1594:1", "device": "cpu", "dtype": "torch.float32", "generation_count": 1}
+{"event": "generation_exit", "at": 2173397.810894916, "pid": 1594, "id": "1594:1", "samples": 101392}

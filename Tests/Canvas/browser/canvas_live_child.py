@@ -41,12 +41,12 @@ def _document(marker: str, version: str) -> str:
 
 class ChildRuntime:
     def __init__(
-        self, client: CanvasControlClient, handler: ServedCanvasControlHandler
+        self, client: CanvasControlClient, handler: ServedCanvasControlHandler, snapshot
     ) -> None:
         self.client = client
         self.marker = f"child-{client.child_id[-8:]}"
         self.session_id = f"session-{client.child_id}"
-        self.controller = ConsoleCanvasController()
+        self.controller = ConsoleCanvasController(profile_snapshot=snapshot)
         self.controller.activate_session(self.session_id)
         self.handler = handler
         self.scope = CanvasScope(
@@ -205,12 +205,20 @@ class CanvasLiveApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
         handler = ServedCanvasControlHandler()
+        from tldw_chatbook.Canvas.profiles import (
+            load_profile_snapshot,
+            runtime_snapshot_id,
+        )
+
+        snapshot = load_profile_snapshot()
         client = CanvasControlClient.from_environment(
-            os.environ, handler=handler.handle
+            os.environ,
+            runtime_snapshot_id=runtime_snapshot_id(snapshot),
+            handler=handler.handle,
         )
         if client is None:
             raise RuntimeError("served_control_environment_required")
-        self.runtime = ChildRuntime(client, handler)
+        self.runtime = ChildRuntime(client, handler, snapshot)
         start_index = os.environ.get("TLDW_CANVAS_ADVERSARIAL_START_INDEX", "0")
         if not start_index.isdecimal():
             raise RuntimeError("invalid_adversarial_start_index")

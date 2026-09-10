@@ -21,6 +21,7 @@
     bridgeCancel: byId("bridge-cancel-button"), bridgeCopy: byId("bridge-copy-button"), bridgeRetry: byId("bridge-retry-button"),
     bridgeReturn: byId("bridge-return-button"), bridgeConfirm: byId("bridge-confirm-button"),
     bridgeExpiry: byId("bridge-expiry"), bridgeExpiryStatus: byId("bridge-expiry-status"),
+    previewState: byId("preview-state"), repair: byId("repair-button"),
   };
   const basePath = location.pathname;
   const api = (path) => new URL(path, location.href).href;
@@ -29,6 +30,7 @@
   let displayedRevisionId = "";
   let selectionEpoch = -1;
   let selectionOperation = 0;
+  let loadOperation = 0;
   let pendingNavigations = 0;
   let displayedMetadata = {};
   let latestRevisionId = "";
@@ -37,6 +39,7 @@
   let closed = false;
   let pollTimer = null;
   let pendingPlan = null;
+  let pendingRuntimeData = null;
   let currentPort = null;
   let currentLoadNonce = "";
   let rendererReady = false;
@@ -44,6 +47,35 @@
   let previewStopped = false;
   let pendingBridge = null;
   let cancellingBridge = false;
+  let repairText = "";
+
+  function previewFailure(message) {
+    const hints = {
+      "parse-error": "Use the supported flowchart or sequence syntax.",
+      "unsupported-syntax": "Use only the supported syntax; declare sequence participants explicitly.",
+      "unsupported-label": "Use plain text labels without HTML or Markdown.",
+      "invalid-id": "Use ASCII letters, digits and underscores for identifiers.",
+      "invalid-text": "Use valid Unicode text.",
+      "conflicting-node": "Keep each node's original shape and label.",
+      "missing-endpoint": "Declare every participant or node before use.",
+      "cycle": "Remove cycles and self-loops from the flowchart.",
+      "self-message": "Use messages between distinct participants.",
+      "duplicate-participant": "Declare each participant once.",
+      "empty-diagram": "Add a supported nonempty diagram.",
+    };
+    const limits = ["declaration", "input", "labels", "label", "nodes", "edges", "participants", "messages", "notes", "work", "elements", "output", "area", "geometry"];
+    for (const name of limits) hints[`${name}-limit`] = "Shorten labels or split the diagram into smaller Canvases.";
+    const value = message.diagram;
+    if (value && ownRecord(value, ["code", "ordinal", "line", "column"]) &&
+        Object.hasOwn(hints, value.code) && Number.isInteger(value.ordinal) &&
+        value.ordinal >= 1 && value.ordinal <= 4 &&
+        [value.line, value.column].every(number => number === null ||
+          (Number.isInteger(number) && number >= 1 && number <= 8192))) {
+      const location = value.line === null ? "" : `, line ${value.line}${value.column === null ? "" : `, column ${value.column}`}`;
+      return `Diagram ${value.ordinal}: ${value.code}${location}. ${hints[value.code]}`;
+    }
+    return "The isolated preview failed. Inspect source, view the previous revision, or reload.";
+  }
 
   async function post(path, value, extraHeaders = {}, signal = undefined) {
     const headers = {"Content-Type": "application/json", ...extraHeaders};
@@ -570,10 +602,15 @@
     branchUnavailable = true;
     rendererReady = false;
     pendingPlan = null;
+    pendingRuntimeData = null;
     latestRevisionId = "";
     if (currentPort) currentPort.close();
     currentPort = null;
     currentLoadNonce = "";
+    repairText = "";
+    ui.repair.hidden = true;
+    ui.frame.hidden = true;
+    ui.previewState.textContent = "Preview unavailable";
     ui.frame.src = "about:blank";
     ui.sourceView.value = "";
     ui.sourcePanel.hidden = true;
@@ -602,64 +639,116 @@
     return (await post("api/actions", {action}, {}, signal)).capability;
   }
 
-  async function readSource() {
+  async function readSource(isCurrent = () => true) {
     const capability = await mintAction("source_read");
+    if (!isCurrent()) return;
     const response = await fetch(api("api/source"), {headers: {Authorization: `CanvasCapability ${capability}`}, cache: "no-store"});
+    if (!isCurrent()) return;
     if (!response.ok) throw new Error("Source is unavailable for this revision.");
     return response.text();
   }
 
   async function loadFrame({updated = false, scriptsDisabled = false, previousRevisionId = "", operation = selectionOperation} = {}) {
+    // Reloads of one selection still supersede each other's async recovery.
+    const load = ++loadOperation;
+    const isCurrent = () => !closed && operation === selectionOperation && load === loadOperation;
     await cancelPendingBridge({restoreFocus: false});
-    if (closed || operation !== selectionOperation) return;
+    if (!isCurrent()) return;
     rendererReady = false;
     pendingPlan = null;
+    pendingRuntimeData = null;
     if (currentPort) currentPort.close();
     currentPort = null;
     currentLoadNonce = "";
+    repairText = "";
+    ui.repair.hidden = true;
+    ui.frame.hidden = true;
+    ui.previewState.textContent = "Preview pending";
     ui.loading.hidden = false;
     ui.loading.textContent = "Preparing isolated preview…";
     const frame = await post("api/frame", {});
-    if (closed || operation !== selectionOperation) return;
+    if (!isCurrent()) return;
     const planResponse = await fetch(api("api/plan"), {cache: "no-store"});
-    if (!planResponse.ok) throw new Error("Canvas render plan is unavailable.");
+    if (!isCurrent()) return;
+    if (!planResponse.ok) {
+      await openInertSource(isCurrent);
+      return;
+    }
     const planPayload = await planResponse.json();
-    if (closed || operation !== selectionOperation) return;
+    if (!isCurrent()) return;
     const issues = Array.isArray(planPayload.compatibility_issues) ? planPayload.compatibility_issues : [];
-    const {compatibility_issues: _shellOnlyIssues, ...rendererPlan} = planPayload;
+    const {compatibility_issues: _shellOnlyIssues, runtime_data: runtimeData, ...rendererPlan} = planPayload;
+    if (scriptsDisabled && rendererPlan.runtime_profile !== "canvas-v1") {
+      await openInertSource(isCurrent);
+      return;
+    }
     pendingPlan = rendererPlan;
+    pendingRuntimeData = runtimeData || null;
     if (scriptsDisabled) pendingPlan.scripts = [];
     ui.compatibility.hidden = issues.length === 0;
     ui.compatibilityCopy.textContent = issues.map((issue) => issue.message).join(" ");
+    // A fresh allowed selection retires source-only recovery from the old load.
+    ui.sourcePanel.hidden = true;
+    ui.sourceView.value = "";
+    for (const child of document.querySelector(".canvas-workbench").children) child.inert = false;
+    ui.source.setAttribute("aria-expanded", "false");
     ui.frame.src = frame.renderer_url;
     if (updated) showNotice("Updated · View previous", {previous: Boolean(previousRevisionId || displayedMetadata.parent_revision_id)});
     if (scriptsDisabled) showNotice("Opened with generated scripts disabled.");
+  }
+
+  async function openInertSource(isCurrent) {
+    if (!isCurrent()) return;
+    ui.frame.src = "about:blank";
+    const source = await readSource(isCurrent);
+    if (!isCurrent()) return;
+    pendingPlan = null;
+    pendingRuntimeData = null;
+    ui.loading.textContent = "Preview unavailable. Source is preserved.";
+    ui.previewState.textContent = "Source only";
+    ui.sourceView.value = source;
+    ui.sourcePanel.hidden = false;
+    for (const child of document.querySelector(".canvas-workbench").children) {
+      if (child !== ui.sourcePanel) child.inert = true;
+    }
+    ui.sourceClose.focus();
   }
 
   function initializeRenderer() {
     if (!rendererReady || !pendingPlan || !ui.frame.contentWindow) return;
     const channel = new MessageChannel();
     const nonce = crypto.randomUUID();
+    const load = loadOperation;
+    const operation = selectionOperation;
     currentLoadNonce = nonce;
     currentPort = channel.port1;
     channel.port1.onmessage = (event) => {
       const message = event.data;
       if (!message || typeof message !== "object") return;
-      if (message.nonce !== nonce) return;
+      if (message.nonce !== nonce || nonce !== currentLoadNonce ||
+          load !== loadOperation || operation !== selectionOperation || closed) return;
       if (message.type === "canvas:execution-started") {
         channel.port1.postMessage({type: "canvas:execution-ack", nonce});
       }
       if (message.type === "canvas:status") {
         if (message.state === "ready") {
           ui.loading.hidden = true;
+          ui.frame.hidden = false;
+          ui.previewState.textContent = "Preview ready";
           setConnection("Connected");
         } else if (message.state === "failed") {
-          ui.loading.textContent = message.message || "Canvas preview failed. Inspect source or reload.";
+          const diagnostic = previewFailure(message);
+          ui.loading.textContent = diagnostic;
+          ui.frame.hidden = true;
+          ui.previewState.textContent = "Preview failed";
+          repairText = `Please repair the selected Canvas revision after this preview failure: ${diagnostic} Read the exact selected source and profile before proposing a complete replacement document.`;
+          ui.repair.hidden = false;
           ui.loading.hidden = false;
           ui.compatibility.hidden = false;
           byId("compatibility-title").textContent = "Preview issue";
-          ui.compatibilityCopy.textContent = "The generated script failed in the isolated runtime. You can retry without generated scripts.";
+          ui.compatibilityCopy.textContent = "Source is preserved; this revision has no successful preview. Inspect its source or explicitly view the previous revision.";
           ui.scriptsDisabled.hidden = false;
+          if (displayedMetadata.parent_revision_id) showNotice("Preview failed · View previous", {previous: true});
         }
       }
       if (message.type === "canvas:bridge-request") void prepareBridgeMessage(message);
@@ -668,7 +757,9 @@
     // A sandboxed renderer has an opaque receiving origin, so the browser
     // requires "*" here. Authority remains bound to this exact contentWindow,
     // the private MessagePort, the one-load nonce, and server-minted plan.
-    ui.frame.contentWindow.postMessage({type: "canvas:init", nonce, plan: pendingPlan}, "*", [channel.port2]);
+    const init = {type: "canvas:init", nonce, plan: pendingPlan};
+    if (pendingRuntimeData) init.runtime_data = pendingRuntimeData;
+    ui.frame.contentWindow.postMessage(init, "*", [channel.port2]);
   }
 
   async function pollEvents() {
@@ -752,12 +843,18 @@
   });
 
   ui.selector.addEventListener("change", () => navigate("select", {canvas_id: ui.selector.value}));
-  ui.pin.addEventListener("click", () => navigate("pin", {}, {reload: false}));
+  // Explicit Pin revokes the server's load authority, even at this revision.
+  ui.pin.addEventListener("click", () => navigate("pin"));
   ui.follow.addEventListener("click", async () => { dismissNotice(); await navigate("follow", {}, {updated: displayedRevisionId !== latestRevisionId}); });
   ui.noticeFollow.addEventListener("click", () => ui.follow.click());
   ui.noticePrevious.addEventListener("click", async () => { dismissNotice(); await navigate("previous"); });
   ui.noticeDismiss.addEventListener("click", dismissNotice);
   ui.reload.addEventListener("click", () => loadFrame());
+  ui.repair.addEventListener("click", () => {
+    if (!repairText || !currentLoadNonce) return;
+    void prepareBridgeMessage({type: "canvas:bridge-request", nonce: currentLoadNonce,
+      request_id: `repair-${crypto.randomUUID()}`, kind: "submit", value: repairText});
+  });
   ui.scriptsDisabled.addEventListener("click", () => loadFrame({scriptsDisabled: true}));
   ui.source.addEventListener("click", async () => {
     try {

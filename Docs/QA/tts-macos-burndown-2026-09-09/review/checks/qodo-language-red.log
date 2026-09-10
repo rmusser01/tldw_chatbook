@@ -1,0 +1,422 @@
+FFFFFFFFFFFF                                                             [100%]
+=================================== FAILURES ===================================
+_ test_concurrent_onnx_frontend_construction_and_use_are_serialized[construction-ja] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:164: in test_concurrent_onnx_frontend_construction_and_use_are_serialized
+    assert state.constructors == (1 if stage == "construction" else 0)
+E   assert 2 == 1
+E    +  where 2 = namespace(entered=<threading.Event at 0x10bb2ce00: set>, contended=<threading.Event at 0x10bb2c1d0: set>, release=<threading.Event at 0x10bb2cd70: unset>, constructors=2, calls=[], active=0, peak_active=0).constructors
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 07:01:42.795 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-09 07:01:42.869 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-09-09 07:01:42.882 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-09 07:01:42.883 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:42.887 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_0/test_data/config/config.toml
+2026-09-09 07:01:42.888 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:42.888 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_0/test_data/config/config.toml
+2026-09-09 07:01:42.889 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:42.889 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:42.890 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:42.891 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:42.891 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:42.892 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:42.892 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:42.893 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:42.893 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:42.894 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:42.895 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:42.895 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:42.896 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:42.896 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:42.897 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:42.897 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:42.898 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:42.898 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:42.899 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:42.900 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:42.901 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:42.903 | INFO     | tldw_chatbook.TTS.backends.kokoro:_close_resources:1978 - KokoroTTSBackend: Final performance stats - Avg: 0.0 tokens/s, Total: 2 generations in 0.0s
+_ test_concurrent_onnx_frontend_construction_and_use_are_serialized[construction-zh] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:164: in test_concurrent_onnx_frontend_construction_and_use_are_serialized
+    assert state.constructors == (1 if stage == "construction" else 0)
+E   assert 2 == 1
+E    +  where 2 = namespace(entered=<threading.Event at 0x10bb2e120: set>, contended=<threading.Event at 0x10bb2c470: set>, release=<threading.Event at 0x10bb2ddc0: unset>, constructors=2, calls=[], active=0, peak_active=0).constructors
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:42.941 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_1/test_data/config/config.toml
+2026-09-09 07:01:42.941 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_1/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:42.942 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_1/test_data/config/config.toml
+2026-09-09 07:01:42.942 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:42.942 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:42.943 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:42.944 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:42.945 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:42.945 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:42.946 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:42.946 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:42.947 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:42.947 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:42.948 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:42.948 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:42.949 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:42.949 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:42.950 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:42.951 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:42.951 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:42.952 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:42.952 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:42.953 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:42.954 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:42.955 | INFO     | tldw_chatbook.TTS.backends.kokoro:_close_resources:1978 - KokoroTTSBackend: Final performance stats - Avg: 0.0 tokens/s, Total: 2 generations in 0.0s
+_ test_concurrent_onnx_frontend_construction_and_use_are_serialized[invocation-ja] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:165: in test_concurrent_onnx_frontend_construction_and_use_are_serialized
+    assert state.peak_active <= 1
+E   AssertionError: assert 2 <= 1
+E    +  where 2 = namespace(entered=<threading.Event at 0x10bb2ce00: set>, contended=<threading.Event at 0x10bb2cd10: set>, release=<threading.Event at 0x10bb2ccb0: unset>, constructors=0, calls=['first', 'second'], active=2, peak_active=2).peak_active
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:42.963 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_2/test_data/config/config.toml
+2026-09-09 07:01:42.964 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_2/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:42.964 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_2/test_data/config/config.toml
+2026-09-09 07:01:42.964 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:42.965 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:42.966 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:42.966 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:42.967 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:42.967 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:42.968 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:42.968 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:42.969 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:42.969 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:42.970 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:42.971 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:42.971 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:42.972 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:42.972 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:42.973 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:42.973 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:42.974 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:42.974 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:42.975 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:42.975 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:42.977 | INFO     | tldw_chatbook.TTS.backends.kokoro:_close_resources:1978 - KokoroTTSBackend: Final performance stats - Avg: 0.0 tokens/s, Total: 2 generations in 0.0s
+_ test_concurrent_onnx_frontend_construction_and_use_are_serialized[invocation-zh] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:165: in test_concurrent_onnx_frontend_construction_and_use_are_serialized
+    assert state.peak_active <= 1
+E   AssertionError: assert 2 <= 1
+E    +  where 2 = namespace(entered=<threading.Event at 0x10bb2c830: set>, contended=<threading.Event at 0x10bb2f2f0: set>, release=<threading.Event at 0x10bb2f200: unset>, constructors=0, calls=['first', 'second'], active=2, peak_active=2).peak_active
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:42.984 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_3/test_data/config/config.toml
+2026-09-09 07:01:42.984 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_3/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:42.985 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_concurrent_onnx_frontend_3/test_data/config/config.toml
+2026-09-09 07:01:42.985 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:42.986 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:42.987 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:42.987 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:42.988 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:42.988 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:42.989 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:42.989 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:42.990 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:42.990 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:42.991 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:42.991 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:42.992 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:42.992 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:42.993 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:42.994 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:42.994 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:42.995 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:42.995 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:42.996 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:42.996 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:42.998 | INFO     | tldw_chatbook.TTS.backends.kokoro:_close_resources:1978 - KokoroTTSBackend: Final performance stats - Avg: 0.0 tokens/s, Total: 2 generations in 0.0s
+_ test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[cancel-construction-ja] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:235: in test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner
+    assert state.calls == ["first"], "Stopped waiter entered the frontend"
+E   AssertionError: Stopped waiter entered the frontend
+E   assert ['first', 'second'] == ['first']
+E     
+E     Left contains one more item: 'second'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:43.005 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop0/test_data/config/config.toml
+2026-09-09 07:01:43.006 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:43.006 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop0/test_data/config/config.toml
+2026-09-09 07:01:43.007 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:43.007 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:43.008 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:43.008 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:43.009 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:43.010 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:43.010 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:43.011 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:43.012 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:43.012 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:43.013 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:43.013 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:43.014 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:43.015 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:43.015 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:43.016 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:43.016 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:43.017 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:43.017 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:43.018 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:43.019 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:43.021 | INFO     | tldw_chatbook.TTS.backends.kokoro:_close_resources:1978 - KokoroTTSBackend: Final performance stats - Avg: 0.0 tokens/s, Total: 1 generations in 0.0s
+_ test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[cancel-construction-zh] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:235: in test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner
+    assert state.calls == ["first"], "Stopped waiter entered the frontend"
+E   AssertionError: Stopped waiter entered the frontend
+E   assert ['first', 'second'] == ['first']
+E     
+E     Left contains one more item: 'second'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:43.029 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop1/test_data/config/config.toml
+2026-09-09 07:01:43.030 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop1/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:43.031 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop1/test_data/config/config.toml
+2026-09-09 07:01:43.031 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:43.032 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:43.033 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:43.033 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:43.034 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:43.034 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:43.035 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:43.035 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:43.036 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:43.037 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:43.037 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:43.038 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:43.038 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:43.039 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:43.040 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:43.040 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:43.041 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:43.041 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:43.042 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:43.043 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:43.044 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:43.046 | INFO     | tldw_chatbook.TTS.backends.kokoro:_close_resources:1978 - KokoroTTSBackend: Final performance stats - Avg: 0.0 tokens/s, Total: 1 generations in 0.0s
+_ test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[cancel-invocation-ja] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:235: in test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner
+    assert state.calls == ["first"], "Stopped waiter entered the frontend"
+E   AssertionError: Stopped waiter entered the frontend
+E   assert ['first', 'second'] == ['first']
+E     
+E     Left contains one more item: 'second'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:43.054 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop2/test_data/config/config.toml
+2026-09-09 07:01:43.055 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop2/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:43.055 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop2/test_data/config/config.toml
+2026-09-09 07:01:43.056 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:43.056 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:43.058 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:43.058 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:43.059 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:43.059 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:43.061 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:43.061 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:43.062 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:43.063 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:43.064 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:43.064 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:43.065 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:43.065 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:43.066 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:43.067 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:43.068 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:43.068 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:43.069 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:43.070 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:43.071 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:43.073 | INFO     | tldw_chatbook.TTS.backends.kokoro:_close_resources:1978 - KokoroTTSBackend: Final performance stats - Avg: 0.0 tokens/s, Total: 1 generations in 0.0s
+_ test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[cancel-invocation-zh] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:235: in test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner
+    assert state.calls == ["first"], "Stopped waiter entered the frontend"
+E   AssertionError: Stopped waiter entered the frontend
+E   assert ['first', 'second'] == ['first']
+E     
+E     Left contains one more item: 'second'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:43.081 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop3/test_data/config/config.toml
+2026-09-09 07:01:43.081 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop3/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:43.082 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop3/test_data/config/config.toml
+2026-09-09 07:01:43.082 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:43.083 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:43.084 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:43.084 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:43.085 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:43.085 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:43.086 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:43.087 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:43.087 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:43.088 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:43.089 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:43.089 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:43.090 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:43.090 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:43.091 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:43.092 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:43.093 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:43.093 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:43.094 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:43.095 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:43.096 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:43.098 | INFO     | tldw_chatbook.TTS.backends.kokoro:_close_resources:1978 - KokoroTTSBackend: Final performance stats - Avg: 0.0 tokens/s, Total: 1 generations in 0.0s
+_ test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[close-construction-ja] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:235: in test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner
+    assert state.calls == ["first"], "Stopped waiter entered the frontend"
+E   AssertionError: Stopped waiter entered the frontend
+E   assert ['first', 'second'] == ['first']
+E     
+E     Left contains one more item: 'second'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:43.106 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop4/test_data/config/config.toml
+2026-09-09 07:01:43.107 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop4/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:43.108 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop4/test_data/config/config.toml
+2026-09-09 07:01:43.108 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:43.109 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:43.110 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:43.110 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:43.111 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:43.112 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:43.112 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:43.113 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:43.113 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:43.114 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:43.114 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:43.115 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:43.116 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:43.116 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:43.117 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:43.117 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:43.118 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:43.118 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:43.119 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:43.119 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:43.120 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+_ test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[close-construction-zh] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:235: in test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner
+    assert state.calls == ["first"], "Stopped waiter entered the frontend"
+E   AssertionError: Stopped waiter entered the frontend
+E   assert ['first', 'second'] == ['first']
+E     
+E     Left contains one more item: 'second'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:43.130 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop5/test_data/config/config.toml
+2026-09-09 07:01:43.130 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop5/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:43.131 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop5/test_data/config/config.toml
+2026-09-09 07:01:43.131 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:43.132 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:43.132 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:43.133 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:43.134 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:43.134 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:43.135 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:43.135 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:43.136 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:43.136 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:43.137 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:43.138 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:43.139 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:43.139 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:43.140 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:43.140 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:43.141 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:43.141 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:43.141 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:43.142 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:43.143 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+_ test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[close-invocation-ja] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:235: in test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner
+    assert state.calls == ["first"], "Stopped waiter entered the frontend"
+E   AssertionError: Stopped waiter entered the frontend
+E   assert ['first', 'second'] == ['first']
+E     
+E     Left contains one more item: 'second'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:43.151 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop6/test_data/config/config.toml
+2026-09-09 07:01:43.152 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop6/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:43.153 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop6/test_data/config/config.toml
+2026-09-09 07:01:43.153 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:43.153 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:43.154 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:43.155 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:43.155 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:43.156 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:43.156 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:43.157 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:43.158 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:43.158 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:43.159 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:43.159 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:43.160 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:43.160 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:43.161 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:43.162 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:43.162 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:43.163 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:43.163 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:43.164 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+2026-09-09 07:01:43.164 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'jf_alpha', 'is_mixed': False, 'voices': [('jf_alpha', 1.0)]}, lang=ja, format=pcm
+_ test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[close-invocation-zh] _
+Tests/TTS/test_kokoro_onnx_lifecycle.py:235: in test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner
+    assert state.calls == ["first"], "Stopped waiter entered the frontend"
+E   AssertionError: Stopped waiter entered the frontend
+E   assert ['first', 'second'] == ['first']
+E     
+E     Left contains one more item: 'second'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:01:43.173 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop7/test_data/config/config.toml
+2026-09-09 07:01:43.173 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop7/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:01:43.174 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35766/test_queued_onnx_frontend_stop7/test_data/config/config.toml
+2026-09-09 07:01:43.174 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:01:43.175 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:01:43.176 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 1 voice blends
+2026-09-09 07:01:43.176 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:01:43.177 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 2 voice blends
+2026-09-09 07:01:43.177 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:01:43.178 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 3 voice blends
+2026-09-09 07:01:43.178 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:01:43.179 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 4 voice blends
+2026-09-09 07:01:43.179 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:01:43.180 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 5 voice blends
+2026-09-09 07:01:43.180 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:01:43.181 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 6 voice blends
+2026-09-09 07:01:43.181 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:01:43.182 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 7 voice blends
+2026-09-09 07:01:43.182 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:01:43.183 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1720 - Saved 8 voice blends
+2026-09-09 07:01:43.183 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1833 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:01:43.184 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1783 - Created 8 default voice blends
+2026-09-09 07:01:43.184 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 5 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+2026-09-09 07:01:43.185 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:836 - KokoroTTSBackend: Generating audio for 6 characters, voice={'primary_voice': 'zf_xiaobei', 'is_mixed': False, 'voices': [('zf_xiaobei', 1.0)]}, lang=zh, format=pcm
+=============================== warnings summary ===============================
+../../../../../../../private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14
+  /private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_concurrent_onnx_frontend_construction_and_use_are_serialized[construction-ja]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_concurrent_onnx_frontend_construction_and_use_are_serialized[construction-zh]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_concurrent_onnx_frontend_construction_and_use_are_serialized[invocation-ja]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_concurrent_onnx_frontend_construction_and_use_are_serialized[invocation-zh]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[cancel-construction-ja]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[cancel-construction-zh]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[cancel-invocation-ja]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[cancel-invocation-zh]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[close-construction-ja]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[close-construction-zh]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[close-invocation-ja]
+FAILED Tests/TTS/test_kokoro_onnx_lifecycle.py::test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner[close-invocation-zh]
+12 failed, 23 deselected, 1 warning in 1.46s

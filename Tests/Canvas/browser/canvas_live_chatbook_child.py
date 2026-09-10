@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import os
 import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from textual.widgets import Button
 
@@ -26,18 +29,106 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_canvas_card import ConsoleCanvasCard
 
 
+async def _wait_for_exact_canvas_card(
+    screen: Any,
+    *,
+    target_revision: str | None,
+    attempts: int,
+    interval: float,
+) -> tuple[ConsoleCanvasCard, Button]:
+    """Wait for the exact mounted card action in the current Console session."""
+
+    cards: list[ConsoleCanvasCard] = []
+    revision_matches: list[ConsoleCanvasCard] = []
+    mounted_matches: list[ConsoleCanvasCard] = []
+    session_matches: list[ConsoleCanvasCard] = []
+    exact_pairs: list[tuple[ConsoleCanvasCard, Button]] = []
+    enabled_pairs: list[tuple[ConsoleCanvasCard, Button]] = []
+    store = None
+    active_session = None
+    for attempt in range(attempts):
+        store = getattr(screen, "_console_chat_store", None)
+        active_session = getattr(store, "active_session_id", None)
+        cards = list(screen.query(ConsoleCanvasCard))
+        revision_matches = [
+            card for card in cards if card.presentation.revision_id == target_revision
+        ]
+        if type(target_revision) is not str or not target_revision:
+            revision_matches = []
+        mounted_matches = [card for card in revision_matches if card.is_mounted]
+        session_matches = (
+            [card for card in mounted_matches if card.session_id == active_session]
+            if type(active_session) is str and active_session
+            else []
+        )
+        exact_pairs = [
+            (card, button)
+            for card in session_matches
+            for button in card.query(Button)
+            if button.id == f"canvas-open-revision-{card._id_suffix}"
+        ]
+        enabled_pairs = [
+            (card, button)
+            for card, button in exact_pairs
+            if button.is_mounted and not button.disabled
+        ]
+        if enabled_pairs:
+            return enabled_pairs[0]
+        if attempt + 1 < attempts:
+            await asyncio.sleep(interval)
+
+    raise RuntimeError(
+        "canvas_card_not_ready("
+        f"cards={min(len(cards), 32)},"
+        f"revision_matches={min(len(revision_matches), 32)},"
+        f"mounted_matches={min(len(mounted_matches), 32)},"
+        f"store_present={'true' if store is not None else 'false'},"
+        "active_session="
+        f"{'true' if type(active_session) is str and bool(active_session) else 'false'},"
+        f"session_matches={min(len(session_matches), 32)},"
+        f"buttons={min(len(exact_pairs), 32)},"
+        f"enabled_buttons={min(len(enabled_pairs), 32)})"
+    )
+
+
 def _document(version: str) -> str:
     return (
         "<!doctype html><html><body>"
         '<h1 id="chatbook-app-canvas">CHATBOOK_APP_CANVAS</h1>'
         f'<p id="chatbook-app-revision">{version}</p>'
-        "</body></html>"
+        + (
+            (
+                '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]'
+                + (
+                    " --> A"
+                    if version == "v2"
+                    and os.environ.get("TLDW_CANVAS_TEST_PREVIEW_FAILURE") == "1"
+                    else ""
+                )
+                + "</pre>"
+            )
+            if os.environ.get("TLDW_CANVAS_TEST_CANDIDATE") == "1"
+            or os.environ.get("TLDW_CANVAS_RELEASE_POLICY") == "candidate"
+            else ""
+        )
+        + (
+            '<button id="release-submit">Send result</button><script>document.getElementById("release-submit").addEventListener("click",()=>canvas.submit({result:"owned pending receipt"}));</script>'
+            if os.environ.get("TLDW_CANVAS_RELEASE_POLICY")
+            else ""
+        )
+        + "</body></html>"
     )
 
 
 def _publish_counter(path: Path, value: int) -> None:
     staged = path.with_name(f".{path.name}.tmp")
     staged.write_text(str(value), encoding="ascii")
+    staged.replace(path)
+
+
+def _publish_owner_receipt(path: Path, value: dict) -> None:
+    staged = path.with_name(f".{path.name}.tmp")
+    staged.write_text(json.dumps(value), encoding="ascii")
     staged.replace(path)
 
 
@@ -278,6 +369,89 @@ class _ScriptedCanvasGateway:
 
 
 def main() -> None:
+    diagnostic_root = os.environ.get("TLDW_CANVAS_TEST_DB_DIAGNOSTICS")
+    if diagnostic_root:
+        import faulthandler
+        import threading
+        import time
+
+        diagnostic_path = Path(diagnostic_root)
+        diagnostic_path.mkdir(parents=True, exist_ok=True)
+        fault_file = (diagnostic_path / f"child-{os.getpid()}-fault.txt").open("w")
+        faulthandler.enable(file=fault_file, all_threads=True)
+        connect = sqlite3.connect
+        rows = []
+        diagnostic_lock = threading.Lock()
+        owned_root = Path(os.environ["XDG_DATA_HOME"]).resolve()
+
+        def observed_connect(database, *args, **kwargs):
+            value = os.fspath(database)
+            if value.startswith("file:"):
+                value = value[5:].split("?", 1)[0]
+            relative = (
+                ":memory:"
+                if value == ":memory:"
+                else str(Path(value).resolve().relative_to(owned_root))
+            )
+            connection = connect(database, *args, **kwargs)
+
+            def trace(statement):
+                # No SQL text, arguments, or generated source crosses this seam.
+                operation = statement.lstrip().split(None, 1)[0].upper()
+                if operation not in {
+                    "SELECT",
+                    "INSERT",
+                    "UPDATE",
+                    "DELETE",
+                    "PRAGMA",
+                    "BEGIN",
+                    "COMMIT",
+                    "ROLLBACK",
+                    "CREATE",
+                    "ALTER",
+                    "DROP",
+                }:
+                    operation = "OTHER"
+                with diagnostic_lock:
+                    rows.append(
+                        {
+                            "time": time.monotonic(),
+                            "thread": threading.get_ident(),
+                            "database": relative,
+                            "operation": operation,
+                        }
+                    )
+                    (diagnostic_path / f"child-{os.getpid()}-db.json").write_text(
+                        json.dumps(rows[-80:]), encoding="utf-8"
+                    )
+
+            connection.set_trace_callback(trace)
+            return connection
+
+        sqlite3.connect = observed_connect
+    if os.environ.get("TLDW_CANVAS_RELEASE_POLICY"):
+        from Tests.Canvas.browser.canvas_release_policy import release_snapshot
+        from tldw_chatbook.Canvas import profiles
+
+        snapshot = release_snapshot(os.environ["TLDW_CANVAS_RELEASE_POLICY"])
+        profiles.load_profile_snapshot = lambda: snapshot
+    elif os.environ.get("TLDW_CANVAS_TEST_CANDIDATE") == "1":
+        from dataclasses import replace
+
+        from tldw_chatbook.Canvas import profiles
+
+        base = profiles.load_profile_snapshot()
+        snapshot = replace(
+            base,
+            profiles=tuple(
+                replace(row, executable=True, reason=None)
+                if row.profile_id == "canvas-v2-mermaid-1"
+                else row
+                for row in base.profiles
+            ),
+            default_diagram_profile="canvas-v2-mermaid-1",
+        )
+        profiles.load_profile_snapshot = lambda: snapshot
     app = None
     database = None
     try:
@@ -338,14 +512,15 @@ def main() -> None:
         app.action_canvas_fixture_load_saved = load_saved_conversation
         app._bindings.bind("f10", "canvas_fixture_load_saved", priority=True)
 
-        def reopen_exact_created_card():
+        async def reopen_exact_created_card():
             # Test keyboard adapter presses the real transcript-card button;
             # routing, selected revision and authority remain production-owned.
             target_revision = recovered_root_revision or gateway._revision_id
-            card = next(
-                card
-                for card in app.screen.query(ConsoleCanvasCard)
-                if card.presentation.revision_id == target_revision
+            _card, button = await _wait_for_exact_canvas_card(
+                app.screen,
+                target_revision=target_revision,
+                attempts=300 if recovered_root_revision is not None else 100,
+                interval=0.05 if recovered_root_revision is not None else 0.02,
             )
             screen = app.screen
             original_open = screen._open_console_canvas_selection
@@ -375,12 +550,32 @@ def main() -> None:
                 return result
 
             screen._open_console_canvas_selection = observe_open_completion
-            card.query_one("Button", Button).press()
+            button.press()
 
         app.action_canvas_fixture_reopen = reopen_exact_created_card
         app._bindings.bind("f12", "canvas_fixture_reopen", priority=True)
 
         def acknowledge_composer_focus():
+            if os.environ.get("TLDW_CANVAS_TEST_PREVIEW_FAILURE") == "1":
+                draft = app.screen.query_one("#console-native-composer").draft_text()
+                _publish_owner_receipt(
+                    data_root / "canvas-live-repair-receipt",
+                    {
+                        "draft_sha256": hashlib.sha256(draft.encode()).hexdigest(),
+                        "draft_bytes": len(draft.encode()),
+                        "provider_calls": gateway.calls,
+                    },
+                )
+            _publish_owner_receipt(
+                data_root / "canvas-live-delivery-owner",
+                {
+                    "served": app._served_canvas_mode,
+                    "native_gateway": app.screen._console_runtime().canvas_gateway
+                    is not None,
+                    "enabled": app.screen._console_runtime()._canvas_enabled(),
+                    "control": app.served_canvas_control is not None,
+                },
+            )
             focused = app.focused
             while focused is not None and focused.id != "console-native-composer":
                 focused = focused.parent

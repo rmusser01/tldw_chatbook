@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.Canvas.conftest import candidate_snapshot as _canvas_candidate_snapshot
 from tldw_chatbook.Canvas.limits import CanvasLimitError, CanvasRepositoryLimits
 from tldw_chatbook.Canvas.models import (
     CanvasConflictResult,
@@ -29,10 +30,12 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 )
 
 SESSION_ID = "session-1"
+candidate_snapshot = _canvas_candidate_snapshot
 CONVERSATION_ID = "conversation-1"
 RUN_ID = "run-1"
 ASSISTANT_ID = "assistant-1"
 SOURCE_SENTINEL = "CANVAS_SOURCE_SENTINEL_3_3"
+DIAGRAM_SOURCE = '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre>'
 
 
 def _scope(**changes: object) -> CanvasScope:
@@ -56,7 +59,96 @@ def _controller() -> ConsoleCanvasController:
     return controller
 
 
-def _synthetic_plan(source: str) -> CanvasRenderPlan:
+def test_v2_revision_keeps_profile_after_removing_diagram(candidate_snapshot):
+    controller = ConsoleCanvasController(profile_snapshot=candidate_snapshot)
+    controller.register_run(
+        _scope(), assistant_message_id=ASSISTANT_ID, temporary=False
+    )
+    created = controller.create_canvas(
+        _scope(),
+        tool_call_id="create-v2",
+        title="Flow",
+        html='<pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre>',
+    )
+    changed = controller.update_canvas(
+        _scope(),
+        tool_call_id="remove-diagram",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        html="<p>Summary</p>",
+    )
+    assert changed.revision.runtime_profile == "canvas-v2-mermaid-1"
+
+
+@pytest.mark.parametrize("mismatch", ["source", "profile"])
+@pytest.mark.parametrize("diagrams", [False, True])
+def test_candidate_import_rejects_untrusted_prepared_plan(
+    candidate_snapshot, mismatch, diagrams
+):
+    from tldw_chatbook.Canvas.compiler import compile_canvas_document
+
+    source = DIAGRAM_SOURCE if diagrams else "<p>plain</p>"
+    offered = compile_canvas_document(
+        source if mismatch == "profile" else "<p>other</p>",
+        runtime_profile="canvas-v1" if diagrams else "canvas-v2-mermaid-1",
+        snapshot=candidate_snapshot,
+    )
+    controller = ConsoleCanvasController(profile_snapshot=candidate_snapshot)
+    controller.activate_session(SESSION_ID)
+    with pytest.raises(CanvasLimitError, match=f"prepared-plan-{mismatch}"):
+        controller.interactive_create_canvas(
+            _scope(),
+            origin_message_id=ASSISTANT_ID,
+            title="Flow",
+            html=source,
+            temporary=True,
+            _prepared_plan=offered,
+        )
+    assert controller.list_session_canvases(_scope(), temporary=True) == ()
+
+
+@pytest.mark.parametrize(
+    "first_source,next_source,expected",
+    [
+        ("<p>first</p>", "<p>next</p>", "canvas-v1"),
+        ("<p>first</p>", DIAGRAM_SOURCE, "canvas-v2-mermaid-1"),
+        (DIAGRAM_SOURCE, "<p>removed</p>", "canvas-v2-mermaid-1"),
+        (DIAGRAM_SOURCE, DIAGRAM_SOURCE, "canvas-v2-mermaid-1"),
+    ],
+)
+def test_provider_profile_transitions_and_replay(
+    candidate_snapshot, first_source, next_source, expected
+):
+    from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+
+    controller = ConsoleCanvasController(profile_snapshot=candidate_snapshot)
+    coordinator = controller.register_run(
+        _scope(), assistant_message_id=ASSISTANT_ID, temporary=False
+    )
+    provider = CanvasToolProvider(coordinator, scope=_scope())
+    with use_run_id(RUN_ID), use_tool_call_id("root"):
+        result = provider.invoke(
+            "canvas:canvas_create", {"title": "Flow", "html": first_source}
+        )
+    assert result.ok, result.error
+    first = json.loads(result.content)["canvas"]
+    arguments = {
+        "canvas_id": first["canvas_id"],
+        "expected_parent_revision_id": first["revision_id"],
+        "html": next_source,
+    }
+    with use_run_id(RUN_ID), use_tool_call_id("change"):
+        changed = provider.invoke("canvas:canvas_update", arguments)
+        replay = provider.invoke("canvas:canvas_update", arguments)
+    assert changed.ok, changed.error
+    assert replay.content == changed.content
+    assert json.loads(changed.content)["canvas"]["runtime_profile"] == expected
+    assert next_source not in changed.content
+    assert controller.run_revision_count(RUN_ID) == 2
+
+
+def _synthetic_plan(source: str, **_kwargs) -> CanvasRenderPlan:
     """Build a source-exact inert plan so admission tests isolate ownership."""
 
     return CanvasRenderPlan(
@@ -173,6 +265,10 @@ def test_temporary_owner_enforces_exact_default_session_bytes_across_scopes(
 
     source = "x" * (512 * 1024)
     plan = _synthetic_plan(source)
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_canvas_controller.compile_canvas_document",
+        _synthetic_plan,
+    )
     controller = ConsoleCanvasController()
     controller.activate_session(SESSION_ID)
 

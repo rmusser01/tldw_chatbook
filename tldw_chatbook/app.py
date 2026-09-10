@@ -114,127 +114,100 @@ install_stylesheet_fastpath()
 from functools import partial
 from pathlib import Path, PurePath
 
-from tldw_chatbook.css import build_css, widget_css
-from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
-from tldw_chatbook.css.Themes.themes import ALL_THEMES
-
-# from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
-from tldw_chatbook.Metrics.metrics import (
-    log_histogram,
-    log_counter,
-    log_resource_usage,
-    init_metrics_server,
-)
-from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
-
-#
-# --- Local API library Imports ---
-from .config import (
-    get_cli_setting,
-    first_profile_created_this_session,
-    get_library_collections_db_path,
-    get_library_ingest_jobs_db_path,
-    get_media_db_path,
-    get_prompts_db_path,
-    get_notifications_db_path,
-    get_notes_sync_state_db_path,
-    get_notes_sync_recovery_capacity_bytes,
-    get_notes_sync_watcher_intervals,
-    get_research_db_path,
-    get_scheduled_tasks_db_path,
-    save_setting_to_cli_config,
-    get_subscriptions_db_path,
-    get_tts_profiles_db_path,
-    get_user_data_dir,
-    get_workspaces_db_path,
-    get_writing_db_path,
-)
-from .Logging_Config import configure_application_logging
-from tldw_chatbook.Utils.instance_lock import (
-    InstanceLockStatus,
-    acquire_profile_instance_lock,
-)
-from tldw_chatbook.Constants import (
-    DEFAULT_SPLASH_DURATION_SECONDS,
-    MODEL_CATALOG_REFRESH_WORKER_GROUP,
-    ALL_TABS,
-    TAB_CCP,
-    TAB_CHAT,
-    TAB_HOME,
-    TAB_LOGS,
-    TAB_STATS,
-    TAB_TOOLS_SETTINGS,
-    TAB_INGEST,
-    TAB_LLM,
-    TAB_MEDIA,
-    TAB_SEARCH,
-    TAB_EVALS,
-    TAB_LIBRARY,
-    TAB_ARTIFACTS,
-    TAB_PERSONAS,
-    TAB_WATCHLISTS_COLLECTIONS,
-    TAB_SCHEDULES,
-    TAB_WORKFLOWS,
-    TAB_MCP,
-    TAB_ACP,
-    TAB_SKILLS,
-    TAB_SETTINGS,
-    TAB_MEETINGS,
-    TAB_STTS,
-    TAB_STUDY,
-    TAB_WRITING,
-    TAB_RESEARCH,
-    TAB_RESEARCH_WORKSPACE,
-    TAB_CHATBOOKS,
-    LIBRARY_NAV_CONTEXT_MODE,
-    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
-    LIBRARY_NAV_CONTEXT_INGEST,
-    WATCHLISTS_NAV_CONTEXT_BACKEND,
-    WATCHLISTS_NAV_CONTEXT_RUN_ID,
-    WATCHLISTS_NAV_CONTEXT_SECTION,
-    WATCHLISTS_SECTION_RUNS,
-    get_tab_display_label,
-)
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_artifact_ownership import (
     CitationArtifactOwnershipCoordinator,
 )
 from tldw_chatbook.Chat.citation_service_factory import (
     build_local_citation_conversation_service,
 )
-from tldw_chatbook.Chat.conversation_local_marks_service import (
-    ConversationLocalMarksService,
+from tldw_chatbook.Chat.console_image_edit_operations import (
+    ImageEditOperationRegistry,
 )
-from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     resolve_console_live_work_primary_action,
 )
-from tldw_chatbook.Chat.console_image_edit_operations import (
-    ImageEditOperationRegistry,
-)
-from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
 from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
+from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilityState
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
 )
-from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilityState
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
-
+from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
+from tldw_chatbook.config import CLI_APP_CLIENT_ID
+from tldw_chatbook.Constants import (
+    ALL_TABS,
+    DEFAULT_SPLASH_DURATION_SECONDS,
+    LIBRARY_NAV_CONTEXT_INGEST,
+    LIBRARY_NAV_CONTEXT_MODE,
+    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
+    MODEL_CATALOG_REFRESH_WORKER_GROUP,
+    TAB_ACP,
+    TAB_ARTIFACTS,
+    TAB_CCP,
+    TAB_CHAT,
+    TAB_CHATBOOKS,
+    TAB_EVALS,
+    TAB_HOME,
+    TAB_INGEST,
+    TAB_LIBRARY,
+    TAB_LLM,
+    TAB_LOGS,
+    TAB_MCP,
+    TAB_MEDIA,
+    TAB_MEETINGS,
+    TAB_PERSONAS,
+    TAB_RESEARCH,
+    TAB_RESEARCH_WORKSPACE,
+    TAB_SCHEDULES,
+    TAB_SEARCH,
+    TAB_SETTINGS,
+    TAB_SKILLS,
+    TAB_STATS,
+    TAB_STTS,
+    TAB_STUDY,
+    TAB_TOOLS_SETTINGS,
+    TAB_WATCHLISTS_COLLECTIONS,
+    TAB_WORKFLOWS,
+    TAB_WRITING,
+    WATCHLISTS_NAV_CONTEXT_BACKEND,
+    WATCHLISTS_NAV_CONTEXT_RUN_ID,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+    WATCHLISTS_SECTION_RUNS,
+    get_tab_display_label,
+)
+from tldw_chatbook.css import build_css, widget_css
+from tldw_chatbook.css.Themes.themes import ALL_THEMES
+from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError as MediaDatabaseError,
+)
+from tldw_chatbook.DB.Client_Media_DB_v2 import (
     InputError as MediaInputError,
+)
+from tldw_chatbook.DB.Client_Media_DB_v2 import (
     MediaDatabase,
 )
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-from tldw_chatbook.config import CLI_APP_CLIENT_ID
-from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
+from tldw_chatbook.Home.active_work_adapter import (
+    HomeControlAction,
+    HomeControlResult,
+    HomeControlResultStatus,
+    LocalNotificationHomeActiveWorkAdapter,
+    UnavailableHomeActiveWorkAdapter,
+)
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
 from tldw_chatbook.Library.ingest_capabilities import (
@@ -243,6 +216,21 @@ from tldw_chatbook.Library.ingest_capabilities import (
     get_type_group,
 )
 from tldw_chatbook.Library.ingest_preflight import collect_directory_files
+from tldw_chatbook.Library.library_ingest_jobs import (
+    DEFAULT_CHUNK_SIZE,
+    INGEST_DUPLICATE_PROGRESS_PREFIX,
+    ActiveIngestConsentScope,
+    ActiveIngestJobRef,
+    ActiveIngestSubmissionRefused,
+    IngestJobState,
+    LibraryIngestJob,
+    LibraryIngestJobRegistry,
+    build_active_ingest_consent_scope,
+    normalize_active_ingest_source,
+)
+from tldw_chatbook.Library.library_local_rag_search_service import (
+    LibraryLocalRagSearchService,
+)
 from tldw_chatbook.Library.server_ingest_reconcile import (
     pending_remote_batches,
     reconcile_remote_ingest_jobs,
@@ -257,27 +245,7 @@ from tldw_chatbook.Library.web_clip_request import (
     clip_failure_reason,
     is_web_clip_source,
 )
-from tldw_chatbook.Library.library_ingest_jobs import (
-    ActiveIngestConsentScope,
-    ActiveIngestJobRef,
-    ActiveIngestSubmissionRefused,
-    DEFAULT_CHUNK_SIZE,
-    INGEST_DUPLICATE_PROGRESS_PREFIX,
-    IngestJobState,
-    LibraryIngestJob,
-    LibraryIngestJobRegistry,
-    build_active_ingest_consent_scope,
-    normalize_active_ingest_source,
-)
-from tldw_chatbook.Library.library_local_rag_search_service import (
-    LibraryLocalRagSearchService,
-)
 from tldw_chatbook.Local_Ingestion import FileIngestionError
-from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
-    classify_parse_failure,
-    initialize_ingest_parse_worker,
-    run_parse_job,
-)
 from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
     INGEST_PARSE_PROGRESS_FLUSH_SECONDS,
     INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE,
@@ -285,14 +253,37 @@ from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
     ParseProgressEvent,
     make_parse_progress_event,
 )
+from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
+    classify_parse_failure,
+    initialize_ingest_parse_worker,
+    run_parse_job,
+)
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     classify_ingest_source,
     persist_parsed_media,
 )
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
-    BatchSTTRoutingError,
     PARAKEET_V2_MODEL,
+    BatchSTTRoutingError,
     resolve_batch_stt_route,
+)
+from tldw_chatbook.Logging_Config import RichLogHandler
+
+# from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
+from tldw_chatbook.Metrics.metrics import (
+    init_metrics_server,
+    log_counter,
+    log_histogram,
+    log_resource_usage,
+)
+from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
+from tldw_chatbook.Prompt_Management import (
+    LocalPromptService,
+    PromptChatbookScopeService,
+    ServerPromptService,
+)
+from tldw_chatbook.Prompt_Management import (
+    Prompts_Interop as prompts_interop,
 )
 from tldw_chatbook.STT.contracts import (
     TRANSCRIPTION_FAILURE_CONTRACT,
@@ -300,6 +291,7 @@ from tldw_chatbook.STT.contracts import (
     FileAudioSource,
     TranscriptionFailureCode,
 )
+from tldw_chatbook.STT.dispatch_coordinator import LocalSTTDispatchCoordinator
 from tldw_chatbook.STT.executor import (
     ExecutorBusyError,
     ExecutorEvent,
@@ -311,27 +303,22 @@ from tldw_chatbook.STT.executor import (
     WorkerPhase,
     snapshot_local_source,
 )
-from tldw_chatbook.STT.dispatch_coordinator import LocalSTTDispatchCoordinator
-from tldw_chatbook.Home.active_work_adapter import (
-    HomeControlAction,
-    HomeControlResult,
-    HomeControlResultStatus,
-    LocalNotificationHomeActiveWorkAdapter,
-    UnavailableHomeActiveWorkAdapter,
+from tldw_chatbook.TTS import TTSProfileService
+from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
+from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+    AudioCppArtifactLeaseCoordinator,
+    AudioCppArtifactRemovalEvidence,
+    AudioCppManagedConsumerIdentity,
+    AudioCppModelLibraryObservationSnapshot,
+    project_audio_cpp_artifact_removal_evidence,
 )
-from tldw_chatbook.Logging_Config import RichLogHandler
-from tldw_chatbook.Prompt_Management import (
-    LocalPromptService,
-    PromptChatbookScopeService,
-    Prompts_Interop as prompts_interop,
-    ServerPromptService,
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppSettingsConfig,
+    project_audio_cpp_settings_config,
 )
-from tldw_chatbook.Utils.Emoji_Handling import (
-    get_char,
-    EMOJI_TITLE_BRAIN,
-    FALLBACK_TITLE_BRAIN,
-    supports_emoji,
-)
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
 from tldw_chatbook.Utils.app_shutdown import (
     arm_exit_watchdog,
     install_termination_handlers,
@@ -344,27 +331,44 @@ from tldw_chatbook.Utils.boot_worker_policy import (
     STAGGERED_BOOT_WORKER_KEYS,
     StaggeredBootWorkerGate,
 )
-from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
+from tldw_chatbook.Utils.Emoji_Handling import (
+    EMOJI_TITLE_BRAIN,
+    FALLBACK_TITLE_BRAIN,
+    get_char,
+    supports_emoji,
+)
+from tldw_chatbook.Utils.instance_lock import (
+    InstanceLockStatus,
+    acquire_profile_instance_lock,
+)
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Utils.text_selection_crash_guard import TextSelectionCrashGuard
-from tldw_chatbook.TTS import TTSProfileService
-from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
-    AudioCppArtifactLeaseCoordinator,
-    AudioCppArtifactRemovalEvidence,
-    AudioCppModelLibraryObservationSnapshot,
-    AudioCppManagedConsumerIdentity,
-    project_audio_cpp_artifact_removal_evidence,
+from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
+
+#
+# --- Local API library Imports ---
+from .config import (
+    first_profile_created_this_session,
+    get_cli_setting,
+    get_library_collections_db_path,
+    get_library_ingest_jobs_db_path,
+    get_media_db_path,
+    get_notes_sync_recovery_capacity_bytes,
+    get_notes_sync_state_db_path,
+    get_notes_sync_watcher_intervals,
+    get_notifications_db_path,
+    get_prompts_db_path,
+    get_research_db_path,
+    get_scheduled_tasks_db_path,
+    get_subscriptions_db_path,
+    get_tts_profiles_db_path,
+    get_user_data_dir,
+    get_workspaces_db_path,
+    get_writing_db_path,
+    save_setting_to_cli_config,
 )
-from tldw_chatbook.TTS.audio_cpp_guided_config import (
-    AudioCppSettingsConfig,
-    project_audio_cpp_settings_config,
-)
-from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
-from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
-from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
-from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from .Logging_Config import configure_application_logging
 
 # TASK-21108: `TTS/voice_bundle_service` (1,857 lines) is imported
 # function-locally in `_ensure_tts_voice_bundle_service` -- the only place
@@ -374,6 +378,7 @@ from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 # annotations on attribute targets ARE evaluated at runtime).
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
+    from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
     from tldw_chatbook.TTS.voice_bundle_service import (
         TTSVoiceBundlePortabilityService,
     )
@@ -7687,8 +7692,8 @@ class TldwCli(
         super().__init__()
 
         # A textual-serve child receives a one-use, per-AppService control
-        # capability through its spawn environment. Native terminal launches
-        # have no such variables and need not import the served transport.
+        # capability through its spawn environment. A non-secret launch marker
+        # persists without a broker; native launches need no served transport.
         canvas_control_keys = (
             "CHATBOOK_CANVAS_CONTROL_HOST",
             "CHATBOOK_CANVAS_CONTROL_PORT",
@@ -7698,17 +7703,28 @@ class TldwCli(
         )
         self.served_canvas_handler = None
         self.served_canvas_control = None
-        if any(key in os.environ for key in canvas_control_keys):
+        self._served_canvas_mode = "CHATBOOK_SERVED_CHILD" in os.environ or any(
+            key in os.environ for key in canvas_control_keys
+        )
+        if self._served_canvas_mode:
             from .Canvas.control_protocol import (
                 CanvasControlClient,
                 ControlProtocolError,
             )
             from .Canvas.gateway import ServedCanvasControlHandler
+            from .Canvas.profiles import (
+                load_application_profile_snapshot,
+                runtime_snapshot_id,
+            )
 
+            self._canvas_profile_snapshot = load_application_profile_snapshot()
             self.served_canvas_handler = ServedCanvasControlHandler()
             try:
                 self.served_canvas_control = CanvasControlClient.from_environment(
                     os.environ,
+                    runtime_snapshot_id=runtime_snapshot_id(
+                        self._canvas_profile_snapshot
+                    ),
                     handler=self.served_canvas_handler.handle,
                 )
             except ControlProtocolError:
@@ -7812,7 +7828,9 @@ class TldwCli(
             self._instance_lock_status = InstanceLockStatus(acquired=True)
         self.tts_service = build_default_tts_service(self.app_config)
         self._tts_binding_active = False
-        self._tts_profile_repository = TTSProfileRepository(get_tts_profiles_db_path())
+        self._tts_profile_repository_path = get_tts_profiles_db_path()
+        self._tts_profile_repository: TTSProfileRepository | None = None
+        self._tts_profile_repository_close_requested = False
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
         self._tts_profile_service: TTSProfileService | None = None
@@ -12236,6 +12254,7 @@ class TldwCli(
     _SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
         TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
         TAB_EVALS: ("screen_feature_evals.tcss",),
+        TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
     }
 
     def _ensure_screen_owned_css(self, canonical_route: str) -> None:
@@ -14549,12 +14568,17 @@ class TldwCli(
 
     async def _ensure_tts_profile_repository(
         self,
-    ) -> TTSProfileRepository | None:
+    ) -> "TTSProfileRepository | None":
         """Open and return the one app-owned profile repository on first use."""
 
+        if getattr(self, "_tts_profile_repository_close_requested", False):
+            return None
         repository = getattr(self, "_tts_profile_repository", None)
         if repository is None:
-            return None
+            from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+
+            repository = TTSProfileRepository(self._tts_profile_repository_path)
+            self._tts_profile_repository = repository
         if getattr(self, "_tts_profile_repository_close_task", None) is not None:
             return None
         if repository.state is ProfileRepositoryState.OPEN:
@@ -14604,6 +14628,7 @@ class TldwCli(
         if (
             not opened
             or repository.state is not ProfileRepositoryState.OPEN
+            or getattr(self, "_tts_profile_repository_close_requested", False)
             or getattr(self, "_tts_profile_repository_close_task", None) is not None
         ):
             return None
@@ -14870,6 +14895,7 @@ class TldwCli(
     async def _close_tts_profile_repository(self) -> None:
         """Definitively close the app-owned profile repository once."""
 
+        self._tts_profile_repository_close_requested = True
         repository = getattr(self, "_tts_profile_repository", None)
         if repository is None:
             return

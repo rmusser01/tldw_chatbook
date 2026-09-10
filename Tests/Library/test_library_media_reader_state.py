@@ -13,7 +13,6 @@ from tldw_chatbook.Library.library_media_reader_state import (
     LIBRARY_MIN_WIDTH,
     LIBRARY_TARGET_WIDTH,
     MEDIA_READER_LAYOUT_PROFILE,
-    PANE_GRIP_WIDTH,
     READER_COMFORT_WIDTH,
     SELECTION_SETTLE_SECONDS,
     LibraryMediaReaderSessionState,
@@ -52,7 +51,7 @@ def test_default_preferences_are_both_open_and_fixed() -> None:
 
 
 def test_default_library_preference_uses_the_shared_reference_width() -> None:
-    assert LIBRARY_TARGET_WIDTH == LIBRARY_REFERENCE_WIDTH == 31
+    assert LIBRARY_TARGET_WIDTH == LIBRARY_REFERENCE_WIDTH == 36
 
 
 @pytest.mark.parametrize(
@@ -102,9 +101,7 @@ def test_fixed_mode_ignores_saved_custom_width_values() -> None:
     )
 
 
-# task-31633 AC#2: Media's two grips are one cell each, not the shared
-# five, so every Media width sum below is against the Media profile's own
-# reservation rather than the shared constant.
+# The resolver reserves both five-cell controls in every width budget.
 MEDIA_GRIP_CELLS = 2 * MEDIA_READER_LAYOUT_PROFILE.grip_width
 
 
@@ -121,7 +118,7 @@ def test_responsive_collapse_does_not_mutate_preferences() -> None:
 
 @pytest.mark.parametrize(
     ("width", "library_open", "items_open"),
-    [(160, True, True), (120, True, True), (80, False, False)],
+    [(160, True, True), (120, True, True), (119, False, True), (80, False, False)],
 )
 def test_normal_resolution_collapses_library_then_items(
     width: int, library_open: bool, items_open: bool
@@ -153,7 +150,7 @@ def test_explicit_open_collapses_other_pane_first_and_uses_requested_minimum(
     preferences = normalize_media_reader_preferences({f"{priority}_open": False})
 
     layout = resolve_media_reader_layout(
-        80,
+        70,
         preferences,
         priority=priority,  # type: ignore[arg-type]
     )
@@ -181,8 +178,7 @@ def test_two_grips_and_reader_remain_reachable_at_sixty_columns() -> None:
 
     assert layout.library_width == 0
     assert layout.items_width == 0
-    # 50 while Media's two grips still cost five cells each (task-31633 AC#2).
-    assert layout.reader_width == 58
+    assert layout.reader_width == 50
     assert layout.reader_width + MEDIA_GRIP_CELLS == 60
 
 
@@ -212,43 +208,23 @@ def test_explicit_open_priority_survives_narrow_resize_resolution() -> None:
     resized = resolve_media_reader_layout(81, preferences, previous=opened)
 
     assert resized.items_open is True
-    # The priority branch caps the list at whatever the width leaves once the
-    # grips and the Reader's minimum are paid for -- so at 81 columns it lands
-    # ABOVE ITEMS_MIN_WIDTH now (it was exactly 32 at five-cell grips, where
-    # the same subtraction left less than the minimum).
-    assert resized.items_width == 81 - MEDIA_GRIP_CELLS - (
-        MEDIA_READER_LAYOUT_PROFILE.work_min_width
-    )
-    assert resized.items_width > ITEMS_MIN_WIDTH
+    assert resized.items_width == ITEMS_MIN_WIDTH
     assert resized.priority_pane == "items"
 
 
 def test_hysteresis_prevents_one_column_resize_thrashing() -> None:
     preferences = normalize_media_reader_preferences({})
-    nominal_width = (
-        MEDIA_GRIP_CELLS
-        + project_default_library_width(120)
-        + ITEMS_TARGET_WIDTH
-        + MEDIA_READER_LAYOUT_PROFILE.work_min_width
-    )
+    nominal_width = 120
     collapsed = resolve_media_reader_layout(nominal_width - 1, preferences)
-    boundary = resolve_media_reader_layout(
-        nominal_width,
-        preferences,
-        previous=collapsed,
-    )
-    reopened = resolve_media_reader_layout(
-        nominal_width + LAYOUT_HYSTERESIS_WIDTH,
-        preferences,
-        previous=boundary,
-    )
+    boundary = resolve_media_reader_layout(nominal_width, preferences, previous=collapsed)
+    still_collapsed = resolve_media_reader_layout(nominal_width + LAYOUT_HYSTERESIS_WIDTH - 1, preferences, previous=boundary)
+    reopened = resolve_media_reader_layout(nominal_width + LAYOUT_HYSTERESIS_WIDTH, preferences, previous=boundary)
 
     assert collapsed.library_open is False
     assert boundary.library_open is False
+    assert still_collapsed.library_open is False
     assert reopened.library_open is True
-    assert reopened.library_width == project_default_library_width(
-        nominal_width + LAYOUT_HYSTERESIS_WIDTH
-    )
+    assert (reopened.library_width, reopened.items_width, reopened.reader_width) == (28, 40, 46)
 
 
 def test_shrink_expand_cycles_are_idempotent() -> None:

@@ -261,6 +261,7 @@ async def test_independent_visibility_does_not_read_or_change_persona(
 @pytest.mark.asyncio
 async def test_import_retry_after_save_failure_reuses_publication_and_keeps_revision_guard(
     monkeypatch,
+    tmp_path,
 ):
     from tldw_chatbook import config
     from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
@@ -282,17 +283,19 @@ async def test_import_retry_after_save_failure_reuses_publication_and_keeps_revi
         controller=controller,
         library=library,
     )
-    choice = BuddyManagementChoice(enabled=True, import_path="pack.zip")
+    path = tmp_path / "pack.zip"
+    path.write_bytes(b"reviewed by test library")
+    choice = BuddyManagementChoice(enabled=True, import_path=str(path))
     imports = {}
     monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: False)
     with pytest.raises(ValueError) as failed:
         await manager.apply_choice(choice, expected_revision=0, imports=imports)
     revision = failed.value.buddy_retry_revision
-    assert imports == {"pack.zip": "imported"}
+    assert imports == {str(path): "imported"}
     assert controller.current_preferences().selection is None
     monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: True)
     await manager.apply_choice(choice, expected_revision=revision, imports=imports)
-    assert published == ["pack.zip"]
+    assert published == [path]
     assert controller.current_preferences().selection == BuddySelection("imported")
     controller.apply_preferences_patch(selection=BuddySelection("newer"))
     with pytest.raises(ValueError, match="changed elsewhere"):
@@ -301,7 +304,9 @@ async def test_import_retry_after_save_failure_reuses_publication_and_keeps_revi
 
 
 @pytest.mark.asyncio
-async def test_invalid_import_error_is_actionable_and_does_not_expose_internal_code():
+async def test_invalid_import_error_is_actionable_and_does_not_expose_internal_code(
+    tmp_path,
+):
     from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
     from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
         BuddyManagementChoice,
@@ -310,13 +315,15 @@ async def test_invalid_import_error_is_actionable_and_does_not_expose_internal_c
     def invalid(_):
         raise ValueError("persona_visual_import_invalid")
 
+    path = tmp_path / "invalid.zip"
+    path.write_bytes(b"invalid")
     manager = coordinator_module().BuddyManagementCoordinator(
         SimpleNamespace(app_config={}, console_runtime=None),
         controller=PersonaBuddyController(),
         library=SimpleNamespace(review_archive=invalid),
     )
     with pytest.raises(ValueError) as failed:
-        await manager.apply_choice(BuddyManagementChoice(import_path="missing.zip"))
+        await manager.apply_choice(BuddyManagementChoice(import_path=str(path)))
     assert "Check the path" in str(failed.value)
     assert "persona_visual_import_invalid" not in str(failed.value)
 

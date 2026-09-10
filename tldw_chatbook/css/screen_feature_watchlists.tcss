@@ -1,0 +1,1674 @@
+/* ========================================
+ * GENERATED FILE - DO NOT EDIT DIRECTLY
+ * ========================================
+ * watchlists-owned rules split out of features/_watchlists.tcss
+ * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
+ * CSS_PATH, so these bytes are parsed on first visit instead of before
+ * first paint. Edit features/_watchlists.tcss and re-run build_css.py.
+ * ======================================== */
+
+$ds-surface-panel: $panel;
+$ds-surface-raised: $surface;
+$ds-surface-inspector: $surface;
+$ds-grid-line: $surface-lighten-1;
+$ds-column-line: $surface-lighten-2;
+$ds-text-primary: $text;
+$ds-text-muted: $text-muted;
+$ds-text-disabled: $text-disabled;
+$ds-action-focus: $primary;
+$ds-focus-fg: $ds-text-primary;
+$ds-focus-bg: $block-cursor-blurred-background;
+$ds-focus-accent: $primary;
+$ds-input-focus-border: $primary;
+$ds-input-focus-bg: $ds-focus-bg;
+$ds-input-focus-accent: $primary;
+$ds-control-edge: $surface-lighten-2;
+$ds-status-ready: $success;
+$ds-status-running: $primary;
+$ds-status-info: $accent;
+$ds-status-warning: $warning;
+$ds-status-approval-required: $warning;
+$ds-status-blocked: $error;
+$ds-status-error: $error;
+$ds-status-error-readable: $text-error;
+$ds-text-placeholder: $text-muted;
+$ds-text-disabled-readable: $text-muted;
+$ds-status-paused: $warning;
+$ds-status-unsaved: $warning;
+$ds-status-recovered: $success;
+$ds-authority-local: $success;
+$ds-authority-server: $primary;
+$ds-authority-workspace: $accent;
+$ds-authority-remote-only: $warning;
+$ds-source-role-context: $accent;
+$ds-source-role-evidence: $accent;
+$ds-source-role-editable-target: $warning;
+$ds-source-role-output-seed: $secondary;
+$ds-active-fg: $text-primary;
+$ds-value-fg: $text-accent;
+
+$ds-chat-user-accent: $text-primary;
+$ds-chat-user-accent-dark: #8bd5ff;
+$ds-chat-user-accent-light: #004d6d;
+$ds-chat-assistant-accent-dark: #ffc473;
+$ds-chat-assistant-accent-light: #704000;
+$ds-chat-rp-speech-dark: #8bd5ff;
+$ds-chat-rp-speech-light: #004d6d;
+$ds-chat-rp-thought-dark: #2dd4bf;
+$ds-chat-rp-thought-light: #0b5d4a;
+$ds-chat-rp-action-dark: #d7b2ff;
+$ds-chat-rp-action-light: #5e3578;
+$ds-chat-rp-strong-dark: #fff0a6;
+$ds-chat-rp-strong-light: #665000;
+$ds-destination-header-height: 1;
+$ds-destination-compact-strip-height: 1;
+$ds-home-dashboard-grid-height: 18;
+$ds-home-control-button-height: 1;
+$ds-home-compact-row-height: 1;
+$ds-home-followup-row-height: 6;
+$ds-console-workspace-grid-height: 1fr;
+$ds-console-composer-height: 1;
+$ds-library-mode-chip-height: 1;
+$ds-library-mode-chip-min-width: 10;
+$ds-library-source-action-width: auto;
+$ds-library-source-action-min-width: 0;
+$ds-library-source-action-height: 1;
+$ds-library-source-browser-width: 31;
+
+
+.tldw-agentic-split-preamble-end { }
+
+/* ========================================
+ * FEATURES: Watchlists
+ * ========================================
+ * Styles for the WatchlistsCollectionsScreen dashboard and panes.
+ * ======================================== */
+
+/* Overview dashboard grid and cards.
+ *
+ * TASK-998, second finding. The UAT called these "seven empty bordered
+ * cards" and read it as a first-run problem. It is not: they were empty in
+ * EVERY state, populated or not, and had been since the dashboard shipped.
+ * Measured at 160x42 with a source present:
+ *
+ *     #overview-total-sources  region=Region(height=1)  content=Size(height=0)
+ *
+ * Two compounding causes, one per rule below.
+ *
+ * The grid had no `height`, so it took `Grid`'s `1fr` default and was handed
+ * six rows for three rows of cards plus two gutters -- about one row each.
+ * `height: auto` sizes it to the cards instead, which is the only way a fixed
+ * card height means anything.
+ *
+ * And `padding: 1` inside `height: 4` with a `round` border left ZERO content
+ * rows: 4 - 2 (border) - 2 (padding) = 0. Even given its four rows the card
+ * could not have painted the label or the number. The padding is now
+ * horizontal only, so the two lines the card actually renders
+ * ("Total sources" / the value) have exactly the two rows they need.
+ *
+ * This is the same family as TASK-995 and task-875 elsewhere on this screen:
+ * a container too short for its children, where the border is the only thing
+ * that survives.
+ */
+#watchlists-overview-grid {
+    layout: grid;
+    grid-size: 3;
+    grid-gutter: 1;
+    height: auto;
+    margin: 1 0;
+}
+
+.overview-card {
+    height: 4;
+    padding: 0 1;
+    background: $surface;
+    border: round $surface-lighten-1;
+    text-align: center;
+    text-style: bold;
+}
+
+/* Failed runs table in overview */
+#overview-failed-runs {
+    height: 1fr;
+    border: round $surface-lighten-1;
+}
+
+/* Section detail title */
+#watchlists-detail-title {
+    text-style: bold;
+    color: $text;
+}
+
+/* Workbench: stable chrome above a permanent horizontal centre. */
+.watchlists-workbench {
+    layout: vertical;
+    width: 100%;
+    height: 1fr;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#wl-workbench-body {
+    layout: horizontal;
+    width: 100%;
+    height: 1fr;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.watchlists-region-left_rail {
+    width: 28fr;
+    min-width: 24;
+    max-width: 28;
+    height: 100%;
+    border: round $ds-grid-line;
+}
+
+/* Keeps its region border: the ONE box per region is
+ * drawn by the region wrapper, and the pane inside is stripped by ID below
+ * (`#watchlists-inspector-pane`). See that rule for why the region, not the
+ * pane, is the survivor.
+ */
+.watchlists-region-right_rail {
+    width: 34fr;
+    min-width: 30;
+    max-width: 34;
+    height: 100%;
+    border: round $ds-grid-line;
+}
+
+.watchlists-region-right_rail Button {
+    width: 100%;
+    text-wrap: wrap;
+}
+
+/* Collapsed breadcrumb levels (Task 5 fix round 2): muted and left-aligned
+ * so they read as ancestry, not as an action -- distinct from the deepest
+ * level's action buttons directly below them, which keep the default
+ * centered/emphasized Button look.
+ */
+.inspector-breadcrumb {
+    color: $ds-text-muted;
+    text-align: left;
+}
+
+/* Cross-cutting tab/status chrome stays above the body on every section. */
+#wl-centre-status {
+    width: 100%;
+    height: auto;
+}
+
+/* Exactly one box per region (Task 6, fix round 3): the *region wrapper*
+ * draws it and the pane inside draws none, rather than the other way round.
+ *
+ * These two ids are declared in `components/_agentic_terminal.tcss` (the
+ * shared destination-pane block, ~line 3544) with `border: solid
+ * $ds-grid-line`. An ID selector here matches that block's specificity
+ * exactly and wins on source order -- `features/` loads after `components/`
+ * in `build_css.py` -- so this narrows to Watchlists' panes and touches
+ * none of the other destinations that share that block. (An earlier round
+ * wrongly believed stripping the border required editing the shared
+ * `.destination-workbench-pane` class and thus 13 other screens.)
+ *
+ * Suppressing the PANE rather than the REGION is what makes the region
+ * boxes uniformly `round` and puts each region's scrollbar inside the box
+ * that owns it.
+ */
+#watchlists-detail-pane,
+#watchlists-inspector-pane {
+    border: none;
+}
+
+/* The Inspector can be taller than its rail at ordinary terminal heights.
+ * Bound it to the region and give it the scroll path its `height: auto`
+ * `.ds-inspector` base style otherwise lacks; without this, the Console
+ * handoff action is painted below the viewport and cannot be reached.
+ */
+#watchlists-inspector-pane {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+/* ITEMS is the management canvas, but a bounded Feed Items side pane on Read. */
+.watchlists-region-items {
+    width: 44fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    border: round $ds-grid-line;
+}
+
+.watchlists-read-mode .watchlists-region-items {
+    width: 50fr;
+    min-width: 42;
+    max-width: 50;
+    height: 100%;
+    overflow: hidden;
+}
+
+.watchlists-read-mode #watchlists-detail-pane,
+.watchlists-read-mode #watchlists-items-pane {
+    height: 100%;
+    min-height: 0;
+}
+
+.watchlists-read-mode #items-table {
+    height: 1fr;
+    min-height: 1;
+    overflow-y: auto;
+}
+
+#items-pagination {
+    height: 1;
+    min-height: 1;
+}
+
+#items-page-previous,
+#items-page-next {
+    width: auto;
+}
+
+#items-page-label {
+    width: 1fr;
+    text-align: center;
+}
+
+/* Reader is the permanent flexing centre; only its article body scrolls. */
+.watchlists-region-content {
+    width: 44fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    border: round $ds-grid-line;
+    overflow: hidden;
+}
+
+.watchlists-has-expanded-side-pane .watchlists-region-content,
+.watchlists-has-expanded-side-pane .watchlists-region-items {
+    min-width: 44;
+}
+
+.watchlists-has-expanded-side-pane.watchlists-read-mode .watchlists-region-items {
+    min-width: 42;
+}
+
+#watchlists-content-pane {
+    height: 1fr;
+    min-height: 0;
+}
+
+.watchlists-region-title {
+    height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.watchlists-region-placeholder {
+    color: $ds-text-muted;
+}
+
+.watchlists-pane-grip {
+    width: 5;
+    min-width: 5;
+    max-width: 5;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    border-left: solid $ds-grid-line;
+    color: $ds-text-muted;
+    background: $ds-surface-panel;
+    text-align: center;
+    content-align: center middle;
+}
+
+.watchlists-pane-grip:focus,
+.watchlists-pane-grip:hover:focus {
+    border: none;
+    border-left: solid $ds-action-focus;
+    outline: none;
+    color: $ds-focus-fg;
+    background: $ds-focus-bg;
+}
+
+/* Section tab strip (Task 3, styled in Task 6 fix round 3 -- folded in by
+ * the reviewer because the active section was invisible).
+ *
+ * `WatchlistsTabStrip.__init__` pins the strip to `height: 1`, and
+ * `.watchlists-tab` carried no styling of its own, so the active tab picked
+ * up the global `.is-active { border: round $ds-action-focus }`
+ * (`components/_agentic_terminal.tcss`). A `round` border needs 2 lines
+ * before it has a content line at all, so inside a 1-row strip the button
+ * rendered as its own top border and nothing else: the active section's
+ * LABEL never painted, which is the one thing the strip exists to show.
+ *
+ * Fixed here rather than in the shared sheet: that global rule is used by
+ * many screens, and it is overridden the same way wherever a height-1
+ * control meets it -- `#mcp-hub-rail Button.mcp-rail-row.is-active` and
+ * `#mcp-mode-strip .mcp-mode-chip.is-active` in `_agentic_terminal.tcss`
+ * both carry exactly this `border: none` + `text-style: bold underline`
+ * pair. This mirrors the MCP mode strip, which is the same widget shape (a
+ * one-row strip of mode chips), rather than inventing a new active look.
+ */
+.watchlists-tab-strip Button.watchlists-tab {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+/* Focus must not impersonate the active tab (bold underline above), and the
+ * active tab must stay legible while focused -- same split the MCP mode
+ * strip uses.
+ */
+.watchlists-tab-strip .watchlists-tab:focus,
+.watchlists-tab-strip .watchlists-tab:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+    outline: none;
+    border: none;
+}
+
+/* Tree node labels read as a list, so they align left (TASK-1091).
+ *
+ * Every node is a `Button`, and Textual centres a Button's label. With names
+ * of different lengths that puts each one at a different indent:
+ *
+ *     ▸     Daily  0
+ *     ▸  Security Watch  0
+ *
+ * The third Watchlists UAT read that leading gap as a stored leading space and
+ * filed it as a trimming bug. It is not — `WatchlistBundleService.create`/
+ * `rename` both strip before storing, and a whitespace-only name is already
+ * rejected (verified directly against the service). The cause is label
+ * centring, and left-alignment is the fix.
+ *
+ * Both properties are required. Textual's Button sets `text-align: center`
+ * AND `content-align: center middle`; overriding only the first leaves the
+ * label centred, which is what a first attempt at this did.
+ */
+.watchlist-tree .watchlist-tree-root,
+.watchlist-tree .watchlist-tree-watchlist,
+.watchlist-tree .watchlist-tree-source {
+    text-align: left;
+    content-align: left middle;
+}
+
+/* The tree's write verbs (TASK-895): two one-row strips above the roots.
+ *
+ * `min-width: 0` is the load-bearing declaration. Textual's own Button CSS
+ * pins `min-width: 16` (textual/widgets/_button.py) and `compact=True` only
+ * removes the border, not that floor -- so three action buttons in a
+ * `Horizontal` would claim 48 columns inside a rail whose interior is 26,
+ * and the labels would render clipped with an ellipsis. That is not merely
+ * ugly: `Tests/UI/test_destination_visual_parity_correction.py::
+ * test_watchlists_left_rail_is_labelled_when_expanded` fails on any `…` in
+ * the composited rail, which is how this was caught.
+ *
+ * At `width: auto` + zero padding the two rows measure 21 and 22 columns,
+ * so both fit whole against the 22-column interior of the 24-column rail
+ * floor.
+ *
+ * `height: 1` on the strip matches every other one-row control group on
+ * this screen (`.destination-filter-strip`, the tab strip): the rail is a
+ * plain `Vertical`, so a strip left at `auto` would size to the tallest
+ * child rather than to a row.
+ */
+.watchlist-tree-actions {
+    width: 100%;
+    height: 1;
+}
+
+.watchlist-tree-actions Button.watchlist-tree-action {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0;
+    border: none;
+}
+
+/* Why the verbs above are off, when they are. Muted like
+ * `.watchlists-region-placeholder`, and `height: auto` so the reason wraps
+ * to as many rows as the 26-column rail needs rather than being clipped to
+ * one -- a stated reason that does not fit is not a stated reason.
+ */
+.watchlist-tree-actions-note {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+/* TASK-2304 AC#3: what the number after every tree node counts.
+ *
+ * One row, pinned to one row (`height: 1`) like every other single-line
+ * control group on this screen -- the tree is a plain `Vertical`, so a
+ * `Static` left at `auto` is fine today but would silently grow if the copy
+ * ever wrapped, pushing a watchlist off the bottom of the rail. Muted for
+ * the same reason `.watchlist-tree-actions-note` is: it is a caption for the
+ * rows below it, not one of them.
+ */
+.watchlist-tree-count-legend {
+    width: 100%;
+    height: 1;
+    color: $ds-text-muted;
+}
+
+#watchlist-name-dialog,
+#watchlist-add-source-dialog,
+#watchlist-pick-dialog {
+    width: 60;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $surface;
+    border: round $ds-grid-line;
+}
+
+/* TASK-2303 AC#3: the line that says what pressing a row does. `height:
+ * auto` for the same reason `#watchlist-name-error` has it -- this sentence
+ * is the whole point of the row, so it wraps rather than being clipped.
+ * Muted because it is a caption for the list below it, not an entry in it.
+ */
+.watchlist-picker-instructions {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+/* The rejection reason for an empty or duplicate name. `height: auto` so a
+ * long name's message wraps instead of being clipped -- the whole point of
+ * this line is that the user can read why nothing happened.
+ */
+#watchlist-name-error {
+    width: 100%;
+    height: auto;
+    color: $error;
+}
+
+#watchlist-add-source-options,
+#watchlist-pick-options {
+    width: 100%;
+    height: auto;
+    max-height: 16;
+}
+
+#watchlist-add-source-options Button,
+#watchlist-pick-options Button {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    border: none;
+    text-align: left;
+}
+
+/* TASK-998. The first-run panel that replaces the seven empty Overview cards.
+ *
+ * `height: auto` on both the wrapper and the body is the load-bearing pair.
+ * `Vertical` defaults to `height: 1fr`, so the wrapper would claim the whole
+ * region and re-create the "large box containing nothing" this task exists to
+ * remove; and a `Static` left at its default single row would clip multi-
+ * paragraph copy to its first line, which is the same class of defect as
+ * TASK-995 one region over. `text-wrap: wrap` because this copy has to
+ * survive the centre pane at 160 columns as well as at 235.
+ *
+ * No border. The region wrapper (`.watchlists-region-items`) already draws
+ * one box, and Task 6's rule for this screen is one border and one heading
+ * per region -- an inner box here would be the doubled-chrome defect that
+ * task removed.
+ */
+#overview-first-run {
+    width: 100%;
+    height: auto;
+    padding: 1 0;
+}
+
+.watchlists-first-run-title {
+    width: 100%;
+    height: auto;
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.watchlists-first-run-body {
+    width: 100%;
+    height: auto;
+    padding: 1 0 0 0;
+    text-wrap: wrap;
+    color: $ds-text-muted;
+}
+
+/* The Inspector's own first-run line, muted the same way, so the rail reads
+ * as one voice with `.watchlists-region-placeholder` rather than as an
+ * alert.
+ */
+#inspector-first-run-hint {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    color: $ds-text-muted;
+}
+
+/* TASK-1362 (spec §2): the Inspector's noise-selector editor -- the only
+ * edit affordance a source has. Sized exactly like the create form's copy of
+ * the field (`#sources-create-ignore-selectors` below): `max-height: 4` is
+ * two content rows between the top and bottom border rows, and `height: auto`
+ * under that cap stops TextArea's own default from claiming a full `fr` share
+ * of the rail and pushing the source's four action buttons off the bottom.
+ *
+ * Only the TOP border carries a label here (`Ignore (CSS)`); unlike the
+ * create form's copy this field has no `border_subtitle`, because the rail is
+ * ~26 columns and Textual truncates an over-wide border label silently -- see
+ * `InspectorPane._IGNORE_SELECTORS_LABEL`. The row count is unaffected: a
+ * bordered widget spends the same two rows either way.
+ */
+#inspector-noise-selectors {
+    width: 100%;
+    height: auto;
+    max-height: 4;
+    margin: 0;
+}
+
+#inspector-save-selectors-button {
+    width: 100%;
+    margin: 0;
+}
+
+/* TASK-997. The expand chevron drew on its own indented line ABOVE the
+ * watchlist name:
+ *
+ *     │ Unassigned  0            │
+ *     │       ▸                  │
+ *     │ Morning AI Brief  0      │
+ *
+ * `_watchlist_node` now wraps the two buttons in this row so they share a
+ * line. `height: 1` is what makes the row a row: `Horizontal` defaults to
+ * `height: 1fr`, which inside the rail's `Vertical` would let one watchlist
+ * claim whatever vertical space the tree had left.
+ *
+ * `min-width: 0` on the chevron is the other half of the original defect and
+ * is load-bearing, exactly as it is for `.watchlist-tree-action` above:
+ * Textual's Button CSS pins `min-width: 16` and `compact=True` removes only
+ * the border, not that floor. A one-glyph chevron was therefore SIXTEEN
+ * columns wide with the glyph centred in them -- which is why it painted
+ * seven columns in from the left edge of a 26-column rail, reading as a
+ * stray mark rather than as this watchlist's control.
+ *
+ * The name button is left at its natural `width: auto` rather than given
+ * `1fr`: at `1fr` a name longer than the remaining rail would be ellipsized
+ * (`test_watchlists_left_rail_is_labelled_when_expanded` fails on any `…`),
+ * and the `is-active` highlight would stretch the full rail width instead of
+ * hugging the label the way the sibling root nodes do.
+ *
+ * `width: 3` and not `2`, which is the tighter look this was first written
+ * for: Textual's `Button` reserves a column each side via `line-pad: 1`, so
+ * a 2-column button has ZERO content columns and Rich raises
+ * `ValueError: range() arg 3 must not be zero` while wrapping the glyph. The
+ * obvious `line-pad: 0` is not available -- Textual's integer property parser
+ * rejects a literal 0 for it (`_process_integer` errors on `value == 0`), so
+ * the stylesheet fails to parse and every rule after it is lost. 3 is the
+ * narrowest width that renders.
+ *
+ * The source rows deliberately get NO rule: their four-space label indent
+ * plus Textual's one-column line pad places the left-aligned source name one
+ * column past the watchlist name (column 6 versus column 5 in a 26-column
+ * rail), so the nesting reads without adding a margin that would only move
+ * with the chevron's width.
+ */
+.watchlist-tree .watchlist-tree-row {
+    width: 100%;
+    height: 1;
+}
+
+.watchlist-tree Button.watchlist-tree-expander {
+    width: 3;
+    min-width: 0;
+    height: 1;
+    padding: 0;
+    border: none;
+}
+
+/* TASK-897. `#sources-toolbar` is a bare `Vertical` wrapping several
+ * `.destination-filter-strip` rows, and had no height rule anywhere -- so it
+ * inherited Textual's `height: 1fr` default and its size came from whatever
+ * its sibling `#sources-table` was not using, rather than from its own
+ * controls.
+ *
+ * With rows in the table that looked fine (measured 160x42: toolbar 3, table
+ * 13). With an EMPTY table -- the first thing a new user sees -- the table
+ * collapsed to 1 row and the toolbar swallowed the rest: toolbar 15 of a
+ * 16-row pane, and 25 of 26 at 235x52. Growing the terminal did not help,
+ * because `1fr` grows with it.
+ *
+ * The four sibling toolbars (runs/items/rules/notifications) are `Horizontal`
+ * with `.destination-filter-strip`, which pins `height: 1` in
+ * layout/_panes.tcss, so they were never affected. This one is the only
+ * wrapper, and so the only one that needed its own rule.
+ */
+#sources-toolbar {
+    height: auto;
+}
+
+/* TASK-995. The Sources toolbar rendered as one bare `▊▔▔▔` bar with no
+ * controls at all, which blocked the entire new-user path: create a
+ * watchlist, press "Create source", and there is no visible way to add one.
+ *
+ * Two independent causes compounded, and both are fixed here.
+ *
+ * 1. HEIGHT. `.destination-filter-strip` is `height: 1`
+ *    (layout/_panes.tcss) but a bordered `Input`/`Select` is three rows, so
+ *    only the top border row survived. The widgets now pass `compact=True`
+ *    (sources_pane.py / items_pane.py / watchlists_collections_screen.py),
+ *    Textual's own supported one-row form -- the same idiom this codebase
+ *    already uses ~300 times, including for `Input`/`Select` in
+ *    mcp_server_mutations.py. That is done in Python rather than by
+ *    un-pinning the strip: `.destination-filter-strip` is shared chrome
+ *    (schedules, workflows and four sibling Watchlists toolbars), and the
+ *    one-row strip is this screen's design language -- the tab strip, the
+ *    tree action row and the header bar are all one row. Growing the strip
+ *    to three rows instead would have cost the Sources table a quarter of
+ *    its rows at 160x42, re-opening TASK-897.
+ *
+ * 2. WIDTH, which the strip's height alone would not have fixed. Nothing
+ *    sized these controls, so `Input`'s Textual default (`width: 100%`) and
+ *    `_conversations.tcss`'s bare global `Select { width: 100%; }` each
+ *    claimed the FULL strip: measured at 160x42 the four of them stacked to
+ *    x=31,122,213,304 in a pane 93 columns wide, putting `New source` at
+ *    x=395 -- 300 columns off the right edge of a 160-column terminal. The
+ *    explicit widths below are what keeps every control on screen.
+ *
+ *    These must live in the bundle, not in a widget's `DEFAULT_CSS`:
+ *    Textual always ranks a CSS_PATH rule above any `DEFAULT_CSS` rule
+ *    regardless of specificity, so that bare `Select { width: 100% }` beats
+ *    DEFAULT_CSS every time. Same lesson as `#mcp-tools-filter-server-slot
+ *    Select` and `#mcp-audit-filter-*` in components/_agentic_terminal.tcss.
+ *    `margin: 0` is part of that override too -- the same global rule adds
+ *    `margin-bottom: 1`, which would push a one-row Select to two rows.
+ *
+ * Widths are sized to their longest option label plus the dropdown arrow
+ * ("All statuses" 12, "Playlist"/"Inactive" 8), leaving the search box the
+ * remainder: 19 columns at 160x42 and 94 at 235x52.
+ */
+#sources-toolbar Input,
+#sources-toolbar Select,
+#items-toolbar Input,
+#items-toolbar Select,
+#watchlists-header-bar Select {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#sources-search-input {
+    width: 1fr;
+    min-width: 12;
+}
+
+#sources-type-select {
+    width: 12;
+}
+
+#sources-status-filter {
+    width: 16;
+}
+
+#sources-active-filter {
+    width: 12;
+}
+
+#sources-tags-filter {
+    width: 1fr;
+    min-width: 12;
+}
+
+#sources-new-button,
+#sources-add-several-button,
+#sources-filter-toggle {
+    width: auto;
+    min-width: 0;
+    padding: 0;
+}
+
+#sources-filter-editor .sources-filter-label {
+    width: auto;
+    min-width: 0;
+    margin: 0 1 0 0;
+}
+
+#sources-filter-editor #sources-tags-filter {
+    min-width: 8;
+}
+
+#sources-selection-actions {
+    width: 100%;
+    height: 1;
+}
+
+#sources-selection-status {
+    width: 1fr;
+    height: 1;
+}
+
+#sources-create-watchlist-selected {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0;
+}
+
+/* TASK-1035. The create-source form had no rule anywhere, so it took
+ * Textual's defaults for its container and painted like an unfinished
+ * sketch: `Create` on row 40 and `Cancel` on row 43 with blank rows between
+ * them, and `#sources-table` squeezed to a single row underneath.
+ *
+ * The container is now a `Vertical` rather than a bare `Grid` (see
+ * `sources_pane.py`), which fixes the row spread; `height: auto` is what
+ * stops it then claiming `1fr` of the pane and starving the table a second
+ * way -- the same defect and the same one-line fix as `#sources-toolbar`
+ * immediately above (TASK-897).
+ */
+#sources-create-form {
+    height: auto;
+    width: 100%;
+}
+
+/* TASK-1362. Name and URL share one row so the noise field below has rows to
+ * occupy. Measured with the form open at 160x42: the Sources pane is 16 rows
+ * (toolbar 2 + form 13 + table 1), i.e. the form had no spare row at all, and
+ * a field of any height pushed `Create`/`Cancel` -- and then the table -- past
+ * the pane's bottom edge, which is the unreachable-control defect TASK-1035
+ * existed to fix. Pairing costs neither Input its border or its size, and it
+ * is what this form already does for Type/Active and Tags/cadence.
+ */
+#sources-create-form .sources-create-identity-row {
+    width: 100%;
+    height: 3;
+}
+
+#sources-create-form #sources-create-name,
+#sources-create-form #sources-create-url {
+    width: 1fr;
+    margin: 0;
+}
+
+/* Type + Active share one row. Two things are pinned here.
+ *
+ * The `Active` label was `width: 1fr` at Textual's default and claimed the
+ * whole 168-column row, pushing the `Switch` to x=198 -- one column past
+ * the pane's right edge at 235x52, so the only control for "is this source
+ * active" was neither visible nor clickable.
+ *
+ * `margin: 0` on the Select undoes the bare global `Select { width: 100%;
+ * margin-bottom: 1; }` in features/_conversations.tcss, which added a blank
+ * row under the row and pushed the fields below it further down a pane that
+ * has no rows to spare. Same override, same reason, as the toolbar block
+ * above.
+ */
+#sources-create-form .sources-create-type-row {
+    width: 100%;
+    height: 3;
+}
+
+#sources-create-form #sources-create-type {
+    width: 1fr;
+    margin: 0;
+}
+
+#sources-create-form .sources-create-active-label {
+    width: auto;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+}
+
+/* TASK-2302 AC#3: the visible label for a Select that painted as a bare
+ * "RSS ▼". Sized exactly like `.sources-create-active-label` above -- same
+ * row, same three rows of height, same vertical centring -- because it is
+ * the same idiom, and `width: auto` is what stops it claiming the row and
+ * pushing the control it names off the pane's right edge (the defect that
+ * comment records for the `Active` label).
+ *
+ * `height: 3` is overridden to 1 inside the compact destination row below;
+ * a `Static` of height 3 in a one-row container is the strip defect
+ * TASK-995 fixed, three rows of label over one row of box.
+ */
+#sources-create-form .sources-create-field-label {
+    width: auto;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+}
+
+/* TASK-2302 AC#1: the destination row. Compact (one row) for the reason the
+ * tags row above it is: the Sources pane is 16 rows at 160x42 and a
+ * full-height row would push `Create`/`Cancel` past its bottom edge. The
+ * Select needs the same `margin: 0` override as its two siblings -- the bare
+ * global `Select { width: 100%; margin-bottom: 1; }` in
+ * features/_conversations.tcss otherwise adds a blank row and reintroduces
+ * exactly that overflow.
+ */
+#sources-create-form .sources-create-destination-row {
+    width: 100%;
+    height: 1;
+}
+
+#sources-create-form .sources-create-destination-row
+.sources-create-field-label {
+    height: 1;
+}
+
+#sources-create-form #sources-create-watchlist {
+    width: 1fr;
+    margin: 0;
+}
+
+/* Tags + check cadence share the next row, for the reason spelled out above:
+ * the Sources pane is 16 rows tall at 160x42 and a sixth full-height field row
+ * would put `Create`/`Cancel` past its bottom edge. The Select needs the same
+ * `margin: 0` override as the type Select -- the bare global
+ * `Select { width: 100%; margin-bottom: 1; }` in features/_conversations.tcss
+ * otherwise adds a blank row beneath it and reintroduces exactly that overflow.
+ */
+#sources-create-form .sources-create-tags-row {
+    width: 100%;
+    height: 1;
+}
+
+#sources-create-form #sources-create-tags {
+    width: 1fr;
+    margin: 0;
+}
+
+#sources-create-form #sources-create-frequency {
+    width: 16;
+    margin: 0;
+}
+
+/* TASK-1362 (spec §2): the noise control. `max-height: 4` is the whole field
+ * -- two rows of selectors between its border rows, with the label on the top
+ * border and the help copy on the bottom (see `_IGNORE_SELECTORS_LABEL` in
+ * sources_pane.py). Two `Static` rows for that text is two rows this form does
+ * not have, and a taller field puts `Create`/`Cancel` off the bottom of a
+ * 16-row pane at 160x42. `height: auto` under the cap keeps it from claiming
+ * `1fr` of the form the way TextArea's own default would, which is the same
+ * defect and the same fix as `#sources-toolbar` and the form container above.
+ */
+#sources-create-form #sources-create-ignore-selectors {
+    width: 100%;
+    height: auto;
+    max-height: 4;
+    margin: 0;
+}
+
+/* TASK-2310: a compact, one-row inline label placed immediately before a
+ * filter/picker Select inside a `.destination-filter-strip` row (height: 1)
+ * -- Sources' type/status/active filters, Items' status filter, Artifacts'
+ * mode/preset/cadence pickers, Rules' condition/severity. UAT: these Selects
+ * painted bare resting values ("All ▾", "Off ▾") with no clue what
+ * they filter. Unlike `.sources-create-field-label` above (a
+ * `#sources-create-form`-scoped, height: 3 idiom for a full field row), this
+ * is generic and height: 1 to fit inside an EXISTING one-row toolbar strip --
+ * no new row, no extra height budget (the same TASK-995 constraint every
+ * `.destination-filter-strip` row already lives under). `color: $text-muted`
+ * keeps it visually secondary to the Select's own value, which is what the
+ * user is actually scanning for.
+ */
+.watchlists-inline-select-label {
+    width: auto;
+    height: 1;
+    content-align: left middle;
+    padding: 0 1 0 0;
+    color: $text-muted;
+}
+
+/* TASK-2310: the Rule form's Threshold explanation line -- one row, muted,
+ * directly under the Threshold Input it describes. `#rules-create-form` is
+ * an unstyled single-column `Grid` (Textual's own default), so each child
+ * -- including this one -- is already its own row; no width/height fight
+ * to win here, just keep it visually secondary like the Select labels above.
+ */
+.rules-create-threshold-help {
+    width: 100%;
+    height: 1;
+    color: $text-muted;
+}
+
+/* TASK-2313: a muted, one-line caption -- used for AC#4's empty-table
+ * guidance (Runs/Rules/Notifications, matching in spirit, not literal
+ * reuse, Overview's own first-run guidance so a genuinely empty list
+ * reads as "nothing here yet" rather than "broken") and for AC#6's
+ * persistent column-meaning legends (e.g. Items' Queued glyph).
+ */
+.watchlists-hint-line {
+    width: 100%;
+    height: auto;
+    color: $text-muted;
+    padding: 1 0;
+}
+
+/* `.dialog-buttons` (features/_media.tcss) supplies the side-by-side pair
+ * itself -- `layout: horizontal`, and `margin: 0 1; min-width: 12` on each
+ * Button -- so this form and `WatchlistNameDialog` pair their Create/Cancel
+ * the same way rather than stacking them.
+ *
+ * Two properties are deliberately not inherited. The dialog centres its
+ * pair inside a narrow modal; this form is inline and 168 columns wide,
+ * where a centred pair would float away from the fields it belongs to. And
+ * the dialog's `height: 3` would put the pair a row past the bottom of a
+ * 16-row Sources pane at 160x42; one row is also what every other button on
+ * this screen uses (`New source`, `Preview`, `Import OPML`, the tree's
+ * `New`), so the pair reads as part of the screen rather than a modal
+ * dropped into it.
+ */
+#sources-create-form .sources-create-buttons {
+    align: left middle;
+    width: 100%;
+    height: 1;
+}
+
+#items-search-input {
+    width: 1fr;
+    min-width: 0;
+}
+
+#items-status-select {
+    width: 9;
+    min-width: 0;
+}
+
+#items-refresh-button {
+    width: auto;
+    min-width: 0;
+    padding: 0;
+}
+
+/* TASK-3791 plan task 5. The pill is a notice, not a verb: no border
+ * chrome, content width (the 1fr search box yields to it), and a
+ * pointer so its click-to-reload affordance reads as one.
+ */
+#items-new-items-pill {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    color: $accent;
+    text-style: bold;
+}
+
+#items-new-items-pill:hover {
+    text-style: bold underline;
+}
+
+#watchlists-backend-select {
+    width: 12;
+}
+
+/* TASK-1105 lived here. Clicking any Watchlists table row other than the
+ * first left the selection on row 0, so `Preview`, `Check now` and `Delete`
+ * all acted on the wrong source. The cause is the app-wide keyboard-focus
+ * fallback `*:focus { outline: solid $ds-focus-accent; }` (core/_reset.tcss):
+ * Textual paints an `outline` OVER a widget's outermost rendered lines, and
+ * the overwritten segments lose the `{"row", "column"}` metadata that
+ * `DataTable._on_click` needs, so the bottom row of a FOCUSED table is
+ * unclickable. The Sources table is three rows tall here (header + two rows),
+ * which left row 0 as the only reachable data row.
+ *
+ * It was fixed with `.watchlists-region DataTable:focus { outline: none; }`
+ * plus a `$ds-focus-bg`/`$ds-focus-fg` cursor recolour, scoped to this
+ * screen, and its notes called out that every other table in the app still
+ * had it. TASK-1160 promoted exactly those two rules to a bare
+ * `DataTable:focus` type selector in components/_lists.tcss, which every
+ * region here inherits unchanged, and removed this local copy so there is one
+ * mechanism rather than two.
+ * Tests/UI/test_watchlists_source_row_click_selects.py still guards the
+ * Watchlists behaviour end to end.
+ */
+
+/* TASK-1020. The Overview region's and the Inspector's third state: the
+ * overview worker has been started and has not answered yet. Muted like
+ * `.watchlists-region-placeholder` and `.watchlists-first-run-body` so a
+ * transient line does not read as an alert, and `height: auto` so it does not
+ * claim the region's rows on the way past.
+ */
+.watchlists-loading-state {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    color: $ds-text-muted;
+}
+
+/* Artifacts pane (spec #2 phase 1, task 4; re-tuned spec #2 phase 2a,
+ * task 5): a briefing list over a briefing body, over a scripts list over
+ * a script body, all inside the ITEMS region's fixed budget.
+ *
+ * Task-15779 note: everything below the briefings table now lives inside
+ * `BriefingDetailRegion` (`#artifacts-detail-region`, its own rule below)
+ * -- the recompose boundary that lets a briefing selection rebuild the
+ * detail WITHOUT destroying the table above it. The pane's own `fr` pool
+ * is therefore two-deep: the table takes `2fr` against the region's
+ * `8fr` (the detail half's old 6+1+1 shares, pooled), and the region's
+ * children re-divide that share 6:1:1 among themselves. The reasoning
+ * below about each child's share and floor is unchanged -- only the level
+ * at which the detail-side `fr`s resolve moved.
+ *
+ * Every one of the four needs an explicit `fr` share, and the two DETAIL
+ * halves are the ones that actually bite. `ArtifactsPane` is a `Vertical`,
+ * so its children lay out top to bottom: scope note (1), toolbar (1),
+ * table, "Briefing detail" title (1), detail, Cast toolbar (1), scripts
+ * table, script detail (no separate title -- see `ArtifactsPane.compose`).
+ * Both detail `Static`s hold a `rich.markdown`/turn render that is
+ * naturally dozens of rows for a real briefing/script, and a `Static`
+ * sizes to its content by default -- left to that default it does not stop
+ * at the bottom of the region: the region's own height is fixed (`2fr` of
+ * the centre column, see `.watchlists-region-items` above), so the surplus
+ * is laid out BELOW the terminal's last row, where a reader can neither
+ * see it nor scroll to it -- measured at 160x42 pre-task-5, a 40-line
+ * briefing body put the detail's lower edge ~30 rows past the viewport.
+ *
+ * `fr` + `overflow-y: auto` is the fix, and it is the same idiom
+ * `.watchlists-region-content` already uses for the same reason: give each
+ * box a share of the budget it cannot exceed and let its content scroll
+ * inside it. `min-height` on every half keeps the split from degenerating
+ * -- no single half may be squeezed to nothing by the others.
+ *
+ * The 2:6 weighting between the briefing list and its body (not 1:1, as
+ * task 4 shipped it) is task 5's own trade-off, measured rather than
+ * assumed: adding the scripts section as a plain second `1fr` pair made
+ * an even FOUR-way split (or even a heavily briefing-biased one, `4fr`
+ * each against the scripts' `1fr`) shrink `#artifacts-detail` down to its
+ * `min-height` floor of 4 rows -- not enough to show more than its header,
+ * which broke `test_generate_records_a_complete_briefing_and_renders_
+ * its_body`'s "the link is actually painted" assertion (a SHORT, 5-
+ * paragraph canned body, not the 40-paragraph geometry fixture). The list
+ * itself does not need much room -- scrolling a few rows to see an older
+ * briefing costs nothing -- so it gives up share to the body it sits
+ * above, which is why a user opened Artifacts in the first place.
+ *
+ * `#artifacts-table`'s `min-height: 4` is what keeps the LIST usable once
+ * it has given up most of its share: at the pane's real 10-unit `fr` pool
+ * (`2 + 6 + 1 + 1`), `2fr` alone resolves to EXACTLY this floor (measured:
+ * `region.height == 4`) the moment a briefing is selected at all -- the
+ * scripts section's own fixed rows (toolbar, table, detail) are already
+ * in the layout at that point regardless of whether any script has
+ * actually been cast yet, since `ArtifactsPane.compose` gates that whole
+ * section on `selected_briefing is not None`, not on `scripts` being
+ * non-empty. Without this rule, `2fr` alone drops below one usable data
+ * row at 180x50. It is now pinned by `test_the_briefings_table_keeps_
+ * at_least_three_usable_rows`, which asserts `region.height >= 4` (a
+ * header row plus at least 3 data rows) with both a briefing AND a script
+ * present -- dropping this rule REDs it rather than silently shrinking
+ * the list to something unusable.
+ */
+#artifacts-table {
+    width: 100%;
+    height: 2fr;
+    min-height: 4;
+}
+
+/* Task-15779: the recompose boundary holding everything below the
+ * briefings table (title, detail, citations, scripts/audio). `8fr`
+ * against the table's `2fr` stands in for the old flat 2:(6+1+1) split;
+ * the children's own 6:1:1 shares below now resolve inside this box.
+ * `min-height: 8` is the no-selection floor (title's 4 rows plus the
+ * detail's own `min-height: 4`); `overflow-y: auto` mirrors
+ * `#watchlists-artifacts-pane`'s belt-and-suspenders rule one level
+ * down -- when a short terminal leaves less than the children's floors
+ * need, the region scrolls rather than silently clipping the scripts
+ * section past its bottom edge.
+ */
+#artifacts-detail-region {
+    width: 100%;
+    height: 8fr;
+    min-height: 8;
+    overflow-y: auto;
+}
+
+#artifacts-detail {
+    width: 100%;
+    height: 6fr;
+    min-height: 4;
+    overflow-y: auto;
+}
+
+/* Cast scripts (spec #2 phase 2a, Task 5): a second list-over-body pair
+ * under the briefing's own, rendered only once a briefing is selected
+ * (`ArtifactsPane.compose`). `1fr` each, the smallest share of the four --
+ * a script's own list/body matter less moment-to-moment than the briefing
+ * they were cast from, and `DataTable` itself has an observed floor near 2
+ * rows (header + a data/empty row) that `min-height` alone does not push
+ * below, so `min-height: 1` here is a documented floor-of-intent rather
+ * than a binding one. Dropping the "Script detail" `.pane-title` (see
+ * `ArtifactsPane.compose`'s own comment -- that shared class alone costs 4
+ * rows: `height: 3` + `margin-bottom: 1`) is what actually bought back the
+ * room `#artifacts-detail` needed above; a script names itself instead,
+ * in `_script_detail_renderable`'s own header ("Script: <preset>"). Longer
+ * scripts/turns overflow into this section's OWN `overflow-y: auto`, same
+ * as the briefing body already does.
+ *
+ * Task-16852 note: the body/detail half's `1fr` now belongs to
+ * `ScriptDetailRegion` (`#artifacts-script-detail-region`, its own rule
+ * below) -- the nested recompose boundary that lets a SCRIPT selection
+ * rebuild the script detail WITHOUT destroying `#artifacts-scripts-table`
+ * above it, mirroring the table/`BriefingDetailRegion` split above. The
+ * region's own only `fr` child is `#artifacts-script-detail` itself, so
+ * that rule is unchanged -- it still claims all the height the region's
+ * `1fr` allots it, same as when it was a direct sibling of the table.
+ */
+#artifacts-scripts-table {
+    width: 100%;
+    height: 1fr;
+    min-height: 1;
+}
+
+#artifacts-script-detail-region {
+    width: 100%;
+    height: 1fr;
+    min-height: 1;
+}
+
+#artifacts-script-detail {
+    width: 100%;
+    height: 1fr;
+    min-height: 1;
+    overflow-y: auto;
+}
+
+/* Audio (spec #2 phase 2b, Task 7): Synthesize/Play/Stop, rendered only
+ * once a script is selected (`ArtifactsPane.compose`, nested under the
+ * same `selected_briefing is not None` gate the scripts section above
+ * already uses). Deliberately NOT a fifth `fr` participant, and
+ * deliberately no second scrollable detail region either: this section's
+ * own toolbar reuses `.destination-filter-strip` (`layout/_panes.tcss`)
+ * with no extra rule needed, exactly like `#artifacts-scripts-toolbar`
+ * above it needs none -- and the audio status/duration/error itself is
+ * folded straight into `_script_detail_renderable`'s own render (appended
+ * after the script's turns), inside `#artifacts-script-detail`'s ALREADY
+ * measured `1fr` + `overflow-y: auto`. A first draft gave the audio
+ * status its own `Static`/id and one more fixed toolbar row on top of
+ * that; measured, not assumed, against `test_the_briefings_table_keeps_
+ * at_least_three_usable_rows`'s pinned `region.height >= 4`: the extra
+ * fixed rows squeezed `#artifacts-scripts-table` down to its header alone,
+ * losing the one visible data row `test_casting_a_complete_briefing_
+ * writes_a_script_row_and_the_table_shows_it` already depends on. Folding
+ * the status text into the existing detail region costs exactly one new
+ * fixed row (the toolbar) instead of that plus a whole new scrollable
+ * region, and both pinned tests stay green.
+ */
+#artifacts-audio-toolbar {
+    width: 100%;
+}
+
+/* Belt-and-suspenders: whatever the `fr` split above computes for these
+ * four regions, the pane as a whole scrolls rather than letting any
+ * child's region extend silently past the terminal's own last row -- the
+ * exact failure mode the comment above already names for a single
+ * overlong body, now possible again one level up once a second
+ * list-over-body pair sits below the first.
+ */
+#watchlists-artifacts-pane {
+    overflow-y: auto;
+}
+
+/* The scope line states which watchlist these briefings belong to and that
+ * they are written locally -- muted, like every other standing statement of
+ * provenance on this screen (`.watchlists-region-placeholder`).
+ */
+#artifacts-scope-note {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    color: $ds-text-muted;
+}
+
+/* The operational receipt precedes lower-priority scope/table content and
+ * owns its wrapped height so compact terminals paint the complete cadence,
+ * attention, eligibility, and history state before the pane scrolls. */
+#artifacts-automation-receipt {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+}
+
+/* TASK-22866: operational state is an inline overlay, not a replacement for
+ * the last-good briefing list/body. It owns only the rows its bounded copy
+ * needs; Retry and the owning Runs destination stay reachable beside it. */
+#artifacts-state-region {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+}
+
+#artifacts-state-message {
+    width: 1fr;
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+}
+
+#artifacts-state-region Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+}
+
+/* Keep the collapsed disclosure to one row at the 160x42 floor. The global
+ * Collapsible floor is three rows plus a margin, which would steal height
+ * from the already-measured briefing body even while its contents are hidden. */
+#artifacts-more-actions {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+
+#artifacts-more-actions > CollapsibleTitle {
+    height: 1;
+    min-height: 1;
+    padding: 0;
+}
+
+#artifacts-more-actions > Contents {
+    height: auto;
+    padding: 0;
+}
+
+#artifacts-more-actions-toolbar {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+}
+
+/* Selection-mode, default-preset, and cadence pickers (spec #2 phase 2a,
+ * Task 4; cadence added by phase 4, Task 4).
+ * `#artifacts-picker-toolbar` is a second `.destination-filter-strip` row,
+ * rendered only when a watchlist is in scope (`ArtifactsPane.compose`) --
+ * `.destination-filter-strip` already pins `height: 1; min-height: 1;`
+ * (layout/_panes.tcss), same as `#artifacts-toolbar` above it.
+ *
+ * All three `Select`s need the exact TASK-995 override `#sources-toolbar
+ * Select` carries: the bare global `Select { width: 100%; margin-bottom: 1; }`
+ * (features/_conversations.tcss) always wins over `DEFAULT_CSS` regardless
+ * of specificity, so without `margin: 0` here a one-row picker strip grows
+ * a blank row underneath it, and without an explicit `width` each Select
+ * claims the whole strip -- the same two-part defect TASK-995 fixed for
+ * Sources, on a different toolbar.
+ */
+#artifacts-picker-toolbar Select {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#artifacts-mode-select {
+    width: 26;
+}
+
+#artifacts-preset-select {
+    width: 24;
+}
+
+/* Cadence's own options are the shortest of the three ("Off"/"Daily"/
+ * "Weekly"/"Every 12h"), so this can be narrower than its siblings --
+ * matching `#sources-status-filter`'s own width for a similar-length
+ * label set (features/_watchlists.tcss above).
+ */
+#artifacts-cadence-select {
+    width: 16;
+}
+
+#bpm-dialog {
+    width: 96;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: $surface;
+    border: round $ds-grid-line;
+}
+
+#bpm-title {
+    width: 100%;
+    height: auto;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#bpm-body {
+    width: 100%;
+    height: auto;
+    max-height: 28;
+}
+
+/* One compact button per preset (task-895's own "one button per candidate
+ * rather than a Select" convention, `WatchlistSourcePickerDialog`) -- a
+ * `Select` posts `Changed` on mount, which this modal's pull-only reads
+ * are built to never listen for (see the module docstring).
+ */
+#bpm-list-column {
+    width: 28;
+    height: auto;
+    max-height: 100%;
+    padding-right: 1;
+    border-right: solid $ds-grid-line;
+}
+
+#bpm-preset-list {
+    width: 100%;
+    height: auto;
+    max-height: 20;
+}
+
+#bpm-preset-list Button {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    border: none;
+    text-align: left;
+}
+
+#bpm-preset-list-empty {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+#bpm-editor-column {
+    width: 1fr;
+    height: auto;
+    max-height: 100%;
+    padding-left: 1;
+}
+
+.bpm-column-heading {
+    width: 100%;
+    height: auto;
+    text-style: bold;
+    margin-top: 1;
+}
+
+.bpm-field {
+    width: 100%;
+    height: 3;
+}
+
+.bpm-field-label {
+    width: 14;
+    padding-top: 1;
+}
+
+.bpm-field Input {
+    width: 1fr;
+}
+
+/* One row per speaker: name, role prompt, character Select, voice Select,
+ * Remove. `height: 3` matches every bordered `Input`/`Select` in this row --
+ * a shorter row would clip their own borders, the same defect class
+ * `#overview-total-sources` (top of this file) already documents once.
+ */
+.bpm-speaker-row {
+    width: 100%;
+    height: 3;
+}
+
+/* UAT batch-5 review, m1: column labels for the row above, reusing the
+ * SAME `bpm-speaker-name`/`-role`/`-character`/`-voice` width classes so
+ * they land in the same columns as the fields they name. `height: auto`
+ * (not the data rows' `height: 3`, sized for bordered Input/Select) --
+ * a bare `Static` needs none of that.
+ */
+.bpm-speaker-header-row {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+}
+
+.bpm-speaker-column-label {
+    color: $text-muted;
+}
+
+.bpm-speaker-name,
+.bpm-speaker-role {
+    width: 1fr;
+    margin-right: 1;
+}
+
+.bpm-speaker-character,
+.bpm-speaker-voice {
+    width: 22;
+    margin-right: 1;
+}
+
+.bpm-speaker-row Button {
+    width: auto;
+    min-width: 0;
+    height: 3;
+    border: none;
+}
+
+/* The `validate_roster` rejection reason -- a duplicate/empty speaker name
+ * -- or "enter a preset name". `height: auto` so a long message wraps
+ * instead of being clipped, matching `#watchlist-name-error` above.
+ */
+#bpm-error {
+    width: 100%;
+    height: auto;
+    color: $error;
+    margin-top: 1;
+}
+
+#bpm-actions {
+    width: 100%;
+    height: 3;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+#bpm-actions Button {
+    min-width: 12;
+    height: 3;
+    border: none;
+    margin-left: 1;
+}
+
+#kbm-dialog {
+    width: 104;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: $surface;
+    border: round $ds-grid-line;
+}
+
+#kbm-title {
+    width: 100%;
+    height: auto;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#kbm-body {
+    width: 100%;
+    height: auto;
+    max-height: 32;
+}
+
+/* One compact button per kept briefing -- task-895's own "one button per
+ * candidate rather than a Select" convention, exactly like
+ * `#bpm-list-column`/`#bpm-preset-list` above.
+ */
+#kbm-list-column {
+    width: 32;
+    height: auto;
+    max-height: 100%;
+    padding-right: 1;
+    border-right: solid $ds-grid-line;
+}
+
+#kbm-kept-list {
+    width: 100%;
+    height: auto;
+    max-height: 26;
+}
+
+#kbm-kept-list Button {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    border: none;
+    text-align: left;
+}
+
+#kbm-kept-list-empty {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+#kbm-detail-column {
+    width: 1fr;
+    height: auto;
+    max-height: 100%;
+    padding-left: 1;
+}
+
+.kbm-column-heading {
+    width: 100%;
+    height: auto;
+    text-style: bold;
+    margin-top: 1;
+}
+
+#kbm-detail {
+    width: 100%;
+    height: auto;
+    max-height: 16;
+    overflow-y: auto;
+}
+
+/* The keep/cast error surface -- a provider's own message, or a
+ * `ScriptCastError`/`GenerationInFlightError`'s safe-to-show text. `height:
+ * auto` so a long message wraps instead of clipping, matching `#bpm-error`
+ * above.
+ */
+#kbm-error {
+    width: 100%;
+    height: auto;
+    color: $error;
+    margin-top: 1;
+}
+
+#kbm-detail-actions {
+    width: 100%;
+    height: 3;
+    margin-top: 1;
+}
+
+#kbm-detail-actions Button {
+    min-width: 12;
+    height: 3;
+    border: none;
+}
+
+/* The cast preset picker, rendered only once a kept briefing is selected.
+ * Same TASK-995 override every other one-row `Select` strip in this file
+ * needs (`#artifacts-picker-toolbar Select` above is the closest sibling):
+ * the bare global `Select { width: 100%; margin-bottom: 1; }`
+ * (features/_conversations.tcss) always wins over `DEFAULT_CSS` regardless
+ * of specificity.
+ */
+#kbm-cast-toolbar Select {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#kbm-preset-select {
+    width: 34;
+}
+
+/* One block per kept script: header, then its turns. `border-top` visually
+ * separates consecutive scripts without costing a `.pane-title`'s own 4
+ * rows per entry (`ArtifactsPane.compose`'s own comment on that cost).
+ */
+.kbm-script {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    border-top: solid $ds-grid-line;
+    padding-top: 1;
+}
+
+#kbm-scripts-empty {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+#kbm-actions {
+    width: 100%;
+    height: 3;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+#kbm-actions Button {
+    min-width: 12;
+    height: 3;
+    border: none;
+    margin-left: 1;
+}
+
+#svm-dialog {
+    width: 90;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: $surface;
+    border: round $ds-grid-line;
+}
+
+#svm-header {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+/* The snapshot body is the one field here with no natural size cap --
+ * `extracted_content` is a full page's extracted text -- so it gets its
+ * own scrollable region rather than growing the whole dialog past the
+ * terminal, mirroring `#kbm-detail`'s identical `max-height` + `overflow-y`
+ * pair above.
+ */
+#svm-body-scroll {
+    width: 100%;
+    height: auto;
+    max-height: 28;
+    overflow-y: auto;
+}
+
+#svm-body {
+    width: 100%;
+    height: auto;
+}
+
+#svm-actions {
+    width: 100%;
+    height: 3;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+#svm-actions Button {
+    min-width: 12;
+    height: 3;
+    border: none;
+}

@@ -1,0 +1,41 @@
+{
+  "device": "cpu",
+  "base": "238ab6a9e321c17de8e120559f57efeedaeb1345",
+  "configure": [
+    "cmake",
+    "-S",
+    "/private/tmp/tts-macos-burndown/native/source",
+    "-B",
+    "/private/tmp/tts-macos-burndown/native/build-cpu",
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DCMAKE_OSX_ARCHITECTURES=arm64",
+    "-DAUDIOCPP_DEPLOYMENT_BUILD=ON",
+    "-DAUDIOCPP_MODEL_SET=custom",
+    "-DAUDIOCPP_MODELS=pocket_tts,supertonic",
+    "-DENGINE_BUILD_TESTS=ON",
+    "-DENGINE_ENABLE_OPENMP=OFF",
+    "-DGGML_NATIVE=ON",
+    "-DGGML_OPENMP=OFF",
+    "-DGGML_METAL=OFF",
+    "-DGGML_METAL_EMBED_LIBRARY=OFF"
+  ],
+  "log": "/private/tmp/tts-macos-burndown/native/build-cpu.log",
+  "started": 1788933353.439162,
+  "configure_exit": 0,
+  "build": [
+    "cmake",
+    "--build",
+    "/private/tmp/tts-macos-burndown/native/build-cpu",
+    "--target",
+    "audiocpp_server",
+    "http_shutdown_test",
+    "http_live_body_test",
+    "server_busy_guard_test",
+    "-j",
+    "6"
+  ],
+  "build_exit": 0,
+  "binary": "/private/tmp/tts-macos-burndown/native/build-cpu/bin/audiocpp_server",
+  "sha256": "8dbc2c8b9d87fe1d4f55002b3a6d55db4d508cba33e11048085d2dcf06f18760",
+  "finished": 1788933360.209524
+}

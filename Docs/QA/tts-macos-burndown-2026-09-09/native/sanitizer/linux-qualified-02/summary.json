@@ -1,0 +1,98 @@
+{
+  "task": "TASK-32164",
+  "status": "linux_arm_asan_ubsan_transport_passed",
+  "toolchain_image": "sha256:596934820d0c869610526649be433cefcdce0b9b4abdbd8040fc6b2894b83bcd",
+  "parent_image": "sha256:c758cd09229cf4e17bb799063d5213f784b37d74ea8e2e312c9b438ac3fec08b",
+  "parent_layers_verified": true,
+  "platform": "Linux 3f8672278318 6.12.67-linuxkit #1 SMP Sun Jan 25 02:26:28 UTC 2026 aarch64 GNU/Linux",
+  "compiler": "c++ (Debian 12.2.0-14+deb12u1) 12.2.0",
+  "binary_sha256": "d6276944d028097b71a58dbb8590c13c587398b27c4111288da6d0a2119acca2",
+  "sanitizer_runtimes": {
+    "libasan.so": {
+      "path": "/usr/lib/gcc/aarch64-linux-gnu/12/libasan.so",
+      "sha256": "c444b0c16f2aa35677e744fb0984fd3ab839955c37d7a4076b586f8db9189b3e"
+    },
+    "libubsan.so": {
+      "path": "/usr/lib/gcc/aarch64-linux-gnu/12/libubsan.so",
+      "sha256": "ee04bba23bf7db3ed4e844a881459879d3e7d4b16c916e99c313370220491fc0"
+    }
+  },
+  "asan_options": "detect_leaks=1:halt_on_error=1",
+  "ubsan_options": "halt_on_error=1:print_stacktrace=1",
+  "startup_returncode": 2,
+  "startup_seconds": 0.6094223750114907,
+  "cases": [
+    {
+      "case": "active-handler",
+      "returncode": 0,
+      "passed": true,
+      "seconds": 1.3454662919975817,
+      "sanitizer_diagnostic": false
+    },
+    {
+      "case": "stream-callback",
+      "returncode": 0,
+      "passed": true,
+      "seconds": 1.320373792987084,
+      "sanitizer_diagnostic": false
+    },
+    {
+      "case": "accept-loop-exception",
+      "returncode": 0,
+      "passed": true,
+      "seconds": 1.2061171249952167,
+      "sanitizer_diagnostic": false
+    },
+    {
+      "case": "idle-client",
+      "returncode": 0,
+      "passed": true,
+      "seconds": 0.8398866259958595,
+      "sanitizer_diagnostic": false
+    },
+    {
+      "case": "partial-header",
+      "returncode": 0,
+      "passed": true,
+      "seconds": 1.1218589999771211,
+      "sanitizer_diagnostic": false
+    },
+    {
+      "case": "partial-body",
+      "returncode": 0,
+      "passed": true,
+      "seconds": 1.0935173750040121,
+      "sanitizer_diagnostic": false
+    },
+    {
+      "case": "idle",
+      "returncode": 0,
+      "passed": true,
+      "seconds": 0.8701954589923844,
+      "sanitizer_diagnostic": false
+    },
+    {
+      "case": "completed-request",
+      "returncode": 0,
+      "passed": true,
+      "seconds": 0.8943562089989427,
+      "sanitizer_diagnostic": false
+    },
+    {
+      "case": "handler-exception",
+      "returncode": 0,
+      "passed": true,
+      "seconds": 0.8885487919906154,
+      "sanitizer_diagnostic": false
+    }
+  ],
+  "container_name": "tts32147-sanitizer-20260909073508-22932",
+  "container_removed": true,
+  "container_seconds": 18.87226275,
+  "source_input_count": 507,
+  "source_and_patch_unchanged": true,
+  "native_patch_sha256": "faa692effa31ef5b7836e2b727fda0a9452a19008a8c679686dceda1c1831dac",
+  "macos_status": "Startup still blocked before main; documented against this working Linux alternative, not resolved by these Linux tests.",
+  "initial_linux_status": "Initial supplied image lacked cc/c++; explicit later authorization provisioned a separate image.",
+  "new_models_or_audio": false
+}

@@ -56,7 +56,7 @@ SIZES = ((160, 50), (120, 35), (100, 30), (80, 24))
 DESTINATION_CONTRACT = {
     "media": (
         "#library-row-browse-media",
-        "#library-media-reader-shell",
+        ".library-media-route",
         "#library-media-row-1",
         # wave-7 task 3: media's own reader_preferences/reader_layout fields
         # moved to ``screen._media_state.<field>`` -- the same extra hop the
@@ -94,7 +94,7 @@ DESTINATION_CONTRACT = {
     ),
     "notes": (
         "#library-row-browse-notes",
-        "#library-notes-reader-shell",
+        ".library-notes-route",
         "#library-notes-tree-note-2",
         # Wave-8 task 3: notes' own reader_preferences/reader_layout fields
         # moved to ``screen._notes_state.<field>`` -- the EIGHTH and last
@@ -1405,7 +1405,7 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
                 f"branches={screen._notes_state.tree_branches!r}"
             ),
         )
-        shell = screen.query_one("#library-notes-reader-shell")
+        shell = screen.query_one(".library-notes-route")
         items = shell.items
         notes_list = screen.query_one("#library-notes-list", Vertical)
         initial_pagers = list(screen.query(".library-notes-tree-pager"))
@@ -1601,7 +1601,7 @@ async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
         shell = await _wait_for_selector(
-            screen, pilot, "#library-notes-reader-shell"
+            screen, pilot, ".library-notes-route"
         )
         if not screen._notes_state.reader_layout.library_open:
             shell.library_grip.press()
@@ -1669,7 +1669,7 @@ async def test_notes_explicit_close_never_resolves_against_stale_allocation(
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
         shell = await _wait_for_selector(
-            screen, pilot, "#library-notes-reader-shell"
+            screen, pilot, ".library-notes-route"
         )
         if not screen._notes_state.reader_layout.library_open:
             shell.library_grip.press()

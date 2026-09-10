@@ -1,0 +1,48 @@
+"""Inspect the loaded sounddevice function's actual dylib; no stream or model."""
+
+from __future__ import annotations
+
+import ctypes
+import hashlib
+from pathlib import Path
+
+
+def verify_portaudio(expected_prefix: str, expected_sha256: str) -> dict:
+    import sounddevice as sd
+
+    class DlInfo(ctypes.Structure):
+        _fields_ = [
+            ("dli_fname", ctypes.c_char_p),
+            ("dli_fbase", ctypes.c_void_p),
+            ("dli_sname", ctypes.c_char_p),
+            ("dli_saddr", ctypes.c_void_p),
+        ]
+
+    loader = ctypes.CDLL(None)
+    dladdr = loader.dladdr
+    dladdr.argtypes = (ctypes.c_void_p, ctypes.POINTER(DlInfo))
+    dladdr.restype = ctypes.c_int
+    function_address = int(sd._ffi.cast("uintptr_t", sd._lib.Pa_GetVersion))
+    info = DlInfo()
+    if (
+        not dladdr(ctypes.c_void_p(function_address), ctypes.byref(info))
+        or not info.dli_fname
+    ):
+        raise RuntimeError("Cannot resolve the actual loaded PortAudio function image")
+    actual = Path(info.dli_fname.decode()).resolve()
+    prefix = Path(expected_prefix).resolve()
+    actual_sha256 = hashlib.sha256(actual.read_bytes()).hexdigest()
+    record = {
+        "sounddevice_requested_name": sd._libname,
+        "actual_function_image": str(actual),
+        "actual_sha256": actual_sha256,
+        "portaudio_version": sd.get_portaudio_version(),
+        "expected_prefix": str(prefix),
+        "expected_sha256": expected_sha256,
+        "stream_opened": False,
+        "model_loaded": False,
+    }
+    if not actual.is_relative_to(prefix) or actual_sha256 != expected_sha256:
+        raise RuntimeError(f"PortAudio candidate gate rejected actual image: {record}")
+    record["verified"] = True
+    return record
