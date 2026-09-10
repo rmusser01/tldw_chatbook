@@ -1383,9 +1383,12 @@ def test_explicit_exclusions_and_absence_of_async_owner_are_documented() -> None
         for node in json_storage.body
         if isinstance(node, ast.FunctionDef) and node.name == "_create_backup"
     )
-    assert any(
-        isinstance(node, ast.Call) and _is_named_call(node, "shutil", "copy2")
-        for node in ast.walk(json_backup)
+    assert all(
+        any(
+            isinstance(node, ast.Call) and _is_named_call(node, "raw", method)
+            for node in ast.walk(json_backup)
+        )
+        for method in ("_file", "_replace")
     )
     assert not any(
         isinstance(node, ast.Call) and _is_sqlite3_connect(node)
